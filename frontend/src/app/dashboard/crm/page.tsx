@@ -1,20 +1,19 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   Building2,
   CalendarClock,
   CheckCircle2,
-  CircleDollarSign,
   Filter,
   Loader2,
+  LockKeyhole,
   MessageSquarePlus,
   Plus,
   Search,
   Settings2,
   Target,
-  UserRound,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -212,14 +211,6 @@ export default function CrmPage() {
     }
   }
 
-  async function changeStatus(leadId: string, statusId: string) {
-    await api(`/leads/${leadId}/status`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status_id: statusId }),
-    });
-  }
-
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
@@ -331,14 +322,7 @@ export default function CrmPage() {
                       {leads.map((lead) => (
                         <tr key={lead.id} className="hover:bg-neutral-50/70">
                           <td className="px-6 py-4"><p className="font-medium">{lead.company_name || lead.contact_name}</p><p className="mt-1 text-xs text-neutral-400">{lead.lead_code} · {lead.contact_name}{lead.email ? ` · ${lead.email}` : ""}</p></td>
-                          <td className="px-4 py-4">
-                            <StatusSelect
-                              value={lead.status_id}
-                              statuses={activeStatuses}
-                              disabled={saving}
-                              onChange={(statusId) => void run(async () => { await changeStatus(lead.id, statusId); }, `Lead status changed to ${activeStatuses.find((item) => item.id === statusId)?.name ?? "selected status"}`)}
-                            />
-                          </td>
+                          <td className="px-4 py-4"><StatusBadge name={lead.status_name} color={lead.status_color} /></td>
                           <td className="px-4 py-4 text-neutral-600">{lead.source_name ?? "—"}</td>
                           <td className="px-4 py-4"><p className="font-medium">{money(lead.estimated_value, lead.currency)}</p><p className="mt-1 text-xs text-neutral-400">{lead.probability_percent}% probability</p></td>
                           <td className="px-4 py-4 text-neutral-600">{lead.assigned_employee_name ?? "Unassigned"}</td>
@@ -456,106 +440,205 @@ function LeadDrawer({ detail, loading, meta, saving, onClose, api, run, reloadDe
   run: (work: () => Promise<void>, success: string) => Promise<void>;
   reloadDetail: () => Promise<void>;
 }) {
+  const [wonNoticeOpen, setWonNoticeOpen] = useState(false);
+  const [convertOpen, setConvertOpen] = useState(false);
   const activeStatuses = meta?.statuses.filter((item) => item.is_active) ?? [];
+  const isWon = detail?.lead.status_category === "won";
+  const isConverted = Boolean(detail?.lead.converted_client_id);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside className="ml-auto h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl">
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Lead detail</p><h2 className="mt-1 text-xl font-semibold">{detail?.lead.company_name || detail?.lead.contact_name || "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>
-        {loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : (
-          <div className="space-y-6 p-6">
-            <div className="rounded-2xl border p-5">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Pipeline status</p>
-                  <p className="mt-1 text-sm text-neutral-500">Change the stage as the opportunity moves forward.</p>
+    <>
+      <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <aside className="ml-auto h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl">
+          <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Lead detail</p><h2 className="mt-1 text-xl font-semibold">{detail?.lead.company_name || detail?.lead.contact_name || "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>
+          {loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : (
+            <div className="space-y-6 p-6">
+              <div className={`rounded-2xl border p-5 ${isWon ? "border-emerald-200 bg-emerald-50/40" : "bg-white"}`}>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Pipeline status</p>
+                    <p className="mt-1 text-sm text-neutral-500">Status can only be changed from this lead detail.</p>
+                  </div>
+                  {isWon || isConverted ? (
+                    <StatusBadge name={detail.lead.status_name} color={detail.lead.status_color} locked />
+                  ) : (
+                    <StatusSelect
+                      value={detail.lead.status_id}
+                      statuses={activeStatuses}
+                      disabled={saving}
+                      onChange={(statusId) => {
+                        const target = activeStatuses.find((item) => item.id === statusId);
+                        void run(async () => {
+                          await api(`/leads/${detail.lead.id}/status`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ status_id: statusId }),
+                          });
+                          await reloadDetail();
+                          if (target?.category === "won") setWonNoticeOpen(true);
+                        }, `Lead status changed to ${target?.name ?? "selected status"}`);
+                      }}
+                    />
+                  )}
                 </div>
-                <StatusSelect
-                  value={detail.lead.status_id}
-                  statuses={activeStatuses}
-                  disabled={saving}
-                  onChange={(statusId) => void run(async () => {
-                    await api(`/leads/${detail.lead.id}/status`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ status_id: statusId }),
-                    });
-                    await reloadDetail();
-                  }, `Lead status changed to ${activeStatuses.find((item) => item.id === statusId)?.name ?? "selected status"}`)}
-                />
+
+                {isWon && !isConverted ? (
+                  <div className="mt-4 flex flex-col gap-3 rounded-xl border border-emerald-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex gap-3">
+                      <LockKeyhole className="mt-0.5 size-4 shrink-0 text-emerald-700" />
+                      <div>
+                        <p className="text-sm font-semibold text-emerald-800">Won status is locked</p>
+                        <p className="mt-1 text-xs leading-5 text-emerald-700">This opportunity cannot move back to another pipeline status. Create the client when you are ready.</p>
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => setConvertOpen(true)} className="h-10 shrink-0 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white">Convert to Client</button>
+                  </div>
+                ) : null}
+
+                {isConverted ? (
+                  <div className="mt-4 flex items-center justify-between gap-4 rounded-xl border border-emerald-200 bg-white p-4 text-sm text-emerald-700">
+                    <span>This won lead has been converted and permanently linked to a client.</span>
+                    <a href="/dashboard/clients" className="shrink-0 font-semibold underline underline-offset-4">View Clients</a>
+                  </div>
+                ) : null}
               </div>
-              {detail.lead.status_category === "won" && !detail.lead.converted_client_id ? (
-                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                  Opportunity won. The proposal is accepted—this lead is ready to become a client.
-                </div>
-              ) : null}
-            </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Info label="Lead code" value={detail.lead.lead_code} />
-              <Info label="Contact" value={detail.lead.contact_name} />
-              <Info label="Email" value={detail.lead.email ?? "—"} />
-              <Info label="Phone" value={detail.lead.phone ?? "—"} />
-              <Info label="Source" value={detail.lead.source_name ?? "—"} />
-              <Info label="Assigned" value={detail.lead.assigned_employee_name ?? "Unassigned"} />
-              <Info label="Potential" value={money(detail.lead.estimated_value, detail.lead.currency)} />
-              <Info label="Follow-up" value={when(detail.lead.next_follow_up_at)} />
-              <Info label="Country" value={detail.country_code ?? "—"} />
-            </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Info label="Lead code" value={detail.lead.lead_code} />
+                <Info label="Contact" value={detail.lead.contact_name} />
+                <Info label="Email" value={detail.lead.email ?? "—"} />
+                <Info label="Phone" value={detail.lead.phone ?? "—"} />
+                <Info label="Source" value={detail.lead.source_name ?? "—"} />
+                <Info label="Assigned" value={detail.lead.assigned_employee_name ?? "Unassigned"} />
+                <Info label="Potential" value={money(detail.lead.estimated_value, detail.lead.currency)} />
+                <Info label="Follow-up" value={when(detail.lead.next_follow_up_at)} />
+                <Info label="Country" value={detail.country_code ?? "—"} />
+              </div>
 
-            {detail.notes ? <div className="rounded-2xl border bg-neutral-50 p-4"><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Notes</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{detail.notes}</p></div> : null}
+              {detail.notes ? <div className="rounded-2xl border bg-neutral-50 p-4"><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Notes</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{detail.notes}</p></div> : null}
 
-            {!detail.lead.converted_client_id && detail.lead.status_category === "won" ? (
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5">
-                <div className="flex items-center gap-2"><Building2 className="size-4" /><h3 className="font-semibold">Convert won lead to client</h3></div>
-                <p className="mt-1 text-sm text-neutral-600">Creates the client record and permanently links it to this lead.</p>
+              <div className="rounded-2xl border p-5">
+                <div className="flex items-center gap-2"><MessageSquarePlus className="size-4" /><h3 className="font-semibold">Add CRM activity</h3></div>
                 <form onSubmit={(event) => {
-                  event.preventDefault(); const form = new FormData(event.currentTarget);
+                  event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement);
                   void run(async () => {
-                    await api(`/leads/${detail.lead.id}/convert`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ display_name: text(form, "display_name"), billing_email: text(form, "billing_email"), tax_identifier: text(form, "tax_identifier") }) });
-                    await reloadDetail();
-                  }, "Lead converted to client");
-                }} className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <Field label="Client display name" name="display_name" defaultValue={detail.lead.company_name || detail.lead.contact_name} />
-                  <Field label="Billing email" name="billing_email" type="email" defaultValue={detail.lead.email} />
-                  <Field label="Tax identifier" name="tax_identifier" />
-                  <div className="flex items-end"><button disabled={saving} className="h-11 w-full rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white">Convert to client</button></div>
+                    const scheduled = text(form, "scheduled_at");
+                    await api(`/leads/${detail.lead.id}/interactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ interaction_type: text(form, "interaction_type") ?? "note", subject: text(form, "subject"), body: text(form, "body"), scheduled_at: scheduled ? new Date(scheduled).toISOString() : null }) });
+                    formElement.reset(); await reloadDetail();
+                  }, "CRM activity added");
+                }} className="mt-4 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2"><SelectField label="Type" name="interaction_type" options={[["note", "Note"], ["call", "Call"], ["email", "Email"], ["meeting", "Meeting"], ["follow_up", "Follow-up"]]} defaultValue="note" /><Field label="Subject" name="subject" /></div>
+                  <label className="block text-sm font-medium">Details<textarea name="body" className={textareaClass} /></label>
+                  <Field label="Schedule / follow-up time" name="scheduled_at" type="datetime-local" />
+                  <button disabled={saving} className="h-10 rounded-xl border px-4 text-sm font-semibold hover:bg-neutral-50">Add activity</button>
                 </form>
               </div>
-            ) : !detail.lead.converted_client_id ? (
-              <div className="rounded-2xl border border-dashed bg-neutral-50 p-5 text-sm text-neutral-500">
-                Mark this opportunity as <strong className="text-neutral-800">Won</strong> when the proposal is accepted. The Convert to Client action will then become available.
-              </div>
-            ) : <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">This lead is already converted to a client.</div>}
 
-            <div className="rounded-2xl border p-5">
-              <div className="flex items-center gap-2"><MessageSquarePlus className="size-4" /><h3 className="font-semibold">Add CRM activity</h3></div>
-              <form onSubmit={(event) => {
-                event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement);
-                void run(async () => {
-                  const scheduled = text(form, "scheduled_at");
-                  await api(`/leads/${detail.lead.id}/interactions`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ interaction_type: text(form, "interaction_type") ?? "note", subject: text(form, "subject"), body: text(form, "body"), scheduled_at: scheduled ? new Date(scheduled).toISOString() : null }) });
-                  formElement.reset(); await reloadDetail();
-                }, "CRM activity added");
-              }} className="mt-4 space-y-4">
-                <div className="grid gap-4 sm:grid-cols-2"><SelectField label="Type" name="interaction_type" options={[["note", "Note"], ["call", "Call"], ["email", "Email"], ["meeting", "Meeting"], ["follow_up", "Follow-up"]]} defaultValue="note" /><Field label="Subject" name="subject" /></div>
-                <label className="block text-sm font-medium">Details<textarea name="body" className={textareaClass} /></label>
-                <Field label="Schedule / follow-up time" name="scheduled_at" type="datetime-local" />
-                <button disabled={saving} className="h-10 rounded-xl border px-4 text-sm font-semibold hover:bg-neutral-50">Add activity</button>
-              </form>
+              <div>
+                <h3 className="font-semibold">Timeline</h3>
+                <div className="mt-3 space-y-3">
+                  {detail.interactions.map((item) => <div key={item.id} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold capitalize">{item.interaction_type.replace("_", " ")}{item.subject ? ` · ${item.subject}` : ""}</p><span className="text-xs text-neutral-400">{when(item.created_at)}</span></div>{item.body ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{item.body}</p> : null}{item.scheduled_at ? <p className="mt-2 text-xs text-neutral-400">Scheduled: {when(item.scheduled_at)}</p> : null}</div>)}
+                  {detail.interactions.length === 0 ? <p className="rounded-2xl border border-dashed p-8 text-center text-sm text-neutral-400">No CRM activities yet.</p> : null}
+                </div>
+              </div>
             </div>
+          )}
+        </aside>
+      </div>
 
+      {wonNoticeOpen && detail && !detail.lead.converted_client_id ? (
+        <DecisionModal title="Opportunity marked as Won" onClose={() => setWonNoticeOpen(false)}>
+          <div className="flex gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+            <LockKeyhole className="mt-0.5 size-5 shrink-0 text-emerald-700" />
             <div>
-              <h3 className="font-semibold">Timeline</h3>
-              <div className="mt-3 space-y-3">
-                {detail.interactions.map((item) => <div key={item.id} className="rounded-2xl border p-4"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold capitalize">{item.interaction_type.replace("_", " ")}{item.subject ? ` · ${item.subject}` : ""}</p><span className="text-xs text-neutral-400">{when(item.created_at)}</span></div>{item.body ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{item.body}</p> : null}{item.scheduled_at ? <p className="mt-2 text-xs text-neutral-400">Scheduled: {when(item.scheduled_at)}</p> : null}</div>)}
-                {detail.interactions.length === 0 ? <p className="rounded-2xl border border-dashed p-8 text-center text-sm text-neutral-400">No CRM activities yet.</p> : null}
-              </div>
+              <p className="font-semibold text-emerald-900">Won is now a final status.</p>
+              <p className="mt-1 text-sm leading-6 text-emerald-800">This lead can no longer be moved back to another pipeline status. You can now create the complete client record from the lead information.</p>
             </div>
           </div>
-        )}
-      </aside>
-    </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button type="button" onClick={() => setWonNoticeOpen(false)} className="h-10 rounded-xl border px-4 text-sm font-semibold">Close</button>
+            <button type="button" onClick={() => { setWonNoticeOpen(false); setConvertOpen(true); }} className="h-10 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white">Convert to Client</button>
+          </div>
+        </DecisionModal>
+      ) : null}
+
+      {convertOpen && detail && meta && detail.lead.status_category === "won" && !detail.lead.converted_client_id ? (
+        <Modal title="Create client from won lead" onClose={() => setConvertOpen(false)}>
+          <div className="mb-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+            Lead information is prefilled below. Review or complete the client information before creating the client record.
+          </div>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            const form = new FormData(event.currentTarget);
+            void run(async () => {
+              await api(`/leads/${detail.lead.id}/convert`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  client_type: text(form, "client_type") ?? detail.lead.lead_type,
+                  display_name: text(form, "display_name"),
+                  legal_name: text(form, "legal_name"),
+                  contact_name: text(form, "contact_name"),
+                  email: text(form, "email"),
+                  billing_email: text(form, "billing_email"),
+                  phone: text(form, "phone"),
+                  whatsapp: text(form, "whatsapp"),
+                  website: text(form, "website"),
+                  country_code: text(form, "country_code"),
+                  state_region: text(form, "state_region"),
+                  city: text(form, "city"),
+                  postal_code: text(form, "postal_code"),
+                  address_line1: text(form, "address_line1"),
+                  address_line2: text(form, "address_line2"),
+                  tax_identifier: text(form, "tax_identifier"),
+                  currency: text(form, "currency"),
+                  assigned_employee_id: text(form, "assigned_employee_id"),
+                  notes: text(form, "notes"),
+                }),
+              });
+              setConvertOpen(false);
+              await reloadDetail();
+            }, "Lead converted to client");
+          }} className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <SelectField label="Client type" name="client_type" options={[["company", "Company"], ["individual", "Individual"]]} defaultValue={detail.lead.lead_type} />
+              <Field label="Display name" name="display_name" required defaultValue={detail.lead.company_name || detail.lead.contact_name} />
+              <Field label="Legal company name" name="legal_name" defaultValue={detail.lead.company_name} />
+              <Field label="Contact person" name="contact_name" defaultValue={detail.lead.contact_name} />
+              <Field label="Email" name="email" type="email" defaultValue={detail.lead.email} />
+              <Field label="Billing email" name="billing_email" type="email" defaultValue={detail.lead.email} />
+              <Field label="Phone" name="phone" defaultValue={detail.lead.phone} />
+              <Field label="WhatsApp" name="whatsapp" defaultValue={detail.whatsapp} />
+              <Field label="Website" name="website" type="url" defaultValue={detail.website} />
+              <SearchableSelect label="Country" name="country_code" defaultValue={detail.country_code ?? meta.default_country_code} options={COUNTRY_OPTIONS} searchPlaceholder="Search country..." />
+              <Field label="State / Province / Region" name="state_region" defaultValue={detail.state_region} />
+              <Field label="City" name="city" defaultValue={detail.city} />
+              <Field label="Postal / ZIP code" name="postal_code" />
+              <Field label="Address line 1" name="address_line1" defaultValue={detail.address_line1} />
+              <Field label="Address line 2" name="address_line2" />
+              <Field label="Tax / VAT identifier" name="tax_identifier" />
+              <SearchableSelect label="Currency" name="currency" defaultValue={detail.lead.currency ?? meta.default_currency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." />
+              <SelectField label="Assigned to" name="assigned_employee_id" options={meta.employees.map((item) => [item.id, item.full_name])} defaultValue={detail.lead.assigned_employee_id ?? ""} empty="Unassigned" />
+            </div>
+            <label className="block text-sm font-medium">Client notes<textarea name="notes" defaultValue={detail.notes ?? ""} className={textareaClass} /></label>
+            <div className="flex justify-end gap-2 border-t pt-5">
+              <button type="button" onClick={() => setConvertOpen(false)} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button>
+              <button disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white">{saving ? <Loader2 className="size-4 animate-spin" /> : <Building2 className="size-4" />} Create Client</button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
+function StatusBadge({ name, color, locked = false }: { name: string; color: string | null; locked?: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border bg-white px-2.5 py-1 text-xs font-medium">
+      <span className="size-2 rounded-full" style={{ backgroundColor: color ?? "#a3a3a3" }} />
+      {name}
+      {locked ? <LockKeyhole className="size-3 text-neutral-400" /> : null}
+    </span>
   );
 }
 
@@ -567,18 +650,18 @@ function StatusSelect({ value, statuses, disabled, onChange }: {
 }) {
   const current = statuses.find((item) => item.id === value);
   return (
-    <label className="relative inline-flex min-w-[120px] items-center gap-2 rounded-full border bg-white px-2.5 py-1 text-xs font-medium shadow-sm transition focus-within:border-neutral-500 hover:border-neutral-400">
+    <label className="relative inline-flex min-w-[150px] items-center gap-2 rounded-xl border bg-white px-3 py-2.5 text-sm font-medium shadow-sm transition focus-within:border-neutral-500 hover:border-neutral-400">
       <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: current?.color ?? "#a3a3a3" }} />
       <select
         aria-label="Lead status"
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
-        className="min-w-0 flex-1 cursor-pointer appearance-none bg-transparent pr-3 text-xs font-medium outline-none disabled:cursor-wait disabled:opacity-50"
+        className="min-w-0 flex-1 cursor-pointer appearance-none bg-transparent pr-5 text-sm font-medium outline-none disabled:cursor-wait disabled:opacity-50"
       >
         {statuses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select>
-      <span className="pointer-events-none absolute right-2 text-[9px] text-neutral-400">▼</span>
+      <span className="pointer-events-none absolute right-3 text-[9px] text-neutral-400">▼</span>
     </label>
   );
 }
@@ -592,7 +675,11 @@ function PipelineSources({ sources, saving, run, api }: { sources: LeadSource[];
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><h2 className="text-xl font-semibold">{title}</h2><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div><div className="p-6">{children}</div></div></div>;
+  return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><h2 className="text-xl font-semibold">{title}</h2><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div><div className="p-6">{children}</div></div></div>;
+}
+
+function DecisionModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between gap-4"><h2 className="text-xl font-semibold">{title}</h2><button onClick={onClose} className="flex size-9 items-center justify-center rounded-xl border"><X className="size-4" /></button></div><div className="mt-5">{children}</div></div></div>;
 }
 
 function Field({ label, name, type = "text", required = false, defaultValue, step }: { label: string; name: string; type?: string; required?: boolean; defaultValue?: string | null; step?: string }) {
