@@ -10,6 +10,7 @@ from app.models.common import new_uuid, utc_now
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.subscription import Subscription
+from app.models.team import Employee
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationMembershipRead,
@@ -17,6 +18,7 @@ from app.schemas.organization import (
 )
 from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
+from app.services.team import ensure_system_roles, next_employee_code
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -69,13 +71,16 @@ def create_organization(
     db.add(organization)
     db.flush()
 
+    roles = ensure_system_roles(db, organization)
     membership = Membership(
         organization_id=organization.id,
         user_id=current_user.id,
+        role_id=roles["admin"].id,
         role=MEMBERSHIP_ROLE_ADMIN,
         status="active",
     )
     db.add(membership)
+    db.flush()
 
     subscription = Subscription(
         organization_id=organization.id,
@@ -88,6 +93,17 @@ def create_organization(
     ensure_company_settings_defaults(db, organization)
     db.flush()
 
+    employee = Employee(
+        organization_id=organization.id,
+        membership_id=membership.id,
+        employee_code=next_employee_code(db, organization.id),
+        work_email=current_user.email,
+        employment_type="full_time",
+        employment_status="active",
+    )
+    db.add(employee)
+    db.flush()
+
     record_activity(
         db,
         action="organization.created",
@@ -96,7 +112,7 @@ def create_organization(
         organization_id=organization.id,
         entity_type="organization",
         entity_id=organization.id,
-        message="Company workspace and master settings created",
+        message="Company workspace, roles, settings and owner employee profile created",
         after={
             "id": organization.id,
             "name": organization.name,
@@ -108,6 +124,8 @@ def create_organization(
             "team_size": organization.team_size,
             "status": organization.status,
             "membership_role": membership.role,
+            "organization_role_id": membership.role_id,
+            "employee_code": employee.employee_code,
             "subscription_plan": subscription.plan_code,
             "subscription_status": subscription.status,
             "company_master_settings": "initialized",
