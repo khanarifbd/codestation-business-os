@@ -13,6 +13,15 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
+if ! grep -q '^JWT_SECRET_KEY=' "${ENV_FILE}"; then
+  echo "==> Generating JWT secret for this environment"
+  printf '\nJWT_SECRET_KEY=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
+elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$' "${ENV_FILE}"; then
+  JWT_SECRET="$(openssl rand -hex 32)"
+  sed -i "s|^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$|JWT_SECRET_KEY=${JWT_SECRET}|" "${ENV_FILE}"
+  unset JWT_SECRET
+fi
+
 set -a
 # shellcheck disable=SC1090
 source "${ENV_FILE}"
@@ -20,11 +29,6 @@ set +a
 
 if [[ -z "${POSTGRES_PASSWORD:-}" || "${POSTGRES_PASSWORD}" == "replace_with_a_long_random_password" ]]; then
   echo "ERROR: Configure POSTGRES_PASSWORD in .env.staging first."
-  exit 1
-fi
-
-if [[ -z "${JWT_SECRET_KEY:-}" || "${JWT_SECRET_KEY}" == "replace_with_a_long_random_jwt_secret" ]]; then
-  echo "ERROR: Configure JWT_SECRET_KEY in .env.staging first."
   exit 1
 fi
 
