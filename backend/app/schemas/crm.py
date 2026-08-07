@@ -242,9 +242,22 @@ class ClientPage(BaseModel):
 
 
 class LeadConvertRequest(BaseModel):
+    client_type: Literal["company", "individual"] | None = None
     display_name: str | None = Field(default=None, max_length=220)
     legal_name: str | None = Field(default=None, max_length=220)
+    contact_name: str | None = Field(default=None, max_length=180)
+    email: EmailStr | None = None
     billing_email: EmailStr | None = None
-    tax_identifier: str | None = Field(default=None, max_length=180)
+    phone: str | None = Field(default=None, max_length=64)
+    whatsapp: str | None = Field(default=None, max_length=64)
+    website: str | None = Field(default=None, max_length=500)
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    state_region: str | None = Field(default=None, max_length=120)
+    city: str | None = Field(default=None, max_length=120)
     postal_code: str | None = Field(default=None, max_length=32)
+    address_line1: str | None = Field(default=None, max_length=250)
     address_line2: str | None = Field(default=None, max_length=250)
+    tax_identifier: str | None = Field(default=None, max_length=180)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    assigned_employee_id: str | None = None
+    notes: str | None = None
