@@ -5,6 +5,18 @@ from app.core.roles import SYSTEM_ROLE_SUPER_ADMIN
 from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.services.activity_log import record_activity
+
+
+def _user_state(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "system_role": user.system_role,
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+    }
 
 
 def ensure_super_admin() -> None:
@@ -36,7 +48,9 @@ def ensure_super_admin() -> None:
             )
 
         user = db.scalar(select(User).where(User.email == email))
+        before = _user_state(user) if user is not None else None
         if user is None:
+            action = "system.super_admin.created"
             user = User(
                 email=email,
                 full_name=full_name,
@@ -47,10 +61,24 @@ def ensure_super_admin() -> None:
             )
             db.add(user)
         else:
+            action = "system.super_admin.recovered"
             user.full_name = full_name
             user.password_hash = hash_password(password)
             user.system_role = SYSTEM_ROLE_SUPER_ADMIN
             user.is_active = True
             user.is_verified = True
 
+        db.flush()
+        record_activity(
+            db,
+            action=action,
+            scope="platform",
+            actor_type="system",
+            entity_type="user",
+            entity_id=user.id,
+            message="Global super admin ensured from environment configuration",
+            before=before,
+            after=_user_state(user),
+            metadata={"source": "startup_bootstrap"},
+        )
         db.commit()
