@@ -1,7 +1,8 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
@@ -14,6 +15,24 @@ from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/crm", tags=["CRM Clients"])
 ClientViewer = Annotated[TenantContext, Depends(require_tenant_permission("clients.view"))]
+
+
+class ClientSummary(BaseModel):
+    total: int
+    active: int
+    inactive: int
+
+
+@router.get("/clients/summary", response_model=ClientSummary)
+def get_client_summary(db: DbSession, tenant: ClientViewer) -> ClientSummary:
+    row = db.execute(
+        select(
+            func.count(Client.id),
+            func.count(Client.id).filter(Client.status == "active"),
+            func.count(Client.id).filter(Client.status == "inactive"),
+        ).where(Client.organization_id == tenant.organization_id)
+    ).one()
+    return ClientSummary(total=row[0], active=row[1], inactive=row[2])
 
 
 @router.get("/clients/{client_id}/detail", response_model=ClientDetailRead)
