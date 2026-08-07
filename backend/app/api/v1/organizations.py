@@ -1,7 +1,7 @@
 import re
 import unicodedata
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
@@ -15,6 +15,7 @@ from app.schemas.organization import (
     OrganizationMembershipRead,
     OrganizationRead,
 )
+from app.services.activity_log import record_activity
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -48,6 +49,7 @@ def _membership_response(organization: Organization, membership: Membership) -> 
 @router.post("", response_model=OrganizationMembershipRead, status_code=status.HTTP_201_CREATED)
 def create_organization(
     payload: OrganizationCreate,
+    request: Request,
     db: DbSession,
     current_user: CurrentUser,
 ) -> OrganizationMembershipRead:
@@ -82,6 +84,33 @@ def create_organization(
         current_period_start=utc_now(),
     )
     db.add(subscription)
+    db.flush()
+
+    record_activity(
+        db,
+        action="organization.created",
+        scope="tenant",
+        actor_user_id=current_user.id,
+        organization_id=organization.id,
+        entity_type="organization",
+        entity_id=organization.id,
+        message="Company workspace created",
+        after={
+            "id": organization.id,
+            "name": organization.name,
+            "slug": organization.slug,
+            "country_code": organization.country_code,
+            "timezone": organization.timezone,
+            "currency": organization.currency,
+            "business_type": organization.business_type,
+            "team_size": organization.team_size,
+            "status": organization.status,
+            "membership_role": membership.role,
+            "subscription_plan": subscription.plan_code,
+            "subscription_status": subscription.status,
+        },
+        request=request,
+    )
 
     db.commit()
     db.refresh(organization)
