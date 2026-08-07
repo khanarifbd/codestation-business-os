@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -16,6 +16,10 @@ class Organization(Base):
     country_code: Mapped[str] = mapped_column(String(2), default="BD", nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Dhaka", nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
+    business_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    team_size: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    financial_year_start_month: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    setup_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
     )
