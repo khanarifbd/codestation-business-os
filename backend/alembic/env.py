@@ -7,6 +7,10 @@ from app.core.config import settings
 from app.db.base import Base
 from app.models import (  # noqa: F401
     ActivityLog,
+    Department,
+    Designation,
+    Employee,
+    EmployeeInvitation,
     Membership,
     Organization,
     OrganizationAddress,
@@ -18,6 +22,7 @@ from app.models import (  # noqa: F401
     OrganizationLocalizationSettings,
     OrganizationOnlineProfile,
     OrganizationProfile,
+    OrganizationRole,
     OrganizationSystemDefaults,
     Subscription,
     User,
