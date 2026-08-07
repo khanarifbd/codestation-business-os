@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env.staging"
 COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
+NGINX_SITE="/etc/nginx/sites-available/codestation-business-os"
 
 cd "${ROOT_DIR}"
 
@@ -20,6 +21,30 @@ env_value() {
   local line
   line="$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)"
   printf '%s' "${line#*=}"
+}
+
+ensure_nginx_upload_limit() {
+  if [[ ! -f "${NGINX_SITE}" ]] || ! command -v nginx >/dev/null 2>&1; then
+    return
+  fi
+  if grep -q '# codestation-business-os-upload-limit' "${NGINX_SITE}"; then
+    return
+  fi
+
+  echo "==> Enabling 25 MB frontend document uploads in Business OS Nginx site"
+  local backup="${NGINX_SITE}.pre-upload-limit"
+  cp "${NGINX_SITE}" "${backup}"
+  sed -i '/server_name os\.codestationai\.com;/a\    # codestation-business-os-upload-limit\n    client_max_body_size 25m;' "${NGINX_SITE}"
+
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx
+    rm -f "${backup}"
+  else
+    mv "${backup}" "${NGINX_SITE}"
+    nginx -t
+    echo "ERROR: Nginx upload-limit update failed and was rolled back."
+    exit 1
+  fi
 }
 
 if ! grep -q '^JWT_SECRET_KEY=' "${ENV_FILE}"; then
@@ -72,6 +97,7 @@ if [[ "$(git branch --show-current)" != "${BRANCH}" ]]; then
 fi
 
 git pull --ff-only origin "${BRANCH}"
+ensure_nginx_upload_limit
 
 echo "==> Building application images"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build
