@@ -14,6 +14,7 @@ from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.models.team import OrganizationRole
 from app.models.user import User
 from app.tenancy.context import TenantContext
 
@@ -121,3 +122,26 @@ def get_current_tenant_admin(tenant: CurrentTenant) -> TenantContext:
 
 
 CurrentTenantAdmin = Annotated[TenantContext, Depends(get_current_tenant_admin)]
+
+
+def require_tenant_permission(permission: str):
+    """Return a FastAPI dependency enforcing an organization role permission."""
+
+    def checker(db: DbSession, tenant: CurrentTenant) -> TenantContext:
+        role = db.scalar(
+            select(OrganizationRole).where(
+                OrganizationRole.id == tenant.membership.role_id,
+                OrganizationRole.organization_id == tenant.organization_id,
+                OrganizationRole.is_active.is_(True),
+            )
+        )
+        if role is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company role is inactive")
+        if "*" not in role.permissions and permission not in role.permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {permission}",
+            )
+        return tenant
+
+    return checker
