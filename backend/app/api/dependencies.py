@@ -5,7 +5,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.roles import ORGANIZATION_STATUS_ACTIVE, SYSTEM_ROLE_SUPER_ADMIN
+from app.core.roles import (
+    MEMBERSHIP_ROLE_ADMIN,
+    ORGANIZATION_STATUS_ACTIVE,
+    SYSTEM_ROLE_SUPER_ADMIN,
+)
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.membership import Membership
@@ -105,3 +109,15 @@ def get_tenant_context(
 
 
 CurrentTenant = Annotated[TenantContext, Depends(get_tenant_context)]
+
+
+def get_current_tenant_admin(tenant: CurrentTenant) -> TenantContext:
+    if tenant.role != MEMBERSHIP_ROLE_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Company admin access required",
+        )
+    return tenant
+
+
+CurrentTenantAdmin = Annotated[TenantContext, Depends(get_current_tenant_admin)]
