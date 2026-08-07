@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
@@ -154,6 +154,26 @@ def refresh(payload: RefreshTokenRequest, db: DbSession) -> TokenPair:
             detail="User is inactive or no longer exists",
         )
     return _token_pair(user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    request: Request,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> Response:
+    record_activity(
+        db,
+        action="auth.logout",
+        scope="auth",
+        actor_user_id=current_user.id,
+        entity_type="user",
+        entity_id=current_user.id,
+        message="User signed out",
+        request=request,
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=UserRead)
