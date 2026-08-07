@@ -4,6 +4,7 @@ import unicodedata
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.company_defaults import OrganizationSystemDefaults
 from app.models.company_settings import OrganizationDocumentSequence
 from app.models.crm import LeadSource, LeadStatus
 from app.models.organization import Organization
@@ -105,6 +106,22 @@ def next_sequence_code(db: Session, organization_id: str, document_type: str) ->
 
 
 def get_default_lead_status(db: Session, organization_id: str) -> LeadStatus:
+    defaults = db.scalar(
+        select(OrganizationSystemDefaults).where(
+            OrganizationSystemDefaults.organization_id == organization_id
+        )
+    )
+    if defaults and defaults.default_lead_status:
+        status = db.scalar(
+            select(LeadStatus).where(
+                LeadStatus.organization_id == organization_id,
+                LeadStatus.slug == defaults.default_lead_status,
+                LeadStatus.is_active.is_(True),
+            )
+        )
+        if status is not None:
+            return status
+
     status = db.scalar(
         select(LeadStatus).where(
             LeadStatus.organization_id == organization_id,
