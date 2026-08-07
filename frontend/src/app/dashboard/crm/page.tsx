@@ -154,7 +154,6 @@ export default function CrmPage() {
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
     params.set("limit", "30");
-    params.set("converted", "false");
     if (search) params.set("search", search);
     if (statusFilter) params.set("status_id", statusFilter);
     if (sourceFilter) params.set("source_id", sourceFilter);
@@ -321,7 +320,13 @@ export default function CrmPage() {
                     <tbody className="divide-y">
                       {leads.map((lead) => (
                         <tr key={lead.id} className="hover:bg-neutral-50/70">
-                          <td className="px-6 py-4"><p className="font-medium">{lead.company_name || lead.contact_name}</p><p className="mt-1 text-xs text-neutral-400">{lead.lead_code} · {lead.contact_name}{lead.email ? ` · ${lead.email}` : ""}</p></td>
+                          <td className="px-6 py-4">
+                            <p className="flex items-center gap-2 font-medium">
+                              <span>{lead.company_name || lead.contact_name}</span>
+                              {lead.converted_client_id ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Client</span> : null}
+                            </p>
+                            <p className="mt-1 text-xs text-neutral-400">{lead.lead_code} · {lead.contact_name}{lead.email ? ` · ${lead.email}` : ""}</p>
+                          </td>
                           <td className="px-4 py-4"><StatusBadge name={lead.status_name} color={lead.status_color} /></td>
                           <td className="px-4 py-4 text-neutral-600">{lead.source_name ?? "—"}</td>
                           <td className="px-4 py-4"><p className="font-medium">{money(lead.estimated_value, lead.currency)}</p><p className="mt-1 text-xs text-neutral-400">{lead.probability_percent}% probability</p></td>
