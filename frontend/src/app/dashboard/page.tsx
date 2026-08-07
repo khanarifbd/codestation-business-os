@@ -35,13 +35,13 @@ type TenantContext = {
 };
 
 const navigation = [
-  { label: "Dashboard", icon: LayoutDashboard, active: true },
+  { label: "Dashboard", icon: LayoutDashboard, active: true, href: "/dashboard" },
   { label: "Clients", icon: Users },
   { label: "Orders", icon: ReceiptText },
   { label: "Projects", icon: FolderKanban },
   { label: "Finance", icon: CircleDollarSign },
   { label: "Reports", icon: BarChart3 },
-  { label: "Company", icon: Building2 },
+  { label: "Company", icon: Building2, href: "/dashboard/company" },
   { label: "Settings", icon: Settings },
 ];
 
@@ -140,14 +140,16 @@ export default function DashboardPage() {
           </div>
 
           <nav className="mt-5 space-y-1">
-            {navigation.map(({ label, icon: Icon, active }) => (
+            {navigation.map(({ label, icon: Icon, active, href }) => (
               <button
                 key={label}
                 type="button"
+                onClick={() => href && router.push(href)}
+                disabled={!href}
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
                   active
                     ? "bg-neutral-950 font-medium text-white"
-                    : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"
+                    : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-neutral-600"
                 }`}
               >
                 <Icon className="size-4" />
@@ -172,10 +174,14 @@ export default function DashboardPage() {
               <p className="text-sm text-neutral-500">Workspace overview</p>
               <h2 className="mt-1 text-3xl font-semibold tracking-tight">{company.name}</h2>
             </div>
-            <div className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm text-neutral-600">
+            <button
+              type="button"
+              onClick={() => router.push("/dashboard/company")}
+              className="flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm text-neutral-600 hover:bg-neutral-50"
+            >
               <Building2 className="size-4" />
-              {company.business_type ?? "Business"}
-            </div>
+              Company setup
+            </button>
           </header>
 
           <div className="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -197,7 +203,7 @@ export default function DashboardPage() {
             <section className="rounded-2xl border bg-white p-6 shadow-sm shadow-neutral-200/30">
               <h3 className="font-semibold">Tenant-safe Business OS foundation</h3>
               <p className="mt-1 text-sm text-neutral-500">
-                Every company request now resolves a validated tenant context before business data is accessed.
+                Every company request resolves a validated tenant context before business data is accessed.
               </p>
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
                 {[
