@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { setAuthCookies, type TokenPair } from "@/lib/auth-session";
+import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
 const secure = process.env.NODE_ENV === "production";
@@ -11,7 +12,10 @@ async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
 
   const response = await backendFetch("/auth/refresh", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...requestContextHeaders(request),
+    },
     body: JSON.stringify({ refresh_token: refreshToken }),
   });
 
@@ -33,10 +37,12 @@ async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") 
   }
 
   const body = method === "POST" ? await request.text() : undefined;
+  const contextHeaders = requestContextHeaders(request);
   let upstream = await backendFetch("/organizations", {
     method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      ...contextHeaders,
       ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
     },
     body,
@@ -49,6 +55,7 @@ async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") 
         method,
         headers: {
           Authorization: `Bearer ${rotatedTokens.access_token}`,
+          ...contextHeaders,
           ...(method === "POST" ? { "Content-Type": "application/json" } : {}),
         },
         body,
