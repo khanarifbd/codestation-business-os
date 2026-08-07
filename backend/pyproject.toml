@@ -1,10 +1,10 @@
 [project]
 name = "backend"
 version = "0.1.0"
-description = "Add your description here"
+description = "CodeStation Business OS FastAPI backend"
 readme = "README.md"
 authors = [
-    { name = "arifxpartbd", email = "arifkhancsebd@gmail.com" }
+    { name = "khanarifbd", email = "arifkhancsebd@gmail.com" }
 ]
 requires-python = ">=3.13"
 dependencies = [
