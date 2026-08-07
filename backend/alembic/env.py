@@ -5,7 +5,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models import Membership, Organization, User  # noqa: F401
+from app.models import Membership, Organization, Subscription, User  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
@@ -22,7 +22,6 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=True,
-        render_as_batch=settings.database_url.startswith("sqlite"),
     )
 
     with context.begin_transaction():
@@ -41,7 +40,6 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
-            render_as_batch=settings.database_url.startswith("sqlite"),
         )
 
         with context.begin_transaction():
