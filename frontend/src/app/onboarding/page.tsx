@@ -108,7 +108,7 @@ export default function OnboardingPage() {
             <div className="mt-8 space-y-3 text-sm text-white/65">
               {[
                 "Private company workspace",
-                "Owner role created automatically",
+                "Company admin role created automatically",
                 "Currency and timezone scoped per company",
                 "Ready for team invitations and permissions",
               ].map((item) => (
