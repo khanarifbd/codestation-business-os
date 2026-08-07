@@ -26,6 +26,19 @@ def _optional_text(value: str | None) -> str | None:
     return value or None
 
 
+def _optional_date(value: str | None, field_name: str) -> date | None:
+    normalized = _optional_text(value)
+    if normalized is None:
+        return None
+    try:
+        return date.fromisoformat(normalized)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field_name} date",
+        ) from exc
+
+
 def _download_name(title: str, storage_key: str) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "-", title.strip()).strip("-.") or "document"
     return f"{stem}{Path(storage_key).suffix.lower()}"
@@ -45,10 +58,13 @@ def upload_company_document(
     title: Annotated[str, Form(min_length=1, max_length=180)],
     document_number: Annotated[str | None, Form()] = None,
     issuing_authority: Annotated[str | None, Form()] = None,
-    issue_date: Annotated[date | None, Form()] = None,
-    expiry_date: Annotated[date | None, Form()] = None,
+    issue_date: Annotated[str | None, Form()] = None,
+    expiry_date: Annotated[str | None, Form()] = None,
     notes: Annotated[str | None, Form()] = None,
 ) -> CompanyDocumentRead:
+    parsed_issue_date = _optional_date(issue_date, "issue")
+    parsed_expiry_date = _optional_date(expiry_date, "expiry")
+
     storage_key, size_bytes = storage.save(
         organization_id=tenant.organization_id,
         source=file.file,
@@ -62,8 +78,8 @@ def upload_company_document(
         title=title.strip(),
         document_number=_optional_text(document_number),
         issuing_authority=_optional_text(issuing_authority),
-        issue_date=issue_date,
-        expiry_date=expiry_date,
+        issue_date=parsed_issue_date,
+        expiry_date=parsed_expiry_date,
         storage_key=storage_key,
         notes=_optional_text(notes),
     )
