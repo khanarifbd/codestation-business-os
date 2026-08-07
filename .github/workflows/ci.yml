@@ -47,7 +47,10 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen
       - run: uv run python -m compileall app alembic scripts
+      - run: uv run alembic upgrade 0008_team_roles
+      - run: uv run python scripts/seed_existing_tenant_fixture.py
       - run: uv run alembic upgrade head
+      - run: uv run python scripts/verify_crm_migration_fixture.py
       - run: uv run python scripts/verify_audit.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
