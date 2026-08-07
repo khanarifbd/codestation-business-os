@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -17,6 +19,9 @@ class OrganizationRead(BaseModel):
     id: str
     name: str
     slug: str
+    status: str
+    suspension_reason: str | None
+    suspended_at: datetime | None
     country_code: str
     timezone: str
     currency: str
