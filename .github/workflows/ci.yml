@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: business_os
+          POSTGRES_PASSWORD: business_os_ci
+          POSTGRES_DB: codestation_business_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U business_os -d codestation_business_os"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://business_os:business_os_ci@127.0.0.1:5432/codestation_business_os
+      JWT_SECRET_KEY: ci-only-secret
+      SUPER_ADMIN_EMAIL: admin@codestationai.com
+      SUPER_ADMIN_PASSWORD: ci-super-admin-password
+      SUPER_ADMIN_NAME: CodeStation AI Super Admin
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - run: uv run python -m compileall app alembic
+      - run: uv run alembic upgrade head
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1
