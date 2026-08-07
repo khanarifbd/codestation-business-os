@@ -15,9 +15,16 @@ import {
   Settings,
   Users,
   UsersRound,
+  type LucideIcon,
 } from "lucide-react";
 
-const navigation = [
+type NavigationItem = {
+  label: string;
+  icon: LucideIcon;
+  href?: string;
+};
+
+const navigation: NavigationItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
   { label: "CRM", icon: ClipboardList },
   { label: "Clients", icon: Users },
@@ -29,7 +36,7 @@ const navigation = [
   { label: "Company", icon: Building2, href: "/dashboard/company" },
   { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs" },
   { label: "Settings", icon: Settings },
-] as const;
+];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -54,8 +61,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="mt-3 space-y-1 overflow-y-auto pb-4">
-          {navigation.map(({ label, icon: Icon, ...item }) => {
-            const href = "href" in item ? item.href : undefined;
+          {navigation.map(({ label, icon: Icon, href }) => {
             const active =
               href === "/dashboard"
                 ? pathname === "/dashboard"
