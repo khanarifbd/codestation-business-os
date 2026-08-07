@@ -72,6 +72,8 @@ export function SearchableSelect({
         option.label.toLowerCase() === customValue.toLowerCase(),
     );
 
+  const displayValue = selected?.label ?? (value || placeholder);
+
   return (
     <div ref={rootRef} className="relative block text-sm font-medium">
       <span>{label}</span>
@@ -84,7 +86,7 @@ export function SearchableSelect({
         aria-expanded={open}
       >
         <span className={selected || value ? "text-neutral-950" : "text-neutral-400"}>
-          {selected?.label ?? value || placeholder}
+          {displayValue}
         </span>
         <ChevronDown className="size-4 shrink-0 text-neutral-400" />
       </button>
