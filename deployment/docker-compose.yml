@@ -26,6 +26,10 @@ services:
     environment:
       ENVIRONMENT: staging
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LOCAL_STORAGE_PATH: /data/uploads
+      MAX_DOCUMENT_UPLOAD_MB: 20
+    volumes:
+      - business_os_uploads:/data/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,3 +62,4 @@ services:
 
 volumes:
   business_os_postgres:
+  business_os_uploads:
