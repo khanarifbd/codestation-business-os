@@ -33,6 +33,7 @@ jobs:
       SUPER_ADMIN_EMAIL: admin@codestationai.com
       SUPER_ADMIN_PASSWORD: ci-super-admin-password
       SUPER_ADMIN_NAME: CodeStation AI Super Admin
+      PYTHONPATH: .
     defaults:
       run:
         working-directory: backend
