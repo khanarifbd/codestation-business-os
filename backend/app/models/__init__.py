@@ -14,10 +14,15 @@ from app.models.company_settings import (
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.subscription import Subscription
+from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
 
 __all__ = [
     "ActivityLog",
+    "Department",
+    "Designation",
+    "Employee",
+    "EmployeeInvitation",
     "Membership",
     "Organization",
     "OrganizationAddress",
@@ -29,6 +34,7 @@ __all__ = [
     "OrganizationLocalizationSettings",
     "OrganizationOnlineProfile",
     "OrganizationProfile",
+    "OrganizationRole",
     "OrganizationSystemDefaults",
     "Subscription",
     "User",
