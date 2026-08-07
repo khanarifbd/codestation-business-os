@@ -83,7 +83,7 @@ def upgrade() -> None:
         LANGUAGE plpgsql
         AS $$
         BEGIN
-            RAISE EXCEPTION 'activity_logs are append-only and cannot be updated or deleted';
+            RAISE EXCEPTION 'activity_logs are append-only and cannot be updated, deleted, or truncated';
         END;
         $$;
         """
@@ -93,6 +93,14 @@ def upgrade() -> None:
         CREATE TRIGGER activity_logs_immutable
         BEFORE UPDATE OR DELETE ON activity_logs
         FOR EACH ROW
+        EXECUTE FUNCTION prevent_activity_log_mutation();
+        """
+    )
+    op.execute(
+        """
+        CREATE TRIGGER activity_logs_no_truncate
+        BEFORE TRUNCATE ON activity_logs
+        FOR EACH STATEMENT
         EXECUTE FUNCTION prevent_activity_log_mutation();
         """
     )
@@ -130,6 +138,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("DROP TRIGGER IF EXISTS activity_logs_no_truncate ON activity_logs")
     op.execute("DROP TRIGGER IF EXISTS activity_logs_immutable ON activity_logs")
     op.execute("DROP FUNCTION IF EXISTS prevent_activity_log_mutation()")
     op.drop_index("ix_activity_logs_request_id", table_name="activity_logs")
