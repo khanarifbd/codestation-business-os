@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, func, or_, select
@@ -25,6 +26,13 @@ router = APIRouter(prefix="/sales", tags=["Orders"])
 
 OrderViewer = Annotated[TenantContext, Depends(require_tenant_permission("orders.view"))]
 OrderManager = Annotated[TenantContext, Depends(require_tenant_permission("orders.manage"))]
+
+
+def _tenant_today(timezone_name: str):
+    try:
+        return datetime.now(ZoneInfo(timezone_name)).date()
+    except ZoneInfoNotFoundError:
+        return datetime.now(timezone.utc).date()
 
 
 def _encode_cursor(created_at: datetime, entity_id: str) -> str:
@@ -249,7 +257,7 @@ def create_order_from_quotation(
         created_by_user_id=tenant.user_id,
         status="confirmed",
         subject=quotation.subject,
-        order_date=date.today(),
+        order_date=_tenant_today(tenant.organization.timezone),
         currency=quotation.currency,
         tax_calculation_mode=quotation.tax_calculation_mode,
         seller_name_snapshot=quotation.seller_name_snapshot,
