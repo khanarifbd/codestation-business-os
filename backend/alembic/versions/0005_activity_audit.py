@@ -45,6 +45,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
+        "ix_activity_logs_created_id",
+        "activity_logs",
+        ["created_at", "id"],
+        unique=False,
+    )
+    op.create_index(
         "ix_activity_logs_org_created",
         "activity_logs",
         ["organization_id", "created_at"],
@@ -131,4 +137,5 @@ def downgrade() -> None:
     op.drop_index("ix_activity_logs_action_created", table_name="activity_logs")
     op.drop_index("ix_activity_logs_actor_created", table_name="activity_logs")
     op.drop_index("ix_activity_logs_org_created", table_name="activity_logs")
+    op.drop_index("ix_activity_logs_created_id", table_name="activity_logs")
     op.drop_table("activity_logs")
