@@ -23,6 +23,7 @@ ALLOWED_EXTENSIONS = {
 }
 
 ALLOWED_CONTENT_TYPES = {
+    "application/octet-stream",
     "application/pdf",
     "image/png",
     "image/jpeg",
