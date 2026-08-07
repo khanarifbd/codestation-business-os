@@ -11,6 +11,7 @@ from app.models.company_settings import (
     OrganizationOnlineProfile,
     OrganizationProfile,
 )
+from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.subscription import Subscription
@@ -19,10 +20,15 @@ from app.models.user import User
 
 __all__ = [
     "ActivityLog",
+    "Client",
     "Department",
     "Designation",
     "Employee",
     "EmployeeInvitation",
+    "Lead",
+    "LeadInteraction",
+    "LeadSource",
+    "LeadStatus",
     "Membership",
     "Organization",
     "OrganizationAddress",
