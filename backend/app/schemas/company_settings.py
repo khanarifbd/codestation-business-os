@@ -223,7 +223,7 @@ class CompanySettingsBundle(BaseModel):
     addresses: list[AddressRead]
     localization: LocalizationRead
     financial: FinancialRead
-    system_defaults: SystemDefaultsRead
+    system_defaults: SystemDefaultsRead | None = None
     sequences: list[SequenceRead]
     branding: BrandingRead
     online_legal: OnlineLegalRead
