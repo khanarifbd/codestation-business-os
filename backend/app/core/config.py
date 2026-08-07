@@ -5,13 +5,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "CodeStation Business OS API"
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.0"
     environment: str = "development"
     database_url: str = (
         "postgresql+psycopg://business_os:change_me@localhost:5432/"
         "codestation_business_os"
     )
     cors_origins: str = "http://localhost:3000"
+    jwt_secret_key: str = "development-only-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30
 
     model_config = SettingsConfigDict(
         env_file=".env",
