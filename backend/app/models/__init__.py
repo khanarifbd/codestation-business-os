@@ -14,6 +14,7 @@ from app.models.company_settings import (
 from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.models.sales import Quotation, QuotationItem
 from app.models.subscription import Subscription
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
@@ -42,6 +43,8 @@ __all__ = [
     "OrganizationProfile",
     "OrganizationRole",
     "OrganizationSystemDefaults",
+    "Quotation",
+    "QuotationItem",
     "Subscription",
     "User",
 ]
