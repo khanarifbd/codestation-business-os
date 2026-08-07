@@ -2,7 +2,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentSuperAdmin, DbSession
-from app.core.roles import ORGANIZATION_STATUS_ACTIVE, ORGANIZATION_STATUS_SUSPENDED
+from app.core.roles import (
+    ORGANIZATION_STATUS_ACTIVE,
+    ORGANIZATION_STATUS_SUSPENDED,
+    SYSTEM_ROLE_SUPER_ADMIN,
+)
 from app.models.common import utc_now
 from app.models.organization import Organization
 from app.models.subscription import Subscription
@@ -12,8 +16,10 @@ from app.schemas.platform import (
     OrganizationStatusUpdate,
     PlatformOrganizationRead,
     PlatformSummaryRead,
+    PlatformUserRead,
     SubscriptionRead,
     SubscriptionUpdate,
+    UserStatusUpdate,
 )
 
 router = APIRouter(prefix="/platform", tags=["Platform Administration"])
@@ -48,6 +54,55 @@ def platform_summary(
         )
         or 0,
     )
+
+
+@router.get("/users", response_model=list[PlatformUserRead])
+def platform_users(
+    db: DbSession,
+    _: CurrentSuperAdmin,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[PlatformUserRead]:
+    users = db.scalars(
+        select(User).order_by(User.created_at.desc()).offset(offset).limit(limit)
+    ).all()
+    return [PlatformUserRead.model_validate(user) for user in users]
+
+
+@router.patch("/users/{user_id}/status", response_model=PlatformUserRead)
+def update_user_status(
+    user_id: str,
+    payload: UserStatusUpdate,
+    db: DbSession,
+    current_super_admin: CurrentSuperAdmin,
+) -> PlatformUserRead:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if user.id == current_super_admin.id and not payload.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot suspend your own super admin account",
+        )
+
+    if user.system_role == SYSTEM_ROLE_SUPER_ADMIN and not payload.is_active:
+        active_super_admins = db.scalar(
+            select(func.count()).select_from(User).where(
+                User.system_role == SYSTEM_ROLE_SUPER_ADMIN,
+                User.is_active.is_(True),
+            )
+        ) or 0
+        if active_super_admins <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one active super admin is required",
+            )
+
+    user.is_active = payload.is_active
+    db.commit()
+    db.refresh(user)
+    return PlatformUserRead.model_validate(user)
 
 
 @router.get("/organizations", response_model=list[PlatformOrganizationRead])
