@@ -7,6 +7,7 @@ class UserRead(BaseModel):
     id: str
     email: EmailStr
     full_name: str
+    system_role: str
     is_active: bool
     is_verified: bool
 
