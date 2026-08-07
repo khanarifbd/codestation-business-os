@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { setAuthCookies, type TokenPair } from "@/lib/auth-session";
 import { backendFetch } from "@/lib/server-api";
 
+const secure = process.env.NODE_ENV === "production";
+
 async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
   const refreshToken = request.cookies.get("refresh_token")?.value;
   if (!refreshToken) return null;
@@ -57,6 +59,17 @@ async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") 
   const payload = await upstream.json();
   const response = NextResponse.json(payload, { status: upstream.status });
   if (rotatedTokens) setAuthCookies(response, rotatedTokens);
+
+  if (method === "POST" && upstream.ok && payload?.organization?.id) {
+    response.cookies.set("organization_id", payload.organization.id, {
+      httpOnly: true,
+      secure,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 365 * 24 * 60 * 60,
+    });
+  }
+
   return response;
 }
 
