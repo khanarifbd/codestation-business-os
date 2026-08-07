@@ -136,6 +136,23 @@ class FinancialRead(BaseModel):
     prices_include_tax: bool
 
 
+class SystemDefaultsUpdate(BaseModel):
+    default_client_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    default_client_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    default_document_language: str = Field(min_length=2, max_length=16)
+    default_lead_status: str = Field(min_length=1, max_length=64)
+    default_project_status: str = Field(min_length=1, max_length=64)
+    default_order_status: str = Field(min_length=1, max_length=64)
+    default_invoice_status: str = Field(min_length=1, max_length=64)
+    quotation_validity_days: int = Field(ge=1, le=365)
+
+
+class SystemDefaultsRead(SystemDefaultsUpdate):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    organization_id: str
+
+
 class SequenceUpdate(BaseModel):
     prefix: str = Field(min_length=1, max_length=24)
     next_number: int = Field(ge=1)
@@ -206,6 +223,7 @@ class CompanySettingsBundle(BaseModel):
     addresses: list[AddressRead]
     localization: LocalizationRead
     financial: FinancialRead
+    system_defaults: SystemDefaultsRead
     sequences: list[SequenceRead]
     branding: BrandingRead
     online_legal: OnlineLegalRead
