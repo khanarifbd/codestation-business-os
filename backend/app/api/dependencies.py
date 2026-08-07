@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.roles import ORGANIZATION_STATUS_ACTIVE, SYSTEM_ROLE_SUPER_ADMIN
 from app.core.security import decode_token
 from app.db.session import get_db
 from app.models.membership import Membership
@@ -50,6 +51,18 @@ def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+def get_current_super_admin(current_user: CurrentUser) -> User:
+    if current_user.system_role != SYSTEM_ROLE_SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
+        )
+    return current_user
+
+
+CurrentSuperAdmin = Annotated[User, Depends(get_current_super_admin)]
+
+
 def get_tenant_context(
     db: DbSession,
     current_user: CurrentUser,
@@ -78,6 +91,12 @@ def get_tenant_context(
         )
 
     membership, organization = row
+    if organization.status != ORGANIZATION_STATUS_ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This company workspace is suspended",
+        )
+
     return TenantContext(
         user=current_user,
         organization=organization,
