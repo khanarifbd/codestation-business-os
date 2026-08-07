@@ -60,8 +60,16 @@ async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") 
   const response = NextResponse.json(payload, { status: upstream.status });
   if (rotatedTokens) setAuthCookies(response, rotatedTokens);
 
-  if (method === "POST" && upstream.ok && payload?.organization?.id) {
-    response.cookies.set("organization_id", payload.organization.id, {
+  const existingOrganizationId = request.cookies.get("organization_id")?.value;
+  const organizationId =
+    method === "POST"
+      ? payload?.organization?.id
+      : Array.isArray(payload)
+        ? payload[0]?.organization?.id
+        : undefined;
+
+  if (upstream.ok && organizationId && !existingOrganizationId) {
+    response.cookies.set("organization_id", organizationId, {
       httpOnly: true,
       secure,
       sameSite: "lax",
