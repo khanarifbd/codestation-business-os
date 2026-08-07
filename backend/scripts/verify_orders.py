@@ -13,9 +13,15 @@ from app.schemas.orders import OrderStatusChange
 
 
 @dataclass(frozen=True)
+class FixtureOrganization:
+    timezone: str
+
+
+@dataclass(frozen=True)
 class FixtureTenant:
     organization_id: str
     user_id: str
+    organization: FixtureOrganization
 
 
 def make_request(method: str, path: str) -> Request:
@@ -55,7 +61,7 @@ def main() -> None:
         fixture = connection.execute(
             text(
                 """
-                SELECT o.id AS organization_id, o.created_by_user_id AS user_id
+                SELECT o.id AS organization_id, o.created_by_user_id AS user_id, o.timezone AS timezone
                 FROM organizations o
                 WHERE o.name = 'Existing Tenant Fixture'
                 ORDER BY o.created_at DESC
@@ -151,7 +157,11 @@ def main() -> None:
         connection.execute(item_sql, {"id": accepted_item_id, "organization_id": fixture["organization_id"], "quotation_id": accepted_quotation_id, "now": now})
         connection.execute(item_sql, {"id": sent_item_id, "organization_id": fixture["organization_id"], "quotation_id": sent_quotation_id, "now": now})
 
-    tenant = FixtureTenant(organization_id=str(fixture["organization_id"]), user_id=str(fixture["user_id"]))
+    tenant = FixtureTenant(
+        organization_id=str(fixture["organization_id"]),
+        user_id=str(fixture["user_id"]),
+        organization=FixtureOrganization(timezone=str(fixture["timezone"] or "UTC")),
+    )
     db = SessionLocal()
     try:
         expect_http_error(
