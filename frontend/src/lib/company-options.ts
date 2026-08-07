@@ -58,6 +58,11 @@ const languagePairs = [
 export const LANGUAGE_OPTIONS: SearchOption[] = languagePairs.map(([value, label]) => ({ value, label: `${label} (${value})` }));
 
 export const BUSINESS_TYPE_OPTIONS: SearchOption[] = [
+  "Software & IT Services",
+  "SaaS Company",
+  "Technology Company",
+  "Service Business",
+  "E-commerce Business",
   "Sole Proprietorship",
   "Partnership",
   "Private Limited Company",
