@@ -15,6 +15,11 @@ __pycache__/
 *.py[cod]
 backend/.venv/
 
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
 # Node
 frontend/node_modules/
 frontend/.next/
