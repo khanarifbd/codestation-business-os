@@ -13,6 +13,16 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
+# Read only the values the deployment script needs. Do not `source` the whole
+# dotenv file: valid dotenv values can contain spaces and are not necessarily
+# valid Bash assignments.
+env_value() {
+  local key="$1"
+  local line
+  line="$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)"
+  printf '%s' "${line#*=}"
+}
+
 if ! grep -q '^JWT_SECRET_KEY=' "${ENV_FILE}"; then
   echo "==> Generating JWT secret for this environment"
   printf '\nJWT_SECRET_KEY=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
@@ -22,12 +32,14 @@ elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$' "${ENV_FIL
   unset JWT_SECRET
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "${ENV_FILE}"
-set +a
+POSTGRES_USER="$(env_value POSTGRES_USER)"
+POSTGRES_DB="$(env_value POSTGRES_DB)"
+POSTGRES_PASSWORD="$(env_value POSTGRES_PASSWORD)"
 
-if [[ -z "${POSTGRES_PASSWORD:-}" || "${POSTGRES_PASSWORD}" == "replace_with_a_long_random_password" ]]; then
+POSTGRES_USER="${POSTGRES_USER:-business_os}"
+POSTGRES_DB="${POSTGRES_DB:-codestation_business_os}"
+
+if [[ -z "${POSTGRES_PASSWORD}" || "${POSTGRES_PASSWORD}" == "replace_with_a_long_random_password" ]]; then
   echo "ERROR: Configure POSTGRES_PASSWORD in .env.staging first."
   exit 1
 fi
