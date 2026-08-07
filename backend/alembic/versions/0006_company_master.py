@@ -218,7 +218,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_organization_documents_organization_id", "organization_documents", ["organization_id"])
     op.create_index(
-        "ix_organization_documents_organization_document_type_expiry_date",
+        "ix_org_documents_organization_document_type_expiry_date",
         "organization_documents", ["organization_id", "document_type", "expiry_date"],
     )
 
@@ -339,7 +339,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_organization_documents_organization_document_type_expiry_date", table_name="organization_documents")
+    op.drop_index("ix_org_documents_organization_document_type_expiry_date", table_name="organization_documents")
     op.drop_index("ix_organization_documents_organization_id", table_name="organization_documents")
     op.drop_table("organization_documents")
     op.drop_index("ix_organization_online_profiles_organization_id", table_name="organization_online_profiles")
