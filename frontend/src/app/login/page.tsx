@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { ArrowRight, Loader2 } from "lucide-react";
 
+type LoginResponse = {
+  user: {
+    system_role: string;
+  };
+};
+
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -29,6 +35,13 @@ export default function LoginPage() {
       const payload = await response.json().catch(() => null);
       setError(payload?.detail ?? "Unable to sign in. Please try again.");
       setLoading(false);
+      return;
+    }
+
+    const login = (await response.json()) as LoginResponse;
+    if (login.user.system_role === "super_admin") {
+      router.replace("/super-admin");
+      router.refresh();
       return;
     }
 
