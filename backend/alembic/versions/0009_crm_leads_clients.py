@@ -182,6 +182,19 @@ def upgrade() -> None:
         ("other", "Other", 90),
     ]
 
+    document_sequences = sa.table(
+        "organization_document_sequences",
+        sa.column("id", sa.String(36)),
+        sa.column("organization_id", sa.String(36)),
+        sa.column("document_type", sa.String(40)),
+        sa.column("prefix", sa.String(24)),
+        sa.column("next_number", sa.Integer()),
+        sa.column("padding", sa.Integer()),
+        sa.column("separator", sa.String(8)),
+        sa.column("created_at", sa.DateTime(timezone=True)),
+        sa.column("updated_at", sa.DateTime(timezone=True)),
+    )
+
     for organization in organizations:
         organization_id = organization["id"]
         for slug, name, category, color, sort_order, is_default in statuses:
@@ -216,21 +229,29 @@ def upgrade() -> None:
                     "name": name, "slug": slug, "sort_order": sort_order, "now": now,
                 },
             )
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO organization_document_sequences
-                    (id, organization_id, document_type, prefix, next_number, padding,
-                     separator, created_at, updated_at)
-                SELECT :id, :organization_id, 'lead', 'LEAD', 1, 5, '-', :now, :now
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM organization_document_sequences
-                    WHERE organization_id=:organization_id AND document_type='lead'
-                )
-                """
-            ),
-            {"id": str(uuid4()), "organization_id": organization_id, "now": now},
+
+        existing_lead_sequence = bind.scalar(
+            sa.select(document_sequences.c.id)
+            .where(
+                document_sequences.c.organization_id == organization_id,
+                document_sequences.c.document_type == "lead",
+            )
+            .limit(1)
         )
+        if existing_lead_sequence is None:
+            bind.execute(
+                document_sequences.insert().values(
+                    id=str(uuid4()),
+                    organization_id=organization_id,
+                    document_type="lead",
+                    prefix="LEAD",
+                    next_number=1,
+                    padding=5,
+                    separator="-",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
 
     bind.execute(
         sa.text(
