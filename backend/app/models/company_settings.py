@@ -179,7 +179,7 @@ class OrganizationOnlineProfile(TenantOwnedMixin, Base):
 class OrganizationDocument(TenantOwnedMixin, Base):
     __tablename__ = "organization_documents"
     __table_args__ = (
-        tenant_index("organization_documents", "document_type", "expiry_date"),
+        tenant_index("org_documents", "document_type", "expiry_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
