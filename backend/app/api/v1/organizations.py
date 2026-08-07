@@ -1,13 +1,16 @@
 import re
 import unicodedata
+from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
-from app.models.common import new_uuid
+from app.core.roles import MEMBERSHIP_ROLE_ADMIN, SUBSCRIPTION_STATUS_TRIALING
+from app.models.common import new_uuid, utc_now
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.models.subscription import Subscription
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationMembershipRead,
@@ -67,10 +70,23 @@ def create_organization(
     membership = Membership(
         organization_id=organization.id,
         user_id=current_user.id,
-        role="owner",
+        role=MEMBERSHIP_ROLE_ADMIN,
         status="active",
     )
     db.add(membership)
+
+    now = utc_now()
+    subscription = Subscription(
+        organization_id=organization.id,
+        plan_code="starter",
+        status=SUBSCRIPTION_STATUS_TRIALING,
+        billing_cycle="monthly",
+        trial_ends_at=now + timedelta(days=14),
+        current_period_start=now,
+        current_period_end=now + timedelta(days=14),
+    )
+    db.add(subscription)
+
     db.commit()
     db.refresh(organization)
     db.refresh(membership)
