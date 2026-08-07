@@ -13,6 +13,7 @@ from app.models.company_settings import (
 )
 from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
 from app.models.membership import Membership
+from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
 from app.models.sales import Quotation, QuotationItem
 from app.models.subscription import Subscription
@@ -31,6 +32,8 @@ __all__ = [
     "LeadSource",
     "LeadStatus",
     "Membership",
+    "Order",
+    "OrderItem",
     "Organization",
     "OrganizationAddress",
     "OrganizationBranding",
