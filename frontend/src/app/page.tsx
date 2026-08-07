@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ArrowRight, Building2, ChartNoAxesCombined, ShieldCheck, Users } from "lucide-react";
 
 const foundations = [
@@ -8,12 +9,12 @@ const foundations = [
   },
   {
     title: "Operations first",
-    description: "CRM, orders, projects, finance, HR, and reports will share one business context.",
+    description: "CRM, orders, projects, finance, HR, and reports share one company context.",
     icon: ChartNoAxesCombined,
   },
   {
     title: "Team permissions",
-    description: "Role and permission controls will keep every workspace scoped to the right people.",
+    description: "Role and permission controls keep every workspace scoped to the right people.",
     icon: Users,
   },
   {
@@ -32,8 +33,19 @@ export default function Home() {
             <p className="text-sm font-medium tracking-wide text-white/60">CodeStation AI</p>
             <h1 className="text-lg font-semibold">Business OS</h1>
           </div>
-          <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            Foundation v0.1
+          <div className="flex items-center gap-2">
+            <Link
+              href="/login"
+              className="rounded-full px-4 py-2 text-sm font-medium text-white/70 transition hover:bg-white/10 hover:text-white"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-neutral-950 transition hover:bg-neutral-200"
+            >
+              Start free
+            </Link>
           </div>
         </header>
 
@@ -46,13 +58,24 @@ export default function Home() {
               One operating system to run your entire business.
             </h2>
             <p className="mt-6 max-w-2xl text-base leading-7 text-white/55 sm:text-lg">
-              Start with a company workspace, invite your team, and manage clients, orders,
+              Create a company workspace, invite your team, and manage clients, orders,
               projects, finance, employees, and reporting from one connected platform.
             </p>
 
-            <div className="mt-8 inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-neutral-950">
-              SaaS foundation in progress
-              <ArrowRight className="size-4" />
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link
+                href="/signup"
+                className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-neutral-950"
+              >
+                Create your workspace
+                <ArrowRight className="size-4" />
+              </Link>
+              <Link
+                href="/login"
+                className="inline-flex items-center rounded-full border border-white/15 px-5 py-3 text-sm font-semibold text-white/80"
+              >
+                Sign in
+              </Link>
             </div>
           </div>
 
@@ -73,7 +96,7 @@ export default function Home() {
         </div>
 
         <footer className="border-t border-white/10 pt-5 text-xs text-white/35">
-          Local development: Next.js frontend + FastAPI backend + SQLite. PostgreSQL-ready by configuration.
+          Next.js · FastAPI · PostgreSQL · Docker · Multi-tenant SaaS
         </footer>
       </section>
     </main>
