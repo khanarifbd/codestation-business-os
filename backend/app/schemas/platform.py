@@ -27,6 +27,18 @@ class PlatformOrganizationRead(BaseModel):
     admin_name: str
 
 
+class PlatformUserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    email: EmailStr
+    full_name: str
+    system_role: str
+    is_active: bool
+    is_verified: bool
+    created_at: datetime
+
+
 class PlatformSummaryRead(BaseModel):
     total_users: int
     total_companies: int
@@ -39,6 +51,10 @@ class PlatformSummaryRead(BaseModel):
 class OrganizationStatusUpdate(BaseModel):
     status: Literal["active", "suspended"]
     reason: str | None = Field(default=None, max_length=500)
+
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
 
 
 class SubscriptionUpdate(BaseModel):
