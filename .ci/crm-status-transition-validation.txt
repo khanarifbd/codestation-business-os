@@ -1,0 +1,1 @@
+Validate CRM quick status transitions, audited timeline, backend imports, and frontend production build.
