@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - business_os_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   backend:
     build:
       context: ./backend
@@ -7,9 +25,10 @@ services:
       - .env.staging
     environment:
       ENVIRONMENT: staging
-      DATABASE_URL: sqlite:////data/codestation_business_os.db
-    volumes:
-      - business_os_sqlite:/data
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8100:8000"
     healthcheck:
@@ -36,4 +55,4 @@ services:
       - "127.0.0.1:3100:3000"
 
 volumes:
-  business_os_sqlite:
+  business_os_postgres:
