@@ -1,6 +1,6 @@
 """add platform admin roles, organization lifecycle, and subscriptions
 
-Revision ID: 0004_platform_admin_subscriptions
+Revision ID: 0004_platform_admin
 Revises: 0003_tenant_context_foundation
 Create Date: 2026-08-07
 """
@@ -12,7 +12,7 @@ from uuid import uuid4
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0004_platform_admin_subscriptions"
+revision: str = "0004_platform_admin"
 down_revision: str | None = "0003_tenant_context_foundation"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
