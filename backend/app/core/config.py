@@ -11,6 +11,9 @@ class Settings(BaseSettings):
         "postgresql+psycopg://business_os:change_me@localhost:5432/"
         "codestation_business_os"
     )
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_recycle_seconds: int = 1800
     cors_origins: str = "http://localhost:3000"
     jwt_secret_key: str = "development-only-change-me"
     jwt_algorithm: str = "HS256"
