@@ -9,13 +9,12 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml uv.lock ./
-COPY app ./app
-COPY alembic.ini ./
-COPY alembic ./alembic
+RUN uv sync --frozen --no-dev --no-install-project
 
+COPY . .
 RUN uv sync --frozen --no-dev
 RUN mkdir -p /data
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "uv run --no-sync alembic upgrade head && uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000"]
