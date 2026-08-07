@@ -7,7 +7,10 @@ class Settings(BaseSettings):
     app_name: str = "CodeStation Business OS API"
     app_version: str = "0.1.0"
     environment: str = "development"
-    database_url: str = "sqlite:///./codestation_business_os.db"
+    database_url: str = (
+        "postgresql+psycopg://business_os:change_me@localhost:5432/"
+        "codestation_business_os"
+    )
     cors_origins: str = "http://localhost:3000"
 
     model_config = SettingsConfigDict(
