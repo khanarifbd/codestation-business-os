@@ -18,6 +18,7 @@ SEQUENCE_DEFAULTS = {
     "order": "ORD",
     "project": "PRJ",
     "client": "CLI",
+    "lead": "LEAD",
     "employee": "EMP",
 }
 
