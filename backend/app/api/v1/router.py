@@ -6,6 +6,7 @@ from app.api.v1.company_defaults import router as company_defaults_router
 from app.api.v1.company_settings import router as company_settings_router
 from app.api.v1.company_uploads import router as company_uploads_router
 from app.api.v1.crm import router as crm_router
+from app.api.v1.crm_summary import router as crm_summary_router
 from app.api.v1.health import router as health_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.platform import router as platform_router
@@ -19,6 +20,7 @@ api_router.include_router(invitation_router)
 api_router.include_router(organizations_router)
 api_router.include_router(tenant_router)
 api_router.include_router(team_router)
+api_router.include_router(crm_summary_router)
 api_router.include_router(crm_router)
 api_router.include_router(company_uploads_router)
 api_router.include_router(company_settings_router)
