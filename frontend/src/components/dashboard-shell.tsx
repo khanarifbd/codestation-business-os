@@ -26,8 +26,8 @@ type NavigationItem = {
 
 const navigation: NavigationItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
-  { label: "CRM", icon: ClipboardList },
-  { label: "Clients", icon: Users },
+  { label: "CRM", icon: ClipboardList, href: "/dashboard/crm" },
+  { label: "Clients", icon: Users, href: "/dashboard/clients" },
   { label: "Orders", icon: ReceiptText },
   { label: "Projects", icon: FolderKanban },
   { label: "Finance", icon: CircleDollarSign },
