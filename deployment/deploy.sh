@@ -13,9 +13,8 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   exit 1
 fi
 
-# Read only the values the deployment script needs. Do not `source` the whole
-# dotenv file: valid dotenv values can contain spaces and are not necessarily
-# valid Bash assignments.
+# Read only the values the deployment script needs. Do not source the whole
+# dotenv file because valid dotenv values may contain spaces.
 env_value() {
   local key="$1"
   local line
@@ -30,6 +29,23 @@ elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$' "${ENV_FIL
   JWT_SECRET="$(openssl rand -hex 32)"
   sed -i "s|^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$|JWT_SECRET_KEY=${JWT_SECRET}|" "${ENV_FILE}"
   unset JWT_SECRET
+fi
+
+if ! grep -q '^SUPER_ADMIN_EMAIL=' "${ENV_FILE}"; then
+  printf '\nSUPER_ADMIN_EMAIL=admin@codestationai.com\n' >> "${ENV_FILE}"
+fi
+
+if ! grep -q '^SUPER_ADMIN_NAME=' "${ENV_FILE}"; then
+  printf 'SUPER_ADMIN_NAME=CodeStation AI Super Admin\n' >> "${ENV_FILE}"
+fi
+
+if ! grep -q '^SUPER_ADMIN_PASSWORD=' "${ENV_FILE}"; then
+  echo "==> Generating initial super admin password"
+  printf 'SUPER_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 24)" >> "${ENV_FILE}"
+elif grep -q '^SUPER_ADMIN_PASSWORD=replace_with_a_long_random_super_admin_password$' "${ENV_FILE}"; then
+  SUPER_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+  sed -i "s|^SUPER_ADMIN_PASSWORD=replace_with_a_long_random_super_admin_password$|SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}|" "${ENV_FILE}"
+  unset SUPER_ADMIN_PASSWORD
 fi
 
 POSTGRES_USER="$(env_value POSTGRES_USER)"
@@ -114,3 +130,4 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 echo "==> Deployment completed successfully"
 echo "Frontend: https://os.codestationai.com"
 echo "API:      https://api-os.codestationai.com"
+echo "Super admin credentials are stored in .env.staging"
