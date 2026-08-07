@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     super_admin_email: str = ""
     super_admin_password: str = ""
     super_admin_name: str = "CodeStation AI Super Admin"
-    local_storage_path: str = "/data/uploads"
+    local_storage_path: str = "./data/uploads"
     max_document_upload_mb: int = 20
 
     model_config = SettingsConfigDict(
