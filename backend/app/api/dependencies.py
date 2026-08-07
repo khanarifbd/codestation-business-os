@@ -1,12 +1,16 @@
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import decode_token
 from app.db.session import get_db
+from app.models.membership import Membership
+from app.models.organization import Organization
 from app.models.user import User
+from app.tenancy.context import TenantContext
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -44,3 +48,41 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def get_tenant_context(
+    db: DbSession,
+    current_user: CurrentUser,
+    organization_id: Annotated[str | None, Header(alias="X-Organization-ID")] = None,
+) -> TenantContext:
+    if not organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Organization-ID header is required",
+        )
+
+    row = db.execute(
+        select(Membership, Organization)
+        .join(Organization, Organization.id == Membership.organization_id)
+        .where(
+            Membership.organization_id == organization_id,
+            Membership.user_id == current_user.id,
+            Membership.status == "active",
+        )
+    ).first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workspace not found or access denied",
+        )
+
+    membership, organization = row
+    return TenantContext(
+        user=current_user,
+        organization=organization,
+        membership=membership,
+    )
+
+
+CurrentTenant = Annotated[TenantContext, Depends(get_tenant_context)]
