@@ -4,6 +4,7 @@ export type AuthUser = {
   id: string;
   email: string;
   full_name: string;
+  system_role: "super_admin" | "user" | string;
   is_active: boolean;
   is_verified: boolean;
 };
@@ -43,6 +44,13 @@ export function clearAuthCookies(response: NextResponse): void {
     maxAge: 0,
   });
   response.cookies.set("refresh_token", "", {
+    httpOnly: true,
+    secure,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
+  response.cookies.set("organization_id", "", {
     httpOnly: true,
     secure,
     sameSite: "lax",
