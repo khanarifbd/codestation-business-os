@@ -26,6 +26,7 @@ class LeadStatusChangeRead(BaseModel):
     status_category: str
     previous_status_id: str
     previous_status_name: str
+    locked: bool
 
 
 @router.patch("/leads/{lead_id}/status", response_model=LeadStatusChangeRead)
@@ -70,6 +71,19 @@ def change_lead_status(
             status_category=target_status.category,
             previous_status_id=current_status.id,
             previous_status_name=current_status.name,
+            locked=current_status.category == "won" or lead.converted_client_id is not None,
+        )
+
+    if lead.converted_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This lead has already been converted to a client. Its pipeline status is locked.",
+        )
+
+    if current_status.category == "won":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Won status is locked and can no longer be changed.",
         )
 
     changed_at = utc_now()
@@ -100,6 +114,7 @@ def change_lead_status(
             "status_id": target_status.id,
             "status_name": target_status.name,
             "status_category": target_status.category,
+            "locked": target_status.category == "won",
         },
         metadata={"timeline_interaction_id": timeline.id},
         message=f"Lead {lead.lead_code} status changed from {current_status.name} to {target_status.name}",
@@ -114,4 +129,5 @@ def change_lead_status(
         status_category=target_status.category,
         previous_status_id=current_status.id,
         previous_status_name=current_status.name,
+        locked=target_status.category == "won",
     )
