@@ -65,12 +65,31 @@ def upload_company_document(
     parsed_issue_date = _optional_date(issue_date, "issue")
     parsed_expiry_date = _optional_date(expiry_date, "expiry")
 
-    storage_key, size_bytes = storage.save(
-        organization_id=tenant.organization_id,
-        source=file.file,
-        original_filename=file.filename or "document",
-        content_type=file.content_type,
-    )
+    try:
+        storage_key, size_bytes = storage.save(
+            organization_id=tenant.organization_id,
+            source=file.file,
+            original_filename=file.filename or "document",
+            content_type=file.content_type,
+        )
+    except HTTPException as exc:
+        record_activity(
+            db,
+            action="company.document.upload_failed",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="organization_document",
+            outcome="failure",
+            message=str(exc.detail),
+            metadata={
+                "original_filename": file.filename,
+                "content_type": file.content_type,
+            },
+            request=request,
+        )
+        db.commit()
+        raise
 
     item = OrganizationDocument(
         organization_id=tenant.organization_id,
