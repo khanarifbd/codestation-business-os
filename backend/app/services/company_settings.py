@@ -1,6 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.company_defaults import OrganizationSystemDefaults
 from app.models.company_settings import (
     OrganizationBranding,
     OrganizationDocumentSequence,
@@ -58,6 +59,19 @@ def ensure_company_settings_defaults(db: Session, organization: Organization) ->
             OrganizationFinancialSettings(
                 organization_id=organization_id,
                 accounting_currency=organization.currency,
+            )
+        )
+
+    if db.scalar(
+        select(OrganizationSystemDefaults.id).where(
+            OrganizationSystemDefaults.organization_id == organization_id
+        )
+    ) is None:
+        db.add(
+            OrganizationSystemDefaults(
+                organization_id=organization_id,
+                default_client_country_code=organization.country_code,
+                default_client_currency=organization.currency,
             )
         )
 
