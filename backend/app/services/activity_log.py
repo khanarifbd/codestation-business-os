@@ -58,12 +58,14 @@ def _request_fields(request: Request | None) -> dict[str, str | None]:
             "request_path": None,
         }
 
+    real_ip = request.headers.get("x-real-ip")
     forwarded_for = request.headers.get("x-forwarded-for")
-    ip_address = (
-        forwarded_for.split(",", 1)[0].strip()
-        if forwarded_for
-        else (request.client.host if request.client else None)
-    )
+    ip_address = real_ip
+    if not ip_address and forwarded_for:
+        ip_address = forwarded_for.split(",")[-1].strip()
+    if not ip_address and request.client:
+        ip_address = request.client.host
+
     return {
         "request_id": getattr(request.state, "request_id", None),
         "ip_address": ip_address,
