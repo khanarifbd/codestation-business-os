@@ -42,10 +42,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  // The dashboard landing page already contains the same full sidebar today.
-  // Nested routes use this persistent shell so navigation never disappears.
-  if (pathname === "/dashboard") return <>{children}</>;
-
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.replace("/login");
@@ -100,7 +96,15 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </button>
       </aside>
 
-      <div className="min-w-0 flex-1">{children}</div>
+      <div
+        className={`min-w-0 flex-1 ${
+          pathname === "/dashboard"
+            ? "[&>main>div>aside]:!hidden [&>main>div]:!max-w-none"
+            : ""
+        }`}
+      >
+        {children}
+      </div>
     </div>
   );
 }
