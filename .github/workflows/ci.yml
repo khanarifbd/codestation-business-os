@@ -52,6 +52,7 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run python scripts/verify_crm_migration_fixture.py
       - run: uv run python scripts/verify_crm_won_flow.py
+      - run: uv run python scripts/verify_sales.py
       - run: uv run python scripts/verify_audit.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
