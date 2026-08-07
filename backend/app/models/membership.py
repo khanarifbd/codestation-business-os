@@ -27,6 +27,11 @@ class Membership(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    role_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("organization_roles.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    # Compatibility slug for built-in admin/user semantics. Custom authorization
+    # is driven by role_id and OrganizationRole.permissions.
     role: Mapped[str] = mapped_column(String(64), default=MEMBERSHIP_ROLE_USER, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default=MEMBERSHIP_STATUS_ACTIVE, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
