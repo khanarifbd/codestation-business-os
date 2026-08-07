@@ -45,8 +45,9 @@ jobs:
         with:
           python-version: "3.13"
       - run: uv sync --frozen
-      - run: uv run python -m compileall app alembic
+      - run: uv run python -m compileall app alembic scripts
       - run: uv run alembic upgrade head
+      - run: uv run python scripts/verify_audit.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
   frontend:
