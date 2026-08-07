@@ -61,12 +61,15 @@ async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") 
   if (rotatedTokens) setAuthCookies(response, rotatedTokens);
 
   const existingOrganizationId = request.cookies.get("organization_id")?.value;
-  const organizationId =
-    method === "POST"
-      ? payload?.organization?.id
-      : Array.isArray(payload)
-        ? payload[0]?.organization?.id
-        : undefined;
+  let organizationId: string | undefined;
+  if (method === "POST") {
+    organizationId = payload?.organization?.id;
+  } else if (Array.isArray(payload)) {
+    const preferred = payload.find(
+      (item) => item?.organization?.status === "active" && item?.status === "active",
+    );
+    organizationId = preferred?.organization?.id ?? payload[0]?.organization?.id;
+  }
 
   if (upstream.ok && organizationId && !existingOrganizationId) {
     response.cookies.set("organization_id", organizationId, {
