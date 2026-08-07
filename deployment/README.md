@@ -16,6 +16,15 @@ This folder is the canonical server/deployment layer for CodeStation Business OS
 - Backend local bind: `127.0.0.1:8100`
 - PostgreSQL is only exposed inside the Docker network.
 
+## Persistent data
+
+Docker named volumes persist database and document data across normal image rebuilds/container recreation:
+
+- `business_os_postgres` — PostgreSQL data
+- `business_os_uploads` — private company document uploads (`/data/uploads` in the backend container)
+
+Company files are not exposed as a public static directory. Authenticated tenant routes stream them after membership/role validation. The storage service is adapter-based so local VPS storage can later be replaced by S3/R2 without changing the company document database contract.
+
 ## One-command deploy
 
 The staging server tracks the `develop` branch. From the repository root:
@@ -28,13 +37,14 @@ The script:
 
 1. ensures JWT and platform super-admin bootstrap secrets exist
 2. fetches and fast-forwards `develop`
-3. builds backend and frontend images
-4. starts/waits for PostgreSQL
-5. runs `alembic upgrade head`
-6. starts backend and frontend
-7. API startup guarantees at least one active `super_admin`
-8. checks backend and frontend health
-9. prints container status
+3. safely ensures the Business OS frontend Nginx site accepts up to 25 MB requests
+4. builds backend and frontend images
+5. starts/waits for PostgreSQL
+6. runs `alembic upgrade head`
+7. starts backend and frontend
+8. API startup guarantees at least one active `super_admin`
+9. checks backend and frontend health
+10. prints container status
 
 ## Secrets
 
@@ -58,4 +68,4 @@ openssl rand -hex 32
 
 ## Nginx / SSL
 
-The live Nginx file is managed by the server under `/etc/nginx/sites-available/`. The repository copy is the source/template for disaster recovery and future server moves. Certbot manages the HTTPS certificate directives on the live server.
+The live Nginx file is managed by the server under `/etc/nginx/sites-available/`. The repository copy is the source/template for disaster recovery and future server moves. Certbot manages the HTTPS certificate directives on the live server. `deploy.sh` only patches the Business OS frontend site with the upload-size directive when it is missing; other websites are not modified.
