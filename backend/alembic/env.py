@@ -5,7 +5,22 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import settings
 from app.db.base import Base
-from app.models import ActivityLog, Membership, Organization, Subscription, User  # noqa: F401
+from app.models import (  # noqa: F401
+    ActivityLog,
+    Membership,
+    Organization,
+    OrganizationAddress,
+    OrganizationBranding,
+    OrganizationDocument,
+    OrganizationDocumentSequence,
+    OrganizationFinancialSettings,
+    OrganizationIdentifier,
+    OrganizationLocalizationSettings,
+    OrganizationOnlineProfile,
+    OrganizationProfile,
+    Subscription,
+    User,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
