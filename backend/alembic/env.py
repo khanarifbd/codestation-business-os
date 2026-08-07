@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401
     OrganizationLocalizationSettings,
     OrganizationOnlineProfile,
     OrganizationProfile,
+    OrganizationSystemDefaults,
     Subscription,
     User,
 )
