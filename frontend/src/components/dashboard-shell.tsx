@@ -26,7 +26,7 @@ const navigation: NavigationItem[] = [
   { label: "CRM", icon: ClipboardList, href: "/dashboard/crm" },
   { label: "Clients", icon: Users, href: "/dashboard/clients" },
   { label: "Quotations", icon: FileText, href: "/dashboard/quotations" },
-  { label: "Orders", icon: ReceiptText },
+  { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
   { label: "Projects", icon: FolderKanban },
   { label: "Finance", icon: CircleDollarSign },
   { label: "Employees", icon: UsersRound, href: "/dashboard/employees" },
