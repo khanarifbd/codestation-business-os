@@ -1,17 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  CheckCircle2,
-  Clock3,
-  FileText,
-  Loader2,
-  Plus,
-  Search,
-  Send,
-  X,
-  XCircle,
-} from "lucide-react";
+import { CheckCircle2, Clock3, FileText, Loader2, Plus, Search, Send, X, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { SearchableSelect } from "@/components/searchable-select";
@@ -19,346 +9,63 @@ import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
 type ClientOption = { id: string; client_code: string; display_name: string; currency: string | null; contact_name: string | null };
-type SalesMeta = {
-  default_currency: string;
-  default_tax_calculation_mode: string;
-  default_tax_rate: string | number;
-  default_validity_days: number;
-  employees: EmployeeOption[];
-};
-type Summary = { total: number; draft: number; sent: number; accepted: number; rejected: number; cancelled: number; accepted_value: string | number };
-type Quotation = {
-  id: string;
-  quotation_number: string;
-  client_id: string;
-  client_name: string;
-  status: string;
-  subject: string | null;
-  issue_date: string;
-  valid_until: string | null;
-  currency: string;
-  total: string | number;
-  assigned_employee_id: string | null;
-  assigned_employee_name: string | null;
-  is_expired: boolean;
-  created_at: string;
-  updated_at: string;
-};
-type QuotationItem = {
-  id: string;
-  sort_order: number;
-  description: string;
-  quantity: string | number;
-  unit_price: string | number;
-  discount_percent: string | number;
-  tax_rate: string | number;
-  line_subtotal: string | number;
-  discount_amount: string | number;
-  taxable_amount: string | number;
-  tax_amount: string | number;
-  line_total: string | number;
-};
-type Detail = {
-  id: string;
-  quotation_number: string;
-  client_id: string;
-  source_lead_id: string | null;
-  assigned_employee_id: string | null;
-  assigned_employee_name: string | null;
-  status: string;
-  subject: string | null;
-  issue_date: string;
-  valid_until: string | null;
-  currency: string;
-  tax_calculation_mode: string;
-  seller_name_snapshot: string;
-  seller_email_snapshot: string | null;
-  seller_address_snapshot: string | null;
-  seller_tax_identifier_snapshot: string | null;
-  client_name_snapshot: string;
-  client_contact_snapshot: string | null;
-  client_email_snapshot: string | null;
-  client_address_snapshot: string | null;
-  client_tax_identifier_snapshot: string | null;
-  subtotal: string | number;
-  discount_total: string | number;
-  tax_total: string | number;
-  total: string | number;
-  notes: string | null;
-  terms_conditions: string | null;
-  internal_notes: string | null;
-  sent_at: string | null;
-  accepted_at: string | null;
-  rejected_at: string | null;
-  cancelled_at: string | null;
-  is_expired: boolean;
-  items: QuotationItem[];
-  created_at: string;
-  updated_at: string;
-};
+type SalesMeta = { default_currency: string; default_tax_calculation_mode: string; default_tax_rate: string | number; default_validity_days: number; employees: EmployeeOption[] };
+type Summary = { total: number; draft: number; sent: number; accepted: number; rejected: number; cancelled: number };
+type Quotation = { id: string; quotation_number: string; client_id: string; client_name: string; status: string; subject: string | null; issue_date: string; valid_until: string | null; currency: string; total: string | number; assigned_employee_id: string | null; assigned_employee_name: string | null; is_expired: boolean; created_at: string; updated_at: string };
+type QuotationItem = { id: string; sort_order: number; description: string; quantity: string | number; unit_price: string | number; discount_percent: string | number; tax_rate: string | number; line_subtotal: string | number; discount_amount: string | number; taxable_amount: string | number; tax_amount: string | number; line_total: string | number };
+type Detail = { id: string; quotation_number: string; client_id: string; source_lead_id: string | null; assigned_employee_id: string | null; assigned_employee_name: string | null; status: string; subject: string | null; issue_date: string; valid_until: string | null; currency: string; tax_calculation_mode: string; seller_name_snapshot: string; seller_email_snapshot: string | null; seller_address_snapshot: string | null; seller_tax_identifier_snapshot: string | null; client_name_snapshot: string; client_contact_snapshot: string | null; client_email_snapshot: string | null; client_address_snapshot: string | null; client_tax_identifier_snapshot: string | null; subtotal: string | number; discount_total: string | number; tax_total: string | number; total: string | number; notes: string | null; terms_conditions: string | null; internal_notes: string | null; sent_at: string | null; accepted_at: string | null; rejected_at: string | null; cancelled_at: string | null; is_expired: boolean; items: QuotationItem[]; created_at: string; updated_at: string };
 type DraftItem = { description: string; quantity: number; unit_price: number; discount_percent: number; tax_rate: number };
 
 const inputClass = "mt-2 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm outline-none transition focus:border-neutral-500";
 const textareaClass = "mt-2 min-h-24 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm outline-none transition focus:border-neutral-500";
 
-function localDate(value = new Date()) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-function addDays(dateText: string, days: number) {
-  const [year, month, day] = dateText.split("-").map(Number);
-  const value = new Date(year, month - 1, day);
-  value.setDate(value.getDate() + days);
-  return localDate(value);
-}
-function money(value: string | number, currency: string) {
-  const amount = Number(value || 0);
-  return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-function previewLine(item: DraftItem, taxMode: string) {
-  const subtotal = item.quantity * item.unit_price;
-  const discount = subtotal * item.discount_percent / 100;
-  const taxable = Math.max(0, subtotal - discount);
-  const tax = item.tax_rate > 0
-    ? taxMode === "inclusive" ? taxable - taxable / (1 + item.tax_rate / 100) : taxable * item.tax_rate / 100
-    : 0;
-  return { subtotal, discount, tax, total: taxMode === "inclusive" ? taxable : taxable + tax };
-}
+function localDate(value = new Date()) { const year = value.getFullYear(); const month = String(value.getMonth() + 1).padStart(2, "0"); const day = String(value.getDate()).padStart(2, "0"); return `${year}-${month}-${day}`; }
+function addDays(dateText: string, days: number) { const [year, month, day] = dateText.split("-").map(Number); const value = new Date(year, month - 1, day); value.setDate(value.getDate() + days); return localDate(value); }
+function money(value: string | number, currency: string) { const amount = Number(value || 0); return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`.trim(); }
+function previewLine(item: DraftItem, taxMode: string) { const subtotal = item.quantity * item.unit_price; const discount = subtotal * item.discount_percent / 100; const taxable = Math.max(0, subtotal - discount); const tax = item.tax_rate > 0 ? taxMode === "inclusive" ? taxable - taxable / (1 + item.tax_rate / 100) : taxable * item.tax_rate / 100 : 0; return { subtotal, discount, tax, total: taxMode === "inclusive" ? taxable : taxable + tax }; }
 
 export default function QuotationsPage() {
   const router = useRouter();
-  const [meta, setMeta] = useState<SalesMeta | null>(null);
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [rows, setRows] = useState<Quotation[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [searchDraft, setSearchDraft] = useState("");
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [clientOptions, setClientOptions] = useState<ClientOption[]>([]);
-  const [clientSearch, setClientSearch] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [subject, setSubject] = useState("");
-  const [issueDate, setIssueDate] = useState(localDate());
-  const [validUntil, setValidUntil] = useState("");
-  const [currency, setCurrency] = useState("");
-  const [taxMode, setTaxMode] = useState("exclusive");
-  const [assignedEmployeeId, setAssignedEmployeeId] = useState("");
-  const [notes, setNotes] = useState("");
-  const [terms, setTerms] = useState("");
-  const [internalNotes, setInternalNotes] = useState("");
+  const [meta, setMeta] = useState<SalesMeta | null>(null); const [summary, setSummary] = useState<Summary | null>(null); const [rows, setRows] = useState<Quotation[]>([]); const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [loadingMore, setLoadingMore] = useState(false); const [error, setError] = useState<string | null>(null); const [message, setMessage] = useState<string | null>(null);
+  const [searchDraft, setSearchDraft] = useState(""); const [search, setSearch] = useState(""); const [statusFilter, setStatusFilter] = useState(""); const [createOpen, setCreateOpen] = useState(false); const [detail, setDetail] = useState<Detail | null>(null); const [detailLoading, setDetailLoading] = useState(false);
+  const [clientOptions, setClientOptions] = useState<ClientOption[]>([]); const [clientSearch, setClientSearch] = useState(""); const [clientId, setClientId] = useState(""); const [preselectHandled, setPreselectHandled] = useState(false);
+  const [subject, setSubject] = useState(""); const [issueDate, setIssueDate] = useState(localDate()); const [validUntil, setValidUntil] = useState(""); const [currency, setCurrency] = useState(""); const [taxMode, setTaxMode] = useState(""); const [assignedEmployeeId, setAssignedEmployeeId] = useState(""); const [notes, setNotes] = useState(""); const [terms, setTerms] = useState(""); const [internalNotes, setInternalNotes] = useState("");
   const [items, setItems] = useState<DraftItem[]>([{ description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: 0 }]);
 
-  const api = useCallback(async (path: string, init?: RequestInit) => {
-    const response = await fetch(`/api/sales${path}`, init);
-    if (response.status === 401) {
-      router.replace("/login");
-      throw new Error("Authentication required");
-    }
-    if (response.status === 403) throw new Error("Your company role does not have permission for quotations.");
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(payload?.detail ?? "Quotation request failed.");
-    return payload;
-  }, [router]);
+  const api = useCallback(async (path: string, init?: RequestInit) => { const response = await fetch(`/api/sales${path}`, init); if (response.status === 401) { router.replace("/login"); throw new Error("Authentication required"); } if (response.status === 403) throw new Error("Your company role does not have permission for quotations."); const payload = await response.json().catch(() => null); if (!response.ok) throw new Error(payload?.detail ?? "Quotation request failed."); return payload; }, [router]);
+  const query = useMemo(() => { const params = new URLSearchParams({ limit: "30" }); if (search) params.set("search", search); if (statusFilter) params.set("status", statusFilter); return params.toString(); }, [search, statusFilter]);
+  const loadFoundation = useCallback(async () => { const [metaPayload, summaryPayload] = await Promise.all([api("/meta"), api("/quotations/summary")]); const typedMeta = metaPayload as SalesMeta; setMeta(typedMeta); setSummary(summaryPayload as Summary); setCurrency((current) => current || typedMeta.default_currency); setTaxMode((current) => current || typedMeta.default_tax_calculation_mode); }, [api]);
+  const loadRows = useCallback(async () => { setLoading(true); try { const payload = await api(`/quotations?${query}`) as { items: Quotation[]; next_cursor: string | null }; setRows(payload.items); setNextCursor(payload.next_cursor); } finally { setLoading(false); } }, [api, query]);
 
-  const query = useMemo(() => {
-    const params = new URLSearchParams({ limit: "30" });
-    if (search) params.set("search", search);
-    if (statusFilter) params.set("status", statusFilter);
-    return params.toString();
-  }, [search, statusFilter]);
+  useEffect(() => { void Promise.all([loadFoundation(), loadRows()]).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load quotations.")); }, [loadFoundation, loadRows]);
+  useEffect(() => { if (!meta) return; const timer = window.setTimeout(() => { const params = new URLSearchParams({ limit: "20" }); if (clientSearch.trim()) params.set("search", clientSearch.trim()); void api(`/client-options?${params}`).then((payload) => setClientOptions(payload as ClientOption[])).catch(() => undefined); }, 200); return () => window.clearTimeout(timer); }, [api, clientSearch, meta]);
+  useEffect(() => { if (!meta || preselectHandled) return; const params = new URLSearchParams(window.location.search); const preselected = params.get("client_id"); if (!preselected) { setPreselectHandled(true); return; } setPreselectHandled(true); void api(`/client-options?client_id=${encodeURIComponent(preselected)}&limit=1`).then((payload) => { const options = payload as ClientOption[]; if (!options[0]) return; setClientOptions(options); setClientId(options[0].id); setCurrency(options[0].currency || meta.default_currency); setTaxMode(meta.default_tax_calculation_mode); const today = localDate(); setIssueDate(today); setValidUntil(addDays(today, meta.default_validity_days)); setItems([{ description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: Number(meta.default_tax_rate) }]); setCreateOpen(true); }).catch(() => undefined); }, [api, meta, preselectHandled]);
 
-  const loadFoundation = useCallback(async () => {
-    const [metaPayload, summaryPayload] = await Promise.all([api("/meta"), api("/quotations/summary")]);
-    const typedMeta = metaPayload as SalesMeta;
-    setMeta(typedMeta);
-    setSummary(summaryPayload as Summary);
-    setCurrency((current) => current || typedMeta.default_currency);
-    setTaxMode((current) => current || typedMeta.default_tax_calculation_mode);
-  }, [api]);
-
-  const loadRows = useCallback(async () => {
-    setLoading(true);
-    try {
-      const payload = await api(`/quotations?${query}`) as { items: Quotation[]; next_cursor: string | null };
-      setRows(payload.items);
-      setNextCursor(payload.next_cursor);
-    } finally {
-      setLoading(false);
-    }
-  }, [api, query]);
-
-  useEffect(() => {
-    void Promise.all([loadFoundation(), loadRows()]).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load quotations."));
-  }, [loadFoundation, loadRows]);
-
-  useEffect(() => {
-    if (!meta) return;
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({ limit: "20" });
-      if (clientSearch.trim()) params.set("search", clientSearch.trim());
-      void api(`/client-options?${params}`).then((payload) => setClientOptions(payload as ClientOption[])).catch(() => undefined);
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [api, clientSearch, meta]);
-
-  useEffect(() => {
-    if (!meta) return;
-    const params = new URLSearchParams(window.location.search);
-    const preselected = params.get("client_id");
-    if (!preselected) return;
-    void api(`/client-options?client_id=${encodeURIComponent(preselected)}&limit=1`).then((payload) => {
-      const options = payload as ClientOption[];
-      if (!options[0]) return;
-      setClientOptions(options);
-      setClientId(options[0].id);
-      setCurrency(options[0].currency || meta.default_currency);
-      setIssueDate(localDate());
-      setValidUntil(addDays(localDate(), meta.default_validity_days));
-      setItems([{ description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: Number(meta.default_tax_rate) }]);
-      setCreateOpen(true);
-    }).catch(() => undefined);
-  }, [api, meta]);
-
-  const preview = useMemo(() => {
-    const lines = items.map((item) => previewLine(item, taxMode));
-    return {
-      subtotal: lines.reduce((sum, item) => sum + item.subtotal, 0),
-      discount: lines.reduce((sum, item) => sum + item.discount, 0),
-      tax: lines.reduce((sum, item) => sum + item.tax, 0),
-      total: lines.reduce((sum, item) => sum + item.total, 0),
-    };
-  }, [items, taxMode]);
-
-  function resetDraft() {
-    if (!meta) return;
-    const today = localDate();
-    setClientId(""); setClientSearch(""); setSubject(""); setIssueDate(today);
-    setValidUntil(addDays(today, meta.default_validity_days));
-    setCurrency(meta.default_currency); setTaxMode(meta.default_tax_calculation_mode); setAssignedEmployeeId("");
-    setNotes(""); setTerms(""); setInternalNotes("");
-    setItems([{ description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: Number(meta.default_tax_rate) }]);
-  }
+  const preview = useMemo(() => { const lines = items.map((item) => previewLine(item, taxMode || "exclusive")); return { subtotal: lines.reduce((sum, item) => sum + item.subtotal, 0), discount: lines.reduce((sum, item) => sum + item.discount, 0), tax: lines.reduce((sum, item) => sum + item.tax, 0), total: lines.reduce((sum, item) => sum + item.total, 0) }; }, [items, taxMode]);
+  function resetDraft() { if (!meta) return; const today = localDate(); setClientId(""); setClientSearch(""); setSubject(""); setIssueDate(today); setValidUntil(addDays(today, meta.default_validity_days)); setCurrency(meta.default_currency); setTaxMode(meta.default_tax_calculation_mode); setAssignedEmployeeId(""); setNotes(""); setTerms(""); setInternalNotes(""); setItems([{ description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: Number(meta.default_tax_rate) }]); }
   function openCreate() { resetDraft(); setCreateOpen(true); }
-
   async function refresh() { await Promise.all([loadFoundation(), loadRows()]); }
-  async function openDetail(id: string) {
-    setDetailLoading(true); setError(null);
-    try { setDetail(await api(`/quotations/${id}`) as Detail); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load quotation."); }
-    finally { setDetailLoading(false); }
-  }
-  async function createQuotation() {
-    if (!clientId) { setError("Select a client."); return; }
-    if (items.some((item) => !item.description.trim() || item.quantity <= 0 || item.unit_price < 0)) { setError("Complete all quotation items."); return; }
-    setSaving(true); setError(null); setMessage(null);
-    try {
-      const created = await api("/quotations", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: clientId, subject: subject.trim() || null, issue_date: issueDate, valid_until: validUntil || null,
-          currency, tax_calculation_mode: taxMode, assigned_employee_id: assignedEmployeeId || null,
-          notes: notes.trim() || null, terms_conditions: terms.trim() || null, internal_notes: internalNotes.trim() || null,
-          items,
-        }),
-      }) as Detail;
-      setCreateOpen(false); setDetail(created); setMessage(`Quotation ${created.quotation_number} created`); await refresh();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to create quotation."); }
-    finally { setSaving(false); }
-  }
-  async function changeStatus(next: "sent" | "accepted" | "rejected" | "cancelled") {
-    if (!detail) return;
-    setSaving(true); setError(null);
-    try {
-      const updated = await api(`/quotations/${detail.id}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) }) as Detail;
-      setDetail(updated); setMessage(`Quotation ${updated.quotation_number} marked ${updated.status}`); await refresh();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update quotation status."); }
-    finally { setSaving(false); }
-  }
-  async function loadMore() {
-    if (!nextCursor) return;
-    setLoadingMore(true);
-    try {
-      const params = new URLSearchParams(query); params.set("cursor", nextCursor);
-      const payload = await api(`/quotations?${params}`) as { items: Quotation[]; next_cursor: string | null };
-      setRows((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor);
-    } finally { setLoadingMore(false); }
-  }
+  async function openDetail(id: string) { setDetailLoading(true); setError(null); try { setDetail(await api(`/quotations/${id}`) as Detail); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load quotation."); } finally { setDetailLoading(false); } }
+  async function createQuotation() { if (!clientId) { setError("Select a client."); return; } if (items.some((item) => !item.description.trim() || item.quantity <= 0 || item.unit_price < 0)) { setError("Complete all quotation items."); return; } setSaving(true); setError(null); setMessage(null); try { const created = await api("/quotations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: clientId, subject: subject.trim() || null, issue_date: issueDate, valid_until: validUntil || null, currency, tax_calculation_mode: taxMode || meta?.default_tax_calculation_mode || "exclusive", assigned_employee_id: assignedEmployeeId || null, notes: notes.trim() || null, terms_conditions: terms.trim() || null, internal_notes: internalNotes.trim() || null, items }) }) as Detail; setCreateOpen(false); setDetail(created); setMessage(`Quotation ${created.quotation_number} created`); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to create quotation."); } finally { setSaving(false); } }
+  async function changeStatus(next: "sent" | "accepted" | "rejected" | "cancelled") { if (!detail) return; setSaving(true); setError(null); try { const updated = await api(`/quotations/${detail.id}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) }) as Detail; setDetail(updated); setMessage(`Quotation ${updated.quotation_number} marked ${updated.status}`); await refresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update quotation status."); } finally { setSaving(false); } }
+  async function loadMore() { if (!nextCursor) return; setLoadingMore(true); try { const params = new URLSearchParams(query); params.set("cursor", nextCursor); const payload = await api(`/quotations?${params}`) as { items: Quotation[]; next_cursor: string | null }; setRows((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); } finally { setLoadingMore(false); } }
 
-  return (
-    <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10">
-      <div className="mx-auto max-w-[1500px]">
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div><p className="text-sm font-medium text-neutral-500">Sales documents</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Quotations</h1><p className="mt-2 text-sm text-neutral-500">Create priced proposals, send them to clients and track acceptance.</p></div>
-          <button onClick={openCreate} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><Plus className="size-4" /> New quotation</button>
-        </header>
-
-        <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Stat label="Total" value={summary?.total ?? 0} icon={FileText} />
-          <Stat label="Draft" value={summary?.draft ?? 0} icon={Clock3} />
-          <Stat label="Sent" value={summary?.sent ?? 0} icon={Send} />
-          <Stat label="Accepted" value={summary?.accepted ?? 0} icon={CheckCircle2} />
-          <Stat label="Accepted value" value={money(summary?.accepted_value ?? 0, meta?.default_currency ?? "")} icon={CheckCircle2} />
-        </div>
-        {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
-        {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-
-        <section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(260px,1fr)_220px_auto] sm:p-5">
-            <form onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()); }} className="relative"><Search className="absolute left-3 top-3.5 size-4 text-neutral-400" /><input value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} placeholder="Search quotation, client or subject..." className="h-11 w-full rounded-xl border pl-9 pr-3 text-sm outline-none focus:border-neutral-500" /></form>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="">All statuses</option>{["draft", "sent", "accepted", "rejected", "cancelled"].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select>
-            <button onClick={() => { setSearchDraft(""); setSearch(""); setStatusFilter(""); }} className="h-11 rounded-xl border px-4 text-sm font-semibold">Reset</button>
-          </div>
-          {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : rows.length === 0 ? <div className="px-6 py-20 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No quotations found</h2><p className="mt-1 text-sm text-neutral-500">Create a quotation from a client to start the sales document flow.</p></div> : <>
-            <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Quotation</th><th className="px-4 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">Issued</th><th className="px-4 py-3 font-medium">Valid until</th><th className="px-4 py-3 font-medium">Total</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{rows.map((item) => <tr key={item.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{item.quotation_number}</p><p className="mt-1 text-xs text-neutral-400">{item.subject || "No subject"}</p></td><td className="px-4 py-4">{item.client_name}</td><td className="px-4 py-4"><StatusBadge status={item.status} expired={item.is_expired} /></td><td className="px-4 py-4 text-neutral-600">{item.issue_date}</td><td className="px-4 py-4 text-neutral-600">{item.valid_until ?? "—"}</td><td className="px-4 py-4 font-medium">{money(item.total, item.currency)}</td><td className="px-6 py-4 text-right"><button onClick={() => void openDetail(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table></div>
-            {nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}
-          </>}
-        </section>
-      </div>
-
-      {createOpen && meta ? <Modal title="Create quotation" onClose={() => setCreateOpen(false)} wide><div className="space-y-6">
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <label className="block text-sm font-medium sm:col-span-2 lg:col-span-1">Client<input value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} placeholder="Search client..." className={inputClass} /><select value={clientId} onChange={(e) => { setClientId(e.target.value); const selected = clientOptions.find((item) => item.id === e.target.value); if (selected?.currency) setCurrency(selected.currency); }} className={inputClass}><option value="">Select client</option>{clientOptions.map((item) => <option key={item.id} value={item.id}>{item.client_code} · {item.display_name}</option>)}</select></label>
-          <Field label="Subject" value={subject} onChange={setSubject} />
-          <Field label="Issue date" type="date" value={issueDate} onChange={(value) => { setIssueDate(value); if (meta) setValidUntil(addDays(value, meta.default_validity_days)); }} />
-          <Field label="Valid until" type="date" value={validUntil} onChange={setValidUntil} />
-          <SearchableSelect label="Currency" name="quotation_currency" value={currency} onValueChange={setCurrency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." />
-          <label className="block text-sm font-medium">Tax calculation<select value={taxMode} onChange={(e) => setTaxMode(e.target.value)} className={inputClass}><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></label>
-          <label className="block text-sm font-medium">Assigned to<select value={assignedEmployeeId} onChange={(e) => setAssignedEmployeeId(e.target.value)} className={inputClass}><option value="">Unassigned</option>{meta.employees.map((item) => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[900px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Description</th><th className="px-3 py-3">Qty</th><th className="px-3 py-3">Unit price</th><th className="px-3 py-3">Discount %</th><th className="px-3 py-3">Tax %</th><th className="px-3 py-3 text-right">Total</th><th className="w-12" /></tr></thead><tbody className="divide-y">{items.map((item, index) => { const line = previewLine(item, taxMode); return <tr key={index}><td className="p-3"><input value={item.description} onChange={(e) => setItems((current) => current.map((row, i) => i === index ? { ...row, description: e.target.value } : row))} className="h-10 w-full rounded-lg border px-3" placeholder="Service or product description" /></td>{(["quantity", "unit_price", "discount_percent", "tax_rate"] as const).map((field) => <td key={field} className="p-3"><input type="number" min={field === "quantity" ? "0.0001" : "0"} max={field.includes("percent") || field === "tax_rate" ? "100" : undefined} step="0.01" value={item[field]} onChange={(e) => setItems((current) => current.map((row, i) => i === index ? { ...row, [field]: Number(e.target.value) } : row))} className="h-10 w-28 rounded-lg border px-2" /></td>)}<td className="p-3 text-right font-medium">{money(line.total, currency)}</td><td className="p-3"><button disabled={items.length === 1} onClick={() => setItems((current) => current.filter((_, i) => i !== index))} className="flex size-8 items-center justify-center rounded-lg border disabled:opacity-30"><X className="size-3" /></button></td></tr>; })}</tbody></table></div>
-        <button onClick={() => setItems((current) => [...current, { description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: Number(meta.default_tax_rate) }])} className="rounded-xl border px-4 py-2 text-sm font-semibold"><Plus className="mr-2 inline size-4" />Add line</button>
-
-        <div className="grid gap-6 lg:grid-cols-[1fr_360px]"><div className="space-y-4"><TextArea label="Client notes" value={notes} onChange={setNotes} /><TextArea label="Terms & conditions" value={terms} onChange={setTerms} /><TextArea label="Internal notes" value={internalNotes} onChange={setInternalNotes} /></div><div className="h-fit rounded-2xl border bg-neutral-50 p-5"><h3 className="font-semibold">Quotation totals</h3><TotalRow label="Subtotal" value={money(preview.subtotal, currency)} /><TotalRow label="Discount" value={`- ${money(preview.discount, currency)}`} /><TotalRow label="Tax" value={money(preview.tax, currency)} /><div className="mt-4 border-t pt-4"><TotalRow label="Total" value={money(preview.total, currency)} strong /></div><p className="mt-4 text-xs leading-5 text-neutral-400">Preview only. Final totals are recalculated by the server.</p></div></div>
-        <div className="flex justify-end gap-2 border-t pt-5"><button onClick={() => setCreateOpen(false)} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button><button disabled={saving} onClick={() => void createQuotation()} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />} Create draft</button></div>
-      </div></Modal> : null}
-
-      {(detailLoading || detail) ? <QuotationDrawer detail={detail} loading={detailLoading} saving={saving} onClose={() => setDetail(null)} onStatus={changeStatus} /> : null}
-    </main>
-  );
+  return <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1500px]">
+    <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-neutral-500">Sales documents</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Quotations</h1><p className="mt-2 text-sm text-neutral-500">Create priced proposals, send them to clients and track acceptance.</p></div><button onClick={openCreate} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><Plus className="size-4" /> New quotation</button></header>
+    <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-5"><Stat label="Total" value={summary?.total ?? 0} icon={FileText} /><Stat label="Draft" value={summary?.draft ?? 0} icon={Clock3} /><Stat label="Sent" value={summary?.sent ?? 0} icon={Send} /><Stat label="Accepted" value={summary?.accepted ?? 0} icon={CheckCircle2} /><Stat label="Rejected" value={summary?.rejected ?? 0} icon={XCircle} /></div>
+    {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}{error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+    <section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(260px,1fr)_220px_auto] sm:p-5"><form onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()); }} className="relative"><Search className="absolute left-3 top-3.5 size-4 text-neutral-400" /><input value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} placeholder="Search quotation, client or subject..." className="h-11 w-full rounded-xl border pl-9 pr-3 text-sm outline-none focus:border-neutral-500" /></form><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="">All statuses</option>{["draft", "sent", "accepted", "rejected", "cancelled"].map((value) => <option key={value} value={value}>{value[0].toUpperCase() + value.slice(1)}</option>)}</select><button onClick={() => { setSearchDraft(""); setSearch(""); setStatusFilter(""); }} className="h-11 rounded-xl border px-4 text-sm font-semibold">Reset</button></div>
+      {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : rows.length === 0 ? <div className="px-6 py-20 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No quotations found</h2><p className="mt-1 text-sm text-neutral-500">Create a quotation from a client to start the sales document flow.</p></div> : <><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Quotation</th><th className="px-4 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">Issued</th><th className="px-4 py-3 font-medium">Valid until</th><th className="px-4 py-3 font-medium">Total</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{rows.map((item) => <tr key={item.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{item.quotation_number}</p><p className="mt-1 text-xs text-neutral-400">{item.subject || "No subject"}</p></td><td className="px-4 py-4">{item.client_name}</td><td className="px-4 py-4"><StatusBadge status={item.status} expired={item.is_expired} /></td><td className="px-4 py-4 text-neutral-600">{item.issue_date}</td><td className="px-4 py-4 text-neutral-600">{item.valid_until ?? "—"}</td><td className="px-4 py-4 font-medium">{money(item.total, item.currency)}</td><td className="px-6 py-4 text-right"><button onClick={() => void openDetail(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table></div>{nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}</>}
+    </section>
+  </div>
+  {createOpen && meta ? <Modal title="Create quotation" onClose={() => setCreateOpen(false)} wide><div className="space-y-6"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><label className="block text-sm font-medium sm:col-span-2 lg:col-span-1">Client<input value={clientSearch} onChange={(e) => setClientSearch(e.target.value)} placeholder="Search client..." className={inputClass} /><select value={clientId} onChange={(e) => { setClientId(e.target.value); const selected = clientOptions.find((item) => item.id === e.target.value); if (selected?.currency) setCurrency(selected.currency); }} className={inputClass}><option value="">Select client</option>{clientOptions.map((item) => <option key={item.id} value={item.id}>{item.client_code} · {item.display_name}</option>)}</select></label><Field label="Subject" value={subject} onChange={setSubject} /><Field label="Issue date" type="date" value={issueDate} onChange={(value) => { setIssueDate(value); setValidUntil(addDays(value, meta.default_validity_days)); }} /><Field label="Valid until" type="date" value={validUntil} onChange={setValidUntil} /><SearchableSelect label="Currency" name="quotation_currency" value={currency} onValueChange={setCurrency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." /><label className="block text-sm font-medium">Tax calculation<select value={taxMode || meta.default_tax_calculation_mode} onChange={(e) => setTaxMode(e.target.value)} className={inputClass}><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></label><label className="block text-sm font-medium">Assigned to<select value={assignedEmployeeId} onChange={(e) => setAssignedEmployeeId(e.target.value)} className={inputClass}><option value="">Unassigned</option>{meta.employees.map((item) => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label></div>
+    <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[900px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Description</th><th className="px-3 py-3">Qty</th><th className="px-3 py-3">Unit price</th><th className="px-3 py-3">Discount %</th><th className="px-3 py-3">Tax %</th><th className="px-3 py-3 text-right">Total</th><th className="w-12" /></tr></thead><tbody className="divide-y">{items.map((item, index) => { const line = previewLine(item, taxMode || meta.default_tax_calculation_mode); return <tr key={index}><td className="p-3"><input value={item.description} onChange={(e) => setItems((current) => current.map((row, i) => i === index ? { ...row, description: e.target.value } : row))} className="h-10 w-full rounded-lg border px-3" placeholder="Service or product description" /></td>{(["quantity", "unit_price", "discount_percent", "tax_rate"] as const).map((field) => <td key={field} className="p-3"><input type="number" min={field === "quantity" ? "0.0001" : "0"} max={field.includes("percent") || field === "tax_rate" ? "100" : undefined} step="0.01" value={item[field]} onChange={(e) => setItems((current) => current.map((row, i) => i === index ? { ...row, [field]: Number(e.target.value) } : row))} className="h-10 w-28 rounded-lg border px-2" /></td>)}<td className="p-3 text-right font-medium">{money(line.total, currency)}</td><td className="p-3"><button disabled={items.length === 1} onClick={() => setItems((current) => current.filter((_, i) => i !== index))} className="flex size-8 items-center justify-center rounded-lg border disabled:opacity-30"><X className="size-3" /></button></td></tr>; })}</tbody></table></div><button onClick={() => setItems((current) => [...current, { description: "", quantity: 1, unit_price: 0, discount_percent: 0, tax_rate: Number(meta.default_tax_rate) }])} className="rounded-xl border px-4 py-2 text-sm font-semibold"><Plus className="mr-2 inline size-4" />Add line</button>
+    <div className="grid gap-6 lg:grid-cols-[1fr_360px]"><div className="space-y-4"><TextArea label="Client notes" value={notes} onChange={setNotes} /><TextArea label="Terms & conditions" value={terms} onChange={setTerms} /><TextArea label="Internal notes" value={internalNotes} onChange={setInternalNotes} /></div><div className="h-fit rounded-2xl border bg-neutral-50 p-5"><h3 className="font-semibold">Quotation totals</h3><TotalRow label="Subtotal" value={money(preview.subtotal, currency)} /><TotalRow label="Discount" value={`- ${money(preview.discount, currency)}`} /><TotalRow label="Tax" value={money(preview.tax, currency)} /><div className="mt-4 border-t pt-4"><TotalRow label="Total" value={money(preview.total, currency)} strong /></div><p className="mt-4 text-xs leading-5 text-neutral-400">Preview only. Final totals are recalculated by the server.</p></div></div><div className="flex justify-end gap-2 border-t pt-5"><button onClick={() => setCreateOpen(false)} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button><button disabled={saving} onClick={() => void createQuotation()} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />} Create draft</button></div></div></Modal> : null}
+  {(detailLoading || detail) ? <QuotationDrawer detail={detail} loading={detailLoading} saving={saving} onClose={() => setDetail(null)} onStatus={changeStatus} /> : null}</main>;
 }
 
-function QuotationDrawer({ detail, loading, saving, onClose, onStatus }: { detail: Detail | null; loading: boolean; saving: boolean; onClose: () => void; onStatus: (status: "sent" | "accepted" | "rejected" | "cancelled") => Promise<void> }) {
-  return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Quotation</p><h2 className="mt-1 text-xl font-semibold">{detail?.quotation_number ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6">
-    <div className="rounded-2xl border p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Document status</p><div className="mt-2"><StatusBadge status={detail.status} expired={detail.is_expired} /></div></div><div className="flex flex-wrap gap-2">{detail.status === "draft" ? <><ActionButton disabled={saving} onClick={() => void onStatus("sent")} label="Mark Sent" primary /><ActionButton disabled={saving} onClick={() => void onStatus("cancelled")} label="Cancel" /></> : null}{detail.status === "sent" ? <><ActionButton disabled={saving} onClick={() => void onStatus("accepted")} label="Accept" primary /><ActionButton disabled={saving} onClick={() => void onStatus("rejected")} label="Reject" /><ActionButton disabled={saving} onClick={() => void onStatus("cancelled")} label="Cancel" /></> : null}</div></div>{detail.status === "accepted" ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"><strong>Accepted quotation.</strong> This document is locked and ready to become an Order in the next module.</div> : null}</div>
-    <div className="grid gap-4 sm:grid-cols-2"><Info label="Client" value={detail.client_name_snapshot} /><Info label="Contact" value={detail.client_contact_snapshot ?? "—"} /><Info label="Client email" value={detail.client_email_snapshot ?? "—"} /><Info label="Valid until" value={detail.valid_until ?? "—"} /><Info label="Assigned" value={detail.assigned_employee_name ?? "Unassigned"} /><Info label="Currency" value={detail.currency} /></div>
-    <div className="grid gap-5 lg:grid-cols-2"><Snapshot title="From" name={detail.seller_name_snapshot} email={detail.seller_email_snapshot} address={detail.seller_address_snapshot} tax={detail.seller_tax_identifier_snapshot} /><Snapshot title="To" name={detail.client_name_snapshot} email={detail.client_email_snapshot} address={detail.client_address_snapshot} tax={detail.client_tax_identifier_snapshot} /></div>
-    {detail.subject ? <div><p className="text-xs uppercase tracking-wide text-neutral-400">Subject</p><p className="mt-1 font-medium">{detail.subject}</p></div> : null}
-    <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[720px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Description</th><th className="px-3 py-3 text-right">Qty</th><th className="px-3 py-3 text-right">Price</th><th className="px-3 py-3 text-right">Disc.</th><th className="px-3 py-3 text-right">Tax</th><th className="px-4 py-3 text-right">Total</th></tr></thead><tbody className="divide-y">{detail.items.map((item) => <tr key={item.id}><td className="px-4 py-3">{item.description}</td><td className="px-3 py-3 text-right">{Number(item.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right">{money(item.unit_price, detail.currency)}</td><td className="px-3 py-3 text-right">{Number(item.discount_percent)}%</td><td className="px-3 py-3 text-right">{Number(item.tax_rate)}%</td><td className="px-4 py-3 text-right font-medium">{money(item.line_total, detail.currency)}</td></tr>)}</tbody></table></div>
-    <div className="ml-auto max-w-sm rounded-2xl border bg-neutral-50 p-5"><TotalRow label="Subtotal" value={money(detail.subtotal, detail.currency)} /><TotalRow label="Discount" value={`- ${money(detail.discount_total, detail.currency)}`} /><TotalRow label="Tax" value={money(detail.tax_total, detail.currency)} /><div className="mt-4 border-t pt-4"><TotalRow label="Total" value={money(detail.total, detail.currency)} strong /></div></div>
-    {detail.notes ? <TextBlock label="Client notes" value={detail.notes} /> : null}{detail.terms_conditions ? <TextBlock label="Terms & conditions" value={detail.terms_conditions} /> : null}{detail.internal_notes ? <TextBlock label="Internal notes" value={detail.internal_notes} muted /> : null}
-  </div>}</aside></div>;
-}
+function QuotationDrawer({ detail, loading, saving, onClose, onStatus }: { detail: Detail | null; loading: boolean; saving: boolean; onClose: () => void; onStatus: (status: "sent" | "accepted" | "rejected" | "cancelled") => Promise<void> }) { return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Quotation</p><h2 className="mt-1 text-xl font-semibold">{detail?.quotation_number ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6"><div className="rounded-2xl border p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Document status</p><div className="mt-2"><StatusBadge status={detail.status} expired={detail.is_expired} /></div></div><div className="flex flex-wrap gap-2">{detail.status === "draft" ? <><ActionButton disabled={saving} onClick={() => void onStatus("sent")} label="Mark Sent" primary /><ActionButton disabled={saving} onClick={() => void onStatus("cancelled")} label="Cancel" /></> : null}{detail.status === "sent" ? <><ActionButton disabled={saving} onClick={() => void onStatus("accepted")} label="Accept" primary /><ActionButton disabled={saving} onClick={() => void onStatus("rejected")} label="Reject" /><ActionButton disabled={saving} onClick={() => void onStatus("cancelled")} label="Cancel" /></> : null}</div></div>{detail.status === "accepted" ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"><strong>Accepted quotation.</strong> This document is locked and ready to become an Order in the next module.</div> : null}</div><div className="grid gap-4 sm:grid-cols-2"><Info label="Client" value={detail.client_name_snapshot} /><Info label="Contact" value={detail.client_contact_snapshot ?? "—"} /><Info label="Client email" value={detail.client_email_snapshot ?? "—"} /><Info label="Valid until" value={detail.valid_until ?? "—"} /><Info label="Assigned" value={detail.assigned_employee_name ?? "Unassigned"} /><Info label="Currency" value={detail.currency} /></div><div className="grid gap-5 lg:grid-cols-2"><Snapshot title="From" name={detail.seller_name_snapshot} email={detail.seller_email_snapshot} address={detail.seller_address_snapshot} tax={detail.seller_tax_identifier_snapshot} /><Snapshot title="To" name={detail.client_name_snapshot} email={detail.client_email_snapshot} address={detail.client_address_snapshot} tax={detail.client_tax_identifier_snapshot} /></div>{detail.subject ? <div><p className="text-xs uppercase tracking-wide text-neutral-400">Subject</p><p className="mt-1 font-medium">{detail.subject}</p></div> : null}<div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[720px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Description</th><th className="px-3 py-3 text-right">Qty</th><th className="px-3 py-3 text-right">Price</th><th className="px-3 py-3 text-right">Disc.</th><th className="px-3 py-3 text-right">Tax</th><th className="px-4 py-3 text-right">Total</th></tr></thead><tbody className="divide-y">{detail.items.map((item) => <tr key={item.id}><td className="px-4 py-3">{item.description}</td><td className="px-3 py-3 text-right">{Number(item.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right">{money(item.unit_price, detail.currency)}</td><td className="px-3 py-3 text-right">{Number(item.discount_percent)}%</td><td className="px-3 py-3 text-right">{Number(item.tax_rate)}%</td><td className="px-4 py-3 text-right font-medium">{money(item.line_total, detail.currency)}</td></tr>)}</tbody></table></div><div className="ml-auto max-w-sm rounded-2xl border bg-neutral-50 p-5"><TotalRow label="Subtotal" value={money(detail.subtotal, detail.currency)} /><TotalRow label="Discount" value={`- ${money(detail.discount_total, detail.currency)}`} /><TotalRow label="Tax" value={money(detail.tax_total, detail.currency)} /><div className="mt-4 border-t pt-4"><TotalRow label="Total" value={money(detail.total, detail.currency)} strong /></div></div>{detail.notes ? <TextBlock label="Client notes" value={detail.notes} /> : null}{detail.terms_conditions ? <TextBlock label="Terms & conditions" value={detail.terms_conditions} /> : null}{detail.internal_notes ? <TextBlock label="Internal notes" value={detail.internal_notes} muted /> : null}</div>}</aside></div>; }
 
 function StatusBadge({ status, expired }: { status: string; expired?: boolean }) { const styles: Record<string, string> = { draft: "bg-neutral-50 text-neutral-600", sent: "border-blue-200 bg-blue-50 text-blue-700", accepted: "border-emerald-200 bg-emerald-50 text-emerald-700", rejected: "border-red-200 bg-red-50 text-red-700", cancelled: "bg-neutral-100 text-neutral-500" }; return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${styles[status] ?? "bg-neutral-50"}`}>{status}{expired ? " · expired" : ""}</span>; }
 function Stat({ label, value, icon: Icon }: { label: string; value: string | number; icon: typeof FileText }) { return <article className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-4 text-2xl font-semibold">{value}</p></article>; }
