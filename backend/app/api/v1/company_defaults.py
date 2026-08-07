@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentTenantAdmin, DbSession
@@ -20,29 +20,10 @@ def get_system_defaults(
         )
     )
     if item is None:
-        item = OrganizationSystemDefaults(
-            organization_id=tenant.organization_id,
-            default_client_country_code=tenant.organization.country_code,
-            default_client_currency=tenant.organization.currency,
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Company system defaults are missing. Run the latest database migrations.",
         )
-        db.add(item)
-        record_activity(
-            db,
-            action="company.system_defaults.created",
-            scope="tenant",
-            actor_user_id=tenant.user_id,
-            organization_id=tenant.organization_id,
-            entity_type="organization_system_defaults",
-            entity_id=item.id,
-            after={
-                "default_client_country_code": item.default_client_country_code,
-                "default_client_currency": item.default_client_currency,
-                "default_document_language": item.default_document_language,
-            },
-            message="Missing company system defaults were initialized",
-        )
-        db.commit()
-        db.refresh(item)
     return SystemDefaultsRead.model_validate(item)
 
 
@@ -59,13 +40,12 @@ def update_system_defaults(
         )
     )
     if item is None:
-        item = OrganizationSystemDefaults(organization_id=tenant.organization_id)
-        db.add(item)
-        db.flush()
-        before = None
-    else:
-        before = SystemDefaultsRead.model_validate(item).model_dump(mode="json")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Company system defaults are missing. Run the latest database migrations.",
+        )
 
+    before = SystemDefaultsRead.model_validate(item).model_dump(mode="json")
     item.default_client_country_code = (
         payload.default_client_country_code.upper()
         if payload.default_client_country_code
