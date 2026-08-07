@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 
 import type { TokenPair } from "@/lib/auth-session";
+import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
 async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
@@ -9,7 +10,10 @@ async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
 
   const response = await backendFetch("/auth/refresh", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...requestContextHeaders(request),
+    },
     body: JSON.stringify({ refresh_token: refreshToken }),
   });
 
@@ -42,6 +46,9 @@ export async function authenticatedBackendFetch(
 
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${accessToken}`);
+  for (const [name, value] of Object.entries(requestContextHeaders(request))) {
+    headers.set(name, value);
+  }
 
   let upstream = await backendFetch(path, { ...init, headers });
 
