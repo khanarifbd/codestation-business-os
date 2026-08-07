@@ -92,8 +92,6 @@ class QuotationDetail(BaseModel):
     source_lead_id: str | None
     assigned_employee_id: str | None
     assigned_employee_name: str | None
-    converted_order_id: str | None
-    converted_order_number: str | None
     status: str
     subject: str | None
     issue_date: date
