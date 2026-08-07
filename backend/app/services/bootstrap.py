@@ -8,15 +8,20 @@ from app.models.user import User
 
 
 def ensure_super_admin() -> None:
-    """Ensure the platform always has at least one global super admin.
+    """Ensure the platform always has at least one active global super admin.
 
-    Credentials come from environment variables. If no super admin exists,
-    the configured account is created or promoted atomically at startup.
+    Credentials come from environment variables. If no active super admin exists,
+    the configured account is created or promoted/reactivated atomically at startup.
     """
 
     with SessionLocal() as db:
         existing_super_admin = db.scalar(
-            select(User).where(User.system_role == SYSTEM_ROLE_SUPER_ADMIN).limit(1)
+            select(User)
+            .where(
+                User.system_role == SYSTEM_ROLE_SUPER_ADMIN,
+                User.is_active.is_(True),
+            )
+            .limit(1)
         )
         if existing_super_admin is not None:
             return
@@ -27,7 +32,7 @@ def ensure_super_admin() -> None:
 
         if not email or not password:
             raise RuntimeError(
-                "No super admin exists. SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD are required."
+                "No active super admin exists. SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD are required."
             )
 
         user = db.scalar(select(User).where(User.email == email))
