@@ -13,6 +13,8 @@ export function SearchableSelect({
   label,
   name,
   defaultValue,
+  value: controlledValue,
+  onValueChange,
   options,
   placeholder = "Select an option",
   searchPlaceholder = "Search...",
@@ -22,6 +24,8 @@ export function SearchableSelect({
   label: string;
   name: string;
   defaultValue?: string | null;
+  value?: string | null;
+  onValueChange?: (value: string) => void;
   options: SearchOption[];
   placeholder?: string;
   searchPlaceholder?: string;
@@ -31,11 +35,13 @@ export function SearchableSelect({
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [value, setValue] = useState(defaultValue ?? "");
+  const [internalValue, setInternalValue] = useState(defaultValue ?? "");
+  const isControlled = controlledValue !== undefined;
+  const value = isControlled ? controlledValue ?? "" : internalValue;
 
   useEffect(() => {
-    setValue(defaultValue ?? "");
-  }, [defaultValue]);
+    if (!isControlled) setInternalValue(defaultValue ?? "");
+  }, [defaultValue, isControlled]);
 
   useEffect(() => {
     function onPointerDown(event: MouseEvent) {
@@ -57,7 +63,8 @@ export function SearchableSelect({
   }, [options, query]);
 
   function choose(nextValue: string) {
-    setValue(nextValue);
+    if (!isControlled) setInternalValue(nextValue);
+    onValueChange?.(nextValue);
     setQuery("");
     setOpen(false);
   }
@@ -85,9 +92,7 @@ export function SearchableSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className={selected || value ? "text-neutral-950" : "text-neutral-400"}>
-          {displayValue}
-        </span>
+        <span className={selected || value ? "text-neutral-950" : "text-neutral-400"}>{displayValue}</span>
         <ChevronDown className="size-4 shrink-0 text-neutral-400" />
       </button>
 
@@ -96,44 +101,13 @@ export function SearchableSelect({
           <div className="border-b p-2">
             <div className="flex items-center gap-2 rounded-lg bg-neutral-50 px-3">
               <Search className="size-4 text-neutral-400" />
-              <input
-                autoFocus
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={searchPlaceholder}
-                className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-neutral-400"
-              />
+              <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-neutral-400" />
             </div>
           </div>
           <div className="max-h-64 overflow-y-auto p-1.5" role="listbox">
-            {showCustom ? (
-              <button
-                type="button"
-                onClick={() => choose(customValue)}
-                className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"
-              >
-                Use “{customValue}”
-              </button>
-            ) : null}
-            {filtered.map((option) => (
-              <button
-                key={`${option.value}-${option.label}`}
-                type="button"
-                onClick={() => choose(option.value)}
-                className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"
-              >
-                <span>
-                  <span className="block">{option.label}</span>
-                  {option.label !== option.value ? (
-                    <span className="mt-0.5 block text-xs text-neutral-400">{option.value}</span>
-                  ) : null}
-                </span>
-                {value === option.value ? <Check className="size-4 text-neutral-700" /> : null}
-              </button>
-            ))}
-            {filtered.length === 0 && !showCustom ? (
-              <p className="px-3 py-6 text-center text-sm text-neutral-400">No matches found</p>
-            ) : null}
+            {showCustom ? <button type="button" onClick={() => choose(customValue)} className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50">Use “{customValue}”</button> : null}
+            {filtered.map((option) => <button key={`${option.value}-${option.label}`} type="button" onClick={() => choose(option.value)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"><span><span className="block">{option.label}</span>{option.label !== option.value ? <span className="mt-0.5 block text-xs text-neutral-400">{option.value}</span> : null}</span>{value === option.value ? <Check className="size-4 text-neutral-700" /> : null}</button>)}
+            {filtered.length === 0 && !showCustom ? <p className="px-3 py-6 text-center text-sm text-neutral-400">No matches found</p> : null}
           </div>
         </div>
       ) : null}
