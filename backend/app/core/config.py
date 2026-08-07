@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "CodeStation Business OS API"
-    app_version: str = "0.2.0"
+    app_version: str = "0.3.0"
     environment: str = "development"
     database_url: str = (
         "postgresql+psycopg://business_os:change_me@localhost:5432/"
@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    super_admin_email: str = ""
+    super_admin_password: str = ""
+    super_admin_name: str = "CodeStation AI Super Admin"
 
     model_config = SettingsConfigDict(
         env_file=".env",
