@@ -16,6 +16,7 @@ from app.schemas.organization import (
     OrganizationRead,
 )
 from app.services.activity_log import record_activity
+from app.services.company_settings import ensure_company_settings_defaults
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
 
@@ -84,6 +85,7 @@ def create_organization(
         current_period_start=utc_now(),
     )
     db.add(subscription)
+    ensure_company_settings_defaults(db, organization)
     db.flush()
 
     record_activity(
@@ -94,7 +96,7 @@ def create_organization(
         organization_id=organization.id,
         entity_type="organization",
         entity_id=organization.id,
-        message="Company workspace created",
+        message="Company workspace and master settings created",
         after={
             "id": organization.id,
             "name": organization.name,
@@ -108,6 +110,7 @@ def create_organization(
             "membership_role": membership.role,
             "subscription_plan": subscription.plan_code,
             "subscription_status": subscription.status,
+            "company_master_settings": "initialized",
         },
         request=request,
     )
