@@ -212,6 +212,14 @@ export default function CrmPage() {
     }
   }
 
+  async function changeStatus(leadId: string, statusId: string) {
+    await api(`/leads/${leadId}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status_id: statusId }),
+    });
+  }
+
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
@@ -323,7 +331,14 @@ export default function CrmPage() {
                       {leads.map((lead) => (
                         <tr key={lead.id} className="hover:bg-neutral-50/70">
                           <td className="px-6 py-4"><p className="font-medium">{lead.company_name || lead.contact_name}</p><p className="mt-1 text-xs text-neutral-400">{lead.lead_code} · {lead.contact_name}{lead.email ? ` · ${lead.email}` : ""}</p></td>
-                          <td className="px-4 py-4"><span className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium"><span className="size-2 rounded-full" style={{ backgroundColor: lead.status_color ?? "#a3a3a3" }} />{lead.status_name}</span></td>
+                          <td className="px-4 py-4">
+                            <StatusSelect
+                              value={lead.status_id}
+                              statuses={activeStatuses}
+                              disabled={saving}
+                              onChange={(statusId) => void run(async () => { await changeStatus(lead.id, statusId); }, `Lead status changed to ${activeStatuses.find((item) => item.id === statusId)?.name ?? "selected status"}`)}
+                            />
+                          </td>
                           <td className="px-4 py-4 text-neutral-600">{lead.source_name ?? "—"}</td>
                           <td className="px-4 py-4"><p className="font-medium">{money(lead.estimated_value, lead.currency)}</p><p className="mt-1 text-xs text-neutral-400">{lead.probability_percent}% probability</p></td>
                           <td className="px-4 py-4 text-neutral-600">{lead.assigned_employee_name ?? "Unassigned"}</td>
@@ -441,18 +456,46 @@ function LeadDrawer({ detail, loading, meta, saving, onClose, api, run, reloadDe
   run: (work: () => Promise<void>, success: string) => Promise<void>;
   reloadDetail: () => Promise<void>;
 }) {
+  const activeStatuses = meta?.statuses.filter((item) => item.is_active) ?? [];
+
   return (
     <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <aside className="ml-auto h-full w-full max-w-2xl overflow-y-auto bg-white shadow-2xl">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Lead detail</p><h2 className="mt-1 text-xl font-semibold">{detail?.lead.company_name || detail?.lead.contact_name || "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>
         {loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : (
           <div className="space-y-6 p-6">
+            <div className="rounded-2xl border p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Pipeline status</p>
+                  <p className="mt-1 text-sm text-neutral-500">Change the stage as the opportunity moves forward.</p>
+                </div>
+                <StatusSelect
+                  value={detail.lead.status_id}
+                  statuses={activeStatuses}
+                  disabled={saving}
+                  onChange={(statusId) => void run(async () => {
+                    await api(`/leads/${detail.lead.id}/status`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ status_id: statusId }),
+                    });
+                    await reloadDetail();
+                  }, `Lead status changed to ${activeStatuses.find((item) => item.id === statusId)?.name ?? "selected status"}`)}
+                />
+              </div>
+              {detail.lead.status_category === "won" && !detail.lead.converted_client_id ? (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                  Opportunity won. The proposal is accepted—this lead is ready to become a client.
+                </div>
+              ) : null}
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <Info label="Lead code" value={detail.lead.lead_code} />
               <Info label="Contact" value={detail.lead.contact_name} />
               <Info label="Email" value={detail.lead.email ?? "—"} />
               <Info label="Phone" value={detail.lead.phone ?? "—"} />
-              <Info label="Status" value={detail.lead.status_name} />
               <Info label="Source" value={detail.lead.source_name ?? "—"} />
               <Info label="Assigned" value={detail.lead.assigned_employee_name ?? "Unassigned"} />
               <Info label="Potential" value={money(detail.lead.estimated_value, detail.lead.currency)} />
@@ -462,10 +505,10 @@ function LeadDrawer({ detail, loading, meta, saving, onClose, api, run, reloadDe
 
             {detail.notes ? <div className="rounded-2xl border bg-neutral-50 p-4"><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Notes</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{detail.notes}</p></div> : null}
 
-            {!detail.lead.converted_client_id ? (
-              <div className="rounded-2xl border p-5">
-                <div className="flex items-center gap-2"><Building2 className="size-4" /><h3 className="font-semibold">Convert to client</h3></div>
-                <p className="mt-1 text-sm text-neutral-500">Creates the client and links this lead permanently.</p>
+            {!detail.lead.converted_client_id && detail.lead.status_category === "won" ? (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-5">
+                <div className="flex items-center gap-2"><Building2 className="size-4" /><h3 className="font-semibold">Convert won lead to client</h3></div>
+                <p className="mt-1 text-sm text-neutral-600">Creates the client record and permanently links it to this lead.</p>
                 <form onSubmit={(event) => {
                   event.preventDefault(); const form = new FormData(event.currentTarget);
                   void run(async () => {
@@ -478,6 +521,10 @@ function LeadDrawer({ detail, loading, meta, saving, onClose, api, run, reloadDe
                   <Field label="Tax identifier" name="tax_identifier" />
                   <div className="flex items-end"><button disabled={saving} className="h-11 w-full rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white">Convert to client</button></div>
                 </form>
+              </div>
+            ) : !detail.lead.converted_client_id ? (
+              <div className="rounded-2xl border border-dashed bg-neutral-50 p-5 text-sm text-neutral-500">
+                Mark this opportunity as <strong className="text-neutral-800">Won</strong> when the proposal is accepted. The Convert to Client action will then become available.
               </div>
             ) : <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">This lead is already converted to a client.</div>}
 
@@ -509,6 +556,30 @@ function LeadDrawer({ detail, loading, meta, saving, onClose, api, run, reloadDe
         )}
       </aside>
     </div>
+  );
+}
+
+function StatusSelect({ value, statuses, disabled, onChange }: {
+  value: string;
+  statuses: LeadStatus[];
+  disabled?: boolean;
+  onChange: (statusId: string) => void;
+}) {
+  const current = statuses.find((item) => item.id === value);
+  return (
+    <label className="relative inline-flex min-w-[120px] items-center gap-2 rounded-full border bg-white px-2.5 py-1 text-xs font-medium shadow-sm transition focus-within:border-neutral-500 hover:border-neutral-400">
+      <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: current?.color ?? "#a3a3a3" }} />
+      <select
+        aria-label="Lead status"
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-w-0 flex-1 cursor-pointer appearance-none bg-transparent pr-3 text-xs font-medium outline-none disabled:cursor-wait disabled:opacity-50"
+      >
+        {statuses.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+      </select>
+      <span className="pointer-events-none absolute right-2 text-[9px] text-neutral-400">▼</span>
+    </label>
   );
 }
 
