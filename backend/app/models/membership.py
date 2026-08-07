@@ -3,6 +3,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.roles import MEMBERSHIP_ROLE_USER, MEMBERSHIP_STATUS_ACTIVE
 from app.db.base import Base
 from app.models.common import new_uuid, utc_now
 
@@ -26,6 +27,6 @@ class Membership(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    role: Mapped[str] = mapped_column(String(64), default="member", nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    role: Mapped[str] = mapped_column(String(64), default=MEMBERSHIP_ROLE_USER, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default=MEMBERSHIP_STATUS_ACTIVE, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
