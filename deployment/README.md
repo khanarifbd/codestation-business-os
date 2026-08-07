@@ -26,19 +26,31 @@ sudo bash deployment/deploy.sh
 
 The script:
 
-1. fetches and fast-forwards `develop`
-2. builds backend and frontend images
-3. starts/waits for PostgreSQL
-4. runs `alembic upgrade head`
-5. starts backend and frontend
-6. checks backend and frontend health
-7. prints container status
+1. ensures JWT and platform super-admin bootstrap secrets exist
+2. fetches and fast-forwards `develop`
+3. builds backend and frontend images
+4. starts/waits for PostgreSQL
+5. runs `alembic upgrade head`
+6. starts backend and frontend
+7. API startup guarantees at least one active `super_admin`
+8. checks backend and frontend health
+9. prints container status
 
 ## Secrets
 
-`.env.staging` lives at the repository root and is not committed. It must contain the PostgreSQL password and JWT secret.
+`.env.staging` lives at the repository root and is not committed. It contains PostgreSQL, JWT, and super-admin bootstrap secrets.
 
-Generate secure values with:
+Important platform values:
+
+```text
+SUPER_ADMIN_EMAIL=admin@codestationai.com
+SUPER_ADMIN_PASSWORD=<secure-random-password>
+SUPER_ADMIN_NAME=CodeStation AI Super Admin
+```
+
+If the super-admin values are absent, `deploy.sh` adds the default platform email/name and generates a secure random password. The password is not printed to deployment logs. It remains in `.env.staging`.
+
+Generate secure values manually when needed with:
 
 ```bash
 openssl rand -hex 32
