@@ -6,7 +6,7 @@ Create Date: 2026-08-07
 """
 
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from alembic import op
@@ -73,17 +73,14 @@ def upgrade() -> None:
     organization_ids = bind.execute(sa.text("SELECT id FROM organizations")).scalars().all()
     if organization_ids:
         now = datetime.now(timezone.utc)
-        trial_end = now + timedelta(days=14)
         subscriptions = sa.table(
             "subscriptions",
-            sa.column("id", sa.String),
-            sa.column("organization_id", sa.String),
-            sa.column("plan_code", sa.String),
-            sa.column("status", sa.String),
-            sa.column("billing_cycle", sa.String),
-            sa.column("trial_ends_at", sa.DateTime(timezone=True)),
+            sa.column("id", sa.String()),
+            sa.column("organization_id", sa.String()),
+            sa.column("plan_code", sa.String()),
+            sa.column("status", sa.String()),
+            sa.column("billing_cycle", sa.String()),
             sa.column("current_period_start", sa.DateTime(timezone=True)),
-            sa.column("current_period_end", sa.DateTime(timezone=True)),
             sa.column("created_at", sa.DateTime(timezone=True)),
             sa.column("updated_at", sa.DateTime(timezone=True)),
         )
@@ -93,12 +90,10 @@ def upgrade() -> None:
                 {
                     "id": str(uuid4()),
                     "organization_id": organization_id,
-                    "plan_code": "starter",
-                    "status": "trialing",
+                    "plan_code": "default",
+                    "status": "active",
                     "billing_cycle": "monthly",
-                    "trial_ends_at": trial_end,
                     "current_period_start": now,
-                    "current_period_end": trial_end,
                     "created_at": now,
                     "updated_at": now,
                 }
