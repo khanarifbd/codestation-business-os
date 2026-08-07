@@ -18,6 +18,7 @@ from app.schemas.organization import (
 )
 from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
+from app.services.crm import ensure_crm_defaults
 from app.services.team import ensure_system_roles, next_employee_code
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
@@ -91,6 +92,7 @@ def create_organization(
     )
     db.add(subscription)
     ensure_company_settings_defaults(db, organization)
+    ensure_crm_defaults(db, organization)
     db.flush()
 
     employee = Employee(
@@ -112,7 +114,7 @@ def create_organization(
         organization_id=organization.id,
         entity_type="organization",
         entity_id=organization.id,
-        message="Company workspace, roles, settings and owner employee profile created",
+        message="Company workspace, roles, settings, CRM defaults and owner employee profile created",
         after={
             "id": organization.id,
             "name": organization.name,
@@ -129,6 +131,7 @@ def create_organization(
             "subscription_plan": subscription.plan_code,
             "subscription_status": subscription.status,
             "company_master_settings": "initialized",
+            "crm_defaults": "initialized",
         },
         request=request,
     )
