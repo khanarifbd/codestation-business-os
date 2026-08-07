@@ -350,11 +350,15 @@ def quotation_summary(db: DbSession, tenant: QuotationViewer) -> QuotationSummar
             func.count(Quotation.id).filter(Quotation.status == "accepted"),
             func.count(Quotation.id).filter(Quotation.status == "rejected"),
             func.count(Quotation.id).filter(Quotation.status == "cancelled"),
-            func.coalesce(func.sum(Quotation.total).filter(Quotation.status == "accepted"), 0),
         ).where(Quotation.organization_id == organization_id)
     ).one()
     return QuotationSummary(
-        total=row[0], draft=row[1], sent=row[2], accepted=row[3], rejected=row[4], cancelled=row[5], accepted_value=row[6]
+        total=row[0],
+        draft=row[1],
+        sent=row[2],
+        accepted=row[3],
+        rejected=row[4],
+        cancelled=row[5],
     )
 
 
@@ -419,8 +423,14 @@ def create_quotation(
         raise HTTPException(status_code=400, detail="Valid until date cannot be before issue date")
     _active_employee(db, tenant.organization_id, payload.assigned_employee_id)
 
-    financial = db.scalar(select(OrganizationFinancialSettings).where(OrganizationFinancialSettings.organization_id == tenant.organization_id))
-    profile = db.scalar(select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id))
+    financial = db.scalar(
+        select(OrganizationFinancialSettings).where(
+            OrganizationFinancialSettings.organization_id == tenant.organization_id
+        )
+    )
+    profile = db.scalar(
+        select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id)
+    )
     address = db.scalar(
         select(OrganizationAddress)
         .where(
@@ -455,10 +465,19 @@ def create_quotation(
         subject=_clean(payload.subject),
         issue_date=payload.issue_date,
         valid_until=payload.valid_until,
-        currency=(payload.currency or client.currency or (financial.accounting_currency if financial else tenant.organization.currency)).upper(),
-        tax_calculation_mode=(payload.tax_calculation_mode or (financial.tax_calculation_mode if financial else "exclusive")),
-        seller_name_snapshot=(profile.legal_name if profile and profile.legal_name else tenant.organization.name),
-        seller_email_snapshot=(profile.billing_email or profile.primary_email if profile else None),
+        currency=(
+            payload.currency
+            or client.currency
+            or (financial.accounting_currency if financial else tenant.organization.currency)
+        ).upper(),
+        tax_calculation_mode=(
+            payload.tax_calculation_mode
+            or (financial.tax_calculation_mode if financial else "exclusive")
+        ),
+        seller_name_snapshot=(
+            profile.legal_name if profile and profile.legal_name else tenant.organization.name
+        ),
+        seller_email_snapshot=((profile.billing_email or profile.primary_email) if profile else None),
         seller_address_snapshot=_address_text(address),
         seller_tax_identifier_snapshot=(identifier.value if identifier else None),
         client_name_snapshot=client.legal_name or client.display_name,
@@ -545,9 +564,13 @@ def update_quotation(
     elif "tax_calculation_mode" in changes:
         existing_items = db.scalars(
             select(QuotationItem)
-            .where(QuotationItem.organization_id == tenant.organization_id, QuotationItem.quotation_id == quotation.id)
+            .where(
+                QuotationItem.organization_id == tenant.organization_id,
+                QuotationItem.quotation_id == quotation.id,
+            )
             .order_by(QuotationItem.sort_order.asc())
         ).all()
+
         class ExistingPayload:
             def __init__(self, item):
                 self.description = item.description
@@ -555,6 +578,7 @@ def update_quotation(
                 self.unit_price = item.unit_price
                 self.discount_percent = item.discount_percent
                 self.tax_rate = item.tax_rate
+
         _replace_items(db, quotation, [ExistingPayload(item) for item in existing_items])
     db.flush()
     after = {
@@ -611,7 +635,10 @@ def change_quotation_status(
         "cancelled": set(),
     }
     if payload.status not in allowed.get(quotation.status, set()):
-        raise HTTPException(status_code=409, detail=f"Quotation cannot move from {quotation.status} to {payload.status}")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Quotation cannot move from {quotation.status} to {payload.status}",
+        )
 
     previous = quotation.status
     now = datetime.now(timezone.utc)
@@ -636,7 +663,10 @@ def change_quotation_status(
         entity_id=quotation.id,
         before={"status": previous},
         after={"status": quotation.status},
-        message=f"Quotation {quotation.quotation_number} status changed from {previous} to {quotation.status}",
+        message=(
+            f"Quotation {quotation.quotation_number} status changed "
+            f"from {previous} to {quotation.status}"
+        ),
         request=request,
     )
     db.commit()
