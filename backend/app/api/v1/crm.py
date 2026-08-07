@@ -56,6 +56,13 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
+def _payload_value(payload, field: str, fallback):
+    """Use a conversion override only when the caller explicitly sent that field."""
+    if field in payload.model_fields_set:
+        return getattr(payload, field)
+    return fallback
+
+
 def _encode_cursor(created_at: datetime, entity_id: str) -> str:
     raw = json.dumps({"created_at": created_at.isoformat(), "id": entity_id}, separators=(",", ":"))
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
@@ -397,8 +404,11 @@ def update_lead(
         "probability_percent": lead.probability_percent, "next_follow_up_at": lead.next_follow_up_at.isoformat() if lead.next_follow_up_at else None,
     }
     changes = payload.model_dump(exclude_unset=True)
-    if "status_id" in changes and changes["status_id"] is not None:
-        _tenant_status(db, tenant.organization_id, changes["status_id"])
+    if "status_id" in changes:
+        raise HTTPException(
+            status_code=400,
+            detail="Lead status can only be changed from the pipeline status control.",
+        )
     if "source_id" in changes:
         _tenant_source(db, tenant.organization_id, changes["source_id"])
     if "assigned_employee_id" in changes:
@@ -494,48 +504,75 @@ def convert_lead(
     if lead.converted_client_id:
         raise HTTPException(status_code=409, detail="Lead has already been converted to a client")
 
-    display_name = _clean(payload.display_name) or lead.company_name or lead.contact_name
+    current_status = db.scalar(
+        select(LeadStatus).where(
+            LeadStatus.id == lead.status_id,
+            LeadStatus.organization_id == tenant.organization_id,
+        )
+    )
+    if current_status is None or current_status.category != "won":
+        raise HTTPException(
+            status_code=409,
+            detail="Only a Won lead can be converted to a client.",
+        )
+
+    client_type = _payload_value(payload, "client_type", lead.lead_type) or lead.lead_type
+    display_name = _clean(_payload_value(payload, "display_name", lead.company_name or lead.contact_name))
+    if not display_name:
+        raise HTTPException(status_code=400, detail="Client display name is required")
+
+    legal_name = _clean(_payload_value(payload, "legal_name", lead.company_name))
+    contact_name = _clean(_payload_value(payload, "contact_name", lead.contact_name))
+
+    email_value = _payload_value(payload, "email", lead.email)
+    billing_email_value = _payload_value(payload, "billing_email", lead.email)
+    phone = _clean(_payload_value(payload, "phone", lead.phone))
+    whatsapp = _clean(_payload_value(payload, "whatsapp", lead.whatsapp))
+    website = _clean(_payload_value(payload, "website", lead.website))
+
+    country_value = _payload_value(payload, "country_code", lead.country_code)
+    state_region = _clean(_payload_value(payload, "state_region", lead.state_region))
+    city = _clean(_payload_value(payload, "city", lead.city))
+    postal_code = _clean(_payload_value(payload, "postal_code", None))
+    address_line1 = _clean(_payload_value(payload, "address_line1", lead.address_line1))
+    address_line2 = _clean(_payload_value(payload, "address_line2", None))
+    tax_identifier = _clean(_payload_value(payload, "tax_identifier", None))
+
+    currency_value = _payload_value(payload, "currency", lead.currency)
+    assigned_employee_id = _payload_value(payload, "assigned_employee_id", lead.assigned_employee_id)
+    _tenant_employee(db, tenant.organization_id, assigned_employee_id)
+    notes = _clean(_payload_value(payload, "notes", lead.notes))
+
     client = Client(
         organization_id=tenant.organization_id,
         client_code=next_sequence_code(db, tenant.organization_id, "client"),
-        client_type=lead.lead_type,
+        client_type=client_type,
         display_name=display_name,
-        legal_name=_clean(payload.legal_name) or lead.company_name,
-        contact_name=lead.contact_name,
-        email=lead.email,
-        billing_email=str(payload.billing_email).lower() if payload.billing_email else lead.email,
-        phone=lead.phone,
-        whatsapp=lead.whatsapp,
-        website=lead.website,
-        country_code=lead.country_code,
-        state_region=lead.state_region,
-        city=lead.city,
-        postal_code=_clean(payload.postal_code),
-        address_line1=lead.address_line1,
-        address_line2=_clean(payload.address_line2),
-        tax_identifier=_clean(payload.tax_identifier),
-        currency=lead.currency,
-        assigned_employee_id=lead.assigned_employee_id,
+        legal_name=legal_name,
+        contact_name=contact_name,
+        email=str(email_value).lower() if email_value else None,
+        billing_email=str(billing_email_value).lower() if billing_email_value else None,
+        phone=phone,
+        whatsapp=whatsapp,
+        website=website,
+        country_code=str(country_value).upper() if country_value else None,
+        state_region=state_region,
+        city=city,
+        postal_code=postal_code,
+        address_line1=address_line1,
+        address_line2=address_line2,
+        tax_identifier=tax_identifier,
+        currency=str(currency_value).upper() if currency_value else None,
+        assigned_employee_id=assigned_employee_id,
         status="active",
-        notes=lead.notes,
+        notes=notes,
     )
     db.add(client)
     db.flush()
 
-    won_status = db.scalar(
-        select(LeadStatus)
-        .where(
-            LeadStatus.organization_id == tenant.organization_id,
-            LeadStatus.category == "won",
-            LeadStatus.is_active.is_(True),
-        )
-        .order_by(LeadStatus.sort_order.asc())
-    )
     before = {"status_id": lead.status_id, "converted_client_id": None}
     lead.converted_client_id = client.id
     lead.converted_at = datetime.now(timezone.utc)
-    if won_status:
-        lead.status_id = won_status.id
 
     interaction = LeadInteraction(
         organization_id=tenant.organization_id,
@@ -557,7 +594,14 @@ def convert_lead(
         entity_type="lead",
         entity_id=lead.id,
         before=before,
-        after={"status_id": lead.status_id, "converted_client_id": client.id, "client_code": client.client_code, "client_name": client.display_name},
+        after={
+            "status_id": lead.status_id,
+            "status_name": current_status.name,
+            "converted_client_id": client.id,
+            "client_code": client.client_code,
+            "client_name": client.display_name,
+            "assigned_employee_id": client.assigned_employee_id,
+        },
         message=f"Lead {lead.lead_code} converted to client {client.client_code}",
         request=request,
     )
