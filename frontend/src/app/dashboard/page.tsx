@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BarChart3,
@@ -14,11 +14,13 @@ import {
   Users,
 } from "lucide-react";
 
-type OrganizationMembership = {
+type TenantContext = {
   organization: {
     id: string;
     name: string;
     slug: string;
+    status: string;
+    suspension_reason: string | null;
     country_code: string;
     timezone: string;
     currency: string;
@@ -27,6 +29,7 @@ type OrganizationMembership = {
     financial_year_start_month: number;
     setup_completed: boolean;
   };
+  membership_id: string;
   role: string;
   status: string;
 };
@@ -44,32 +47,52 @@ const navigation = [
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [memberships, setMemberships] = useState<OrganizationMembership[]>([]);
+  const [tenant, setTenant] = useState<TenantContext | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
-      const response = await fetch("/api/organizations", { cache: "no-store" });
+      let response = await fetch("/api/tenant", { cache: "no-store" });
+
+      if (response.status === 409) {
+        const organizations = await fetch("/api/organizations", { cache: "no-store" });
+        if (organizations.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        if (organizations.ok) {
+          const items = (await organizations.json()) as unknown[];
+          if (items.length === 0) {
+            router.replace("/onboarding");
+            return;
+          }
+          response = await fetch("/api/tenant", { cache: "no-store" });
+        }
+      }
+
       if (response.status === 401) {
         router.replace("/login");
         return;
       }
-      if (!response.ok) {
+
+      if (response.status === 403) {
+        const payload = await response.json().catch(() => null);
+        setError(payload?.detail ?? "This company workspace is not available.");
         setLoading(false);
         return;
       }
 
-      const data = (await response.json()) as OrganizationMembership[];
-      if (data.length === 0) {
-        router.replace("/onboarding");
+      if (!response.ok) {
+        setError("Unable to load the active company workspace.");
+        setLoading(false);
         return;
       }
-      setMemberships(data);
+
+      setTenant((await response.json()) as TenantContext);
       setLoading(false);
     })();
   }, [router]);
-
-  const current = useMemo(() => memberships[0], [memberships]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -77,11 +100,30 @@ export default function DashboardPage() {
     router.refresh();
   }
 
-  if (loading || !current) {
-    return <main className="min-h-screen bg-neutral-50" />;
+  if (loading) {
+    return <main className="min-h-screen bg-neutral-100" />;
   }
 
-  const company = current.organization;
+  if (error || !tenant) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-neutral-100 px-6 text-neutral-950">
+        <div className="w-full max-w-lg rounded-3xl border bg-white p-8 text-center shadow-sm">
+          <Building2 className="mx-auto size-8 text-neutral-400" />
+          <h1 className="mt-5 text-2xl font-semibold">Workspace unavailable</h1>
+          <p className="mt-3 text-sm leading-6 text-neutral-500">{error}</p>
+          <button
+            type="button"
+            onClick={logout}
+            className="mt-6 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-semibold text-white"
+          >
+            Sign out
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  const company = tenant.organization;
 
   return (
     <main className="min-h-screen bg-neutral-100 text-neutral-950">
@@ -94,7 +136,7 @@ export default function DashboardPage() {
 
           <div className="mt-3 rounded-2xl border bg-neutral-50 p-3">
             <p className="truncate text-sm font-semibold">{company.name}</p>
-            <p className="mt-1 text-xs text-neutral-500">{current.role} · {company.currency}</p>
+            <p className="mt-1 text-xs capitalize text-neutral-500">{tenant.role} · {company.currency}</p>
           </div>
 
           <nav className="mt-5 space-y-1">
@@ -153,20 +195,16 @@ export default function DashboardPage() {
 
           <div className="mt-5 grid gap-5 xl:grid-cols-[1.45fr_0.55fr]">
             <section className="rounded-2xl border bg-white p-6 shadow-sm shadow-neutral-200/30">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold">Business OS foundation is live</h3>
-                  <p className="mt-1 text-sm text-neutral-500">
-                    Authentication, tenant isolation, company onboarding, PostgreSQL, and deployment are connected.
-                  </p>
-                </div>
-              </div>
+              <h3 className="font-semibold">Tenant-safe Business OS foundation</h3>
+              <p className="mt-1 text-sm text-neutral-500">
+                Every company request now resolves a validated tenant context before business data is accessed.
+              </p>
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
                 {[
                   "Client & lead management",
                   "Orders & project workflow",
                   "Invoices, payments & banking",
-                  "Employees, roles & permissions",
+                  tenant.role === "admin" ? "Employee & company administration" : "Employee workspace",
                 ].map((item) => (
                   <div key={item} className="rounded-xl border border-dashed bg-neutral-50 px-4 py-4 text-sm text-neutral-600">
                     {item}
@@ -176,8 +214,12 @@ export default function DashboardPage() {
             </section>
 
             <aside className="rounded-2xl border bg-white p-6 shadow-sm shadow-neutral-200/30">
-              <h3 className="font-semibold">Company settings</h3>
+              <h3 className="font-semibold">Company context</h3>
               <dl className="mt-5 space-y-4 text-sm">
+                <div>
+                  <dt className="text-neutral-400">Role</dt>
+                  <dd className="mt-1 font-medium capitalize">{tenant.role}</dd>
+                </div>
                 <div>
                   <dt className="text-neutral-400">Country</dt>
                   <dd className="mt-1 font-medium">{company.country_code}</dd>
@@ -189,10 +231,6 @@ export default function DashboardPage() {
                 <div>
                   <dt className="text-neutral-400">Currency</dt>
                   <dd className="mt-1 font-medium">{company.currency}</dd>
-                </div>
-                <div>
-                  <dt className="text-neutral-400">Team size</dt>
-                  <dd className="mt-1 font-medium">{company.team_size ?? "Not set"}</dd>
                 </div>
               </dl>
             </aside>
