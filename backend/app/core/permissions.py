@@ -14,6 +14,8 @@ PERMISSION_CATALOG = [
     "crm.manage",
     "clients.view",
     "clients.manage",
+    "quotations.view",
+    "quotations.manage",
     "orders.view",
     "orders.manage",
     "projects.view",
