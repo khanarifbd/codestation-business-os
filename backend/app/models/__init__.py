@@ -12,6 +12,7 @@ from app.models.company_settings import (
     OrganizationProfile,
 )
 from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
+from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
@@ -31,7 +32,8 @@ from app.models.user import User
 
 __all__ = [
     "ActivityLog", "Client", "Department", "Designation", "Employee", "EmployeeInvitation",
-    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "Membership", "Order", "OrderItem",
+    "FinancialAccount", "FinancialTransaction", "Invoice", "InvoiceItem",
+    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "Membership", "Order", "OrderItem", "Payment",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
