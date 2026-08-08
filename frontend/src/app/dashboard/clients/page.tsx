@@ -101,6 +101,10 @@ export default function ClientsPage() {
     await Promise.all([loadList(true), loadSummary()]);
   }
 
+  async function refreshDetail(clientId: string) {
+    setDetail(await api(`/clients/${clientId}/detail`) as ClientDetail);
+  }
+
   async function loadMore() {
     if (!nextCursor) return; setLoadingMore(true);
     try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/clients?${params}`) as { items: Client[]; next_cursor: string | null }; setClients((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); }
@@ -110,7 +114,7 @@ export default function ClientsPage() {
 
   async function openClient(id: string) {
     setDetailLoading(true); setError(null);
-    try { setDetail(await api(`/clients/${id}/detail`) as ClientDetail); }
+    try { await refreshDetail(id); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load client."); }
     finally { setDetailLoading(false); }
   }
@@ -126,21 +130,21 @@ export default function ClientsPage() {
   }
 
   async function updateClient(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (!detail) return; const form = new FormData(event.currentTarget);
+    event.preventDefault(); if (!detail) return; const clientId = detail.id; const form = new FormData(event.currentTarget);
     setSaving(true); setError(null); setMessage(null);
     try {
-      const updated = await api(`/clients/${detail.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...clientPayload(form), status: detail.status }) }) as ClientDetail;
-      setDetail(updated); setMessage("Client updated"); await refreshAfterMutation();
+      await api(`/clients/${clientId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...clientPayload(form), status: detail.status }) });
+      await Promise.all([refreshDetail(clientId), refreshAfterMutation()]); setMessage("Client updated");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update client."); }
     finally { setSaving(false); }
   }
 
   async function changeStatus() {
-    if (!detail) return; const next = detail.status === "active" ? "inactive" : "active";
+    if (!detail) return; const clientId = detail.id; const next = detail.status === "active" ? "inactive" : "active";
     setSaving(true); setError(null);
     try {
-      const updated = await api(`/clients/${detail.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) }) as ClientDetail;
-      setDetail(updated); setMessage(next === "active" ? "Client reactivated" : "Client marked inactive"); await refreshAfterMutation();
+      await api(`/clients/${clientId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) });
+      await Promise.all([refreshDetail(clientId), refreshAfterMutation()]); setMessage(next === "active" ? "Client reactivated" : "Client marked inactive");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update client status."); }
     finally { setSaving(false); }
   }
