@@ -1,0 +1,1 @@
+Validate migration 0017, expense/vendor sequences, default categories, account ledger debit/void reversal, project/client profitability, receipt routes, audit, and frontend production build.
