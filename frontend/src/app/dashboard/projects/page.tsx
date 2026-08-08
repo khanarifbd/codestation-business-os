@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, CirclePause, FolderKanban, Loader2, PlayCircle, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { SearchableSelect } from "@/components/searchable-select";
 
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
 type Meta = { employees: EmployeeOption[] };
@@ -63,8 +64,17 @@ export default function ProjectsPage() {
     return params.toString();
   }, [search, statusFilter]);
 
-  const refresh = useCallback(async () => {
-    setLoading(true); setError(null);
+  const loadList = useCallback(async (first = false) => {
+    if (first) setLoading(true);
+    setError(null);
+    try {
+      const listPayload = await api(`?${query}`) as { items: ProjectRow[]; next_cursor: string | null };
+      setRows(listPayload.items); setNextCursor(listPayload.next_cursor);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load projects."); }
+    finally { if (first) setLoading(false); }
+  }, [api, query]);
+
+  useEffect(() => { void (async () => {
     try {
       const [metaPayload, summaryPayload, listPayload] = await Promise.all([api("/meta"), api("/summary"), api(`?${query}`)]);
       setMeta(metaPayload as Meta); setSummary(summaryPayload as Summary);
@@ -72,9 +82,15 @@ export default function ProjectsPage() {
       setRows(typed.items); setNextCursor(typed.next_cursor);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load projects."); }
     finally { setLoading(false); }
-  }, [api, query]);
+  })();
+  // initial metadata and summary are intentionally loaded once
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (loading) return;
+    void loadList();
+  }, [query, loadList, loading]);
 
   useEffect(() => {
     if (!orderId) { setOrder(null); setOrderProjectLink(null); return; }
@@ -121,7 +137,7 @@ export default function ProjectsPage() {
     </section>
   </div>
 
-  {createOpen && order ? <Modal title="Create project from order" onClose={() => setCreateOpen(false)}><div className="grid gap-4 sm:grid-cols-2"><Field label="Project name"><input value={name} onChange={(e) => setName(e.target.value)} className="control" /></Field><Field label="Priority"><select value={priority} onChange={(e) => setPriority(e.target.value)} className="control"><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></Field><Field label="Project manager"><select value={managerId} onChange={(e) => { const id = e.target.value; setManagerId(id); if (id && !memberIds.includes(id)) setMemberIds([...memberIds, id]); }} className="control"><option value="">Unassigned</option>{meta.employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.full_name} · {employee.employee_code}</option>)}</select></Field><Field label="Planned start"><input type="date" value={plannedStartDate} onChange={(e) => setPlannedStartDate(e.target.value)} className="control" /></Field><Field label="Due date"><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="control" /></Field><label className="sm:col-span-2 text-sm font-medium">Team<div className="mt-2 max-h-48 overflow-y-auto rounded-xl border">{meta.employees.map((employee) => <label key={employee.id} className="flex items-center gap-3 border-b px-3 py-2 last:border-0"><input type="checkbox" checked={memberIds.includes(employee.id) || managerId === employee.id} disabled={managerId === employee.id} onChange={(e) => setMemberIds(e.target.checked ? [...new Set([...memberIds, employee.id])] : memberIds.filter((id) => id !== employee.id))} /><span>{employee.full_name}</span></label>)}</div></label><label className="sm:col-span-2 text-sm font-medium">Description<textarea value={description} onChange={(e) => setDescription(e.target.value)} className="mt-2 min-h-24 w-full rounded-xl border p-3 text-sm" /></label></div><div className="mt-6 flex justify-end gap-2"><button onClick={() => setCreateOpen(false)} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button><button disabled={saving || !name.trim()} onClick={() => void createProject()} className="h-11 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Creating..." : "Create project"}</button></div></Modal> : null}
+  {createOpen && order ? <Modal title="Create project from order" onClose={() => setCreateOpen(false)}><div className="grid gap-4 sm:grid-cols-2"><Field label="Project name"><input value={name} onChange={(e) => setName(e.target.value)} className="control" /></Field><Field label="Priority"><select value={priority} onChange={(e) => setPriority(e.target.value)} className="control"><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></Field><SearchableSelect label="Project manager" name="project_manager_employee_id" value={managerId} onValueChange={(id) => { setManagerId(id); if (id && !memberIds.includes(id)) setMemberIds((current) => [...new Set([...current, id])]); }} placeholder="Unassigned" searchPlaceholder="Search employees..." options={meta.employees.map((employee) => ({ value: employee.id, label: employee.full_name, keywords: employee.employee_code }))}/><Field label="Planned start"><input type="date" value={plannedStartDate} onChange={(e) => setPlannedStartDate(e.target.value)} className="control" /></Field><Field label="Due date"><input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="control" /></Field><label className="sm:col-span-2 text-sm font-medium">Team<div className="mt-2 max-h-48 overflow-y-auto rounded-xl border">{meta.employees.map((employee) => <label key={employee.id} className="flex items-center gap-3 border-b px-3 py-2 last:border-0"><input type="checkbox" checked={memberIds.includes(employee.id) || managerId === employee.id} disabled={managerId === employee.id} onChange={(e) => setMemberIds(e.target.checked ? [...new Set([...memberIds, employee.id])] : memberIds.filter((id) => id !== employee.id))} /><span>{employee.full_name}</span></label>)}</div></label><label className="sm:col-span-2 text-sm font-medium">Description<textarea value={description} onChange={(e) => setDescription(e.target.value)} className="mt-2 min-h-24 w-full rounded-xl border p-3 text-sm" /></label></div><div className="mt-6 flex justify-end gap-2"><button onClick={() => setCreateOpen(false)} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button><button disabled={saving || !name.trim()} onClick={() => void createProject()} className="h-11 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Creating..." : "Create project"}</button></div></Modal> : null}
   <style jsx global>{`.control{margin-top:.5rem;height:2.75rem;width:100%;border:1px solid #e5e5e5;border-radius:.75rem;padding:0 .75rem;font-size:.875rem;background:white}`}</style>
   </main>;
 }
