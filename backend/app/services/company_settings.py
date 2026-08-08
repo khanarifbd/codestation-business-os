@@ -16,6 +16,8 @@ SEQUENCE_DEFAULTS = {
     "invoice": "INV",
     "payment": "PAY",
     "transfer": "TRF",
+    "expense": "EXP",
+    "vendor": "VND",
     "quotation": "QUO",
     "order": "ORD",
     "project": "PRJ",
