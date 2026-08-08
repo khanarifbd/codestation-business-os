@@ -102,8 +102,8 @@ def _designation(db: DbSession, organization_id: str, designation_id: str | None
     return item
 
 
-def _employee_rows(db: DbSession, organization_id: str):
-    return db.execute(
+def _employee_query(organization_id: str):
+    return (
         select(Employee, Membership, User, OrganizationRole, Department, Designation)
         .join(Membership, Membership.id == Employee.membership_id)
         .join(User, User.id == Membership.user_id)
@@ -111,8 +111,19 @@ def _employee_rows(db: DbSession, organization_id: str):
         .outerjoin(Department, Department.id == Employee.department_id)
         .outerjoin(Designation, Designation.id == Employee.designation_id)
         .where(Employee.organization_id == organization_id)
-        .order_by(Employee.created_at.asc(), Employee.id.asc())
+    )
+
+
+def _employee_rows(db: DbSession, organization_id: str):
+    return db.execute(
+        _employee_query(organization_id).order_by(Employee.created_at.asc(), Employee.id.asc())
     ).all()
+
+
+def _employee_row(db: DbSession, organization_id: str, employee_id: str):
+    return db.execute(
+        _employee_query(organization_id).where(Employee.id == employee_id)
+    ).first()
 
 
 def _employee_read(row) -> EmployeeRead:
@@ -147,15 +158,14 @@ def _employee_read(row) -> EmployeeRead:
     )
 
 
-def _invitation_read(db: DbSession, item: EmployeeInvitation) -> InvitationRead:
-    role = db.get(OrganizationRole, item.role_id)
+def _invitation_read(item: EmployeeInvitation, role_name: str | None = None) -> InvitationRead:
     return InvitationRead(
         id=item.id,
         organization_id=item.organization_id,
         email=item.email,
         full_name=item.full_name,
         role_id=item.role_id,
-        role_name=role.name if role else "Unknown",
+        role_name=role_name or "Unknown",
         department_id=item.department_id,
         designation_id=item.designation_id,
         employee_code=item.employee_code,
@@ -163,6 +173,17 @@ def _invitation_read(db: DbSession, item: EmployeeInvitation) -> InvitationRead:
         expires_at=item.expires_at,
         created_at=item.created_at,
     )
+
+
+def _invitation_with_role(db: DbSession, organization_id: str, invitation_id: str):
+    return db.execute(
+        select(EmployeeInvitation, OrganizationRole.name)
+        .outerjoin(OrganizationRole, OrganizationRole.id == EmployeeInvitation.role_id)
+        .where(
+            EmployeeInvitation.id == invitation_id,
+            EmployeeInvitation.organization_id == organization_id,
+        )
+    ).first()
 
 
 def _ensure_admin_remains(
@@ -210,12 +231,14 @@ def get_team_bundle(db: DbSession, tenant: CurrentTenantAdmin) -> TeamBundle:
         .where(OrganizationRole.organization_id == organization_id)
         .order_by(OrganizationRole.is_system.desc(), OrganizationRole.name)
     ).all()
-    invitations = db.scalars(
-        select(EmployeeInvitation)
+    invitation_rows = db.execute(
+        select(EmployeeInvitation, OrganizationRole.name)
+        .outerjoin(OrganizationRole, OrganizationRole.id == EmployeeInvitation.role_id)
         .where(EmployeeInvitation.organization_id == organization_id)
         .order_by(EmployeeInvitation.created_at.desc())
         .limit(100)
     ).all()
+    invitations = [_invitation_read(invite, role_name) for invite, role_name in invitation_rows]
     return TeamBundle(
         summary=TeamSummary(
             total_employees=len(employees),
@@ -235,7 +258,7 @@ def get_team_bundle(db: DbSession, tenant: CurrentTenantAdmin) -> TeamBundle:
         departments=[DepartmentRead.model_validate(item) for item in departments],
         designations=[DesignationRead.model_validate(item) for item in designations],
         roles=[RoleRead.model_validate(item) for item in roles],
-        invitations=[_invitation_read(db, item) for item in invitations],
+        invitations=invitations,
         permission_catalog=PERMISSION_CATALOG,
     )
 
@@ -398,35 +421,29 @@ def create_invitation(payload: InvitationCreate, request: Request, db: DbSession
                "employee_code": item.employee_code, "expires_at": item.expires_at.isoformat()},
         request=request, message=f"Employee invited: {item.email}")
     db.commit(); db.refresh(item)
-    base = _invitation_read(db, item)
+    base = _invitation_read(item, role.name)
     return InvitationCreated(**base.model_dump(), invite_token=token)
 
 
 @router.post("/invitations/{invitation_id}/revoke", response_model=InvitationRead)
 def revoke_invitation(invitation_id: str, request: Request, db: DbSession, tenant: CurrentTenantAdmin):
-    item = db.scalar(select(EmployeeInvitation).where(EmployeeInvitation.id == invitation_id, EmployeeInvitation.organization_id == tenant.organization_id))
-    if item is None: raise HTTPException(status_code=404, detail="Invitation not found")
-    before = _invitation_read(db, item).model_dump(mode="json")
+    row = _invitation_with_role(db, tenant.organization_id, invitation_id)
+    if row is None: raise HTTPException(status_code=404, detail="Invitation not found")
+    item, role_name = row
+    before = _invitation_read(item, role_name).model_dump(mode="json")
     if item.status == "pending": item.status = "revoked"
-    db.flush(); after = _invitation_read(db, item).model_dump(mode="json")
+    db.flush(); after = _invitation_read(item, role_name).model_dump(mode="json")
     record_activity(db, action="employee.invitation.revoked", scope="tenant", actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id, entity_type="employee_invitation", entity_id=item.id,
         before=before, after=after, request=request, message=f"Employee invitation revoked: {item.email}")
-    db.commit(); db.refresh(item); return _invitation_read(db, item)
+    db.commit(); db.refresh(item); return _invitation_read(item, role_name)
 
 
 @router.patch("/employees/{employee_id}", response_model=EmployeeRead)
 def update_employee(employee_id: str, payload: EmployeeUpdate, request: Request, db: DbSession, tenant: CurrentTenantAdmin):
-    row = db.execute(
-        select(Employee, Membership, User, OrganizationRole)
-        .join(Membership, Membership.id == Employee.membership_id)
-        .join(User, User.id == Membership.user_id)
-        .join(OrganizationRole, OrganizationRole.id == Membership.role_id)
-        .where(Employee.id == employee_id, Employee.organization_id == tenant.organization_id)
-    ).first()
-    if row is None: raise HTTPException(status_code=404, detail="Employee not found")
-    employee, membership, user, current_role = row
-    before_row = next(r for r in _employee_rows(db, tenant.organization_id) if r[0].id == employee_id)
+    before_row = _employee_row(db, tenant.organization_id, employee_id)
+    if before_row is None: raise HTTPException(status_code=404, detail="Employee not found")
+    employee, membership, user, current_role, _, _ = before_row
     before = _employee_read(before_row).model_dump(mode="json")
     changes = payload.model_dump(exclude_unset=True)
 
@@ -453,18 +470,18 @@ def update_employee(employee_id: str, payload: EmployeeUpdate, request: Request,
     if "manager_employee_id" in changes and changes["manager_employee_id"]:
         manager = db.scalar(select(Employee).where(Employee.id == changes["manager_employee_id"], Employee.organization_id == tenant.organization_id))
         if manager is None or manager.id == employee.id: raise HTTPException(status_code=400, detail="Invalid manager")
-    for field, value in changes.items():
-        if isinstance(value, str): value = value.strip() or None
-        setattr(employee, field, value)
+    for field, field_value in changes.items():
+        if isinstance(field_value, str): field_value = field_value.strip() or None
+        setattr(employee, field, field_value)
     db.flush()
-    after_row = next(r for r in _employee_rows(db, tenant.organization_id) if r[0].id == employee_id)
+    after_row = _employee_row(db, tenant.organization_id, employee_id)
+    if after_row is None: raise HTTPException(status_code=404, detail="Employee not found")
     after = _employee_read(after_row).model_dump(mode="json")
     record_activity(db, action="employee.updated", scope="tenant", actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id, entity_type="employee", entity_id=employee.id,
         before=before, after=after, request=request, message=f"Employee updated: {user.full_name}")
     db.commit()
-    final_row = next(r for r in _employee_rows(db, tenant.organization_id) if r[0].id == employee_id)
-    return _employee_read(final_row)
+    return _employee_read(after_row)
 
 
 @invitation_router.get("/{token}", response_model=InvitationPreview)
