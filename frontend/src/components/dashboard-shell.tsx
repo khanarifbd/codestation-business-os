@@ -28,7 +28,7 @@ const navigation: NavigationItem[] = [
   { label: "Quotations", icon: FileText, href: "/dashboard/quotations" },
   { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
-  { label: "Finance", icon: CircleDollarSign },
+  { label: "Finance", icon: CircleDollarSign, href: "/dashboard/finance" },
   { label: "Employees", icon: UsersRound, href: "/dashboard/employees" },
   { label: "Reports", icon: BarChart3 },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
