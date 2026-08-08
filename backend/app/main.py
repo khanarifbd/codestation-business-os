@@ -1,12 +1,19 @@
+import logging
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import JSONResponse
 
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.services.bootstrap import ensure_super_admin
+
+logger = logging.getLogger(__name__)
+VAULT_CONFIGURATION_ERROR = "Project credential encryption key is not configured"
+VAULT_USER_MESSAGE = "Credentials Vault is temporarily unavailable. Please contact your administrator."
 
 
 @asynccontextmanager
@@ -20,6 +27,20 @@ app = FastAPI(
     version=settings.app_version,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def safe_http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+    detail = exc.detail
+    status_code = exc.status_code
+    if detail == VAULT_CONFIGURATION_ERROR:
+        logger.error(
+            "Credentials Vault unavailable because PROJECT_CREDENTIAL_ENCRYPTION_KEY is not configured",
+            extra={"path": request.url.path},
+        )
+        detail = VAULT_USER_MESSAGE
+        status_code = 503
+    return JSONResponse(status_code=status_code, content={"detail": detail}, headers=exc.headers)
 
 
 @app.middleware("http")
