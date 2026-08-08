@@ -158,6 +158,7 @@ class ExpenseDetail(ExpenseListItem):
 
 class ExpensePage(BaseModel):
     items: list[ExpenseListItem]
+    next_cursor: str | None = None
 
 
 class ExpenseMetaAccount(BaseModel):
