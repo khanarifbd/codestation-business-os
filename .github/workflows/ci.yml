@@ -58,6 +58,7 @@ jobs:
       - run: uv run python scripts/verify_projects.py
       - run: uv run python scripts/verify_project_execution.py
       - run: uv run python scripts/verify_finance.py
+      - run: uv run python scripts/verify_transfers.py
       - run: uv run python scripts/verify_audit.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
