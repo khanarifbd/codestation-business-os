@@ -19,6 +19,7 @@ from app.api.v1.organizations import router as organizations_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.project_execution import router as project_execution_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.reports import router as reports_router
 from app.api.v1.sales import router as sales_router
 from app.api.v1.team import invitation_router, router as team_router
 from app.api.v1.tenant import router as tenant_router
@@ -42,6 +43,7 @@ api_router.include_router(project_execution_router)
 api_router.include_router(finance_router)
 api_router.include_router(finance_transfers_router)
 api_router.include_router(finance_expenses_router)
+api_router.include_router(reports_router)
 api_router.include_router(company_uploads_router)
 api_router.include_router(company_settings_router)
 api_router.include_router(company_defaults_router)
