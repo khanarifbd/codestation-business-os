@@ -55,8 +55,12 @@ def main() -> None:
 
         _, summary_queries = count_selects(lambda: finance_summary(db, tenant))  # type: ignore[arg-type]
         _, account_queries = count_selects(lambda: list_accounts(db, tenant))  # type: ignore[arg-type]
-        _, invoice_queries = count_selects(lambda: list_invoices(db, tenant, limit=100))  # type: ignore[arg-type]
-        _, payment_queries = count_selects(lambda: list_payments(db, tenant, limit=100))  # type: ignore[arg-type]
+        _, invoice_queries = count_selects(
+            lambda: list_invoices(db, tenant, search=None, invoice_status=None, client_id=None, limit=100)  # type: ignore[arg-type]
+        )
+        _, payment_queries = count_selects(
+            lambda: list_payments(db, tenant, invoice_id=None, limit=100)  # type: ignore[arg-type]
+        )
 
         if summary_queries > 4:
             raise AssertionError(f"finance summary query regression: expected <=4 SELECTs, got {summary_queries}")
