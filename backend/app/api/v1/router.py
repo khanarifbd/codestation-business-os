@@ -11,6 +11,7 @@ from app.api.v1.crm_status import router as crm_status_router
 from app.api.v1.crm_summary import router as crm_summary_router
 from app.api.v1.exchange_rates import router as exchange_rates_router
 from app.api.v1.finance import router as finance_router
+from app.api.v1.finance_controls import router as finance_controls_router
 from app.api.v1.finance_expenses import router as finance_expenses_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
 from app.api.v1.health import router as health_router
@@ -45,6 +46,7 @@ api_router.include_router(project_execution_router)
 api_router.include_router(finance_router)
 api_router.include_router(finance_transfers_router)
 api_router.include_router(finance_expenses_router)
+api_router.include_router(finance_controls_router)
 api_router.include_router(reports_router)
 api_router.include_router(workspace_router)
 api_router.include_router(company_uploads_router)
