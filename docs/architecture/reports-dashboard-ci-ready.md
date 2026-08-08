@@ -1,0 +1,1 @@
+Reports and live business dashboard implementation is ready for temporary CI validation.
