@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "CodeStation Business OS API"
-    app_version: str = "0.4.0"
+    app_version: str = "0.5.0"
     environment: str = "development"
     database_url: str = (
         "postgresql+psycopg://business_os:change_me@localhost:5432/"
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     super_admin_name: str = "CodeStation AI Super Admin"
     local_storage_path: str = "./data/uploads"
     max_document_upload_mb: int = 20
+    project_credential_encryption_key: str = "development-only-project-credential-key"
 
     model_config = SettingsConfigDict(
         env_file=".env",
