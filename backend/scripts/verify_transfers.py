@@ -1,9 +1,8 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from starlette.requests import Request
 
 from app.api.v1.finance import create_account
@@ -52,11 +51,11 @@ def expect_http_error(expected_status: int, fn) -> None:
 
 
 def balance(db, account: FinancialAccount) -> Decimal:
-    credits = db.scalar(select(text("COALESCE(SUM(amount), 0)")).select_from(FinancialTransaction).where(
+    credits = db.scalar(select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
         FinancialTransaction.account_id == account.id,
         FinancialTransaction.direction == "credit",
     )) or Decimal("0")
-    debits = db.scalar(select(text("COALESCE(SUM(amount), 0)")).select_from(FinancialTransaction).where(
+    debits = db.scalar(select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
         FinancialTransaction.account_id == account.id,
         FinancialTransaction.direction == "debit",
     )) or Decimal("0")
