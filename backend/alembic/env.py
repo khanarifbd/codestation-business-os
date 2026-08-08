@@ -13,6 +13,9 @@ from app.models import (  # noqa: F401
     Designation,
     Employee,
     EmployeeInvitation,
+    Expense,
+    ExpenseCategory,
+    ExpenseDocument,
     FinancialAccount,
     FinancialTransaction,
     Invoice,
@@ -48,6 +51,7 @@ from app.models import (  # noqa: F401
     QuotationItem,
     Subscription,
     User,
+    Vendor,
 )
 
 config = context.config
