@@ -34,7 +34,7 @@ const navigation: NavigationItem[] = [
   { label: "Transfers", icon: ArrowRightLeft, href: "/dashboard/finance/transfers" },
   { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
   { label: "Employees", icon: UsersRound, href: "/dashboard/employees" },
-  { label: "Reports", icon: BarChart3 },
+  { label: "Reports", icon: BarChart3, href: "/dashboard/reports" },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
   { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs" },
   { label: "Settings", icon: Settings },
