@@ -1,0 +1,248 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, ArrowRight, ArrowRightLeft, Building2, Loader2, Plus, ReceiptText, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+
+type Account = {
+  id: string;
+  name: string;
+  account_type: string;
+  provider_name: string | null;
+  currency: string;
+  current_balance: string | number;
+  is_active: boolean;
+};
+
+type Transfer = {
+  id: string;
+  transfer_number: string;
+  from_account_id: string;
+  from_account_name: string;
+  to_account_id: string;
+  to_account_name: string;
+  transfer_date: string;
+  source_currency: string;
+  destination_currency: string;
+  source_amount: string | number;
+  fee_amount: string | number;
+  net_source_amount: string | number;
+  destination_amount: string | number;
+  exchange_rate: string | number;
+  reference: string | null;
+  notes: string | null;
+  status: string;
+  created_at: string;
+};
+
+type FormState = {
+  from_account_id: string;
+  to_account_id: string;
+  transfer_date: string;
+  source_amount: string;
+  fee_amount: string;
+  destination_amount: string;
+  reference: string;
+  notes: string;
+};
+
+const initialForm: FormState = {
+  from_account_id: "",
+  to_account_id: "",
+  transfer_date: "",
+  source_amount: "",
+  fee_amount: "0",
+  destination_amount: "",
+  reference: "",
+  notes: "",
+};
+
+function pretty(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+function money(value: string | number, currency: string) {
+  return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export default function TransfersPage() {
+  const router = useRouter();
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [form, setForm] = useState<FormState>(initialForm);
+
+  const api = useCallback(async (path: string, init?: RequestInit) => {
+    const response = await fetch(`/api/finance${path}`, init);
+    if (response.status === 401) {
+      router.replace("/login");
+      throw new Error("Authentication required");
+    }
+    const payload = response.status === 204 ? null : await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.detail ?? "Finance request failed.");
+    return payload;
+  }, [router]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [accountData, transferData] = await Promise.all([
+        api("/accounts"),
+        api("/transfers?limit=200"),
+      ]);
+      setAccounts(accountData as Account[]);
+      setTransfers(transferData as Transfer[]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load transfers.");
+    } finally {
+      setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const source = useMemo(() => accounts.find((item) => item.id === form.from_account_id) ?? null, [accounts, form.from_account_id]);
+  const destination = useMemo(() => accounts.find((item) => item.id === form.to_account_id) ?? null, [accounts, form.to_account_id]);
+  const sourceAmount = Number(form.source_amount || 0);
+  const feeAmount = Number(form.fee_amount || 0);
+  const netSource = Math.max(0, sourceAmount - feeAmount);
+  const sameCurrency = Boolean(source && destination && source.currency === destination.currency);
+  const receivedAmount = sameCurrency ? netSource : Number(form.destination_amount || 0);
+  const effectiveRate = netSource > 0 && receivedAmount > 0 ? receivedAmount / netSource : 0;
+
+  function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function openTransfer(sourceId?: string) {
+    const firstSource = sourceId || accounts.find((item) => item.is_active && Number(item.current_balance) > 0)?.id || "";
+    setForm({ ...initialForm, from_account_id: firstSource });
+    setError(null);
+    setMessage(null);
+    setModalOpen(true);
+  }
+
+  async function submitTransfer(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!source || !destination) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api("/transfers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from_account_id: source.id,
+          to_account_id: destination.id,
+          transfer_date: form.transfer_date || null,
+          source_amount: form.source_amount,
+          fee_amount: form.fee_amount || "0",
+          destination_amount: sameCurrency ? null : form.destination_amount,
+          reference: form.reference || null,
+          notes: form.notes || null,
+        }),
+      });
+      setModalOpen(false);
+      setMessage(`Transfer recorded. ${source.name} and ${destination.name} ledgers were updated.`);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to record transfer.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
+  }
+
+  return <main className="min-h-screen bg-neutral-100 p-5 sm:p-7 lg:p-9">
+    <div className="mx-auto max-w-[1500px]">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <Link href="/dashboard/finance" className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Finance</Link>
+          <p className="mt-4 text-sm text-neutral-500">Move money between company accounts</p>
+          <h1 className="mt-1 text-3xl font-semibold tracking-tight">Account Transfers</h1>
+          <p className="mt-2 max-w-3xl text-sm text-neutral-500">Transfers move existing money; they do not create revenue. Withdrawal fees are posted separately, and cross-currency transfers capture the actual effective exchange rate.</p>
+        </div>
+        <button onClick={() => openTransfer()} disabled={accounts.filter((item) => item.is_active).length < 2} className="inline-flex items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"><Plus className="size-4" />New transfer</button>
+      </div>
+
+      {message ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
+      {error && !modalOpen ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+
+      <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {accounts.map((account) => <article key={account.id} className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div><p className="font-semibold">{account.name}</p><p className="mt-1 text-xs text-neutral-400">{pretty(account.account_type)}{account.provider_name ? ` · ${account.provider_name}` : ""}</p></div>
+            <Building2 className="size-5 text-neutral-300" />
+          </div>
+          <p className="mt-5 text-xs text-neutral-400">Current balance</p>
+          <p className="mt-1 text-2xl font-semibold">{money(account.current_balance, account.currency)}</p>
+          <button disabled={!account.is_active || Number(account.current_balance) <= 0} onClick={() => openTransfer(account.id)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold disabled:opacity-40"><ArrowRightLeft className="size-4" />Transfer from this account</button>
+        </article>)}
+      </div>
+
+      <section className="mt-6 overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <div className="border-b p-5"><h2 className="text-lg font-semibold">Transfer history</h2><p className="mt-1 text-sm text-neutral-500">Fees and FX conversion remain traceable to each transfer.</p></div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1150px] text-left text-sm">
+            <thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Transfer</th><th>Route</th><th>Date</th><th>Deducted</th><th>Fee</th><th>Net source</th><th>Received</th><th>Effective rate</th><th className="pr-4">Reference</th></tr></thead>
+            <tbody className="divide-y">
+              {transfers.map((item) => <tr key={item.id}>
+                <td className="p-4 font-semibold">{item.transfer_number}</td>
+                <td><div className="flex items-center gap-2"><span>{item.from_account_name}</span><ArrowRight className="size-3.5 text-neutral-300"/><span>{item.to_account_name}</span></div></td>
+                <td>{item.transfer_date}</td>
+                <td>{money(item.source_amount, item.source_currency)}</td>
+                <td className={Number(item.fee_amount) > 0 ? "font-medium text-amber-700" : "text-neutral-400"}>{money(item.fee_amount, item.source_currency)}</td>
+                <td>{money(item.net_source_amount, item.source_currency)}</td>
+                <td className="font-semibold">{money(item.destination_amount, item.destination_currency)}</td>
+                <td>{item.source_currency === item.destination_currency ? "1.00000000" : `1 ${item.source_currency} = ${Number(item.exchange_rate).toLocaleString(undefined, { maximumFractionDigits: 8 })} ${item.destination_currency}`}</td>
+                <td className="pr-4">{item.reference || "—"}</td>
+              </tr>)}
+            </tbody>
+          </table>
+          {!transfers.length ? <div className="flex min-h-52 flex-col items-center justify-center p-8 text-center"><ReceiptText className="size-7 text-neutral-300"/><p className="mt-3 font-semibold">No transfers yet</p><p className="mt-1 text-sm text-neutral-400">Record your first movement between accounts.</p></div> : null}
+        </div>
+      </section>
+    </div>
+
+    {modalOpen ? <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <form onSubmit={submitTransfer} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-semibold">Record account transfer</h2><p className="mt-1 text-sm text-neutral-500">Use the amounts exactly as they appear in your provider/bank statements.</p></div><button type="button" onClick={() => setModalOpen(false)} className="rounded-lg p-2 hover:bg-neutral-100"><X className="size-5"/></button></div>
+
+        {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="text-sm font-medium">From account<select required value={form.from_account_id} onChange={(e) => updateForm("from_account_id", e.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 font-normal"><option value="">Select source</option>{accounts.filter((item) => item.is_active && item.id !== form.to_account_id).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.currency} {Number(item.current_balance).toFixed(2)}</option>)}</select></label>
+          <label className="text-sm font-medium">To account<select required value={form.to_account_id} onChange={(e) => updateForm("to_account_id", e.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 font-normal"><option value="">Select destination</option>{accounts.filter((item) => item.is_active && item.id !== form.from_account_id).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.currency}</option>)}</select></label>
+          <label className="text-sm font-medium">Transfer date<input type="date" value={form.transfer_date} onChange={(e) => updateForm("transfer_date", e.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 font-normal"/></label>
+          <label className="text-sm font-medium">Reference<input value={form.reference} onChange={(e) => updateForm("reference", e.target.value)} placeholder="Provider / bank reference" className="mt-2 h-11 w-full rounded-xl border px-3 font-normal"/></label>
+          <label className="text-sm font-medium">Total deducted from source {source ? `(${source.currency})` : ""}<input required type="number" min="0.01" step="0.01" value={form.source_amount} onChange={(e) => updateForm("source_amount", e.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 font-normal"/><span className="mt-1 block text-xs font-normal text-neutral-400">Total amount by which the source account balance decreased.</span></label>
+          <label className="text-sm font-medium">Transfer / withdrawal fee {source ? `(${source.currency})` : ""}<input required type="number" min="0" step="0.01" value={form.fee_amount} onChange={(e) => updateForm("fee_amount", e.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 font-normal"/><span className="mt-1 block text-xs font-normal text-neutral-400">Fee is included inside the total deducted amount.</span></label>
+          <label className="text-sm font-medium sm:col-span-2">Actual received in destination {destination ? `(${destination.currency})` : ""}<input required={!sameCurrency} readOnly={sameCurrency} type="number" min="0.01" step="0.01" value={sameCurrency ? (netSource > 0 ? netSource.toFixed(2) : "") : form.destination_amount} onChange={(e) => updateForm("destination_amount", e.target.value)} placeholder={sameCurrency ? "Calculated after fee" : "Enter the exact amount received"} className="mt-2 h-11 w-full rounded-xl border px-3 font-normal read-only:bg-neutral-50"/><span className="mt-1 block text-xs font-normal text-neutral-400">For FX transfers, enter the exact amount that landed in the destination account. The effective rate is calculated automatically.</span></label>
+          <label className="text-sm font-medium sm:col-span-2">Notes<textarea value={form.notes} onChange={(e) => updateForm("notes", e.target.value)} rows={3} className="mt-2 w-full rounded-xl border px-3 py-2 font-normal" placeholder="Optional transfer notes"/></label>
+        </div>
+
+        <div className="mt-5 grid gap-3 rounded-2xl bg-neutral-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Preview label="Source balance" value={source ? money(source.current_balance, source.currency) : "—"}/>
+          <Preview label="Net transferred" value={source ? money(netSource, source.currency) : "—"}/>
+          <Preview label="Received" value={destination && receivedAmount > 0 ? money(receivedAmount, destination.currency) : "—"}/>
+          <Preview label="Effective FX" value={source && destination && effectiveRate > 0 ? (sameCurrency ? "1.00000000" : `1 ${source.currency} = ${effectiveRate.toLocaleString(undefined, { maximumFractionDigits: 8 })} ${destination.currency}`) : "—"}/>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setModalOpen(false)} className="rounded-xl border px-4 py-2.5 text-sm font-semibold">Cancel</button><button disabled={saving || !source || !destination || sourceAmount <= 0 || feeAmount < 0 || feeAmount >= sourceAmount || (!sameCurrency && receivedAmount <= 0)} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{saving ? <Loader2 className="size-4 animate-spin"/> : <ArrowRightLeft className="size-4"/>}Record transfer</button></div>
+      </form>
+    </div> : null}
+  </main>;
+}
+
+function Preview({ label, value }: { label: string; value: string }) {
+  return <div><p className="text-xs text-neutral-400">{label}</p><p className="mt-1 text-sm font-semibold">{value}</p></div>;
+}
