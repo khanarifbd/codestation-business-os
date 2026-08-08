@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 TaskStatus = Literal["todo", "in_progress", "blocked", "review", "completed", "cancelled"]
 TaskPriority = Literal["low", "normal", "high", "urgent"]
@@ -144,6 +144,8 @@ class CredentialRead(BaseModel):
     notes: str | None
     access_level: str
     created_by_user_id: str
+    last_revealed_by: str | None = None
+    last_revealed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -171,3 +173,4 @@ class ProjectWorkspace(BaseModel):
     recent_work: list[WorkLogRead]
     documents: list[ProjectDocumentRead]
     credentials: list[CredentialRead]
+    can_manage_credentials: bool = False
