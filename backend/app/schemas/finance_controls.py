@@ -77,9 +77,9 @@ class RecurringExpenseRead(BaseModel):
     reference: str | None
     notes: str | None
     is_active: bool
-    auto_post: bool
-    auto_post_last_attempt_at: datetime | None
-    auto_post_last_error: str | None
+    auto_post: bool = False
+    auto_post_last_attempt_at: datetime | None = None
+    auto_post_last_error: str | None = None
     last_posted_expense_id: str | None
     last_posted_at: datetime | None
     created_at: datetime
