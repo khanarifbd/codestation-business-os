@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import DBAPIError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
@@ -14,6 +15,8 @@ from app.services.bootstrap import ensure_super_admin
 logger = logging.getLogger(__name__)
 VAULT_CONFIGURATION_ERROR = "Project credential encryption key is not configured"
 VAULT_USER_MESSAGE = "Credentials Vault is temporarily unavailable. Please contact your administrator."
+CLOSED_PERIOD_MARKER = "Accounting period is closed for date"
+CLOSED_PERIOD_USER_MESSAGE = "This accounting period is closed. Reopen it with an audit reason before changing financial records."
 
 
 @asynccontextmanager
@@ -41,6 +44,23 @@ async def safe_http_exception_handler(request: Request, exc: StarletteHTTPExcept
         detail = VAULT_USER_MESSAGE
         status_code = 503
     return JSONResponse(status_code=status_code, content={"detail": detail}, headers=exc.headers)
+
+
+@app.exception_handler(DBAPIError)
+async def safe_database_exception_handler(request: Request, exc: DBAPIError) -> JSONResponse:
+    database_message = str(exc.orig)
+    if CLOSED_PERIOD_MARKER in database_message:
+        logger.info(
+            "Blocked financial mutation in closed accounting period",
+            extra={"path": request.url.path, "request_id": getattr(request.state, "request_id", None)},
+        )
+        return JSONResponse(status_code=409, content={"detail": CLOSED_PERIOD_USER_MESSAGE})
+    logger.exception(
+        "Unhandled database operation error",
+        exc_info=exc,
+        extra={"path": request.url.path, "request_id": getattr(request.state, "request_id", None)},
+    )
+    return JSONResponse(status_code=500, content={"detail": "Database operation failed. Please try again or contact your administrator."})
 
 
 @app.middleware("http")
