@@ -14,6 +14,7 @@ from app.models.organization import Organization
 
 SEQUENCE_DEFAULTS = {
     "invoice": "INV",
+    "payment": "PAY",
     "quotation": "QUO",
     "order": "ORD",
     "project": "PRJ",
