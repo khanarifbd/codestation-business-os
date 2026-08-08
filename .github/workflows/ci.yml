@@ -51,6 +51,7 @@ jobs:
       - run: uv run alembic upgrade 0008_team_roles
       - run: uv run python scripts/seed_existing_tenant_fixture.py
       - run: uv run alembic upgrade head
+      - run: uv run python scripts/verify_performance_indexes.py
       - run: uv run python scripts/verify_crm_migration_fixture.py
       - run: uv run python scripts/verify_crm_won_flow.py
       - run: uv run python scripts/verify_sales.py
