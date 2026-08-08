@@ -17,6 +17,7 @@ SEQUENCE_DEFAULTS = {
     "quotation": "QUO",
     "order": "ORD",
     "project": "PRJ",
+    "task": "TSK",
     "client": "CLI",
     "lead": "LEAD",
     "employee": "EMP",
@@ -32,75 +33,25 @@ def ensure_company_settings_defaults(db: Session, organization: Organization) ->
 
     organization_id = organization.id
 
-    if db.scalar(
-        select(OrganizationProfile.id).where(OrganizationProfile.organization_id == organization_id)
-    ) is None:
-        db.add(
-            OrganizationProfile(
-                organization_id=organization_id,
-                legal_name=organization.name,
-                industry=organization.business_type,
-                company_size=organization.team_size,
-            )
-        )
+    if db.scalar(select(OrganizationProfile.id).where(OrganizationProfile.organization_id == organization_id)) is None:
+        db.add(OrganizationProfile(organization_id=organization_id, legal_name=organization.name, industry=organization.business_type, company_size=organization.team_size))
 
-    if db.scalar(
-        select(OrganizationLocalizationSettings.id).where(
-            OrganizationLocalizationSettings.organization_id == organization_id
-        )
-    ) is None:
+    if db.scalar(select(OrganizationLocalizationSettings.id).where(OrganizationLocalizationSettings.organization_id == organization_id)) is None:
         db.add(OrganizationLocalizationSettings(organization_id=organization_id))
 
-    if db.scalar(
-        select(OrganizationFinancialSettings.id).where(
-            OrganizationFinancialSettings.organization_id == organization_id
-        )
-    ) is None:
-        db.add(
-            OrganizationFinancialSettings(
-                organization_id=organization_id,
-                accounting_currency=organization.currency,
-            )
-        )
+    if db.scalar(select(OrganizationFinancialSettings.id).where(OrganizationFinancialSettings.organization_id == organization_id)) is None:
+        db.add(OrganizationFinancialSettings(organization_id=organization_id, accounting_currency=organization.currency))
 
-    if db.scalar(
-        select(OrganizationSystemDefaults.id).where(
-            OrganizationSystemDefaults.organization_id == organization_id
-        )
-    ) is None:
-        db.add(
-            OrganizationSystemDefaults(
-                organization_id=organization_id,
-                default_client_country_code=organization.country_code,
-                default_client_currency=organization.currency,
-            )
-        )
+    if db.scalar(select(OrganizationSystemDefaults.id).where(OrganizationSystemDefaults.organization_id == organization_id)) is None:
+        db.add(OrganizationSystemDefaults(organization_id=organization_id, default_client_country_code=organization.country_code, default_client_currency=organization.currency))
 
-    if db.scalar(
-        select(OrganizationBranding.id).where(OrganizationBranding.organization_id == organization_id)
-    ) is None:
+    if db.scalar(select(OrganizationBranding.id).where(OrganizationBranding.organization_id == organization_id)) is None:
         db.add(OrganizationBranding(organization_id=organization_id))
 
-    if db.scalar(
-        select(OrganizationOnlineProfile.id).where(
-            OrganizationOnlineProfile.organization_id == organization_id
-        )
-    ) is None:
+    if db.scalar(select(OrganizationOnlineProfile.id).where(OrganizationOnlineProfile.organization_id == organization_id)) is None:
         db.add(OrganizationOnlineProfile(organization_id=organization_id))
 
-    existing_types = set(
-        db.scalars(
-            select(OrganizationDocumentSequence.document_type).where(
-                OrganizationDocumentSequence.organization_id == organization_id
-            )
-        ).all()
-    )
+    existing_types = set(db.scalars(select(OrganizationDocumentSequence.document_type).where(OrganizationDocumentSequence.organization_id == organization_id)).all())
     for document_type, prefix in SEQUENCE_DEFAULTS.items():
         if document_type not in existing_types:
-            db.add(
-                OrganizationDocumentSequence(
-                    organization_id=organization_id,
-                    document_type=document_type,
-                    prefix=prefix,
-                )
-            )
+            db.add(OrganizationDocumentSequence(organization_id=organization_id, document_type=document_type, prefix=prefix))
