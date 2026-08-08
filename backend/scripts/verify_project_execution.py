@@ -14,7 +14,7 @@ from app.api.v1.project_execution import (
     update_task_progress,
 )
 from app.db.session import SessionLocal, engine
-from app.models.projects import Project, ProjectCredential, ProjectMilestone, ProjectTask, ProjectWorkLog
+from app.models.projects import Project, ProjectCredential, ProjectMilestone, ProjectWorkLog
 from app.schemas.project_execution import CredentialCreate, MilestoneCreate, TaskCreate, TaskProgressUpdate
 
 
@@ -58,8 +58,8 @@ def main() -> None:
         """), {"id": role_id, "organization_id": organization_id, "slug": f"ci-manager-{role_id[:8]}", "now": now})
         connection.execute(text("""
             INSERT INTO memberships
-                (id, organization_id, user_id, role_id, role, status, joined_at, created_at, updated_at)
-            VALUES (:id, :organization_id, :user_id, :role_id, 'admin', 'active', :now, :now, :now)
+                (id, organization_id, user_id, role_id, role, status, created_at)
+            VALUES (:id, :organization_id, :user_id, :role_id, 'admin', 'active', :now)
         """), {"id": membership_id, "organization_id": organization_id, "user_id": user_id, "role_id": role_id, "now": now})
         connection.execute(text("""
             INSERT INTO employees
