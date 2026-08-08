@@ -7,6 +7,7 @@ from app.db.session import SessionLocal, engine
 from app.models.expenses import Expense, ExpenseCategory
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.finance_controls import RecurringExpense
+from app.services.activity_log import record_activity
 from app.services.recurring_auto_post import process_due_auto_posts
 
 
@@ -28,24 +29,26 @@ def main() -> None:
 
     db = SessionLocal()
     try:
+        organization_id = str(fixture["organization_id"])
+        user_id = str(fixture["user_id"])
         category = db.scalar(select(ExpenseCategory).where(
-            ExpenseCategory.organization_id == str(fixture["organization_id"]),
+            ExpenseCategory.organization_id == organization_id,
             ExpenseCategory.slug == "office-utilities",
         ))
         if category is None:
             raise AssertionError("office-utilities category missing")
         account = FinancialAccount(
-            organization_id=str(fixture["organization_id"]),
+            organization_id=organization_id,
             name="CI Auto Rent BDT",
             account_type="bank",
             currency="BDT",
             opening_balance=Decimal("100000.00"),
             is_active=True,
-            created_by_user_id=str(fixture["user_id"]),
+            created_by_user_id=user_id,
         )
         db.add(account); db.flush()
         recurring = RecurringExpense(
-            organization_id=str(fixture["organization_id"]),
+            organization_id=organization_id,
             name="CI Monthly Office Rent",
             description="Monthly office rent",
             category_id=category.id,
@@ -59,9 +62,21 @@ def main() -> None:
             tax_amount=Decimal("0"),
             is_active=True,
             auto_post=True,
-            created_by_user_id=str(fixture["user_id"]),
+            created_by_user_id=user_id,
         )
-        db.add(recurring); db.commit()
+        db.add(recurring); db.flush()
+        record_activity(
+            db,
+            action="ci.recurring_auto_post.fixture_created",
+            scope="tenant",
+            actor_user_id=user_id,
+            organization_id=organization_id,
+            entity_type="recurring_expense",
+            entity_id=recurring.id,
+            after={"account_id": account.id, "auto_post": True},
+            message="CI recurring auto-post fixture created",
+        )
+        db.commit()
         recurring_id = recurring.id
 
         posted, failed = process_due_auto_posts(db, now=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc))
