@@ -34,6 +34,7 @@ export default function ClientsPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [filtering, setFiltering] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -61,17 +62,44 @@ export default function ClientsPage() {
     return params.toString();
   }, [search, statusFilter]);
 
-  const load = useCallback(async () => {
-    setLoading(true); setError(null);
+  const loadList = useCallback(async (background = false) => {
+    background ? setFiltering(true) : setLoading(true);
+    setError(null);
     try {
-      const [page, totals, crmMeta] = await Promise.all([api(`/clients?${queryString}`), api("/clients/summary"), api("/meta")]);
-      const typed = page as { items: Client[]; next_cursor: string | null };
-      setClients(typed.items); setNextCursor(typed.next_cursor); setSummary(totals as Summary); setMeta(crmMeta as Meta);
+      const page = await api(`/clients?${queryString}`) as { items: Client[]; next_cursor: string | null };
+      setClients(page.items); setNextCursor(page.next_cursor);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load clients."); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setFiltering(false); }
   }, [api, queryString]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadSummary = useCallback(async () => {
+    setSummary(await api("/clients/summary") as Summary);
+  }, [api]);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError(null);
+    void Promise.all([api(`/clients?${queryString}`), api("/clients/summary"), api("/meta")]).then(([pagePayload, totals, crmMeta]) => {
+      if (!active) return;
+      const page = pagePayload as { items: Client[]; next_cursor: string | null };
+      setClients(page.items); setNextCursor(page.next_cursor); setSummary(totals as Summary); setMeta(crmMeta as Meta);
+    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load clients."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+    // bootstrap only: filter changes are handled by the dedicated list effect below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  useEffect(() => {
+    if (loading) return;
+    void loadList(true);
+    // loading is intentionally excluded to avoid an extra bootstrap request
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryString, loadList]);
+
+  async function refreshAfterMutation() {
+    await Promise.all([loadList(true), loadSummary()]);
+  }
 
   async function loadMore() {
     if (!nextCursor) return; setLoadingMore(true);
@@ -92,7 +120,7 @@ export default function ClientsPage() {
     setSaving(true); setError(null); setMessage(null);
     try {
       await api("/clients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clientPayload(form)) });
-      formElement.reset(); setCreateOpen(false); setMessage("Client created"); await load();
+      formElement.reset(); setCreateOpen(false); setMessage("Client created"); await refreshAfterMutation();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to create client."); }
     finally { setSaving(false); }
   }
@@ -101,8 +129,8 @@ export default function ClientsPage() {
     event.preventDefault(); if (!detail) return; const form = new FormData(event.currentTarget);
     setSaving(true); setError(null); setMessage(null);
     try {
-      await api(`/clients/${detail.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...clientPayload(form), status: detail.status }) });
-      setDetail(await api(`/clients/${detail.id}/detail`) as ClientDetail); setMessage("Client updated"); await load();
+      const updated = await api(`/clients/${detail.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...clientPayload(form), status: detail.status }) }) as ClientDetail;
+      setDetail(updated); setMessage("Client updated"); await refreshAfterMutation();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update client."); }
     finally { setSaving(false); }
   }
@@ -110,8 +138,10 @@ export default function ClientsPage() {
   async function changeStatus() {
     if (!detail) return; const next = detail.status === "active" ? "inactive" : "active";
     setSaving(true); setError(null);
-    try { await api(`/clients/${detail.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) }); setDetail(await api(`/clients/${detail.id}/detail`) as ClientDetail); setMessage(next === "active" ? "Client reactivated" : "Client marked inactive"); await load(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update client status."); }
+    try {
+      const updated = await api(`/clients/${detail.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) }) as ClientDetail;
+      setDetail(updated); setMessage(next === "active" ? "Client reactivated" : "Client marked inactive"); await refreshAfterMutation();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update client status."); }
     finally { setSaving(false); }
   }
 
@@ -130,6 +160,7 @@ export default function ClientsPage() {
     <div className="mt-7 grid gap-4 sm:grid-cols-3"><Stat label="Total clients" value={summary?.total ?? 0} icon={Building2} /><Stat label="Active" value={summary?.active ?? 0} icon={UserRound} /><Stat label="Inactive" value={summary?.inactive ?? 0} icon={UserRound} /></div>
     {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}{error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     <section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(260px,1fr)_220px_auto] sm:p-5"><form onSubmit={(e) => { e.preventDefault(); setSearch(searchDraft.trim()); }} className="relative"><Search className="absolute left-3 top-3.5 size-4 text-neutral-400" /><input value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} placeholder="Search client code, name, email, phone..." className="h-11 w-full rounded-xl border pl-9 pr-3 text-sm outline-none focus:border-neutral-500" /></form><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select><button onClick={() => { setSearchDraft(""); setSearch(""); setStatusFilter(""); }} className="h-11 rounded-xl border px-4 text-sm font-medium">Reset</button></div>
+      {filtering ? <div className="h-0.5 w-full overflow-hidden bg-neutral-100"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
       {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : clients.length === 0 ? <div className="px-6 py-20 text-center"><Building2 className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No clients found</h2><p className="mt-1 text-sm text-neutral-500">Convert a CRM lead or create a client directly.</p></div> : <><div className="overflow-x-auto"><table className="w-full min-w-[950px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Contact</th><th className="px-4 py-3 font-medium">Country</th><th className="px-4 py-3 font-medium">Assigned</th><th className="px-4 py-3 font-medium">Status</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{clients.map((client) => <tr key={client.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{client.display_name}</p><p className="mt-1 text-xs text-neutral-400">{client.client_code} · {client.client_type}</p></td><td className="px-4 py-4"><p>{client.contact_name ?? "—"}</p><p className="mt-1 text-xs text-neutral-400">{client.email ?? client.phone ?? "No contact"}</p></td><td className="px-4 py-4">{client.country_code ?? "—"}{client.currency ? ` · ${client.currency}` : ""}</td><td className="px-4 py-4">{client.assigned_employee_name ?? "Unassigned"}</td><td className="px-4 py-4"><Status status={client.status} /></td><td className="px-6 py-4 text-right"><button onClick={() => void openClient(client.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table></div>{nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}</>}
     </section>
   </div>
@@ -140,7 +171,8 @@ export default function ClientsPage() {
 }
 
 function ClientForm({ meta, detail, saving, onSubmit, onCancel }: { meta: Meta; detail?: ClientDetail | null; saving: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel?: () => void }) {
-  return <form key={detail?.id ?? "new"} onSubmit={onSubmit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><Select label="Client type" name="client_type" options={[["company", "Company"], ["individual", "Individual"]]} defaultValue={detail?.client_type ?? "company"} /><Field label="Display name" name="display_name" required defaultValue={detail?.display_name} /><Field label="Legal name" name="legal_name" defaultValue={detail?.legal_name} /><Field label="Contact person" name="contact_name" defaultValue={detail?.contact_name} /><Field label="Email" name="email" type="email" defaultValue={detail?.email} /><Field label="Billing email" name="billing_email" type="email" defaultValue={detail?.billing_email} /><Field label="Phone" name="phone" defaultValue={detail?.phone} /><Field label="WhatsApp" name="whatsapp" defaultValue={detail?.whatsapp} /><Field label="Website" name="website" type="url" defaultValue={detail?.website} /><SearchableSelect label="Country" name="country_code" defaultValue={detail?.country_code ?? meta.default_country_code} options={COUNTRY_OPTIONS} searchPlaceholder="Search country..." /><SearchableSelect label="Currency" name="currency" defaultValue={detail?.currency ?? meta.default_currency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." /><Field label="Tax / VAT identifier" name="tax_identifier" defaultValue={detail?.tax_identifier} /><Field label="State / Province / Region" name="state_region" defaultValue={detail?.state_region} /><Field label="City" name="city" defaultValue={detail?.city} /><Field label="Postal / ZIP code" name="postal_code" defaultValue={detail?.postal_code} /><Select label="Assigned to" name="assigned_employee_id" options={[["", "Unassigned"], ...meta.employees.map((item) => [item.id, item.full_name] as [string, string])]} defaultValue={detail?.assigned_employee_id ?? ""} /><div className="sm:col-span-2"><Field label="Address line 1" name="address_line1" defaultValue={detail?.address_line1} /></div><div className="sm:col-span-2"><Field label="Address line 2" name="address_line2" defaultValue={detail?.address_line2} /></div></div><label className="block text-sm font-medium">Notes<textarea name="notes" defaultValue={detail?.notes ?? ""} className={textareaClass} /></label><div className="flex justify-end gap-2 border-t pt-5">{onCancel ? <button type="button" onClick={onCancel} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button> : null}<button disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : null}{detail ? "Save changes" : "Create client"}</button></div></form>;
+  const employeeOptions = [{ value: "", label: "Unassigned" }, ...meta.employees.map((item) => ({ value: item.id, label: `${item.full_name} · ${item.employee_code}` }))];
+  return <form key={detail?.id ?? "new"} onSubmit={onSubmit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><Select label="Client type" name="client_type" options={[["company", "Company"], ["individual", "Individual"]]} defaultValue={detail?.client_type ?? "company"} /><Field label="Display name" name="display_name" required defaultValue={detail?.display_name} /><Field label="Legal name" name="legal_name" defaultValue={detail?.legal_name} /><Field label="Contact person" name="contact_name" defaultValue={detail?.contact_name} /><Field label="Email" name="email" type="email" defaultValue={detail?.email} /><Field label="Billing email" name="billing_email" type="email" defaultValue={detail?.billing_email} /><Field label="Phone" name="phone" defaultValue={detail?.phone} /><Field label="WhatsApp" name="whatsapp" defaultValue={detail?.whatsapp} /><Field label="Website" name="website" type="url" defaultValue={detail?.website} /><SearchableSelect label="Country" name="country_code" defaultValue={detail?.country_code ?? meta.default_country_code} options={COUNTRY_OPTIONS} searchPlaceholder="Search country..." /><SearchableSelect label="Currency" name="currency" defaultValue={detail?.currency ?? meta.default_currency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." /><Field label="Tax / VAT identifier" name="tax_identifier" defaultValue={detail?.tax_identifier} /><Field label="State / Province / Region" name="state_region" defaultValue={detail?.state_region} /><Field label="City" name="city" defaultValue={detail?.city} /><Field label="Postal / ZIP code" name="postal_code" defaultValue={detail?.postal_code} /><SearchableSelect label="Assigned to" name="assigned_employee_id" defaultValue={detail?.assigned_employee_id ?? ""} options={employeeOptions} searchPlaceholder="Search employee..." /><div className="sm:col-span-2"><Field label="Address line 1" name="address_line1" defaultValue={detail?.address_line1} /></div><div className="sm:col-span-2"><Field label="Address line 2" name="address_line2" defaultValue={detail?.address_line2} /></div></div><label className="block text-sm font-medium">Notes<textarea name="notes" defaultValue={detail?.notes ?? ""} className={textareaClass} /></label><div className="flex justify-end gap-2 border-t pt-5">{onCancel ? <button type="button" onClick={onCancel} className="h-11 rounded-xl border px-4 text-sm font-semibold">Cancel</button> : null}<button disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : null}{detail ? "Save changes" : "Create client"}</button></div></form>;
 }
 
 function ClientDrawer({ detail, loading, meta, saving, onClose, onSave, onStatus, onQuotation }: { detail: ClientDetail | null; loading: boolean; meta: Meta | null; saving: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void; onStatus: () => void; onQuotation: () => void }) {
