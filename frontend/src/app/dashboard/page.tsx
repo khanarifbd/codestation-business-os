@@ -22,13 +22,15 @@ export default function DashboardPage() {
 
   useEffect(() => { void (async () => {
     try {
-      const tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
-      if (tenantResponse.status === 401) { router.replace("/login"); return; }
+      const params = new URLSearchParams({ date_from: monthStart(), date_to: today() });
+      const [tenantResponse, reportResponse] = await Promise.all([
+        fetch("/api/tenant", { cache: "no-store" }),
+        fetch(`/api/reports/overview?${params}`, { cache: "no-store" }),
+      ]);
+      if (tenantResponse.status === 401 || reportResponse.status === 401) { router.replace("/login"); return; }
       if (!tenantResponse.ok) throw new Error("Unable to load company workspace");
       const current = await tenantResponse.json() as TenantContext;
       setTenant(current);
-      const params = new URLSearchParams({ date_from: monthStart(), date_to: today() });
-      const reportResponse = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
       if (reportResponse.ok) setData(await reportResponse.json() as Overview);
       else if (reportResponse.status !== 403) throw new Error("Unable to load dashboard metrics");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load dashboard"); }
@@ -39,12 +41,16 @@ export default function DashboardPage() {
   const financialDisplay = useMemo(() => {
     if (!data || !company) return { primary: null as FinancialRow | null, others: [] as FinancialRow[], note: "" };
     const base = data.financials.find((row) => row.currency === company.currency) ?? null;
-    if (base) return { primary: base, others: data.financials.filter((row) => row.currency !== base.currency), note: `Company base currency · ${company.currency}` };
+    if (base) {
+      const others = data.financials.filter((row) => row.currency !== base.currency && Number(row.net_profit) !== 0);
+      const extra = others.map((row) => money(row.net_profit, row.currency)).join(" + ");
+      return { primary: base, others, note: extra ? `+ ${extra} · Across ${others.length + 1} currencies` : `Company base currency · ${company.currency}` };
+    }
     if (data.financials.length === 1) {
       const only = data.financials[0];
       return { primary: only, others: [], note: `No ${company.currency} activity this month · showing ${only.currency}` };
     }
-    return { primary: null, others: data.financials, note: data.financials.length ? "Multiple currencies · open Reports for the currency breakdown" : `No ${company.currency} financial activity this month` };
+    return { primary: null, others: data.financials, note: data.financials.length ? "Multiple currencies · open Reports for the full breakdown" : `No ${company.currency} financial activity this month` };
   }, [data, company]);
   const primary = financialDisplay.primary;
 
@@ -68,7 +74,7 @@ export default function DashboardPage() {
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between"><div><p className="text-sm text-neutral-500">This month</p><h2 className="mt-1 text-xl font-semibold">Financial snapshot</h2></div><CircleDollarSign className="size-6 text-neutral-300"/></div>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{primary ? <><Mini label="Invoiced" value={money(primary.invoiced_revenue, primary.currency)}/><Mini label="Collected" value={money(primary.collected_revenue, primary.currency)}/><Mini label="Receivable" value={money(primary.receivables, primary.currency)}/><Mini label="Expenses" value={money(primary.expenses, primary.currency)}/></> : <p className="text-sm text-neutral-400">{data.financials.length ? "Financial activity spans multiple currencies. Review the breakdown below." : `No ${company.currency} financial activity this month.`}</p>}</div>
-          {financialDisplay.others.length ? <div className="mt-5 border-t pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Currency breakdown</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{financialDisplay.others.map((row) => <div key={row.currency} className="flex items-center justify-between rounded-xl bg-neutral-50 px-4 py-3 text-sm"><span className="font-semibold">{row.currency}</span><span>Net {money(row.net_profit, row.currency)}</span></div>)}</div></div> : null}
+          {financialDisplay.others.length ? <div className="mt-5 border-t pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Other currencies</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{financialDisplay.others.map((row) => <div key={row.currency} className="flex items-center justify-between rounded-xl bg-neutral-50 px-4 py-3 text-sm"><span className="font-semibold">{row.currency}</span><span>Net {money(row.net_profit, row.currency)}</span></div>)}</div></div> : null}
         </section>
 
         <section className="rounded-2xl border bg-white p-6 shadow-sm"><p className="text-sm text-neutral-500">Needs attention</p><h2 className="mt-1 text-xl font-semibold">Operations</h2><div className="mt-5 space-y-3"><AlertRow label="Overdue tasks" value={data.operations.overdue_tasks} href="/dashboard/projects"/><AlertRow label="Due follow-ups" value={data.operations.due_followups} href="/dashboard/crm"/><AlertRow label="Open invoices" value={data.operations.open_invoices} href="/dashboard/finance"/></div></section>
