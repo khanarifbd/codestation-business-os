@@ -59,6 +59,38 @@ class LedgerTransactionRead(BaseModel):
     created_at: datetime
 
 
+class AccountTransferCreate(BaseModel):
+    from_account_id: str
+    to_account_id: str
+    transfer_date: date | None = None
+    source_amount: Decimal = Field(gt=0, le=Decimal("1000000000000"))
+    fee_amount: Decimal = Field(default=Decimal("0"), ge=0, le=Decimal("1000000000000"))
+    destination_amount: Decimal | None = Field(default=None, gt=0, le=Decimal("1000000000000000"))
+    reference: str | None = Field(default=None, max_length=180)
+    notes: str | None = None
+
+
+class AccountTransferRead(BaseModel):
+    id: str
+    transfer_number: str
+    from_account_id: str
+    from_account_name: str
+    to_account_id: str
+    to_account_name: str
+    transfer_date: date
+    source_currency: str
+    destination_currency: str
+    source_amount: Decimal
+    fee_amount: Decimal
+    net_source_amount: Decimal
+    destination_amount: Decimal
+    exchange_rate: Decimal
+    reference: str | None
+    notes: str | None
+    status: str
+    created_at: datetime
+
+
 class InvoiceItemInput(BaseModel):
     description: str = Field(min_length=1, max_length=5000)
     quantity: Decimal = Field(gt=0, le=Decimal("100000000"))
