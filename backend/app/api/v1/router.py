@@ -10,6 +10,7 @@ from app.api.v1.crm_clients import router as crm_clients_router
 from app.api.v1.crm_status import router as crm_status_router
 from app.api.v1.crm_summary import router as crm_summary_router
 from app.api.v1.finance import router as finance_router
+from app.api.v1.finance_expenses import router as finance_expenses_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
 from app.api.v1.health import router as health_router
 from app.api.v1.order_links import router as order_links_router
@@ -40,6 +41,7 @@ api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
 api_router.include_router(finance_router)
 api_router.include_router(finance_transfers_router)
+api_router.include_router(finance_expenses_router)
 api_router.include_router(company_uploads_router)
 api_router.include_router(company_settings_router)
 api_router.include_router(company_defaults_router)
