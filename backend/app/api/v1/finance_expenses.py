@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import base64
+import json
 import mimetypes
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 from starlette.responses import FileResponse, Response
 
 from app.api.dependencies import DbSession, require_tenant_permission
@@ -91,17 +93,77 @@ def _slugify(value: str) -> str:
 
 
 def _account_balance(db: DbSession, account: FinancialAccount) -> Decimal:
-    credit = db.scalar(select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
-        FinancialTransaction.organization_id == account.organization_id,
-        FinancialTransaction.account_id == account.id,
-        FinancialTransaction.direction == "credit",
-    )) or Decimal("0")
-    debit = db.scalar(select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
-        FinancialTransaction.organization_id == account.organization_id,
-        FinancialTransaction.account_id == account.id,
-        FinancialTransaction.direction == "debit",
-    )) or Decimal("0")
-    return _money(Decimal(account.opening_balance) + Decimal(credit) - Decimal(debit))
+    net = db.scalar(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (FinancialTransaction.direction == "credit", FinancialTransaction.amount),
+                        else_=-FinancialTransaction.amount,
+                    )
+                ),
+                0,
+            )
+        ).where(
+            FinancialTransaction.organization_id == account.organization_id,
+            FinancialTransaction.account_id == account.id,
+        )
+    ) or Decimal("0")
+    return _money(Decimal(account.opening_balance) + Decimal(net))
+
+
+def _account_balance_map(db: DbSession, organization_id: str) -> dict[str, Decimal]:
+    rows = db.execute(
+        select(
+            FinancialTransaction.account_id,
+            func.coalesce(
+                func.sum(
+                    case(
+                        (FinancialTransaction.direction == "credit", FinancialTransaction.amount),
+                        else_=-FinancialTransaction.amount,
+                    )
+                ),
+                0,
+            ),
+        )
+        .where(FinancialTransaction.organization_id == organization_id)
+        .group_by(FinancialTransaction.account_id)
+    ).all()
+    return {str(account_id): Decimal(net or 0) for account_id, net in rows}
+
+
+def _encode_expense_cursor(expense_date: date, created_at: datetime, entity_id: str) -> str:
+    raw = json.dumps(
+        {"expense_date": expense_date.isoformat(), "created_at": created_at.isoformat(), "id": entity_id},
+        separators=(",", ":"),
+    )
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _decode_expense_cursor(cursor: str | None) -> tuple[date, datetime, str] | None:
+    if not cursor:
+        return None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        expense_date = date.fromisoformat(payload["expense_date"])
+        created_at = datetime.fromisoformat(payload["created_at"])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return expense_date, created_at, str(payload["id"])
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid expense pagination cursor") from exc
+
+
+def _expense_cursor_clause(decoded: tuple[date, datetime, str] | None):
+    if decoded is None:
+        return None
+    expense_date, created_at, entity_id = decoded
+    return or_(
+        Expense.expense_date < expense_date,
+        and_(Expense.expense_date == expense_date, Expense.created_at < created_at),
+        and_(Expense.expense_date == expense_date, Expense.created_at == created_at, Expense.id < entity_id),
+    )
 
 
 def _vendor_read(item: Vendor) -> VendorRead:
@@ -202,15 +264,32 @@ def _expense_detail(db: DbSession, organization_id: str, expense_id: str) -> Exp
 
 @router.get("/expense-summary", response_model=ExpenseSummary)
 def expense_summary(db: DbSession, tenant: FinanceViewer) -> ExpenseSummary:
-    expenses = db.scalars(select(Expense).where(Expense.organization_id == tenant.organization_id)).all()
-    vendors = db.scalar(select(func.count(Vendor.id)).where(Vendor.organization_id == tenant.organization_id, Vendor.is_active.is_(True))) or 0
-    receipts = db.scalar(select(func.count(ExpenseDocument.id)).where(ExpenseDocument.organization_id == tenant.organization_id)) or 0
-    currency_rows: dict[str, dict[str, Decimal]] = {}
-    for item in expenses:
-        if item.status != "posted":
-            continue
-        row = currency_rows.setdefault(item.expense_currency, {"expenses": Decimal("0"), "fees": Decimal("0")})
-        row["expenses"] += item.expense_amount
+    counts = db.execute(
+        select(
+            func.count(Expense.id),
+            func.count(Expense.id).filter(Expense.status == "posted"),
+            func.count(Expense.id).filter(Expense.status == "voided"),
+            func.count(Expense.id).filter(Expense.status == "posted", Expense.project_id.is_not(None)),
+        ).where(Expense.organization_id == tenant.organization_id)
+    ).one()
+    vendors = db.scalar(
+        select(func.count(Vendor.id)).where(
+            Vendor.organization_id == tenant.organization_id,
+            Vendor.is_active.is_(True),
+        )
+    ) or 0
+    receipts = db.scalar(
+        select(func.count(ExpenseDocument.id)).where(ExpenseDocument.organization_id == tenant.organization_id)
+    ) or 0
+    expense_rows = db.execute(
+        select(Expense.expense_currency, func.coalesce(func.sum(Expense.expense_amount), 0))
+        .where(Expense.organization_id == tenant.organization_id, Expense.status == "posted")
+        .group_by(Expense.expense_currency)
+    ).all()
+    currency_rows: dict[str, dict[str, Decimal]] = {
+        currency: {"expenses": Decimal(amount or 0), "fees": Decimal("0")}
+        for currency, amount in expense_rows
+    }
     fee_rows = db.execute(
         select(FinancialTransaction.currency, func.coalesce(func.sum(FinancialTransaction.amount), 0))
         .where(
@@ -222,16 +301,20 @@ def expense_summary(db: DbSession, tenant: FinanceViewer) -> ExpenseSummary:
     ).all()
     for currency, amount in fee_rows:
         row = currency_rows.setdefault(currency, {"expenses": Decimal("0"), "fees": Decimal("0")})
-        row["fees"] += Decimal(amount)
+        row["fees"] += Decimal(amount or 0)
     return ExpenseSummary(
-        expense_count=len(expenses),
-        posted_count=sum(1 for item in expenses if item.status == "posted"),
-        voided_count=sum(1 for item in expenses if item.status == "voided"),
-        vendor_count=vendors,
-        receipt_count=receipts,
-        project_expense_count=sum(1 for item in expenses if item.status == "posted" and item.project_id is not None),
+        expense_count=int(counts[0] or 0),
+        posted_count=int(counts[1] or 0),
+        voided_count=int(counts[2] or 0),
+        vendor_count=int(vendors),
+        receipt_count=int(receipts),
+        project_expense_count=int(counts[3] or 0),
         by_currency=[
-            ExpenseCurrencySummary(currency=currency, posted_expenses=_money(values["expenses"]), transfer_fees=_money(values["fees"]))
+            ExpenseCurrencySummary(
+                currency=currency,
+                posted_expenses=_money(values["expenses"]),
+                transfer_fees=_money(values["fees"]),
+            )
             for currency, values in sorted(currency_rows.items())
         ],
     )
@@ -239,10 +322,28 @@ def expense_summary(db: DbSession, tenant: FinanceViewer) -> ExpenseSummary:
 
 @router.get("/expense-meta", response_model=ExpenseMeta)
 def expense_meta(db: DbSession, tenant: FinanceViewer) -> ExpenseMeta:
-    vendors = db.scalars(select(Vendor).where(Vendor.organization_id == tenant.organization_id).order_by(Vendor.is_active.desc(), Vendor.name.asc())).all()
-    categories = db.scalars(select(ExpenseCategory).where(ExpenseCategory.organization_id == tenant.organization_id).order_by(ExpenseCategory.is_active.desc(), ExpenseCategory.sort_order.asc(), ExpenseCategory.name.asc())).all()
-    accounts = db.scalars(select(FinancialAccount).where(FinancialAccount.organization_id == tenant.organization_id).order_by(FinancialAccount.is_active.desc(), FinancialAccount.name.asc())).all()
-    clients = db.scalars(select(Client).where(Client.organization_id == tenant.organization_id, Client.status == "active").order_by(Client.display_name.asc()).limit(500)).all()
+    vendors = db.scalars(
+        select(Vendor)
+        .where(Vendor.organization_id == tenant.organization_id)
+        .order_by(Vendor.is_active.desc(), Vendor.name.asc())
+    ).all()
+    categories = db.scalars(
+        select(ExpenseCategory)
+        .where(ExpenseCategory.organization_id == tenant.organization_id)
+        .order_by(ExpenseCategory.is_active.desc(), ExpenseCategory.sort_order.asc(), ExpenseCategory.name.asc())
+    ).all()
+    accounts = db.scalars(
+        select(FinancialAccount)
+        .where(FinancialAccount.organization_id == tenant.organization_id)
+        .order_by(FinancialAccount.is_active.desc(), FinancialAccount.name.asc())
+    ).all()
+    balance_map = _account_balance_map(db, tenant.organization_id)
+    clients = db.scalars(
+        select(Client)
+        .where(Client.organization_id == tenant.organization_id, Client.status == "active")
+        .order_by(Client.display_name.asc())
+        .limit(500)
+    ).all()
     project_rows = db.execute(
         select(Project, Client.display_name)
         .join(Client, Client.id == Project.client_id)
@@ -253,9 +354,29 @@ def expense_meta(db: DbSession, tenant: FinanceViewer) -> ExpenseMeta:
     return ExpenseMeta(
         vendors=[_vendor_read(item) for item in vendors],
         categories=[_category_read(item) for item in categories],
-        accounts=[ExpenseMetaAccount(id=item.id, name=item.name, currency=item.currency, current_balance=_account_balance(db, item), is_active=item.is_active) for item in accounts],
+        accounts=[
+            ExpenseMetaAccount(
+                id=item.id,
+                name=item.name,
+                currency=item.currency,
+                current_balance=_money(Decimal(item.opening_balance) + balance_map.get(item.id, Decimal("0"))),
+                is_active=item.is_active,
+            )
+            for item in accounts
+        ],
         clients=[ExpenseMetaClient(id=item.id, code=item.client_code, name=item.display_name, currency=item.currency) for item in clients],
-        projects=[ExpenseMetaProject(id=project.id, number=project.project_number, name=project.name, client_id=project.client_id, client_name=client_name, currency=project.currency, status=project.status) for project, client_name in project_rows],
+        projects=[
+            ExpenseMetaProject(
+                id=project.id,
+                number=project.project_number,
+                name=project.name,
+                client_id=project.client_id,
+                client_name=client_name,
+                currency=project.currency,
+                status=project.status,
+            )
+            for project, client_name in project_rows
+        ],
     )
 
 
@@ -373,7 +494,8 @@ def list_expenses(
     vendor_id: str | None = None,
     project_id: str | None = None,
     client_id: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
 ):
     query = _expense_row_query(tenant.organization_id)
     if expense_status:
@@ -388,9 +510,26 @@ def list_expenses(
         query = query.where(Expense.client_id == client_id)
     if search:
         needle = f"%{search.strip()}%"
-        query = query.where(Expense.expense_number.ilike(needle) | Expense.description.ilike(needle) | Expense.reference.ilike(needle))
-    rows = db.execute(query.order_by(Expense.expense_date.desc(), Expense.created_at.desc()).limit(limit)).all()
-    return ExpensePage(items=[_expense_list_item(row) for row in rows])
+        query = query.where(
+            or_(Expense.expense_number.ilike(needle), Expense.description.ilike(needle), Expense.reference.ilike(needle))
+        )
+    clause = _expense_cursor_clause(_decode_expense_cursor(cursor))
+    if clause is not None:
+        query = query.where(clause)
+    rows = db.execute(
+        query.order_by(Expense.expense_date.desc(), Expense.created_at.desc(), Expense.id.desc()).limit(limit + 1)
+    ).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    last = rows[-1][0] if rows else None
+    return ExpensePage(
+        items=[_expense_list_item(row) for row in rows],
+        next_cursor=(
+            _encode_expense_cursor(last.expense_date, last.created_at, last.id)
+            if has_more and last is not None
+            else None
+        ),
+    )
 
 
 @router.get("/expenses/{expense_id}", response_model=ExpenseDetail)
