@@ -23,6 +23,7 @@ from app.api.v1.reports import router as reports_router
 from app.api.v1.sales import router as sales_router
 from app.api.v1.team import invitation_router, router as team_router
 from app.api.v1.tenant import router as tenant_router
+from app.api.v1.workspace import router as workspace_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -44,6 +45,7 @@ api_router.include_router(finance_router)
 api_router.include_router(finance_transfers_router)
 api_router.include_router(finance_expenses_router)
 api_router.include_router(reports_router)
+api_router.include_router(workspace_router)
 api_router.include_router(company_uploads_router)
 api_router.include_router(company_settings_router)
 api_router.include_router(company_defaults_router)
