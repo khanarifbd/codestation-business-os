@@ -56,6 +56,15 @@ elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$' "${ENV_FIL
   unset JWT_SECRET
 fi
 
+if ! grep -q '^PROJECT_CREDENTIAL_ENCRYPTION_KEY=' "${ENV_FILE}"; then
+  echo "==> Generating project credential encryption key"
+  printf 'PROJECT_CREDENTIAL_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
+elif grep -q '^PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace_with_a_long_random_project_credential_key$' "${ENV_FILE}"; then
+  PROJECT_CREDENTIAL_KEY="$(openssl rand -hex 32)"
+  sed -i "s|^PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace_with_a_long_random_project_credential_key$|PROJECT_CREDENTIAL_ENCRYPTION_KEY=${PROJECT_CREDENTIAL_KEY}|" "${ENV_FILE}"
+  unset PROJECT_CREDENTIAL_KEY
+fi
+
 if ! grep -q '^SUPER_ADMIN_EMAIL=' "${ENV_FILE}"; then
   printf '\nSUPER_ADMIN_EMAIL=admin@codestationai.com\n' >> "${ENV_FILE}"
 fi
@@ -156,4 +165,4 @@ docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
 echo "==> Deployment completed successfully"
 echo "Frontend: https://os.codestationai.com"
 echo "API:      https://api-os.codestationai.com"
-echo "Super admin credentials are stored in .env.staging"
+echo "Super admin credentials and project credential encryption key are stored in .env.staging"
