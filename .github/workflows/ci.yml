@@ -30,6 +30,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://business_os:business_os_ci@127.0.0.1:5432/codestation_business_os
       JWT_SECRET_KEY: ci-only-secret
+      PROJECT_CREDENTIAL_ENCRYPTION_KEY: ci-only-project-credential-key-0123456789abcdef
       SUPER_ADMIN_EMAIL: admin@codestationai.com
       SUPER_ADMIN_PASSWORD: ci-super-admin-password
       SUPER_ADMIN_NAME: CodeStation AI Super Admin
@@ -55,6 +56,7 @@ jobs:
       - run: uv run python scripts/verify_sales.py
       - run: uv run python scripts/verify_orders.py
       - run: uv run python scripts/verify_projects.py
+      - run: uv run python scripts/verify_project_execution.py
       - run: uv run python scripts/verify_audit.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
