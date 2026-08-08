@@ -2,7 +2,7 @@
 
 import { CheckCircle2, ClipboardCheck, FolderKanban, Loader2, PlayCircle, Search, X, XCircle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Summary = { total: number; confirmed: number; in_progress: number; completed: number; cancelled: number };
 type OrderRow = {
@@ -57,6 +57,7 @@ type OrderDetail = OrderRow & {
 };
 type QuotationMini = { id: string; quotation_number: string; status: string; client_name_snapshot: string; total: string | number; currency: string };
 type OrderLink = { order_id: string; order_number: string; status: string };
+type OrderPage = { items: OrderRow[]; next_cursor: string | null };
 
 function money(value: string | number, currency: string) {
   return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -71,6 +72,7 @@ export default function OrdersPage() {
   const [rows, setRows] = useState<OrderRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +84,7 @@ export default function OrdersPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [quotation, setQuotation] = useState<QuotationMini | null>(null);
   const [quotationOrderLink, setQuotationOrderLink] = useState<OrderLink | null>(null);
+  const skipFirstFilterRefresh = useRef(true);
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(`/api/sales${path}`, init);
@@ -102,7 +105,22 @@ export default function OrdersPage() {
     return params.toString();
   }, [search, statusFilter]);
 
-  const refresh = useCallback(async () => {
+  const refreshSummary = useCallback(async () => {
+    setSummary(await api("/orders/summary") as Summary);
+  }, [api]);
+
+  const refreshList = useCallback(async (showLoader = false) => {
+    if (showLoader) setListLoading(true);
+    try {
+      const payload = await api(`/orders?${query}`) as OrderPage;
+      setRows(payload.items);
+      setNextCursor(payload.next_cursor);
+    } finally {
+      if (showLoader) setListLoading(false);
+    }
+  }, [api, query]);
+
+  const bootstrap = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -111,7 +129,7 @@ export default function OrdersPage() {
         api(`/orders?${query}`),
       ]);
       setSummary(summaryPayload as Summary);
-      const typed = listPayload as { items: OrderRow[]; next_cursor: string | null };
+      const typed = listPayload as OrderPage;
       setRows(typed.items);
       setNextCursor(typed.next_cursor);
     } catch (reason) {
@@ -121,7 +139,15 @@ export default function OrdersPage() {
     }
   }, [api, query]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void bootstrap(); }, [bootstrap]);
+
+  useEffect(() => {
+    if (skipFirstFilterRefresh.current) {
+      skipFirstFilterRefresh.current = false;
+      return;
+    }
+    void refreshList(true).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to filter orders."));
+  }, [query, refreshList]);
 
   useEffect(() => {
     if (!quotationId) {
@@ -149,6 +175,13 @@ export default function OrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestedOrderId]);
 
+  function matchesCurrentFilters(item: OrderRow) {
+    if (statusFilter && item.status !== statusFilter) return false;
+    if (!search) return true;
+    const needle = search.toLowerCase();
+    return `${item.order_number} ${item.quotation_number} ${item.client_name} ${item.subject ?? ""}`.toLowerCase().includes(needle);
+  }
+
   async function openDetail(id: string) {
     setDetailLoading(true);
     setError(null);
@@ -170,8 +203,9 @@ export default function OrdersPage() {
       setMessage(`Order ${created.order_number} created from ${created.quotation_number}`);
       setQuotationOrderLink({ order_id: created.id, order_number: created.order_number, status: created.status });
       setDetail(created);
+      if (matchesCurrentFilters(created)) setRows((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+      await refreshSummary();
       router.replace(`/dashboard/orders?order_id=${encodeURIComponent(created.id)}`);
-      await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create order.");
     } finally { setSaving(false); }
@@ -189,7 +223,11 @@ export default function OrdersPage() {
       }) as OrderDetail;
       setDetail(updated);
       setMessage(`Order ${updated.order_number} marked ${updated.status.replace("_", " ")}`);
-      await refresh();
+      setRows((current) => {
+        const without = current.filter((item) => item.id !== updated.id);
+        return matchesCurrentFilters(updated) ? [updated, ...without] : without;
+      });
+      await refreshSummary();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to update order status.");
     } finally { setSaving(false); }
@@ -198,12 +236,15 @@ export default function OrdersPage() {
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
+    setError(null);
     try {
       const params = new URLSearchParams(query);
       params.set("cursor", nextCursor);
-      const payload = await api(`/orders?${params}`) as { items: OrderRow[]; next_cursor: string | null };
+      const payload = await api(`/orders?${params}`) as OrderPage;
       setRows((current) => [...current, ...payload.items]);
       setNextCursor(payload.next_cursor);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load more orders.");
     } finally { setLoadingMore(false); }
   }
 
@@ -232,7 +273,7 @@ export default function OrdersPage() {
             <button onClick={() => { setSearchDraft(""); setSearch(""); setStatusFilter(""); }} className="h-11 rounded-xl border px-4 text-sm font-semibold">Reset</button>
           </div>
 
-          {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : rows.length === 0 ? <div className="px-6 py-20 text-center"><ClipboardCheck className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No orders found</h2><p className="mt-1 text-sm text-neutral-500">Accept a quotation, then convert it into an order.</p></div> : <>
+          {loading || listLoading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : rows.length === 0 ? <div className="px-6 py-20 text-center"><ClipboardCheck className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No orders found</h2><p className="mt-1 text-sm text-neutral-500">Accept a quotation, then convert it into an order.</p></div> : <>
             <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Order</th><th className="px-4 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Quotation</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">Date</th><th className="px-4 py-3 font-medium">Total</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{rows.map((item) => <tr key={item.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{item.order_number}</p><p className="mt-1 text-xs text-neutral-400">{item.subject || "Commercial order"}</p></td><td className="px-4 py-4">{item.client_name}</td><td className="px-4 py-4">{item.quotation_number}</td><td className="px-4 py-4"><StatusBadge status={item.status} /></td><td className="px-4 py-4 text-neutral-600">{item.order_date}</td><td className="px-4 py-4 font-medium">{money(item.total, item.currency)}</td><td className="px-6 py-4 text-right"><button onClick={() => void openDetail(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table></div>
             {nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}
           </>}
