@@ -14,6 +14,7 @@ class RecurringExpense(TenantOwnedMixin, Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "name", name="uq_recurring_expenses_org_name"),
         Index("ix_recurring_expenses_org_active_due", "organization_id", "is_active", "next_due_date"),
+        Index("ix_recurring_expenses_org_auto_due", "organization_id", "auto_post", "is_active", "next_due_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -35,6 +36,9 @@ class RecurringExpense(TenantOwnedMixin, Base):
     reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    auto_post: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auto_post_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    auto_post_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_posted_expense_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("expenses.id", ondelete="SET NULL"), nullable=True)
     last_posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
