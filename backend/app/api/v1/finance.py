@@ -6,7 +6,7 @@ from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.company_settings import OrganizationAddress, OrganizationFinancialSettings, OrganizationIdentifier, OrganizationProfile
@@ -71,21 +71,13 @@ def _address(parts: list[str | None]) -> str | None:
 
 
 def _account_balance(db: DbSession, account: FinancialAccount) -> Decimal:
-    credit = db.scalar(
-        select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
+    net = db.scalar(
+        select(func.coalesce(func.sum(case((FinancialTransaction.direction == "credit", FinancialTransaction.amount), else_=-FinancialTransaction.amount)), 0)).where(
             FinancialTransaction.organization_id == account.organization_id,
             FinancialTransaction.account_id == account.id,
-            FinancialTransaction.direction == "credit",
         )
     ) or Decimal("0")
-    debit = db.scalar(
-        select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
-            FinancialTransaction.organization_id == account.organization_id,
-            FinancialTransaction.account_id == account.id,
-            FinancialTransaction.direction == "debit",
-        )
-    ) or Decimal("0")
-    return _money(Decimal(account.opening_balance) + Decimal(credit) - Decimal(debit))
+    return _money(Decimal(account.opening_balance) + Decimal(net))
 
 
 def _account_read(db: DbSession, account: FinancialAccount) -> FinancialAccountRead:
@@ -106,6 +98,42 @@ def _account_read(db: DbSession, account: FinancialAccount) -> FinancialAccountR
     )
 
 
+def _account_reads(db: DbSession, organization_id: str) -> list[FinancialAccountRead]:
+    net_transactions = (
+        select(
+            FinancialTransaction.account_id,
+            func.coalesce(func.sum(case((FinancialTransaction.direction == "credit", FinancialTransaction.amount), else_=-FinancialTransaction.amount)), 0).label("net"),
+        )
+        .where(FinancialTransaction.organization_id == organization_id)
+        .group_by(FinancialTransaction.account_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(FinancialAccount, func.coalesce(net_transactions.c.net, 0))
+        .outerjoin(net_transactions, net_transactions.c.account_id == FinancialAccount.id)
+        .where(FinancialAccount.organization_id == organization_id)
+        .order_by(FinancialAccount.is_active.desc(), FinancialAccount.name.asc())
+    ).all()
+    return [
+        FinancialAccountRead(
+            id=account.id,
+            name=account.name,
+            account_type=account.account_type,
+            provider_name=account.provider_name,
+            account_holder_name=account.account_holder_name,
+            account_reference=account.account_reference,
+            currency=account.currency,
+            opening_balance=account.opening_balance,
+            current_balance=_money(Decimal(account.opening_balance) + Decimal(net or 0)),
+            is_active=account.is_active,
+            notes=account.notes,
+            created_at=account.created_at,
+            updated_at=account.updated_at,
+        )
+        for account, net in rows
+    ]
+
+
 def _invoice_display_status(invoice: Invoice, today) -> str:
     if invoice.status in {"draft", "cancelled", "paid"}:
         return invoice.status
@@ -114,13 +142,12 @@ def _invoice_display_status(invoice: Invoice, today) -> str:
     return invoice.status
 
 
-def _invoice_list_item(db: DbSession, invoice: Invoice, timezone_name: str) -> InvoiceListItem:
-    client = db.get(Client, invoice.client_id)
+def _invoice_list_item(invoice: Invoice, timezone_name: str) -> InvoiceListItem:
     return InvoiceListItem(
         id=invoice.id,
         invoice_number=invoice.invoice_number,
         client_id=invoice.client_id,
-        client_name=client.display_name if client else invoice.client_name_snapshot,
+        client_name=invoice.client_name_snapshot,
         order_id=invoice.order_id,
         project_id=invoice.project_id,
         status=invoice.status,
@@ -137,7 +164,7 @@ def _invoice_list_item(db: DbSession, invoice: Invoice, timezone_name: str) -> I
 
 
 def _invoice_detail(db: DbSession, invoice: Invoice, timezone_name: str) -> InvoiceDetail:
-    base = _invoice_list_item(db, invoice, timezone_name)
+    base = _invoice_list_item(invoice, timezone_name)
     items = db.scalars(
         select(InvoiceItem)
         .where(InvoiceItem.organization_id == invoice.organization_id, InvoiceItem.invoice_id == invoice.id)
@@ -387,26 +414,43 @@ def _create_invoice_from_order(order: Order, project_id: str | None, request: Re
 
 @router.get("/summary", response_model=FinanceSummary)
 def finance_summary(db: DbSession, tenant: FinanceViewer) -> FinanceSummary:
-    invoices = db.scalars(select(Invoice).where(Invoice.organization_id == tenant.organization_id)).all()
     today = _tenant_today(tenant.organization.timezone)
-    currency_totals: dict[str, dict[str, Decimal]] = {}
-    for invoice in invoices:
-        if invoice.status == "cancelled":
-            continue
-        totals = currency_totals.setdefault(invoice.currency, {"invoiced": Decimal("0"), "paid": Decimal("0"), "outstanding": Decimal("0")})
-        totals["invoiced"] += invoice.total
-        totals["paid"] += invoice.amount_paid
-        totals["outstanding"] += invoice.balance_due
+    counts = db.execute(
+        select(
+            func.count(Invoice.id),
+            func.count(Invoice.id).filter(Invoice.status == "draft"),
+            func.count(Invoice.id).filter(Invoice.status == "sent"),
+            func.count(Invoice.id).filter(Invoice.status == "partially_paid"),
+            func.count(Invoice.id).filter(Invoice.status == "paid"),
+            func.count(Invoice.id).filter(
+                Invoice.status.not_in(["draft", "cancelled", "paid"]),
+                Invoice.balance_due > 0,
+                Invoice.due_date.is_not(None),
+                Invoice.due_date < today,
+            ),
+        ).where(Invoice.organization_id == tenant.organization_id)
+    ).one()
+    currency_rows = db.execute(
+        select(
+            Invoice.currency,
+            func.coalesce(func.sum(Invoice.total), 0),
+            func.coalesce(func.sum(Invoice.amount_paid), 0),
+            func.coalesce(func.sum(Invoice.balance_due), 0),
+        )
+        .where(Invoice.organization_id == tenant.organization_id, Invoice.status != "cancelled")
+        .group_by(Invoice.currency)
+        .order_by(Invoice.currency)
+    ).all()
     return FinanceSummary(
-        invoice_count=len(invoices),
-        draft_count=sum(1 for item in invoices if item.status == "draft"),
-        sent_count=sum(1 for item in invoices if item.status == "sent"),
-        partially_paid_count=sum(1 for item in invoices if item.status == "partially_paid"),
-        paid_count=sum(1 for item in invoices if item.status == "paid"),
-        overdue_count=sum(1 for item in invoices if _invoice_display_status(item, today) == "overdue"),
+        invoice_count=int(counts[0] or 0),
+        draft_count=int(counts[1] or 0),
+        sent_count=int(counts[2] or 0),
+        partially_paid_count=int(counts[3] or 0),
+        paid_count=int(counts[4] or 0),
+        overdue_count=int(counts[5] or 0),
         payment_count=db.scalar(select(func.count(Payment.id)).where(Payment.organization_id == tenant.organization_id, Payment.status == "confirmed")) or 0,
         account_count=db.scalar(select(func.count(FinancialAccount.id)).where(FinancialAccount.organization_id == tenant.organization_id, FinancialAccount.is_active.is_(True))) or 0,
-        by_currency=[CurrencyInvoiceSummary(currency=code, invoiced=_money(values["invoiced"]), paid=_money(values["paid"]), outstanding=_money(values["outstanding"])) for code, values in sorted(currency_totals.items())],
+        by_currency=[CurrencyInvoiceSummary(currency=code, invoiced=_money(Decimal(invoiced or 0)), paid=_money(Decimal(paid or 0)), outstanding=_money(Decimal(outstanding or 0))) for code, invoiced, paid, outstanding in currency_rows],
     )
 
 
@@ -417,19 +461,17 @@ def finance_meta(db: DbSession, tenant: FinanceViewer) -> FinanceMeta:
         select(Order, Client.display_name).join(Client, Client.id == Order.client_id).where(Order.organization_id == tenant.organization_id, Order.status != "cancelled").order_by(Order.created_at.desc()).limit(200)
     ).all()
     projects = db.scalars(select(Project).where(Project.organization_id == tenant.organization_id, Project.status != "cancelled").order_by(Project.created_at.desc()).limit(200)).all()
-    accounts = db.scalars(select(FinancialAccount).where(FinancialAccount.organization_id == tenant.organization_id).order_by(FinancialAccount.is_active.desc(), FinancialAccount.name.asc())).all()
     return FinanceMeta(
         clients=[FinanceMetaClient(id=item.id, code=item.client_code, name=item.display_name, currency=item.currency) for item in clients],
         orders=[FinanceMetaOrder(id=order.id, number=order.order_number, client_id=order.client_id, client_name=client_name, currency=order.currency, total=order.total, status=order.status) for order, client_name in order_rows],
         projects=[FinanceMetaProject(id=item.id, number=item.project_number, order_id=item.order_id, client_id=item.client_id, name=item.name, currency=item.currency, contract_value=item.contract_value, status=item.status) for item in projects],
-        accounts=[_account_read(db, item) for item in accounts],
+        accounts=_account_reads(db, tenant.organization_id),
     )
 
 
 @router.get("/accounts", response_model=list[FinancialAccountRead])
 def list_accounts(db: DbSession, tenant: FinanceViewer):
-    items = db.scalars(select(FinancialAccount).where(FinancialAccount.organization_id == tenant.organization_id).order_by(FinancialAccount.is_active.desc(), FinancialAccount.name.asc())).all()
-    return [_account_read(db, item) for item in items]
+    return _account_reads(db, tenant.organization_id)
 
 
 @router.post("/accounts", response_model=FinancialAccountRead, status_code=status.HTTP_201_CREATED)
@@ -490,11 +532,16 @@ def list_invoices(db: DbSession, tenant: FinanceViewer, search: str | None = Non
     if search:
         needle = f"%{search.strip()}%"
         query = query.where(Invoice.invoice_number.ilike(needle) | Invoice.subject.ilike(needle) | Invoice.client_name_snapshot.ilike(needle))
-    items = db.scalars(query.order_by(Invoice.created_at.desc()).limit(limit)).all()
     if invoice_status == "overdue":
         today = _tenant_today(tenant.organization.timezone)
-        items = [item for item in items if _invoice_display_status(item, today) == "overdue"]
-    return InvoicePage(items=[_invoice_list_item(db, item, tenant.organization.timezone) for item in items])
+        query = query.where(
+            Invoice.status.not_in(["draft", "cancelled", "paid"]),
+            Invoice.balance_due > 0,
+            Invoice.due_date.is_not(None),
+            Invoice.due_date < today,
+        )
+    items = db.scalars(query.order_by(Invoice.created_at.desc()).limit(limit)).all()
+    return InvoicePage(items=[_invoice_list_item(item, tenant.organization.timezone) for item in items])
 
 
 @router.post("/invoices", response_model=InvoiceDetail, status_code=status.HTTP_201_CREATED)
@@ -549,13 +596,15 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
 
 
 def _payment_read(db: DbSession, payment: Payment) -> PaymentRead:
-    invoice = db.get(Invoice, payment.invoice_id)
-    account = db.get(FinancialAccount, payment.account_id)
-    client = db.get(Client, invoice.client_id) if invoice else None
+    row = db.execute(
+        select(Invoice.invoice_number, Invoice.client_name_snapshot, FinancialAccount.name)
+        .join(FinancialAccount, FinancialAccount.id == payment.account_id)
+        .where(Invoice.id == payment.invoice_id, Invoice.organization_id == payment.organization_id)
+    ).first()
     return PaymentRead(
         id=payment.id, payment_number=payment.payment_number, invoice_id=payment.invoice_id,
-        invoice_number=invoice.invoice_number if invoice else "—", client_name=client.display_name if client else "—",
-        account_id=payment.account_id, account_name=account.name if account else "—", payment_date=payment.payment_date,
+        invoice_number=row.invoice_number if row else "—", client_name=row.client_name_snapshot if row else "—",
+        account_id=payment.account_id, account_name=row.name if row else "—", payment_date=payment.payment_date,
         invoice_currency=payment.invoice_currency, account_currency=payment.account_currency,
         invoice_amount=payment.invoice_amount, account_amount=payment.account_amount, exchange_rate=payment.exchange_rate,
         method=payment.method, reference=payment.reference, notes=payment.notes, status=payment.status, created_at=payment.created_at,
@@ -564,10 +613,25 @@ def _payment_read(db: DbSession, payment: Payment) -> PaymentRead:
 
 @router.get("/payments", response_model=list[PaymentRead])
 def list_payments(db: DbSession, tenant: FinanceViewer, invoice_id: str | None = None, limit: Annotated[int, Query(ge=1, le=500)] = 100):
-    query = select(Payment).where(Payment.organization_id == tenant.organization_id)
+    query = (
+        select(Payment, Invoice.invoice_number, Invoice.client_name_snapshot, FinancialAccount.name)
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .join(FinancialAccount, FinancialAccount.id == Payment.account_id)
+        .where(Payment.organization_id == tenant.organization_id)
+    )
     if invoice_id: query = query.where(Payment.invoice_id == invoice_id)
-    items = db.scalars(query.order_by(Payment.payment_date.desc(), Payment.created_at.desc()).limit(limit)).all()
-    return [_payment_read(db, item) for item in items]
+    rows = db.execute(query.order_by(Payment.payment_date.desc(), Payment.created_at.desc()).limit(limit)).all()
+    return [
+        PaymentRead(
+            id=payment.id, payment_number=payment.payment_number, invoice_id=payment.invoice_id,
+            invoice_number=invoice_number, client_name=client_name,
+            account_id=payment.account_id, account_name=account_name, payment_date=payment.payment_date,
+            invoice_currency=payment.invoice_currency, account_currency=payment.account_currency,
+            invoice_amount=payment.invoice_amount, account_amount=payment.account_amount, exchange_rate=payment.exchange_rate,
+            method=payment.method, reference=payment.reference, notes=payment.notes, status=payment.status, created_at=payment.created_at,
+        )
+        for payment, invoice_number, client_name, account_name in rows
+    ]
 
 
 @router.post("/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
