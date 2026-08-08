@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Ban,
-  Building2,
   Download,
   Eye,
   FileText,
@@ -12,14 +11,13 @@ import {
   Plus,
   Receipt,
   Store,
-  Tags,
   Trash2,
   TrendingUp,
   Upload,
-  WalletCards,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { SearchableSelect } from "@/components/searchable-select";
 
 type Tab = "expenses" | "vendors" | "categories" | "profitability";
 type Vendor = { id:string; vendor_code:string; name:string; contact_name:string|null; email:string|null; phone:string|null; website:string|null; tax_identifier:string|null; country_code:string|null; currency:string|null; notes:string|null; is_active:boolean; created_at:string; updated_at:string };
@@ -37,6 +35,7 @@ type Pnl = { currency:string; invoice_revenue:string|number; operating_expenses:
 type ProjectProfit = { project_id:string; project_number:string; project_name:string; client_name:string; currency:string; contract_value:string|number; invoiced_revenue:string|number; collected_revenue:string|number; direct_expenses:string|number; estimated_profit:string|number; margin_percent:string|number|null };
 type ClientProfit = { client_id:string; client_name:string; currency:string; invoiced_revenue:string|number; collected_revenue:string|number; direct_expenses:string|number; estimated_profit:string|number; margin_percent:string|number|null };
 type Profitability = { profit_loss_by_currency:Pnl[]; projects:ProjectProfit[]; clients:ClientProfit[] };
+type ExpensePage = { items:ExpenseRow[]; next_cursor:string|null };
 
 type ExpenseForm = {
   description:string; category_id:string; account_id:string; vendor_id:string; client_id:string; project_id:string;
@@ -58,8 +57,13 @@ export default function ExpensesPage() {
   const [summary,setSummary] = useState<Summary|null>(null);
   const [meta,setMeta] = useState<Meta>({vendors:[],categories:[],accounts:[],clients:[],projects:[]});
   const [expenses,setExpenses] = useState<ExpenseRow[]>([]);
+  const [nextCursor,setNextCursor] = useState<string|null>(null);
   const [profitability,setProfitability] = useState<Profitability>({profit_loss_by_currency:[],projects:[],clients:[]});
+  const [profitabilityLoaded,setProfitabilityLoaded] = useState(false);
+  const [profitabilityLoading,setProfitabilityLoading] = useState(false);
   const [loading,setLoading] = useState(true);
+  const [listLoading,setListLoading] = useState(false);
+  const [loadingMore,setLoadingMore] = useState(false);
   const [saving,setSaving] = useState(false);
   const [error,setError] = useState<string|null>(null);
   const [message,setMessage] = useState<string|null>(null);
@@ -80,18 +84,65 @@ export default function ExpensesPage() {
     return payload;
   },[router]);
 
-  const load = useCallback(async () => {
+  const expenseQuery = useCallback((cursor?:string|null) => {
+    const params=new URLSearchParams({limit:"50"});
+    if(search.trim())params.set("search",search.trim());
+    if(statusFilter)params.set("status",statusFilter);
+    if(categoryFilter)params.set("category_id",categoryFilter);
+    if(cursor)params.set("cursor",cursor);
+    return params.toString();
+  },[search,statusFilter,categoryFilter]);
+
+  const refreshSummary = useCallback(async () => {
+    setSummary(await api("/expense-summary") as Summary);
+  },[api]);
+
+  const refreshMeta = useCallback(async () => {
+    setMeta(await api("/expense-meta") as Meta);
+  },[api]);
+
+  const refreshExpenses = useCallback(async (showLoader=false) => {
+    if(showLoader)setListLoading(true);
+    try {
+      const data=await api(`/expenses?${expenseQuery()}`) as ExpensePage;
+      setExpenses(data.items);
+      setNextCursor(data.next_cursor);
+    } finally {
+      if(showLoader)setListLoading(false);
+    }
+  },[api,expenseQuery]);
+
+  const refreshProfitability = useCallback(async () => {
+    setProfitabilityLoading(true);
+    try {
+      setProfitability(await api("/profitability") as Profitability);
+      setProfitabilityLoaded(true);
+    } finally {
+      setProfitabilityLoading(false);
+    }
+  },[api]);
+
+  const bootstrap = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [summaryData,metaData,expenseData,profitData] = await Promise.all([
-        api("/expense-summary"), api("/expense-meta"), api("/expenses?limit=200"), api("/profitability"),
+      const [summaryData,metaData,expenseData] = await Promise.all([
+        api("/expense-summary"), api("/expense-meta"), api(`/expenses?${new URLSearchParams({limit:"50"})}`),
       ]);
-      setSummary(summaryData as Summary); setMeta(metaData as Meta); setExpenses((expenseData as {items:ExpenseRow[]}).items); setProfitability(profitData as Profitability);
+      setSummary(summaryData as Summary);
+      setMeta(metaData as Meta);
+      const page=expenseData as ExpensePage;
+      setExpenses(page.items);
+      setNextCursor(page.next_cursor);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load expense workspace."); }
     finally { setLoading(false); }
   },[api]);
 
-  useEffect(() => { void load(); },[load]);
+  useEffect(() => { void bootstrap(); },[bootstrap]);
+  useEffect(() => {
+    if(tab==="profitability" && !profitabilityLoaded && !profitabilityLoading) {
+      void refreshProfitability().catch((reason)=>setError(reason instanceof Error?reason.message:"Unable to load profitability."));
+    }
+  },[tab,profitabilityLoaded,profitabilityLoading,refreshProfitability]);
 
   const selectedAccount = useMemo(()=>meta.accounts.find((item)=>item.id===expenseForm.account_id)??null,[meta.accounts,expenseForm.account_id]);
   const selectedProject = useMemo(()=>meta.projects.find((item)=>item.id===expenseForm.project_id)??null,[meta.projects,expenseForm.project_id]);
@@ -99,6 +150,8 @@ export default function ExpensesPage() {
   const profitabilityCurrency = selectedProject?.currency || selectedClient?.currency || expenseForm.expense_currency;
   const accountFxNeeded = Boolean(selectedAccount && selectedAccount.currency !== expenseForm.expense_currency.toUpperCase());
   const profitFxNeeded = Boolean(profitabilityCurrency && profitabilityCurrency !== expenseForm.expense_currency.toUpperCase());
+
+  function invalidateProfitability() { setProfitabilityLoaded(false); }
 
   function openExpense() {
     const account = meta.accounts.find((item)=>item.is_active);
@@ -118,7 +171,9 @@ export default function ExpensesPage() {
         profitability_amount:profitFxNeeded ? expenseForm.profitability_amount : null,
         tax_amount:expenseForm.tax_amount||"0", payment_method:expenseForm.payment_method, reference:expenseForm.reference||null, notes:expenseForm.notes||null,
       })});
-      setModal(null); setMessage("Expense posted and account ledger updated."); await load();
+      setModal(null); setMessage("Expense posted and account ledger updated."); invalidateProfitability();
+      await Promise.all([refreshSummary(),refreshMeta(),refreshExpenses()]);
+      if(tab==="profitability")await refreshProfitability();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to post expense."); }
     finally { setSaving(false); }
   }
@@ -133,8 +188,12 @@ export default function ExpensesPage() {
   async function voidExpense() {
     if (!selected || !window.confirm(`Void ${selected.expense_number}? The account ledger will be reversed.`)) return;
     setSaving(true); setError(null);
-    try { const detail=await api(`/expenses/${selected.id}/void`,{method:"POST"}) as ExpenseDetail; setSelected(detail); setMessage(`${detail.expense_number} voided and account balance restored.`); await load(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to void expense."); }
+    try {
+      const detail=await api(`/expenses/${selected.id}/void`,{method:"POST"}) as ExpenseDetail;
+      setSelected(detail); setMessage(`${detail.expense_number} voided and account balance restored.`); invalidateProfitability();
+      await Promise.all([refreshSummary(),refreshMeta(),refreshExpenses()]);
+      if(tab==="profitability")await refreshProfitability();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to void expense."); }
     finally { setSaving(false); }
   }
 
@@ -145,7 +204,9 @@ export default function ExpensesPage() {
       const data=new FormData(); data.append("file",receiptFile); data.append("title",receiptTitle||receiptFile.name); data.append("document_type","receipt");
       const response=await fetch(`/api/expense-documents/${selected.id}/upload`,{method:"POST",body:data});
       const payload=await response.json().catch(()=>null); if(!response.ok) throw new Error(payload?.detail??"Unable to upload receipt.");
-      const detail=await api(`/expenses/${selected.id}`) as ExpenseDetail; setSelected(detail); setReceiptFile(null); setReceiptTitle(`${detail.expense_number} receipt`); setMessage("Expense receipt uploaded."); await load();
+      const detail=await api(`/expenses/${selected.id}`) as ExpenseDetail;
+      setSelected(detail); setReceiptFile(null); setReceiptTitle(`${detail.expense_number} receipt`); setMessage("Expense receipt uploaded.");
+      await Promise.all([refreshSummary(),refreshExpenses()]);
     } catch(reason){ setError(reason instanceof Error?reason.message:"Unable to upload receipt."); }
     finally{setSaving(false);}
   }
@@ -153,36 +214,59 @@ export default function ExpensesPage() {
   async function deleteReceipt(documentId:string) {
     if (!selected || !window.confirm("Delete this receipt/document?")) return;
     setSaving(true); setError(null);
-    try { const response=await fetch(`/api/expense-documents/${selected.id}/${documentId}`,{method:"DELETE"}); const payload=response.status===204?null:await response.json().catch(()=>null); if(!response.ok) throw new Error(payload?.detail??"Unable to delete document."); const detail=await api(`/expenses/${selected.id}`) as ExpenseDetail; setSelected(detail); setMessage("Expense document deleted."); await load(); }
-    catch(reason){setError(reason instanceof Error?reason.message:"Unable to delete document.");}
+    try {
+      const response=await fetch(`/api/expense-documents/${selected.id}/${documentId}`,{method:"DELETE"});
+      const payload=response.status===204?null:await response.json().catch(()=>null);
+      if(!response.ok) throw new Error(payload?.detail??"Unable to delete document.");
+      const detail=await api(`/expenses/${selected.id}`) as ExpenseDetail;
+      setSelected(detail); setMessage("Expense document deleted.");
+      await Promise.all([refreshSummary(),refreshExpenses()]);
+    } catch(reason){setError(reason instanceof Error?reason.message:"Unable to delete document.");}
     finally{setSaving(false);}
   }
 
   async function submitVendor(event:React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form=new FormData(event.currentTarget); setSaving(true); setError(null);
-    try { await api("/vendors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),contact_name:form.get("contact_name")||null,email:form.get("email")||null,phone:form.get("phone")||null,country_code:form.get("country_code")||null,currency:form.get("currency")||null,notes:form.get("notes")||null})}); setModal(null); setMessage("Vendor created."); await load(); }
-    catch(reason){setError(reason instanceof Error?reason.message:"Unable to create vendor.");} finally{setSaving(false);}
+    try {
+      await api("/vendors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),contact_name:form.get("contact_name")||null,email:form.get("email")||null,phone:form.get("phone")||null,country_code:form.get("country_code")||null,currency:form.get("currency")||null,notes:form.get("notes")||null})});
+      setModal(null); setMessage("Vendor created."); await Promise.all([refreshMeta(),refreshSummary()]);
+    } catch(reason){setError(reason instanceof Error?reason.message:"Unable to create vendor.");} finally{setSaving(false);}
   }
 
   async function toggleVendor(item:Vendor) {
-    setSaving(true); setError(null); try { await api(`/vendors/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})}); await load(); }
+    setSaving(true); setError(null);
+    try { await api(`/vendors/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})}); await Promise.all([refreshMeta(),refreshSummary()]); }
     catch(reason){setError(reason instanceof Error?reason.message:"Unable to update vendor.");} finally{setSaving(false);}
   }
 
   async function submitCategory(event:React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form=new FormData(event.currentTarget); setSaving(true); setError(null);
-    try { await api("/expense-categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),cost_type:form.get("cost_type"),sort_order:Number(form.get("sort_order")||0)})}); setModal(null); setMessage("Expense category created."); await load(); }
-    catch(reason){setError(reason instanceof Error?reason.message:"Unable to create category.");} finally{setSaving(false);}
+    try {
+      await api("/expense-categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),cost_type:form.get("cost_type"),sort_order:Number(form.get("sort_order")||0)})});
+      setModal(null); setMessage("Expense category created."); await refreshMeta();
+    } catch(reason){setError(reason instanceof Error?reason.message:"Unable to create category.");} finally{setSaving(false);}
   }
 
   async function toggleCategory(item:Category) {
-    setSaving(true); setError(null); try { await api(`/expense-categories/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})}); await load(); }
+    setSaving(true); setError(null);
+    try { await api(`/expense-categories/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})}); await refreshMeta(); }
     catch(reason){setError(reason instanceof Error?reason.message:"Unable to update category.");} finally{setSaving(false);}
   }
 
   async function filterExpenses() {
-    const params=new URLSearchParams({limit:"200"}); if(search.trim())params.set("search",search.trim()); if(statusFilter)params.set("status",statusFilter); if(categoryFilter)params.set("category_id",categoryFilter);
-    try { const data=await api(`/expenses?${params}`) as {items:ExpenseRow[]}; setExpenses(data.items); } catch(reason){setError(reason instanceof Error?reason.message:"Unable to filter expenses.");}
+    setError(null);
+    try { await refreshExpenses(true); } catch(reason){setError(reason instanceof Error?reason.message:"Unable to filter expenses.");}
+  }
+
+  async function loadMore() {
+    if(!nextCursor)return;
+    setLoadingMore(true); setError(null);
+    try {
+      const data=await api(`/expenses?${expenseQuery(nextCursor)}`) as ExpensePage;
+      setExpenses((current)=>[...current,...data.items]);
+      setNextCursor(data.next_cursor);
+    } catch(reason){setError(reason instanceof Error?reason.message:"Unable to load more expenses.");}
+    finally{setLoadingMore(false);}
   }
 
   if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400"/></main>;
@@ -198,19 +282,16 @@ export default function ExpensesPage() {
 
     <div className="mt-5 rounded-2xl border bg-white p-2 shadow-sm"><div className="flex flex-wrap gap-1">{(["expenses","vendors","categories","profitability"] as Tab[]).map((item)=><button key={item} onClick={()=>setTab(item)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab===item?"bg-neutral-950 text-white":"text-neutral-500 hover:bg-neutral-100"}`}>{pretty(item)}</button>)}</div></div>
 
-    {tab==="expenses"?<section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-col gap-3 border-b p-4 lg:flex-row"><input value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==="Enter")void filterExpenses();}} placeholder="Search expense, reference..." className="h-11 flex-1 rounded-xl border px-3 text-sm"/><select value={statusFilter} onChange={(e)=>setStatusFilter(e.target.value)} className="h-11 rounded-xl border px-3 text-sm"><option value="">All statuses</option><option value="posted">Posted</option><option value="voided">Voided</option></select><select value={categoryFilter} onChange={(e)=>setCategoryFilter(e.target.value)} className="h-11 rounded-xl border px-3 text-sm"><option value="">All categories</option>{meta.categories.map((item)=><option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={()=>void filterExpenses()} className="h-11 rounded-xl border px-4 text-sm font-semibold">Apply</button></div><div className="overflow-x-auto"><table className="w-full min-w-[1200px] text-left text-sm"><thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Expense</th><th>Date</th><th>Vendor / Category</th><th>Linked to</th><th>Paid from</th><th>Expense</th><th>Account debit</th><th>Docs</th><th>Status</th><th className="pr-4 text-right">Action</th></tr></thead><tbody className="divide-y">{expenses.map((item)=><tr key={item.id}><td className="p-4"><p className="font-semibold">{item.expense_number}</p><p className="mt-1 max-w-60 truncate text-xs text-neutral-400">{item.description}</p></td><td>{item.expense_date}</td><td><p>{item.vendor_name||"—"}</p><p className="text-xs text-neutral-400">{item.category_name}</p></td><td><p>{item.project_number?`${item.project_number} · ${item.project_name}`:item.client_name||"Company"}</p></td><td>{item.account_name}</td><td>{money(item.expense_amount,item.expense_currency)}</td><td>{money(item.account_amount,item.account_currency)}</td><td>{item.document_count}</td><td><span className={`rounded-full px-2.5 py-1 text-xs ${item.status==="posted"?"bg-emerald-50 text-emerald-700":"bg-neutral-100 text-neutral-400"}`}>{pretty(item.status)}</span></td><td className="pr-4 text-right"><button onClick={()=>void openDetail(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table>{!expenses.length?<Empty text="No expenses found."/>:null}</div></section>:null}
+    {tab==="expenses"?<section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-col gap-3 border-b p-4 lg:flex-row"><input value={search} onChange={(e)=>setSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==="Enter")void filterExpenses();}} placeholder="Search expense, reference..." className="h-11 flex-1 rounded-xl border px-3 text-sm"/><select value={statusFilter} onChange={(e)=>setStatusFilter(e.target.value)} className="h-11 rounded-xl border px-3 text-sm"><option value="">All statuses</option><option value="posted">Posted</option><option value="voided">Voided</option></select><select value={categoryFilter} onChange={(e)=>setCategoryFilter(e.target.value)} className="h-11 rounded-xl border px-3 text-sm"><option value="">All categories</option>{meta.categories.map((item)=><option key={item.id} value={item.id}>{item.name}</option>)}</select><button disabled={listLoading} onClick={()=>void filterExpenses()} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">{listLoading?"Applying...":"Apply"}</button></div><div className="overflow-x-auto"><table className="w-full min-w-[1200px] text-left text-sm"><thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Expense</th><th>Date</th><th>Vendor / Category</th><th>Linked to</th><th>Paid from</th><th>Expense</th><th>Account debit</th><th>Docs</th><th>Status</th><th className="pr-4 text-right">Action</th></tr></thead><tbody className="divide-y">{expenses.map((item)=><tr key={item.id}><td className="p-4"><p className="font-semibold">{item.expense_number}</p><p className="mt-1 max-w-60 truncate text-xs text-neutral-400">{item.description}</p></td><td>{item.expense_date}</td><td><p>{item.vendor_name||"—"}</p><p className="text-xs text-neutral-400">{item.category_name}</p></td><td><p>{item.project_number?`${item.project_number} · ${item.project_name}`:item.client_name||"Company"}</p></td><td>{item.account_name}</td><td>{money(item.expense_amount,item.expense_currency)}</td><td>{money(item.account_amount,item.account_currency)}</td><td>{item.document_count}</td><td><span className={`rounded-full px-2.5 py-1 text-xs ${item.status==="posted"?"bg-emerald-50 text-emerald-700":"bg-neutral-100 text-neutral-400"}`}>{pretty(item.status)}</span></td><td className="pr-4 text-right"><button onClick={()=>void openDetail(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table>{!expenses.length?<Empty text="No expenses found."/>:null}</div>{nextCursor?<div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={()=>void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore?"Loading...":"Load more"}</button></div>:null}</section>:null}
 
     {tab==="vendors"?<section className="mt-5"><div className="mb-4 flex justify-end"><button onClick={()=>setModal("vendor")} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white"><Plus className="size-4"/>Add vendor</button></div><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{meta.vendors.map((item)=><article key={item.id} className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-start justify-between"><div><p className="font-semibold">{item.name}</p><p className="mt-1 text-xs text-neutral-400">{item.vendor_code}{item.currency?` · ${item.currency}`:""}</p></div><span className={`rounded-full px-2.5 py-1 text-xs ${item.is_active?"bg-emerald-50 text-emerald-700":"bg-neutral-100 text-neutral-400"}`}>{item.is_active?"Active":"Inactive"}</span></div><div className="mt-4 space-y-1 text-sm text-neutral-500"><p>{item.contact_name||"No contact person"}</p><p>{item.email||"No email"}</p><p>{item.phone||"No phone"}</p></div><button disabled={saving} onClick={()=>void toggleVendor(item)} className="mt-4 w-full rounded-xl border px-3 py-2.5 text-sm font-semibold">{item.is_active?"Deactivate":"Activate"}</button></article>)}</div></section>:null}
 
     {tab==="categories"?<section className="mt-5 rounded-2xl border bg-white shadow-sm"><div className="flex items-center justify-between border-b p-5"><div><h2 className="font-semibold">Expense categories</h2><p className="mt-1 text-sm text-neutral-500">Built-in categories are editable and you can add your own.</p></div><button onClick={()=>setModal("category")} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white"><Plus className="size-4"/>Add category</button></div><div className="divide-y">{meta.categories.map((item)=><div key={item.id} className="flex items-center justify-between gap-4 p-4"><div><p className="font-medium">{item.name}</p><p className="mt-1 text-xs text-neutral-400">{pretty(item.cost_type)} · {item.slug}</p></div><div className="flex items-center gap-3"><span className={`rounded-full px-2.5 py-1 text-xs ${item.is_active?"bg-emerald-50 text-emerald-700":"bg-neutral-100 text-neutral-400"}`}>{item.is_active?"Active":"Inactive"}</span><button disabled={saving} onClick={()=>void toggleCategory(item)} className="rounded-lg border px-3 py-2 text-xs font-semibold">{item.is_active?"Disable":"Enable"}</button></div></div>)}</div></section>:null}
 
-    {tab==="profitability"?<section className="mt-5 space-y-5"><div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Profit & loss by currency</h2><p className="mt-1 text-sm text-neutral-500">Invoice revenue minus posted expenses and transfer fees. Currencies are never mixed.</p><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{profitability.profit_loss_by_currency.map((item)=><div key={item.currency} className="rounded-xl bg-neutral-50 p-4"><div className="flex items-center justify-between"><p className="font-semibold">{item.currency}</p><TrendingUp className="size-4 text-neutral-400"/></div><p className="mt-4 text-2xl font-semibold">{money(item.net_profit,item.currency)}</p><div className="mt-3 space-y-1 text-xs text-neutral-500"><p>Revenue {money(item.invoice_revenue,item.currency)}</p><p>Expenses {money(item.operating_expenses,item.currency)}</p><p>Transfer fees {money(item.transfer_fees,item.currency)}</p></div></div>)}</div></div>
-      <ProfitTable title="Project profitability" rows={profitability.projects.map((item)=>({key:item.project_id,label:`${item.project_number} · ${item.project_name}`,sub:item.client_name,currency:item.currency,revenue:item.invoiced_revenue,collected:item.collected_revenue,cost:item.direct_expenses,profit:item.estimated_profit,margin:item.margin_percent}))}/>
-      <ProfitTable title="Client profitability" rows={profitability.clients.map((item)=>({key:`${item.client_id}-${item.currency}`,label:item.client_name,sub:item.currency,currency:item.currency,revenue:item.invoiced_revenue,collected:item.collected_revenue,cost:item.direct_expenses,profit:item.estimated_profit,margin:item.margin_percent}))}/>
-    </section>:null}
+    {tab==="profitability"?(profitabilityLoading&&!profitabilityLoaded?<div className="mt-5 flex min-h-72 items-center justify-center rounded-2xl border bg-white"><Loader2 className="size-6 animate-spin text-neutral-400"/></div>:<section className="mt-5 space-y-5"><div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Profit & loss by currency</h2><p className="mt-1 text-sm text-neutral-500">Invoice revenue minus posted expenses and transfer fees. Currencies are never mixed.</p><div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{profitability.profit_loss_by_currency.map((item)=><div key={item.currency} className="rounded-xl bg-neutral-50 p-4"><div className="flex items-center justify-between"><p className="font-semibold">{item.currency}</p><TrendingUp className="size-4 text-neutral-400"/></div><p className="mt-4 text-2xl font-semibold">{money(item.net_profit,item.currency)}</p><div className="mt-3 space-y-1 text-xs text-neutral-500"><p>Revenue {money(item.invoice_revenue,item.currency)}</p><p>Expenses {money(item.operating_expenses,item.currency)}</p><p>Transfer fees {money(item.transfer_fees,item.currency)}</p></div></div>)}</div></div><ProfitTable title="Project profitability" rows={profitability.projects.map((item)=>({key:item.project_id,label:`${item.project_number} · ${item.project_name}`,sub:item.client_name,currency:item.currency,revenue:item.invoiced_revenue,collected:item.collected_revenue,cost:item.direct_expenses,profit:item.estimated_profit,margin:item.margin_percent}))}/><ProfitTable title="Client profitability" rows={profitability.clients.map((item)=>({key:`${item.client_id}-${item.currency}`,label:item.client_name,sub:item.currency,currency:item.currency,revenue:item.invoiced_revenue,collected:item.collected_revenue,cost:item.direct_expenses,profit:item.estimated_profit,margin:item.margin_percent}))}/></section>):null}
   </div>
 
-  {modal==="expense"?<Modal title="Post expense" subtitle="Financial amounts are immutable after posting. Void and recreate if the account/currency/amount is wrong." onClose={()=>setModal(null)}><form onSubmit={submitExpense} className="space-y-4">{error?<ErrorBox text={error}/>:null}<div className="grid gap-4 sm:grid-cols-2"><Field label="Description" wide><input required value={expenseForm.description} onChange={(e)=>setExpenseForm({...expenseForm,description:e.target.value})} className="input" placeholder="Hosting renewal, contractor payment..."/></Field><Field label="Category"><select required value={expenseForm.category_id} onChange={(e)=>setExpenseForm({...expenseForm,category_id:e.target.value})} className="input"><option value="">Select category</option>{meta.categories.filter((i)=>i.is_active).map((i)=><option key={i.id} value={i.id}>{i.name} · {pretty(i.cost_type)}</option>)}</select></Field><Field label="Vendor"><select value={expenseForm.vendor_id} onChange={(e)=>setExpenseForm({...expenseForm,vendor_id:e.target.value})} className="input"><option value="">No vendor</option>{meta.vendors.filter((i)=>i.is_active).map((i)=><option key={i.id} value={i.id}>{i.vendor_code} · {i.name}</option>)}</select></Field><Field label="Paid from account"><select required value={expenseForm.account_id} onChange={(e)=>{const account=meta.accounts.find((i)=>i.id===e.target.value);setExpenseForm({...expenseForm,account_id:e.target.value,expense_currency:account?.currency||expenseForm.expense_currency,account_amount:""});}} className="input"><option value="">Select account</option>{meta.accounts.filter((i)=>i.is_active).map((i)=><option key={i.id} value={i.id}>{i.name} · {i.currency} {Number(i.current_balance).toFixed(2)}</option>)}</select></Field><Field label="Expense date"><input type="date" value={expenseForm.expense_date} onChange={(e)=>setExpenseForm({...expenseForm,expense_date:e.target.value})} className="input"/></Field><Field label="Expense currency"><input required maxLength={3} value={expenseForm.expense_currency} onChange={(e)=>setExpenseForm({...expenseForm,expense_currency:e.target.value.toUpperCase()})} className="input uppercase"/></Field><Field label={`Expense amount (${expenseForm.expense_currency})`}><input required type="number" min="0.01" step="0.01" value={expenseForm.expense_amount} onChange={(e)=>setExpenseForm({...expenseForm,expense_amount:e.target.value})} className="input"/></Field>{accountFxNeeded?<Field label={`Actual debit from ${selectedAccount?.name} (${selectedAccount?.currency})`}><input required type="number" min="0.01" step="0.01" value={expenseForm.account_amount} onChange={(e)=>setExpenseForm({...expenseForm,account_amount:e.target.value})} className="input"/><small className="hint">Enter the exact amount deducted from the account.</small></Field>:null}<Field label="Project"><select value={expenseForm.project_id} onChange={(e)=>setExpenseForm({...expenseForm,project_id:e.target.value,client_id:"",profitability_amount:""})} className="input"><option value="">No project</option>{meta.projects.map((i)=><option key={i.id} value={i.id}>{i.number} · {i.name} · {i.currency}</option>)}</select></Field><Field label="Client"><select disabled={Boolean(selectedProject)} value={selectedProject?.client_id||expenseForm.client_id} onChange={(e)=>setExpenseForm({...expenseForm,client_id:e.target.value,profitability_amount:""})} className="input disabled:bg-neutral-50"><option value="">Company expense</option>{meta.clients.map((i)=><option key={i.id} value={i.id}>{i.code} · {i.name}{i.currency?` · ${i.currency}`:""}</option>)}</select>{selectedProject?<small className="hint">Project client: {selectedProject.client_name}</small>:null}</Field>{profitFxNeeded?<Field label={`Cost for profitability (${profitabilityCurrency})`}><input required type="number" min="0.01" step="0.01" value={expenseForm.profitability_amount} onChange={(e)=>setExpenseForm({...expenseForm,profitability_amount:e.target.value})} className="input"/><small className="hint">Normalize this expense to the project/client commercial currency.</small></Field>:null}<Field label={`Tax amount (${expenseForm.expense_currency})`}><input type="number" min="0" step="0.01" value={expenseForm.tax_amount} onChange={(e)=>setExpenseForm({...expenseForm,tax_amount:e.target.value})} className="input"/></Field><Field label="Payment method"><select value={expenseForm.payment_method} onChange={(e)=>setExpenseForm({...expenseForm,payment_method:e.target.value})} className="input">{methods.map((i)=><option key={i} value={i}>{pretty(i)}</option>)}</select></Field><Field label="Reference"><input value={expenseForm.reference} onChange={(e)=>setExpenseForm({...expenseForm,reference:e.target.value})} className="input" placeholder="Receipt / transaction ref"/></Field><Field label="Notes" wide><textarea rows={3} value={expenseForm.notes} onChange={(e)=>setExpenseForm({...expenseForm,notes:e.target.value})} className="textarea"/></Field></div><button disabled={saving} className="btn-primary w-full">{saving?"Posting...":"Post expense"}</button></form></Modal>:null}
+  {modal==="expense"?<Modal title="Post expense" subtitle="Financial amounts are immutable after posting. Void and recreate if the account/currency/amount is wrong." onClose={()=>setModal(null)}><form onSubmit={submitExpense} className="space-y-4">{error?<ErrorBox text={error}/>:null}<div className="grid gap-4 sm:grid-cols-2"><Field label="Description" wide><input required value={expenseForm.description} onChange={(e)=>setExpenseForm({...expenseForm,description:e.target.value})} className="input" placeholder="Hosting renewal, contractor payment..."/></Field><SearchableSelect label="Category" name="category_id" required value={expenseForm.category_id} onValueChange={(value)=>setExpenseForm({...expenseForm,category_id:value})} options={meta.categories.filter((i)=>i.is_active).map((i)=>({value:i.id,label:`${i.name} · ${pretty(i.cost_type)}`,keywords:i.slug}))} placeholder="Select category"/><SearchableSelect label="Vendor" name="vendor_id" value={expenseForm.vendor_id} onValueChange={(value)=>setExpenseForm({...expenseForm,vendor_id:value})} options={meta.vendors.filter((i)=>i.is_active).map((i)=>({value:i.id,label:`${i.vendor_code} · ${i.name}`,keywords:`${i.email||""} ${i.currency||""}`}))} placeholder="No vendor"/><SearchableSelect label="Paid from account" name="account_id" required value={expenseForm.account_id} onValueChange={(value)=>{const account=meta.accounts.find((i)=>i.id===value);setExpenseForm({...expenseForm,account_id:value,expense_currency:account?.currency||expenseForm.expense_currency,account_amount:""});}} options={meta.accounts.filter((i)=>i.is_active).map((i)=>({value:i.id,label:`${i.name} · ${i.currency} ${Number(i.current_balance).toFixed(2)}`,keywords:i.currency}))} placeholder="Select account"/><Field label="Expense date"><input type="date" value={expenseForm.expense_date} onChange={(e)=>setExpenseForm({...expenseForm,expense_date:e.target.value})} className="input"/></Field><Field label="Expense currency"><input required maxLength={3} value={expenseForm.expense_currency} onChange={(e)=>setExpenseForm({...expenseForm,expense_currency:e.target.value.toUpperCase()})} className="input uppercase"/></Field><Field label={`Expense amount (${expenseForm.expense_currency})`}><input required type="number" min="0.01" step="0.01" value={expenseForm.expense_amount} onChange={(e)=>setExpenseForm({...expenseForm,expense_amount:e.target.value})} className="input"/></Field>{accountFxNeeded?<Field label={`Actual debit from ${selectedAccount?.name} (${selectedAccount?.currency})`}><input required type="number" min="0.01" step="0.01" value={expenseForm.account_amount} onChange={(e)=>setExpenseForm({...expenseForm,account_amount:e.target.value})} className="input"/><small className="hint">Enter the exact amount deducted from the account.</small></Field>:null}<SearchableSelect label="Project" name="project_id" value={expenseForm.project_id} onValueChange={(value)=>setExpenseForm({...expenseForm,project_id:value,client_id:"",profitability_amount:""})} options={meta.projects.map((i)=>({value:i.id,label:`${i.number} · ${i.name} · ${i.currency}`,keywords:i.client_name}))} placeholder="No project"/>{selectedProject?<Field label="Client"><input disabled value={`${selectedProject.client_name} · ${selectedProject.currency}`} className="input bg-neutral-50"/><small className="hint">Client is inherited from the selected project.</small></Field>:<SearchableSelect label="Client" name="client_id" value={expenseForm.client_id} onValueChange={(value)=>setExpenseForm({...expenseForm,client_id:value,profitability_amount:""})} options={meta.clients.map((i)=>({value:i.id,label:`${i.code} · ${i.name}${i.currency?` · ${i.currency}`:""}`,keywords:i.currency||""}))} placeholder="Company expense"/>}{profitFxNeeded?<Field label={`Cost for profitability (${profitabilityCurrency})`}><input required type="number" min="0.01" step="0.01" value={expenseForm.profitability_amount} onChange={(e)=>setExpenseForm({...expenseForm,profitability_amount:e.target.value})} className="input"/><small className="hint">Normalize this expense to the project/client commercial currency.</small></Field>:null}<Field label={`Tax amount (${expenseForm.expense_currency})`}><input type="number" min="0" step="0.01" value={expenseForm.tax_amount} onChange={(e)=>setExpenseForm({...expenseForm,tax_amount:e.target.value})} className="input"/></Field><Field label="Payment method"><select value={expenseForm.payment_method} onChange={(e)=>setExpenseForm({...expenseForm,payment_method:e.target.value})} className="input">{methods.map((i)=><option key={i} value={i}>{pretty(i)}</option>)}</select></Field><Field label="Reference"><input value={expenseForm.reference} onChange={(e)=>setExpenseForm({...expenseForm,reference:e.target.value})} className="input" placeholder="Receipt / transaction ref"/></Field><Field label="Notes" wide><textarea rows={3} value={expenseForm.notes} onChange={(e)=>setExpenseForm({...expenseForm,notes:e.target.value})} className="textarea"/></Field></div><button disabled={saving} className="btn-primary w-full">{saving?"Posting...":"Post expense"}</button></form></Modal>:null}
 
   {modal==="vendor"?<Modal title="Add vendor" subtitle="Create suppliers, contractors, software providers or service vendors." onClose={()=>setModal(null)}><form onSubmit={submitVendor} className="space-y-4">{error?<ErrorBox text={error}/>:null}<div className="grid gap-4 sm:grid-cols-2"><Field label="Vendor name" wide><input name="name" required className="input"/></Field><Field label="Contact person"><input name="contact_name" className="input"/></Field><Field label="Email"><input name="email" type="email" className="input"/></Field><Field label="Phone"><input name="phone" className="input"/></Field><Field label="Country code"><input name="country_code" maxLength={2} placeholder="BD" className="input uppercase"/></Field><Field label="Default currency"><input name="currency" maxLength={3} placeholder="USD" className="input uppercase"/></Field><Field label="Notes" wide><textarea name="notes" rows={3} className="textarea"/></Field></div><button disabled={saving} className="btn-primary w-full">Create vendor</button></form></Modal>:null}
 
