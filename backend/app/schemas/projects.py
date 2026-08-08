@@ -68,7 +68,7 @@ class ProjectListItem(BaseModel):
     name: str
     status: str
     priority: str
-    progress_percent: int
+    progress_percent: int = 0
     planned_start_date: date | None
     due_date: date | None
     currency: str
@@ -100,7 +100,7 @@ class ProjectDetail(BaseModel):
     name: str
     status: str
     priority: str
-    progress_percent: int
+    progress_percent: int = 0
     planned_start_date: date | None
     due_date: date | None
     currency: str
