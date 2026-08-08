@@ -15,6 +15,7 @@ export function SearchableSelect({
   defaultValue,
   value: controlledValue,
   onValueChange,
+  onChange,
   options,
   placeholder = "Select an option",
   searchPlaceholder = "Search...",
@@ -22,11 +23,12 @@ export function SearchableSelect({
   allowCustom = false,
   clearable = true,
 }: {
-  label: string;
-  name: string;
+  label?: string;
+  name?: string;
   defaultValue?: string | null;
   value?: string | null;
   onValueChange?: (value: string) => void;
+  onChange?: (value: string) => void;
   options: SearchOption[];
   placeholder?: string;
   searchPlaceholder?: string;
@@ -75,6 +77,7 @@ export function SearchableSelect({
   function choose(nextValue: string) {
     if (!isControlled) setInternalValue(nextValue);
     onValueChange?.(nextValue);
+    onChange?.(nextValue);
     setQuery("");
     setOpen(false);
   }
@@ -85,23 +88,25 @@ export function SearchableSelect({
   );
   const displayValue = selected?.label ?? (value || placeholder);
   const canClear = clearable && !required && Boolean(value);
+  const accessibleLabel = label || placeholder;
 
   return (
     <div ref={rootRef} className="relative block text-sm font-medium">
-      <span>{label}</span>
-      <input type="hidden" name={name} value={value} required={required} />
-      <div className="relative mt-2">
+      {label ? <span>{label}</span> : null}
+      {name ? <input type="hidden" name={name} value={value} required={required} /> : null}
+      <div className={label ? "relative mt-2" : "relative"}>
         <button
           type="button"
           onClick={() => setOpen((current) => !current)}
           className="flex h-11 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 pr-16 text-left text-sm outline-none transition hover:border-neutral-300 focus:border-neutral-500"
           aria-haspopup="listbox"
           aria-expanded={open}
+          aria-label={accessibleLabel}
         >
           <span className={`truncate ${selected || value ? "text-neutral-950" : "text-neutral-400"}`}>{displayValue}</span>
         </button>
         <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center gap-1">
-          {canClear ? <button type="button" aria-label={`Clear ${label}`} onClick={(event) => { event.stopPropagation(); choose(""); }} className="pointer-events-auto rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"><X className="size-3.5" /></button> : null}
+          {canClear ? <button type="button" aria-label={`Clear ${accessibleLabel}`} onClick={(event) => { event.stopPropagation(); choose(""); }} className="pointer-events-auto rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"><X className="size-3.5" /></button> : null}
           <ChevronDown className={`size-4 shrink-0 text-neutral-400 transition ${open ? "rotate-180" : ""}`} />
         </div>
       </div>
