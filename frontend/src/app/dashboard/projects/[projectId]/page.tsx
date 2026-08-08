@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, Clock3, FileText, FolderKanban, KeyRound, ListChecks, Loader2, Milestone, Plus, ShieldCheck, UsersRound, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, FileText, KeyRound, Loader2, Plus, ShieldCheck, UsersRound, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null };
@@ -25,6 +25,13 @@ const tabs: { id: Tab; label: string }[] = [
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`; return `${(value / (1024 * 1024)).toFixed(1)} MB`; }
+function vaultMessage(reason: unknown) {
+  const message = reason instanceof Error ? reason.message : "Unable to save credential.";
+  if (message.toLowerCase().includes("encryption key") || message.toLowerCase().includes("credentials vault")) {
+    return "Credentials Vault is temporarily unavailable. Please contact your administrator.";
+  }
+  return message;
+}
 
 export default function ProjectWorkspacePage() {
   const params = useParams<{ projectId: string }>();
@@ -38,6 +45,7 @@ export default function ProjectWorkspacePage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
   const [modal, setModal] = useState<"milestone" | "task" | "progress" | "document" | "credential" | "team" | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskRow | null>(null);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
@@ -114,10 +122,13 @@ export default function ProjectWorkspacePage() {
   }
 
   async function createCredential(values: { name: string; credential_type: string; environment: string; username: string; secret: string; url: string; notes: string; access_level: string }) {
-    setSaving(true); setError(null);
-    try { await api(`/${projectId}/credentials`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) }); setModal(null); setMessage("Credential encrypted and saved."); await refresh(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save credential."); }
-    finally { setSaving(false); }
+    setSaving(true); setCredentialError(null); setError(null);
+    try {
+      await api(`/${projectId}/credentials`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+      setModal(null); setCredentialError(null); setMessage("Credential encrypted and saved."); await refresh();
+    } catch (reason) {
+      setCredentialError(vaultMessage(reason));
+    } finally { setSaving(false); }
   }
 
   async function revealCredential(id: string) {
@@ -126,7 +137,7 @@ export default function ProjectWorkspacePage() {
       const payload = await api(`/${projectId}/credentials/${id}/reveal`, { method: "POST" }) as { secret: string };
       setRevealed((current) => ({ ...current, [id]: payload.secret }));
       window.setTimeout(() => setRevealed((current) => { const next = { ...current }; delete next[id]; return next; }), 30000);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to reveal credential."); }
+    } catch (reason) { setError(vaultMessage(reason)); }
   }
 
   async function saveTeam(managerId: string, memberIds: string[]) {
@@ -157,7 +168,7 @@ export default function ProjectWorkspacePage() {
       {tab === "tasks" ? <Tasks rows={workspace.tasks} onAdd={() => setModal("task")} onProgress={(task) => { setSelectedTask(task); setModal("progress"); }} /> : null}
       {tab === "work" ? <WorkLogs rows={workspace.recent_work} /> : null}
       {tab === "documents" ? <Documents projectId={projectId} rows={workspace.documents} onAdd={() => setModal("document")} /> : null}
-      {tab === "credentials" ? <Credentials rows={workspace.credentials} revealed={revealed} onAdd={() => setModal("credential")} onReveal={(id) => void revealCredential(id)} /> : null}
+      {tab === "credentials" ? <Credentials rows={workspace.credentials} revealed={revealed} onAdd={() => { setCredentialError(null); setModal("credential"); }} onReveal={(id) => void revealCredential(id)} /> : null}
       {tab === "team" ? <Team project={project} onManage={() => setModal("team")} /> : null}
     </section>
   </div>
@@ -166,7 +177,7 @@ export default function ProjectWorkspacePage() {
   {modal === "task" ? <TaskModal saving={saving} milestones={workspace.milestones} members={project.members} onClose={() => setModal(null)} onSave={createTask} /> : null}
   {modal === "progress" && selectedTask ? <ProgressModal saving={saving} task={selectedTask} onClose={() => { setModal(null); setSelectedTask(null); }} onSave={updateProgress} /> : null}
   {modal === "document" ? <DocumentModal saving={saving} onClose={() => setModal(null)} onSave={uploadDocument} /> : null}
-  {modal === "credential" ? <CredentialModal saving={saving} onClose={() => setModal(null)} onSave={createCredential} /> : null}
+  {modal === "credential" ? <CredentialModal error={credentialError} saving={saving} onClose={() => { setCredentialError(null); setModal(null); }} onSave={createCredential} /> : null}
   {modal === "team" ? <TeamModal saving={saving} project={project} employees={meta.employees} onClose={() => setModal(null)} onSave={saveTeam} /> : null}
   </main>;
 }
@@ -195,7 +206,7 @@ function ProgressModal({ saving, task, onClose, onSave }: { saving:boolean; task
 
 function DocumentModal({ saving, onClose, onSave }: { saving:boolean; onClose:()=>void; onSave:(v:{title:string;document_type:string;notes:string;file:File|null})=>Promise<void> }) { const [title,setTitle]=useState(""); const [type,setType]=useState("other"); const [notes,setNotes]=useState(""); const [file,setFile]=useState<File|null>(null); return <Modal title="Upload project document" onClose={onClose}><Field label="Title"><input value={title} onChange={(e)=>setTitle(e.target.value)} className="control" /></Field><Field label="Document type"><select value={type} onChange={(e)=>setType(e.target.value)} className="control"><option value="requirement">Requirement</option><option value="contract">Contract</option><option value="design">Design</option><option value="technical">Technical</option><option value="delivery">Delivery</option><option value="other">Other</option></select></Field><Field label="File"><input type="file" onChange={(e)=>setFile(e.target.files?.[0] || null)} className="control py-2" /></Field><Field label="Notes"><textarea value={notes} onChange={(e)=>setNotes(e.target.value)} className="textarea" /></Field><ModalActions saving={saving} disabled={!title.trim() || !file} onClose={onClose} onSave={() => void onSave({title:title.trim(),document_type:type,notes,file})} /></Modal>; }
 
-function CredentialModal({ saving, onClose, onSave }: { saving:boolean; onClose:()=>void; onSave:(v:{name:string;credential_type:string;environment:string;username:string;secret:string;url:string;notes:string;access_level:string})=>Promise<void> }) { const [name,setName]=useState(""); const [type,setType]=useState("login"); const [env,setEnv]=useState("production"); const [username,setUsername]=useState(""); const [secret,setSecret]=useState(""); const [url,setUrl]=useState(""); const [notes,setNotes]=useState(""); const [access,setAccess]=useState("manager_only"); return <Modal title="Add encrypted credential" onClose={onClose}><div className="grid gap-4 sm:grid-cols-2"><Field label="Name"><input value={name} onChange={(e)=>setName(e.target.value)} className="control" /></Field><Field label="Type"><select value={type} onChange={(e)=>setType(e.target.value)} className="control"><option value="login">Login</option><option value="api_key">API Key</option><option value="database">Database</option><option value="ssh">SSH / Server</option><option value="hosting">Hosting</option><option value="domain">Domain</option><option value="other">Other</option></select></Field><Field label="Environment"><select value={env} onChange={(e)=>setEnv(e.target.value)} className="control"><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="other">Other</option></select></Field><Field label="Access"><select value={access} onChange={(e)=>setAccess(e.target.value)} className="control"><option value="manager_only">Project manager only</option><option value="team">Project team</option></select></Field><Field label="Username / Email"><input value={username} onChange={(e)=>setUsername(e.target.value)} className="control" /></Field><Field label="Secret / Password / Key"><input type="password" autoComplete="new-password" value={secret} onChange={(e)=>setSecret(e.target.value)} className="control" /></Field><label className="sm:col-span-2 text-sm font-medium">URL<input value={url} onChange={(e)=>setUrl(e.target.value)} className="control" /></label><label className="sm:col-span-2 text-sm font-medium">Notes<textarea value={notes} onChange={(e)=>setNotes(e.target.value)} className="textarea" /></label></div><ModalActions saving={saving} disabled={!name.trim() || !secret} onClose={onClose} onSave={() => void onSave({name:name.trim(),credential_type:type,environment:env,username,secret,url,notes,access_level:access})} /></Modal>; }
+function CredentialModal({ error, saving, onClose, onSave }: { error:string|null; saving:boolean; onClose:()=>void; onSave:(v:{name:string;credential_type:string;environment:string;username:string;secret:string;url:string;notes:string;access_level:string})=>Promise<void> }) { const [name,setName]=useState(""); const [type,setType]=useState("login"); const [env,setEnv]=useState("production"); const [username,setUsername]=useState(""); const [secret,setSecret]=useState(""); const [url,setUrl]=useState(""); const [notes,setNotes]=useState(""); const [access,setAccess]=useState("manager_only"); return <Modal title="Add encrypted credential" onClose={onClose}>{error ? <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><p className="font-semibold">Credential could not be saved</p><p className="mt-1 leading-5">{error}</p></div> : null}<div className="grid gap-4 sm:grid-cols-2"><Field label="Name"><input value={name} onChange={(e)=>setName(e.target.value)} className="control" /></Field><Field label="Type"><select value={type} onChange={(e)=>setType(e.target.value)} className="control"><option value="login">Login</option><option value="api_key">API Key</option><option value="database">Database</option><option value="ssh">SSH / Server</option><option value="hosting">Hosting</option><option value="domain">Domain</option><option value="other">Other</option></select></Field><Field label="Environment"><select value={env} onChange={(e)=>setEnv(e.target.value)} className="control"><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="other">Other</option></select></Field><Field label="Access"><select value={access} onChange={(e)=>setAccess(e.target.value)} className="control"><option value="manager_only">Project manager only</option><option value="team">Project team</option></select></Field><Field label="Username / Email"><input value={username} onChange={(e)=>setUsername(e.target.value)} className="control" /></Field><Field label="Secret / Password / Key"><input type="password" autoComplete="new-password" value={secret} onChange={(e)=>setSecret(e.target.value)} className="control" /></Field><label className="sm:col-span-2 text-sm font-medium">URL<input value={url} onChange={(e)=>setUrl(e.target.value)} className="control" /></label><label className="sm:col-span-2 text-sm font-medium">Notes<textarea value={notes} onChange={(e)=>setNotes(e.target.value)} className="textarea" /></label></div><ModalActions saving={saving} disabled={!name.trim() || !secret} onClose={onClose} onSave={() => void onSave({name:name.trim(),credential_type:type,environment:env,username,secret,url,notes,access_level:access})} /></Modal>; }
 
 function TeamModal({ saving, project, employees, onClose, onSave }: { saving:boolean; project:ProjectDetail; employees:EmployeeOption[]; onClose:()=>void; onSave:(manager:string,members:string[])=>Promise<void> }) { const [manager,setManager]=useState(project.members.find((m)=>m.role_label==="Project Manager")?.employee_id || ""); const [selected,setSelected]=useState(project.members.map((m)=>m.employee_id)); return <Modal title="Manage project team" onClose={onClose}><Field label="Project manager"><select value={manager} onChange={(e)=>{const id=e.target.value;setManager(id);if(id&&!selected.includes(id))setSelected([...selected,id]);}} className="control"><option value="">Unassigned</option>{employees.map((e)=><option key={e.id} value={e.id}>{e.full_name} · {e.employee_code}</option>)}</select></Field><div className="mt-4 max-h-64 overflow-y-auto rounded-xl border">{employees.map((e)=><label key={e.id} className="flex items-center gap-3 border-b px-4 py-3 last:border-0"><input type="checkbox" checked={selected.includes(e.id)||manager===e.id} disabled={manager===e.id} onChange={(event)=>setSelected(event.target.checked?[...new Set([...selected,e.id])]:selected.filter((id)=>id!==e.id))}/><span className="flex-1 text-sm">{e.full_name}</span><span className="text-xs text-neutral-400">{e.employee_code}</span></label>)}</div><ModalActions saving={saving} disabled={false} onClose={onClose} onSave={() => void onSave(manager,selected)} /></Modal>; }
 
