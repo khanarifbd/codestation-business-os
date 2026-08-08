@@ -476,12 +476,13 @@ def update_employee(employee_id: str, payload: EmployeeUpdate, request: Request,
     db.flush()
     after_row = _employee_row(db, tenant.organization_id, employee_id)
     if after_row is None: raise HTTPException(status_code=404, detail="Employee not found")
-    after = _employee_read(after_row).model_dump(mode="json")
+    result = _employee_read(after_row)
+    after = result.model_dump(mode="json")
     record_activity(db, action="employee.updated", scope="tenant", actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id, entity_type="employee", entity_id=employee.id,
         before=before, after=after, request=request, message=f"Employee updated: {user.full_name}")
     db.commit()
-    return _employee_read(after_row)
+    return result
 
 
 @invitation_router.get("/{token}", response_model=InvitationPreview)
