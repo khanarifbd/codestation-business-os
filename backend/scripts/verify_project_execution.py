@@ -10,12 +10,14 @@ from app.api.v1.project_execution import (
     create_credential,
     create_milestone,
     create_task,
+    get_workspace,
     reveal_credential,
+    update_credential,
     update_task_progress,
 )
 from app.db.session import SessionLocal, engine
 from app.models.projects import Project, ProjectCredential, ProjectMilestone, ProjectWorkLog
-from app.schemas.project_execution import CredentialCreate, MilestoneCreate, TaskCreate, TaskProgressUpdate
+from app.schemas.project_execution import CredentialCreate, CredentialUpdate, MilestoneCreate, TaskCreate, TaskProgressUpdate
 
 
 @dataclass(frozen=True)
@@ -49,8 +51,6 @@ def main() -> None:
         """)).mappings().one()
         project_id = str(row["project_id"]); organization_id = str(row["organization_id"]); user_id = str(row["user_id"])
 
-        # The migration fixture organization was inserted after the team migration, so create
-        # a minimal active manager identity for this execution test.
         connection.execute(text("""
             INSERT INTO organization_roles
                 (id, organization_id, name, slug, description, is_system, is_active, permissions, created_at, updated_at)
@@ -140,6 +140,18 @@ def main() -> None:
         stored = db.scalar(select(ProjectCredential).where(ProjectCredential.id == credential.id))
         if stored is None or stored.secret_ciphertext == b"ci-super-secret" or b"ci-super-secret" in stored.secret_ciphertext:
             raise AssertionError("Credential was not encrypted at rest")
+
+        edited = update_credential(
+            project_id,
+            credential.id,
+            CredentialUpdate(username="updated-ci@example.com", notes="Edited without rotating secret"),
+            make_request("PATCH", f"/api/v1/projects/{project_id}/credentials/{credential.id}"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if edited.username != "updated-ci@example.com":
+            raise AssertionError("Credential metadata edit failed")
+
         revealed = reveal_credential(
             project_id,
             credential.id,
@@ -148,7 +160,14 @@ def main() -> None:
             tenant,  # type: ignore[arg-type]
         )
         if revealed.secret != "ci-super-secret":
-            raise AssertionError("Encrypted credential could not be revealed")
+            raise AssertionError("Credential edit unexpectedly changed encrypted secret")
+
+        workspace = get_workspace(project_id, db, tenant)  # type: ignore[arg-type]
+        credential_row = next((item for item in workspace.credentials if item.id == credential.id), None)
+        if credential_row is None or credential_row.last_revealed_at is None or not credential_row.last_revealed_by:
+            raise AssertionError("Last revealed credential audit metadata missing from workspace")
+        if not workspace.can_manage_credentials:
+            raise AssertionError("Project manager credential management capability missing")
     finally:
         db.close()
 
