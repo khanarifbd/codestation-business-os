@@ -1,5 +1,5 @@
 from app.models.activity_log import ActivityLog
-from app.models.company_defaults import OrganizationSystemDefaults
+from app.models.company_defaults import OrganizationExchangeRate, OrganizationSystemDefaults
 from app.models.company_settings import (
     OrganizationAddress,
     OrganizationBranding,
@@ -35,7 +35,7 @@ __all__ = [
     "AccountTransfer", "ActivityLog", "Client", "Department", "Designation", "Employee", "EmployeeInvitation",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "Invoice", "InvoiceItem",
     "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "Membership", "Order", "OrderItem", "Payment",
-    "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument",
+    "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "Project", "ProjectCredential",
