@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowRightLeft,
+  BadgeDollarSign,
   BarChart3,
   Building2,
   CircleDollarSign,
@@ -31,6 +32,7 @@ const navigation: NavigationItem[] = [
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
   { label: "Finance", icon: CircleDollarSign, href: "/dashboard/finance" },
   { label: "Transfers", icon: ArrowRightLeft, href: "/dashboard/finance/transfers" },
+  { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
   { label: "Employees", icon: UsersRound, href: "/dashboard/employees" },
   { label: "Reports", icon: BarChart3 },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
