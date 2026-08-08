@@ -23,6 +23,22 @@ env_value() {
   printf '%s' "${line#*=}"
 }
 
+ensure_project_credential_key() {
+  local current
+  current="$(env_value PROJECT_CREDENTIAL_ENCRYPTION_KEY)"
+  if [[ -z "${current}" || "${current}" == "replace_with_a_long_random_project_credential_key" || "${current}" == "development-only-project-credential-key" ]]; then
+    echo "==> Generating project credential encryption key"
+    local generated
+    generated="$(openssl rand -hex 32)"
+    if grep -q '^PROJECT_CREDENTIAL_ENCRYPTION_KEY=' "${ENV_FILE}"; then
+      sed -i "s|^PROJECT_CREDENTIAL_ENCRYPTION_KEY=.*$|PROJECT_CREDENTIAL_ENCRYPTION_KEY=${generated}|" "${ENV_FILE}"
+    else
+      printf '\nPROJECT_CREDENTIAL_ENCRYPTION_KEY=%s\n' "${generated}" >> "${ENV_FILE}"
+    fi
+    unset generated
+  fi
+}
+
 ensure_nginx_upload_limit() {
   if [[ ! -f "${NGINX_SITE}" ]] || ! command -v nginx >/dev/null 2>&1; then
     return
@@ -56,14 +72,7 @@ elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$' "${ENV_FIL
   unset JWT_SECRET
 fi
 
-if ! grep -q '^PROJECT_CREDENTIAL_ENCRYPTION_KEY=' "${ENV_FILE}"; then
-  echo "==> Generating project credential encryption key"
-  printf 'PROJECT_CREDENTIAL_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
-elif grep -q '^PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace_with_a_long_random_project_credential_key$' "${ENV_FILE}"; then
-  PROJECT_CREDENTIAL_KEY="$(openssl rand -hex 32)"
-  sed -i "s|^PROJECT_CREDENTIAL_ENCRYPTION_KEY=replace_with_a_long_random_project_credential_key$|PROJECT_CREDENTIAL_ENCRYPTION_KEY=${PROJECT_CREDENTIAL_KEY}|" "${ENV_FILE}"
-  unset PROJECT_CREDENTIAL_KEY
-fi
+ensure_project_credential_key
 
 if ! grep -q '^SUPER_ADMIN_EMAIL=' "${ENV_FILE}"; then
   printf '\nSUPER_ADMIN_EMAIL=admin@codestationai.com\n' >> "${ENV_FILE}"
@@ -106,6 +115,10 @@ if [[ "$(git branch --show-current)" != "${BRANCH}" ]]; then
 fi
 
 git pull --ff-only origin "${BRANCH}"
+
+# Run again after pull so a newly deployed deploy.sh feature can bootstrap
+# the vault key on the same deployment instead of requiring another release.
+ensure_project_credential_key
 ensure_nginx_upload_limit
 
 echo "==> Building application images"
@@ -145,6 +158,12 @@ for attempt in $(seq 1 30); do
   fi
   sleep 2
 done
+
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T backend \
+  sh -c 'test -n "${PROJECT_CREDENTIAL_ENCRYPTION_KEY:-}" && test "${PROJECT_CREDENTIAL_ENCRYPTION_KEY}" != "development-only-project-credential-key"'; then
+  echo "ERROR: Credentials Vault encryption key is not available inside the backend container."
+  exit 1
+fi
 
 echo "==> Waiting for frontend"
 for attempt in $(seq 1 30); do
