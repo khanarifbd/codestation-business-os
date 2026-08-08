@@ -19,6 +19,7 @@ PERMISSION_CATALOG = [
     "orders.view",
     "orders.manage",
     "projects.view",
+    "projects.work",
     "projects.manage",
     "finance.view",
     "finance.manage",
@@ -27,7 +28,7 @@ PERMISSION_CATALOG = [
 ]
 
 ADMIN_PERMISSIONS = ["*"]
-USER_PERMISSIONS = ["dashboard.view"]
+USER_PERMISSIONS = ["dashboard.view", "projects.view", "projects.work"]
 
 
 def permission_is_valid(permission: str) -> bool:
