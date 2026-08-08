@@ -26,6 +26,7 @@ class RecurringExpenseCreate(BaseModel):
     payment_method: PaymentMethod = "bank_transfer"
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
+    auto_post: bool = False
 
 
 class RecurringExpenseUpdate(BaseModel):
@@ -47,6 +48,7 @@ class RecurringExpenseUpdate(BaseModel):
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
     is_active: bool | None = None
+    auto_post: bool | None = None
 
 
 class RecurringExpenseRead(BaseModel):
@@ -75,6 +77,9 @@ class RecurringExpenseRead(BaseModel):
     reference: str | None
     notes: str | None
     is_active: bool
+    auto_post: bool
+    auto_post_last_attempt_at: datetime | None
+    auto_post_last_error: str | None
     last_posted_expense_id: str | None
     last_posted_at: datetime | None
     created_at: datetime
