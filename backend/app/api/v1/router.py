@@ -14,6 +14,7 @@ from app.api.v1.order_links import router as order_links_router
 from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.platform import router as platform_router
+from app.api.v1.project_execution import router as project_execution_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.sales import router as sales_router
 from app.api.v1.team import invitation_router, router as team_router
@@ -34,6 +35,7 @@ api_router.include_router(sales_router)
 api_router.include_router(orders_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
+api_router.include_router(project_execution_router)
 api_router.include_router(company_uploads_router)
 api_router.include_router(company_settings_router)
 api_router.include_router(company_defaults_router)
