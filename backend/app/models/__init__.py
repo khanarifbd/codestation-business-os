@@ -14,6 +14,7 @@ from app.models.company_settings import (
 from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
+from app.models.finance_controls import AccountingPeriod, RecurringExpense
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
@@ -32,13 +33,13 @@ from app.models.team import Department, Designation, Employee, EmployeeInvitatio
 from app.models.user import User
 
 __all__ = [
-    "AccountTransfer", "ActivityLog", "Client", "Department", "Designation", "Employee", "EmployeeInvitation",
+    "AccountTransfer", "AccountingPeriod", "ActivityLog", "Client", "Department", "Designation", "Employee", "EmployeeInvitation",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "Invoice", "InvoiceItem",
     "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "Membership", "Order", "OrderItem", "Payment",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "Project", "ProjectCredential",
-    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog",
+    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense",
     "Quotation", "QuotationItem", "Subscription", "User", "Vendor",
 ]
