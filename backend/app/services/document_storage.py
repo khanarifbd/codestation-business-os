@@ -11,15 +11,7 @@ from app.core.config import settings
 
 
 ALLOWED_EXTENSIONS = {
-    ".pdf",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".webp",
-    ".doc",
-    ".docx",
-    ".xls",
-    ".xlsx",
+    ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".csv", ".zip",
 }
 
 ALLOWED_CONTENT_TYPES = {
@@ -32,6 +24,9 @@ ALLOWED_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain",
+    "text/csv",
+    "application/zip",
 }
 
 
@@ -43,20 +38,15 @@ class DocumentStorage(Protocol):
         source: BinaryIO,
         original_filename: str,
         content_type: str | None,
+        namespace: str = "company-documents",
     ) -> tuple[str, int]: ...
 
     def resolve(self, storage_key: str) -> Path: ...
-
     def delete(self, storage_key: str) -> None: ...
 
 
 class LocalDocumentStorage:
-    """Local VPS storage adapter.
-
-    Files are private on disk. They are never mounted as public static files;
-    authenticated API routes resolve and stream them. Replacing this class with
-    an S3/R2 adapter later does not require changing the document database model.
-    """
+    """Private VPS storage adapter; swap with S3/R2 later without schema changes."""
 
     def __init__(self) -> None:
         self.root = Path(settings.local_storage_path).resolve()
@@ -70,20 +60,19 @@ class LocalDocumentStorage:
         source: BinaryIO,
         original_filename: str,
         content_type: str | None,
+        namespace: str = "company-documents",
     ) -> tuple[str, int]:
         suffix = Path(original_filename or "").suffix.lower()
         if suffix not in ALLOWED_EXTENSIONS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unsupported document file type",
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document file type")
         if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unsupported document content type",
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document content type")
 
-        relative = Path("organizations") / organization_id / "company-documents" / f"{uuid4().hex}{suffix}"
+        namespace_path = Path(namespace.strip("/"))
+        if namespace_path.is_absolute() or ".." in namespace_path.parts:
+            raise HTTPException(status_code=400, detail="Invalid storage namespace")
+
+        relative = Path("organizations") / organization_id / namespace_path / f"{uuid4().hex}{suffix}"
         destination = (self.root / relative).resolve()
         if self.root not in destination.parents:
             raise HTTPException(status_code=400, detail="Invalid storage path")
@@ -91,7 +80,6 @@ class LocalDocumentStorage:
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_suffix(destination.suffix + ".uploading")
         total = 0
-
         try:
             source.seek(0)
             with temporary.open("wb") as output:
@@ -111,7 +99,6 @@ class LocalDocumentStorage:
             temporary.unlink(missing_ok=True)
             destination.unlink(missing_ok=True)
             raise
-
         return relative.as_posix(), total
 
     def resolve(self, storage_key: str) -> Path:
