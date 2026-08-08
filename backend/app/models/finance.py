@@ -31,6 +31,34 @@ class FinancialAccount(TenantOwnedMixin, Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class AccountTransfer(TenantOwnedMixin, Base):
+    __tablename__ = "account_transfers"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "transfer_number", name="uq_account_transfers_org_number"),
+        Index("ix_account_transfers_org_date", "organization_id", "transfer_date", "created_at"),
+        Index("ix_account_transfers_org_from_date", "organization_id", "from_account_id", "transfer_date"),
+        Index("ix_account_transfers_org_to_date", "organization_id", "to_account_id", "transfer_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    transfer_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    from_account_id: Mapped[str] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=False)
+    to_account_id: Mapped[str] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=False)
+    transfer_date: Mapped[date] = mapped_column(Date, nullable=False)
+    source_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    destination_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    source_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    fee_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
+    net_source_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    destination_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="confirmed", nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class Invoice(TenantOwnedMixin, Base):
     __tablename__ = "invoices"
     __table_args__ = (
