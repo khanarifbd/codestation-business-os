@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 import re
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ from starlette.responses import FileResponse, Response
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.core.config import settings
+from app.models.activity_log import ActivityLog
 from app.models.membership import Membership
 from app.models.projects import (
     Project,
@@ -48,6 +50,16 @@ from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Project Execution"])
 ProjectWorker = Annotated[TenantContext, Depends(require_tenant_permission("projects.work"))]
+logger = logging.getLogger(__name__)
+
+PREVIEW_MEDIA_TYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "text/plain",
+}
 
 
 def _clean(value: str | None) -> str | None:
@@ -209,11 +221,32 @@ def _document_reads(db: DbSession, project: Project) -> list[ProjectDocumentRead
     return [ProjectDocumentRead.model_validate(item, from_attributes=True) for item in items]
 
 
-def _credential_read(item: ProjectCredential) -> CredentialRead:
+def _last_credential_reveal(db: DbSession, project: Project, credential_id: str) -> tuple[datetime | None, str | None]:
+    row = db.execute(
+        select(ActivityLog.created_at, User.full_name)
+        .outerjoin(User, User.id == ActivityLog.actor_user_id)
+        .where(
+            ActivityLog.organization_id == project.organization_id,
+            ActivityLog.action == "projects.credential.revealed",
+            ActivityLog.entity_type == "project_credential",
+            ActivityLog.entity_id == credential_id,
+            ActivityLog.outcome == "success",
+        )
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None, None
+    return row[0], row[1]
+
+
+def _credential_read(db: DbSession, project: Project, item: ProjectCredential) -> CredentialRead:
+    last_revealed_at, last_revealed_by = _last_credential_reveal(db, project, item.id)
     return CredentialRead(
         id=item.id, name=item.name, credential_type=item.credential_type, environment=item.environment,
         username=item.username, url=item.url, notes=item.notes, access_level=item.access_level,
-        created_by_user_id=item.created_by_user_id, created_at=item.created_at, updated_at=item.updated_at,
+        created_by_user_id=item.created_by_user_id, last_revealed_by=last_revealed_by,
+        last_revealed_at=last_revealed_at, created_at=item.created_at, updated_at=item.updated_at,
     )
 
 
@@ -225,7 +258,7 @@ def _credential_reads(db: DbSession, tenant: TenantContext, project: Project, em
     if not _can_manage_project(db, tenant, project, employee):
         query = query.where(ProjectCredential.access_level == "team")
     items = db.scalars(query.order_by(ProjectCredential.created_at.desc())).all()
-    return [_credential_read(item) for item in items]
+    return [_credential_read(db, project, item) for item in items]
 
 
 def _recalculate_progress(db: DbSession, project: Project) -> None:
@@ -286,6 +319,7 @@ def get_workspace(project_id: str, db: DbSession, tenant: ProjectWorker) -> Proj
         summary=_summary(db, project), milestones=_milestone_reads(db, project), tasks=_task_reads(db, project),
         recent_work=_work_log_reads(db, project), documents=_document_reads(db, project),
         credentials=_credential_reads(db, tenant, project, employee),
+        can_manage_credentials=_can_manage_project(db, tenant, project, employee),
     )
 
 
@@ -421,7 +455,7 @@ def update_task_progress(project_id: str, task_id: str, payload: TaskProgressUpd
 def upload_project_document(
     project_id: str, request: Request, db: DbSession, tenant: ProjectWorker,
     file: Annotated[UploadFile, File()], title: Annotated[str, Form(min_length=1, max_length=180)],
-    document_type: Annotated[str, Form(min_length=1, max_length=64)] = "other",
+    document_type: Annotated[str | None, Form(min_length=1, max_length=64)] = "other",
     notes: Annotated[str | None, Form()] = None,
 ) -> ProjectDocumentRead:
     project = _project(db, tenant, project_id); _require_manager(db, tenant, project); _ensure_open(project)
@@ -437,7 +471,7 @@ def upload_project_document(
         db.commit(); raise
     item = ProjectDocument(
         organization_id=tenant.organization_id, project_id=project.id, title=title.strip(),
-        document_type=document_type.strip().lower(), original_filename=file.filename or "document",
+        document_type=(document_type or "other").strip().lower(), original_filename=file.filename or "document",
         content_type=file.content_type, size_bytes=size_bytes, storage_key=storage_key,
         notes=_clean(notes), uploaded_by_user_id=tenant.user_id,
     )
@@ -455,16 +489,40 @@ def upload_project_document(
     return ProjectDocumentRead.model_validate(item, from_attributes=True)
 
 
-@router.get("/{project_id}/documents/{document_id}/file")
-def download_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectWorker) -> FileResponse:
-    project = _project(db, tenant, project_id); _require_participant(db, tenant, project)
+def _document_file(db: DbSession, project: Project, document_id: str) -> tuple[ProjectDocument, Path, str, str]:
     item = db.scalar(select(ProjectDocument).where(ProjectDocument.id == document_id, ProjectDocument.project_id == project.id))
-    if item is None: raise HTTPException(status_code=404, detail="Project document not found")
+    if item is None:
+        raise HTTPException(status_code=404, detail="Project document not found")
     path = storage.resolve(item.storage_key)
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", item.title).strip("-.") or "project-document"
     suffix = Path(item.original_filename).suffix.lower()
     filename = f"{safe}{suffix}"
-    return FileResponse(path, media_type=mimetypes.guess_type(filename)[0] or "application/octet-stream", filename=filename)
+    media_type = item.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return item, path, filename, media_type
+
+
+@router.get("/{project_id}/documents/{document_id}/preview")
+def preview_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectWorker) -> FileResponse:
+    project = _project(db, tenant, project_id); _require_participant(db, tenant, project)
+    _, path, filename, media_type = _document_file(db, project, document_id)
+    if media_type not in PREVIEW_MEDIA_TYPES:
+        raise HTTPException(status_code=415, detail="Preview is not available for this file type. Please download the document.")
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/{project_id}/documents/{document_id}/file")
+def download_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectWorker) -> FileResponse:
+    project = _project(db, tenant, project_id); _require_participant(db, tenant, project)
+    _, path, filename, media_type = _document_file(db, project, document_id)
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 @router.delete("/{project_id}/documents/{document_id}", status_code=204)
@@ -481,20 +539,38 @@ def delete_project_document(project_id: str, document_id: str, request: Request,
     return Response(status_code=204)
 
 
+def _vault_unavailable() -> HTTPException:
+    return HTTPException(status_code=503, detail="Credentials Vault is temporarily unavailable. Please contact your administrator.")
+
+
 def _encrypt_secret(db: DbSession, secret: str) -> bytes:
     if settings.environment != "development" and settings.project_credential_encryption_key.startswith("development-only"):
-        raise HTTPException(status_code=500, detail="Project credential encryption key is not configured")
-    return db.execute(
-        text("SELECT pgp_sym_encrypt(:secret, :key, 'cipher-algo=aes256')"),
-        {"secret": secret, "key": settings.project_credential_encryption_key},
-    ).scalar_one()
+        raise _vault_unavailable()
+    try:
+        return db.execute(
+            text("SELECT pgp_sym_encrypt(:secret, :key, 'cipher-algo=aes256')"),
+            {"secret": secret, "key": settings.project_credential_encryption_key},
+        ).scalar_one()
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("Credentials Vault encryption operation failed")
+        raise _vault_unavailable()
 
 
 def _decrypt_secret(db: DbSession, ciphertext: bytes) -> str:
-    return db.execute(
-        text("SELECT pgp_sym_decrypt(:ciphertext, :key)"),
-        {"ciphertext": ciphertext, "key": settings.project_credential_encryption_key},
-    ).scalar_one()
+    if settings.environment != "development" and settings.project_credential_encryption_key.startswith("development-only"):
+        raise _vault_unavailable()
+    try:
+        return db.execute(
+            text("SELECT pgp_sym_decrypt(:ciphertext, :key)"),
+            {"ciphertext": ciphertext, "key": settings.project_credential_encryption_key},
+        ).scalar_one()
+    except HTTPException:
+        raise
+    except Exception:
+        logger.error("Credentials Vault decryption operation failed")
+        raise _vault_unavailable()
 
 
 @router.post("/{project_id}/credentials", response_model=CredentialRead, status_code=201)
@@ -512,7 +588,7 @@ def create_credential(project_id: str, payload: CredentialCreate, request: Reque
         after={"project_id": project.id, "name": item.name, "credential_type": item.credential_type, "environment": item.environment, "access_level": item.access_level},
         message=f"Project credential added: {item.name}", request=request)
     db.commit(); db.refresh(item)
-    return _credential_read(item)
+    return _credential_read(db, project, item)
 
 
 @router.patch("/{project_id}/credentials/{credential_id}", response_model=CredentialRead)
@@ -535,7 +611,7 @@ def update_credential(project_id: str, credential_id: str, payload: CredentialUp
         after={"name": item.name, "credential_type": item.credential_type, "environment": item.environment, "access_level": item.access_level, "secret_changed": secret is not None},
         message=f"Project credential updated: {item.name}", request=request)
     db.commit(); db.refresh(item)
-    return _credential_read(item)
+    return _credential_read(db, project, item)
 
 
 @router.post("/{project_id}/credentials/{credential_id}/reveal", response_model=CredentialReveal)
