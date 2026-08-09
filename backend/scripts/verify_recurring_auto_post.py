@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from app.db.session import SessionLocal, engine
 from app.models.expenses import Expense, ExpenseCategory
@@ -78,8 +78,9 @@ def main() -> None:
         )
         db.commit()
         recurring_id = recurring.id
+        run_at = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
 
-        posted, failed = process_due_auto_posts(db, now=datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc))
+        posted, failed = process_due_auto_posts(db, now=run_at)
         if posted < 1 or failed != 0:
             raise AssertionError(f"unexpected auto-post result posted={posted} failed={failed}")
         db.expire_all()
@@ -96,6 +97,20 @@ def main() -> None:
         ))
         if tx is None or tx.amount != Decimal("25000.00") or tx.currency != "BDT":
             raise AssertionError("auto-post ledger debit missing")
+
+        expense_count_before = db.scalar(select(func.count(Expense.id)).where(
+            Expense.organization_id == organization_id,
+            Expense.id == expense.id,
+        )) or 0
+        second_posted, second_failed = process_due_auto_posts(db, now=run_at)
+        if second_posted != 0 or second_failed != 0:
+            raise AssertionError("scheduler reprocessed a recurring expense whose due date had already advanced")
+        expense_count_after = db.scalar(select(func.count(Expense.id)).where(
+            Expense.organization_id == organization_id,
+            Expense.id == expense.id,
+        )) or 0
+        if expense_count_after != expense_count_before:
+            raise AssertionError("scheduler idempotency regression created a duplicate expense")
     finally:
         db.close()
 
