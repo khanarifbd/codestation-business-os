@@ -28,6 +28,7 @@ from app.models.hr import (
     LeaveType,
     PerformanceReview,
 )
+from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
@@ -48,7 +49,7 @@ from app.models.user import User
 
 __all__ = [
     "AccountTransfer", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
-    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRShift", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening",
+    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening",
     "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "Membership", "Order", "OrderItem", "Payment", "PerformanceReview",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
