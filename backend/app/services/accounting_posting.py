@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dateutil.tz import UTC
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
 
@@ -122,7 +121,7 @@ def post_journal(
         memo=memo.strip() if memo and memo.strip() else None,
         created_by_user_id=user_id,
         posted_by_user_id=user_id,
-        posted_at=datetime.now(UTC),
+        posted_at=datetime.now(timezone.utc),
     )
     db.add(entry)
     db.flush()
