@@ -18,6 +18,7 @@ from app.models.finance_controls import AccountingPeriod, RecurringExpense
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
+from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, SalaryProfile
 from app.models.projects import (
     Project,
     ProjectCredential,
@@ -39,7 +40,7 @@ __all__ = [
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
-    "OrganizationRole", "OrganizationSystemDefaults", "Project", "ProjectCredential",
+    "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense",
     "Quotation", "QuotationItem", "Subscription", "User", "Vendor",
 ]
