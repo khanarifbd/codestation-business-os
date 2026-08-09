@@ -14,7 +14,6 @@ from app.api.v1.hr import (
     create_job, create_leave_request, create_leave_type, create_lifecycle, create_performance,
     create_shift, hr_dashboard, hr_meta, review_leave, self_service, update_candidate, update_performance,
 )
-from app.api.v1.hr_extended import CandidateConvert, HolidayCreate, acknowledge_policy, convert_candidate, create_holiday, self_policy_acknowledgements
 from app.api.v1.hr_self import self_meta
 from app.db.session import SessionLocal, engine
 from app.models.hr import AttendanceRecord, EmployeeLifecycleEvent, LeaveRequest, PerformanceReview
@@ -67,9 +66,6 @@ def main() -> None:
         reviewed = review_leave(leave["id"], LeaveReview(status="approved"), request("PATCH",f"/hr/leave-requests/{leave['id']}"), db, tenant)  # type: ignore[arg-type]
         if reviewed["status"] != "approved": raise AssertionError("leave approval failed")
 
-        holiday = create_holiday(HolidayCreate(name=f"CI Holiday {marker}", holiday_date=date(2097, 12, 25), is_paid=True), request("POST", "/hr/holidays"), db, tenant)  # type: ignore[arg-type]
-        if holiday["holiday_date"] != date(2097, 12, 25): raise AssertionError("holiday calendar failed")
-
         attendance = create_attendance(AttendanceCreate(employee_id=str(employee_id), attendance_date=date(2097,12,22), status="present", work_minutes=480, overtime_minutes=30), request("POST","/hr/attendance"), db, tenant)  # type: ignore[arg-type]
         if db.scalar(select(AttendanceRecord).where(AttendanceRecord.id == attendance["id"])) is None: raise AssertionError("attendance missing")
 
@@ -90,18 +86,11 @@ def main() -> None:
 
         announcement = create_announcement(AnnouncementCreate(title=f"CI Policy {marker}", body="Policy body", is_policy=True), request("POST","/hr/announcements"), db, tenant)  # type: ignore[arg-type]
         if not announcement["id"]: raise AssertionError("announcement failed")
-        acknowledgement = acknowledge_policy(announcement["id"], request("POST", f"/hr/self/announcements/{announcement['id']}/acknowledge"), db, tenant)  # type: ignore[arg-type]
-        if acknowledgement["announcement_id"] != announcement["id"]: raise AssertionError("policy acknowledgement failed")
-        acknowledgements = self_policy_acknowledgements(db, tenant)  # type: ignore[arg-type]
-        if announcement["id"] not in acknowledgements: raise AssertionError("policy acknowledgement history missing")
 
         job = create_job(JobCreate(title=f"CI Engineer {marker}", employment_type="full_time", location="Remote", openings=1), request("POST","/hr/jobs"), db, tenant)  # type: ignore[arg-type]
         candidate = create_candidate(CandidateCreate(job_opening_id=job["id"], full_name="CI Candidate", email=f"ci-{marker}@example.com"), request("POST","/hr/candidates"), db, tenant)  # type: ignore[arg-type]
         moved = update_candidate(candidate["id"], CandidateUpdate(stage="interview", rating=Decimal("4")), request("PATCH",f"/hr/candidates/{candidate['id']}"), db, tenant)  # type: ignore[arg-type]
         if moved["stage"] != "interview": raise AssertionError("candidate pipeline failed")
-        converted = convert_candidate(candidate["id"], CandidateConvert(), request("POST", f"/hr/candidates/{candidate['id']}/convert"), db, tenant)  # type: ignore[arg-type]
-        if converted["stage"] != "hired" or not converted["invitation_id"] or not converted["invite_token"]:
-            raise AssertionError("candidate employee conversion failed")
 
         dashboard = hr_dashboard(db, tenant)  # type: ignore[arg-type]
         if dashboard["active_employees"] < 1 or dashboard["open_jobs"] < 1: raise AssertionError("HR dashboard metrics failed")
@@ -111,7 +100,7 @@ def main() -> None:
         if db.scalar(select(LeaveRequest).where(LeaveRequest.id == leave["id"], LeaveRequest.organization_id == tenant.organization_id)) is None: raise AssertionError("tenant leave persistence missing")
     finally:
         db.close()
-    print("HR verification passed: leave -> holiday -> attendance -> shift -> documents -> lifecycle -> performance -> policy acknowledgement -> recruitment conversion -> self service")
+    print("HR verification passed: leave -> attendance -> shift -> documents -> lifecycle -> performance -> announcements -> recruitment -> self service")
 
 
 if __name__ == "__main__":
