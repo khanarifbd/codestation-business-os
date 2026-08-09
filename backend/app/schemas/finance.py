@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 AccountType = Literal["bank", "cash", "mobile_wallet", "credit_card", "payment_gateway", "petty_cash", "other"]
 InvoiceLifecycleAction = Literal["send", "cancel"]
@@ -208,15 +208,18 @@ class PaymentCreate(BaseModel):
     payment_date: date | None = None
     invoice_amount: Decimal = Field(gt=0)
     account_amount: Decimal | None = Field(default=None, gt=0)
+    exchange_rate: Decimal | None = Field(default=None, gt=0)
     method: PaymentMethod = "bank_transfer"
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
 
-    @property
-    def exchange_rate(self) -> Decimal | None:
-        if self.account_amount is None:
-            return None
-        return self.account_amount / self.invoice_amount
+    @model_validator(mode="after")
+    def normalize_conversion(self):
+        if self.exchange_rate is None and self.account_amount is not None:
+            self.exchange_rate = self.account_amount / self.invoice_amount
+        if self.account_amount is None and self.exchange_rate is not None:
+            self.account_amount = self.invoice_amount * self.exchange_rate
+        return self
 
 
 class PaymentRead(BaseModel):
