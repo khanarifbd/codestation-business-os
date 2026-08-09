@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowRightLeft, BadgeDollarSign, Banknote, BarChart3, Bell, BriefcaseBusiness, Building2,
   CalendarRange, CircleDollarSign, ClipboardList, FileClock, FileText, FolderKanban,
-  LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X, Zap,
+  HandCoins, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X, Zap,
   type LucideIcon,
 } from "lucide-react";
 
@@ -26,6 +26,7 @@ const navigation: NavigationItem[] = [
   { label: "Finance Controls", icon: CalendarRange, href: "/dashboard/finance/controls" },
   { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
   { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
+  { label: "Capital & Funding", icon: HandCoins, href: "/dashboard/capital" },
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
   { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
   { label: "HR Setup", icon: SlidersHorizontal, href: "/dashboard/hr/setup" },
