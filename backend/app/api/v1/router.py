@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.activity_logs import platform_activity_router, tenant_activity_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.capital import router as capital_router
+from app.api.v1.capital_insights import router as capital_insights_router
 from app.api.v1.company_defaults import router as company_defaults_router
 from app.api.v1.company_settings import router as company_settings_router
 from app.api.v1.company_uploads import router as company_uploads_router
@@ -64,6 +65,7 @@ api_router.include_router(finance_controls_router)
 api_router.include_router(finance_auto_post_router)
 api_router.include_router(payroll_router)
 api_router.include_router(capital_router)
+api_router.include_router(capital_insights_router)
 api_router.include_router(reports_fast_router)
 api_router.include_router(reports_router)
 api_router.include_router(workspace_router)
