@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
@@ -73,6 +73,10 @@ def create_accounting_financial_account(
     db: DbSession,
     tenant: AccountingManager,
 ):
+    opening = _money(payload.opening_balance)
+    if payload.account_type == "credit_card" and opening < 0:
+        raise HTTPException(status_code=400, detail="Credit card opening balance must be zero or a positive amount currently owed")
+
     account = FinancialAccount(
         organization_id=tenant.organization_id,
         name=payload.name.strip(),
@@ -81,7 +85,7 @@ def create_accounting_financial_account(
         account_holder_name=_clean(payload.account_holder_name),
         account_reference=_clean(payload.account_reference),
         currency=payload.currency.upper(),
-        opening_balance=_money(payload.opening_balance),
+        opening_balance=opening,
         notes=_clean(payload.notes),
         created_by_user_id=tenant.user_id,
     )
@@ -89,12 +93,9 @@ def create_accounting_financial_account(
     db.flush()
 
     _, ledger = financial_ledger_account(db, tenant.organization_id, account.id)
-    opening = _money(payload.opening_balance)
     if opening != 0:
         equity = system_account(db, tenant.organization_id, "opening_balance_equity")
         if account.account_type == "credit_card":
-            if opening < 0:
-                raise ValueError("Credit card opening balance must be zero or positive amount owed")
             lines = [
                 PostingLine(ledger_account_id=equity.id, debit=opening, currency=account.currency, description="Opening credit card balance"),
                 PostingLine(ledger_account_id=ledger.id, credit=opening, currency=account.currency, description=account.name),
