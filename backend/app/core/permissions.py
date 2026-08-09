@@ -25,12 +25,15 @@ PERMISSION_CATALOG = [
     "finance.manage",
     "payroll.view",
     "payroll.manage",
+    "hr.self",
+    "hr.view",
+    "hr.manage",
     "reports.view",
     "settings.manage",
 ]
 
 ADMIN_PERMISSIONS = ["*"]
-USER_PERMISSIONS = ["dashboard.view", "projects.view", "projects.work"]
+USER_PERMISSIONS = ["dashboard.view", "projects.view", "projects.work", "hr.self"]
 
 
 def permission_is_valid(permission: str) -> bool:
