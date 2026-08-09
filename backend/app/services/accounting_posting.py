@@ -56,6 +56,30 @@ def system_account(db, organization_id: str, system_key: str) -> LedgerAccount:
     return item
 
 
+def _create_financial_ledger_mapping(db, financial: FinancialAccount) -> LedgerAccount:
+    parent = system_account(db, financial.organization_id, "cash_equivalents")
+    suffix = financial.id.replace("-", "")[:12].upper()
+    code = f"1010-{suffix}"
+    item = LedgerAccount(
+        organization_id=financial.organization_id,
+        code=code,
+        name=financial.name,
+        category="asset",
+        subtype=financial.account_type,
+        normal_balance="debit",
+        parent_id=parent.id,
+        system_key=f"financial_account:{financial.id}",
+        is_system=False,
+        is_active=True,
+        allow_manual_posting=True,
+        notes=f"Auto-mapped financial account: {financial.name}",
+        created_by_user_id=financial.created_by_user_id,
+    )
+    db.add(item)
+    db.flush()
+    return item
+
+
 def financial_ledger_account(db, organization_id: str, financial_account_id: str) -> tuple[FinancialAccount, LedgerAccount]:
     financial = db.scalar(
         select(FinancialAccount).where(
@@ -74,7 +98,7 @@ def financial_ledger_account(db, organization_id: str, financial_account_id: str
         )
     )
     if ledger is None:
-        raise HTTPException(status_code=409, detail="Financial account is not mapped to the Chart of Accounts")
+        ledger = _create_financial_ledger_mapping(db, financial)
     return financial, ledger
 
 
