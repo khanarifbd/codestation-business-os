@@ -1,5 +1,5 @@
-import { AccountingMoneyPage } from "@/components/accounting-money-page";
+import { MoneyOutWorkspace } from "@/components/money-out-workspace";
 
 export default function MoneyOutPage() {
-  return <AccountingMoneyPage kind="expense" />;
+  return <MoneyOutWorkspace />;
 }
