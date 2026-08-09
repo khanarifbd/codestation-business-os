@@ -6,8 +6,10 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.accounting import JournalEntry
+from app.models.capital import CompanyInvestment, InvestmentReturn, InvestorPayout, ProjectInvestor
 from app.models.expenses import Expense, ExpenseCategory
 from app.models.finance import AccountTransfer, FinancialAccount, Invoice, Payment
+from app.models.payroll import PayrollPeriod, PayrollRun
 from app.services.accounting_posting import PostingLine, financial_ledger_account, money, post_journal, system_account, to_base_amount
 
 
@@ -22,7 +24,18 @@ def _already_posted(db, organization_id: str, source_type: str, source_id: str) 
 
 
 def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_currency: str) -> dict:
-    counts = {"opening_balances": 0, "invoices": 0, "payments": 0, "expenses": 0, "transfers": 0}
+    counts = {
+        "opening_balances": 0,
+        "invoices": 0,
+        "payments": 0,
+        "expenses": 0,
+        "transfers": 0,
+        "payroll": 0,
+        "investments": 0,
+        "investment_returns": 0,
+        "project_investor_funding": 0,
+        "investor_payouts": 0,
+    }
     errors: list[str] = []
     base_currency = base_currency.upper()
 
@@ -63,12 +76,7 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
         except HTTPException as exc:
             errors.append(f"Opening balance {account.name}: {exc.detail}")
 
-    invoices = db.scalars(
-        select(Invoice).where(
-            Invoice.organization_id == organization_id,
-            Invoice.status.not_in(["draft", "cancelled"]),
-        )
-    ).all()
+    invoices = db.scalars(select(Invoice).where(Invoice.organization_id == organization_id, Invoice.status.not_in(["draft", "cancelled"]))).all()
     for invoice in invoices:
         if _already_posted(db, organization_id, "invoice_issue", invoice.id):
             continue
@@ -107,12 +115,7 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
         except HTTPException as exc:
             errors.append(f"Payment {payment.payment_number}: {exc.detail}")
 
-    expense_rows = db.execute(
-        select(Expense, ExpenseCategory.cost_type).join(ExpenseCategory, ExpenseCategory.id == Expense.category_id).where(
-            Expense.organization_id == organization_id,
-            Expense.status == "posted",
-        )
-    ).all()
+    expense_rows = db.execute(select(Expense, ExpenseCategory.cost_type).join(ExpenseCategory, ExpenseCategory.id == Expense.category_id).where(Expense.organization_id == organization_id, Expense.status == "posted")).all()
     for expense, cost_type in expense_rows:
         if _already_posted(db, organization_id, "expense_post", expense.id):
             continue
@@ -153,5 +156,135 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
             counts["transfers"] += 1
         except HTTPException as exc:
             errors.append(f"Transfer {transfer.transfer_number}: {exc.detail}")
+
+    paid_payroll = db.execute(
+        select(PayrollRun, PayrollPeriod)
+        .join(PayrollPeriod, PayrollPeriod.id == PayrollRun.period_id)
+        .where(PayrollRun.organization_id == organization_id, PayrollRun.status == "paid", PayrollRun.paid_account_id.is_not(None))
+    ).all()
+    for run, period in paid_payroll:
+        if _already_posted(db, organization_id, "payroll_payment", run.id):
+            continue
+        try:
+            _, cash_ledger = financial_ledger_account(db, organization_id, run.paid_account_id)
+            payroll_expense = system_account(db, organization_id, "payroll_expense")
+            withholdings = system_account(db, organization_id, "payroll_withholdings")
+            gross_base, rate = to_base_amount(db, organization_id, base_currency, Decimal(run.gross_total), run.currency)
+            net_base, _ = to_base_amount(db, organization_id, base_currency, Decimal(run.net_total), run.currency)
+            withheld_original = money(Decimal(run.gross_total) - Decimal(run.net_total))
+            withheld_base = money(gross_base - net_base)
+            lines = [
+                PostingLine(ledger_account_id=payroll_expense.id, debit=gross_base, currency=run.currency, exchange_rate_to_base=rate, original_amount=run.gross_total, description=f"Payroll {run.run_number}"),
+                PostingLine(ledger_account_id=cash_ledger.id, credit=net_base, currency=run.currency, exchange_rate_to_base=rate, original_amount=run.net_total, description=f"Payroll payment {run.run_number}"),
+            ]
+            if withheld_base > 0:
+                lines.append(PostingLine(ledger_account_id=withholdings.id, credit=withheld_base, currency=run.currency, exchange_rate_to_base=rate, original_amount=withheld_original, description=f"Payroll deductions and taxes {run.run_number}"))
+            post_journal(db, organization_id=organization_id, user_id=user_id, entry_date=period.pay_date, source_type="payroll_payment", source_id=run.id, lines=lines, reference=run.run_number, memo=f"Payroll {run.run_number} · {period.name}")
+            counts["payroll"] += 1
+        except HTTPException as exc:
+            errors.append(f"Payroll {run.run_number}: {exc.detail}")
+
+    investments = db.scalars(select(CompanyInvestment).where(CompanyInvestment.organization_id == organization_id, CompanyInvestment.account_id.is_not(None))).all()
+    for investment in investments:
+        if _already_posted(db, organization_id, "company_investment", investment.id):
+            continue
+        try:
+            _, cash_ledger = financial_ledger_account(db, organization_id, investment.account_id)
+            investment_ledger = system_account(db, organization_id, "investments")
+            base_amount, rate = to_base_amount(db, organization_id, base_currency, Decimal(investment.invested_amount), investment.currency)
+            post_journal(
+                db,
+                organization_id=organization_id,
+                user_id=user_id,
+                entry_date=investment.investment_date,
+                source_type="company_investment",
+                source_id=investment.id,
+                lines=[
+                    PostingLine(ledger_account_id=investment_ledger.id, debit=base_amount, currency=investment.currency, exchange_rate_to_base=rate, original_amount=investment.invested_amount, description=investment.investee_name),
+                    PostingLine(ledger_account_id=cash_ledger.id, credit=base_amount, currency=investment.currency, exchange_rate_to_base=rate, original_amount=investment.invested_amount, description=investment.investee_name),
+                ],
+                reference=investment.reference,
+                memo=f"Investment in {investment.investee_name}",
+            )
+            counts["investments"] += 1
+        except HTTPException as exc:
+            errors.append(f"Investment {investment.investee_name}: {exc.detail}")
+
+    investment_returns = db.execute(
+        select(InvestmentReturn, CompanyInvestment)
+        .join(CompanyInvestment, CompanyInvestment.id == InvestmentReturn.investment_id)
+        .where(InvestmentReturn.organization_id == organization_id)
+    ).all()
+    for item, investment in investment_returns:
+        if _already_posted(db, organization_id, "investment_return", item.id):
+            continue
+        try:
+            _, cash_ledger = financial_ledger_account(db, organization_id, item.account_id)
+            investment_ledger = system_account(db, organization_id, "investments")
+            income_ledger = system_account(db, organization_id, "other_income")
+            cash_base, rate = to_base_amount(db, organization_id, base_currency, Decimal(item.cash_amount), investment.currency)
+            principal_base, _ = to_base_amount(db, organization_id, base_currency, Decimal(item.principal_return_amount), investment.currency) if Decimal(item.principal_return_amount) > 0 else (Decimal("0"), rate)
+            income_base = money(cash_base - principal_base)
+            lines = [PostingLine(ledger_account_id=cash_ledger.id, debit=cash_base, currency=investment.currency, exchange_rate_to_base=rate, original_amount=item.cash_amount, description=investment.investee_name)]
+            if principal_base > 0:
+                lines.append(PostingLine(ledger_account_id=investment_ledger.id, credit=principal_base, currency=investment.currency, exchange_rate_to_base=rate, original_amount=item.principal_return_amount, description="Investment principal returned"))
+            if income_base > 0:
+                lines.append(PostingLine(ledger_account_id=income_ledger.id, credit=income_base, currency=investment.currency, exchange_rate_to_base=rate, original_amount=item.income_amount, description="Investment income"))
+            post_journal(db, organization_id=organization_id, user_id=user_id, entry_date=item.return_date, source_type="investment_return", source_id=item.id, lines=lines, reference=item.reference, memo=f"Investment return from {investment.investee_name}")
+            counts["investment_returns"] += 1
+        except HTTPException as exc:
+            errors.append(f"Investment return {item.id}: {exc.detail}")
+
+    investor_funding = db.scalars(select(ProjectInvestor).where(ProjectInvestor.organization_id == organization_id, ProjectInvestor.account_id.is_not(None))).all()
+    for investor in investor_funding:
+        if _already_posted(db, organization_id, "project_investor_funding", investor.id):
+            continue
+        try:
+            _, cash_ledger = financial_ledger_account(db, organization_id, investor.account_id)
+            funding_ledger = system_account(db, organization_id, "investor_funds_payable")
+            base_amount, rate = to_base_amount(db, organization_id, base_currency, Decimal(investor.invested_amount), investor.currency)
+            post_journal(
+                db,
+                organization_id=organization_id,
+                user_id=user_id,
+                entry_date=investor.investment_date,
+                source_type="project_investor_funding",
+                source_id=investor.id,
+                lines=[
+                    PostingLine(ledger_account_id=cash_ledger.id, debit=base_amount, currency=investor.currency, exchange_rate_to_base=rate, original_amount=investor.invested_amount, description=investor.investor_name),
+                    PostingLine(ledger_account_id=funding_ledger.id, credit=base_amount, currency=investor.currency, exchange_rate_to_base=rate, original_amount=investor.invested_amount, description=investor.investor_name),
+                ],
+                reference=investor.agreement_reference,
+                memo=f"Project investor funding from {investor.investor_name}",
+            )
+            counts["project_investor_funding"] += 1
+        except HTTPException as exc:
+            errors.append(f"Investor funding {investor.investor_name}: {exc.detail}")
+
+    payouts = db.execute(
+        select(InvestorPayout, ProjectInvestor)
+        .join(ProjectInvestor, ProjectInvestor.id == InvestorPayout.investor_id)
+        .where(InvestorPayout.organization_id == organization_id)
+    ).all()
+    for payout, investor in payouts:
+        if _already_posted(db, organization_id, "investor_payout", payout.id):
+            continue
+        try:
+            _, cash_ledger = financial_ledger_account(db, organization_id, payout.account_id)
+            funding_ledger = system_account(db, organization_id, "investor_funds_payable")
+            profit_expense = system_account(db, organization_id, "investor_profit_share")
+            total_original = money(Decimal(payout.principal_return_amount) + Decimal(payout.profit_share_amount))
+            total_base, rate = to_base_amount(db, organization_id, base_currency, total_original, investor.currency)
+            principal_base, _ = to_base_amount(db, organization_id, base_currency, Decimal(payout.principal_return_amount), investor.currency) if Decimal(payout.principal_return_amount) > 0 else (Decimal("0"), rate)
+            profit_base = money(total_base - principal_base)
+            lines = [PostingLine(ledger_account_id=cash_ledger.id, credit=total_base, currency=investor.currency, exchange_rate_to_base=rate, original_amount=total_original, description=investor.investor_name)]
+            if principal_base > 0:
+                lines.append(PostingLine(ledger_account_id=funding_ledger.id, debit=principal_base, currency=investor.currency, exchange_rate_to_base=rate, original_amount=payout.principal_return_amount, description="Investor principal returned"))
+            if profit_base > 0:
+                lines.append(PostingLine(ledger_account_id=profit_expense.id, debit=profit_base, currency=investor.currency, exchange_rate_to_base=rate, original_amount=payout.profit_share_amount, description="Investor profit share"))
+            post_journal(db, organization_id=organization_id, user_id=user_id, entry_date=payout.payout_date, source_type="investor_payout", source_id=payout.id, lines=lines, reference=payout.reference, memo=f"Investor payout to {investor.investor_name}")
+            counts["investor_payouts"] += 1
+        except HTTPException as exc:
+            errors.append(f"Investor payout {payout.id}: {exc.detail}")
 
     return {"counts": counts, "errors": errors}
