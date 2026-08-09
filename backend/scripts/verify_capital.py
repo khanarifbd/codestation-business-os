@@ -38,18 +38,17 @@ def main()->None:
     tenant=Tenant(str(row["organization_id"]),str(row["user_id"]),str(row["membership_id"]),"admin",Org(str(row["organization_id"]),str(row["timezone"] or "UTC"),str(row["currency"] or "BDT")))
     db=SessionLocal(); marker=uuid4().hex[:8]
     try:
-        acc=db.scalar(select(FinancialAccount).where(FinancialAccount.organization_id==tenant.organization_id,FinancialAccount.is_active.is_(True)).order_by(FinancialAccount.created_at.asc()))
         project=db.scalar(select(Project).where(Project.organization_id==tenant.organization_id).order_by(Project.created_at.asc()))
-        if acc is None or project is None: raise AssertionError("capital fixture requires an account and project")
-        currency=acc.currency
+        if project is None: raise AssertionError("capital fixture requires a project")
+        acc=db.scalar(select(FinancialAccount).where(FinancialAccount.organization_id==tenant.organization_id,FinancialAccount.is_active.is_(True),FinancialAccount.currency==project.currency).order_by(FinancialAccount.created_at.asc()))
+        if acc is None: raise AssertionError(f"capital fixture requires an active {project.currency} account")
+        currency=project.currency
         loan=create_loan(LoanCreate(lender_name=f"CI Bank {marker}",lender_type="bank",currency=currency,principal_amount=Decimal("100000"),annual_interest_rate=Decimal("10"),loan_date=date(2096,1,1),account_id=acc.id,reference=f"LN-{marker}"),request("POST","/capital/loans"),db,tenant)  # type: ignore[arg-type]
         paid=repay(loan["id"],RepaymentCreate(account_id=acc.id,payment_date=date(2096,2,1),principal_amount=Decimal("10000"),interest_amount=Decimal("1000"),reference=f"LR-{marker}"),request("POST",f"/capital/loans/{loan['id']}/repay"),db,tenant)  # type: ignore[arg-type]
         if paid["outstanding_principal"]!=Decimal("90000.00"): raise AssertionError("loan outstanding calculation failed")
         inv=create_investment(InvestmentCreate(investee_name=f"CI Venture {marker}",investment_type="equity",currency=currency,invested_amount=Decimal("20000"),investment_date=date(2096,3,1),account_id=acc.id,reference=f"INV-{marker}"),request("POST","/capital/investments"),db,tenant)  # type: ignore[arg-type]
         ret=add_return(inv["id"],ReturnCreate(account_id=acc.id,return_date=date(2096,4,1),return_type="profit",cash_amount=Decimal("7000"),principal_return_amount=Decimal("5000"),income_amount=Decimal("2000"),reference=f"RET-{marker}"),request("POST",f"/capital/investments/{inv['id']}/returns"),db,tenant)  # type: ignore[arg-type]
         if ret["carrying_value"]!=Decimal("15000.00"): raise AssertionError("investment carrying value failed")
-        if project.currency != currency:
-            project.currency=currency; db.commit()
         pi=create_project_investor(InvestorCreate(project_id=project.id,investor_name=f"CI Investor {marker}",currency=currency,invested_amount=Decimal("30000"),investment_date=date(2096,5,1),share_type="profit_percent",share_value=Decimal("25"),account_id=acc.id,agreement_reference=f"PI-{marker}"),request("POST","/capital/project-investors"),db,tenant)  # type: ignore[arg-type]
         po=payout(pi["id"],PayoutCreate(account_id=acc.id,payout_date=date(2096,6,1),principal_return_amount=Decimal("5000"),profit_share_amount=Decimal("2000"),reference=f"PO-{marker}"),request("POST",f"/capital/project-investors/{pi['id']}/payouts"),db,tenant)  # type: ignore[arg-type]
         if po["profit_share_amount"]!=Decimal("2000.00"): raise AssertionError("investor payout failed")
