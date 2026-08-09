@@ -14,7 +14,7 @@ const items = [
   { label: "Loans", href: "/dashboard/accounting/loans", icon: HandCoins },
   { label: "Receivables", href: "/dashboard/accounting/receivables", icon: Receipt },
   { label: "Payables", href: "/dashboard/accounting/payables", icon: Building2 },
-  { label: "Reports", href: "/dashboard/reports", icon: FileText },
+  { label: "Reports", href: "/dashboard/accounting/reports", icon: FileText },
   { label: "Advanced", href: "/dashboard/accounting/advanced", icon: BookOpen },
 ];
 
