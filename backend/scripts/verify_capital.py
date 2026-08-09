@@ -10,6 +10,7 @@ from app.api.v1.capital import (
     InvestmentCreate, InvestorCreate, LoanCreate, PayoutCreate, RepaymentCreate, ReturnCreate,
     add_return, create_investment, create_loan, create_project_investor, dashboard, payout, repay,
 )
+from app.api.v1.capital_insights import insights
 from app.db.session import SessionLocal, engine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.projects import Project
@@ -58,7 +59,12 @@ def main()->None:
         d=dashboard(db,tenant)  # type: ignore[arg-type]
         row=next((x for x in d["rows"] if x["currency"]==currency),None)
         if row is None or row["interest_paid"]<Decimal("1000") or row["investment_income"]<Decimal("2000") or row["investor_profit_paid"]<Decimal("2000"): raise AssertionError("capital dashboard aggregation failed")
+        insight=insights(db,tenant,date_from=date(2096,1,1),date_to=date(2096,12,31))  # type: ignore[arg-type]
+        impact=next((x for x in insight["capital_pnl"] if x["currency"]==currency),None)
+        if impact is None or impact["investment_income"]!=Decimal("2000.00") or impact["loan_interest"]!=Decimal("1000.00") or impact["investor_profit_share"]!=Decimal("2000.00") or impact["net_capital_pnl_impact"]!=Decimal("-1000.00"): raise AssertionError("capital P&L impact failed")
+        settlement=next((x for x in insight["project_settlements"] if x["project_id"]==project.id),None)
+        if settlement is None or not any(x["investor_id"]==pi["id"] for x in settlement["investors"]): raise AssertionError("project investor settlement preview failed")
     finally: db.close()
-    print("capital verification passed: loan -> repayment -> investment -> return -> project investor -> payout -> ledger -> dashboard")
+    print("capital verification passed: loan -> repayment -> investment -> return -> project investor -> payout -> ledger -> P&L -> settlement")
 
 if __name__=="__main__": main()
