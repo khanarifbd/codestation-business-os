@@ -1,0 +1,137 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Banknote, CheckCircle2, Loader2, Play, Plus, Users } from "lucide-react";
+
+import { SearchableSelect } from "@/components/searchable-select";
+
+type Employee = { id: string; employee_code: string; full_name: string };
+type Account = { id: string; name: string; currency: string; is_active: boolean };
+type Meta = { employees: Employee[]; accounts: Account[]; currencies: string[] };
+type Profile = { id: string; employee_id: string; employee_code: string; employee_name: string; currency: string; pay_frequency: string; base_salary: string; effective_from: string; is_active: boolean };
+type Period = { id: string; name: string; period_start: string; period_end: string; pay_date: string; status: string };
+type Entry = { id: string; employee_id: string; employee_code: string; employee_name: string; currency: string; base_salary: string; allowance_total: string; deduction_total: string; tax_amount: string; gross_pay: string; net_pay: string };
+type Run = { id: string; run_number: string; period_id: string; period_name: string; currency: string; status: string; employee_count: number; gross_total: string; allowance_total: string; deduction_total: string; tax_total: string; net_total: string; paid_account_id: string | null; entries: Entry[] };
+type Tab = "runs" | "profiles" | "periods";
+
+function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers || {}) } });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(body?.detail || "Request failed");
+  return body as T;
+}
+
+export default function PayrollPage() {
+  const [tab, setTab] = useState<Tab>("runs");
+  const [meta, setMeta] = useState<Meta | null>(null);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [periods, setPeriods] = useState<Period[]>([]);
+  const [runs, setRuns] = useState<Run[]>([]);
+  const [selectedRun, setSelectedRun] = useState<Run | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => { void bootstrap(); }, []);
+  async function bootstrap() {
+    setLoading(true); setError(null);
+    try {
+      const [m, p, periodsData, runsData] = await Promise.all([
+        api<Meta>("/api/payroll/meta"), api<Profile[]>("/api/payroll/salary-profiles"),
+        api<Period[]>("/api/payroll/periods"), api<Run[]>("/api/payroll/runs"),
+      ]);
+      setMeta(m); setProfiles(p); setPeriods(periodsData); setRuns(runsData);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load payroll"); }
+    finally { setLoading(false); }
+  }
+  async function openRun(id: string) {
+    setBusy(true); setError(null);
+    try { setSelectedRun(await api<Run>(`/api/payroll/runs/${id}`)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load payroll run"); }
+    finally { setBusy(false); }
+  }
+  async function createProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(null); setSuccess(null);
+    const form = new FormData(event.currentTarget);
+    try {
+      const created = await api<Profile>("/api/payroll/salary-profiles", { method: "POST", body: JSON.stringify({
+        employee_id: form.get("employee_id"), currency: form.get("currency"), pay_frequency: form.get("pay_frequency"),
+        base_salary: form.get("base_salary"), effective_from: form.get("effective_from"), default_allowances: [], default_deductions: [],
+      }) });
+      setProfiles((current) => [created, ...current.map((item) => item.employee_id === created.employee_id ? { ...item, is_active: false } : item)]);
+      event.currentTarget.reset(); setSuccess("Salary profile saved.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save salary profile"); }
+    finally { setBusy(false); }
+  }
+  async function createPeriod(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(null); setSuccess(null);
+    const form = new FormData(event.currentTarget);
+    try {
+      const created = await api<Period>("/api/payroll/periods", { method: "POST", body: JSON.stringify({ name: form.get("name"), period_start: form.get("period_start"), period_end: form.get("period_end"), pay_date: form.get("pay_date") }) });
+      setPeriods((current) => [created, ...current]); event.currentTarget.reset(); setSuccess("Payroll period created.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to create payroll period"); }
+    finally { setBusy(false); }
+  }
+  async function createRun(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(null); setSuccess(null);
+    const form = new FormData(event.currentTarget);
+    try {
+      const created = await api<Run>("/api/payroll/runs", { method: "POST", body: JSON.stringify({ period_id: form.get("period_id"), currency: form.get("currency") }) });
+      setRuns((current) => [{ ...created, entries: [] }, ...current]); setSelectedRun(created); setSuccess("Draft payroll generated from active salary profiles.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to generate payroll"); }
+    finally { setBusy(false); }
+  }
+  async function runAction(action: "approve" | "pay", accountId?: string) {
+    if (!selectedRun) return; setBusy(true); setError(null); setSuccess(null);
+    try {
+      const updated = await api<Run>(`/api/payroll/runs/${selectedRun.id}/${action}`, { method: "POST", body: action === "pay" ? JSON.stringify({ account_id: accountId }) : undefined });
+      setSelectedRun(updated); setRuns((current) => current.map((item) => item.id === updated.id ? { ...updated, entries: [] } : item));
+      setSuccess(action === "approve" ? "Payroll approved and locked." : "Payroll paid and Finance ledger updated.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update payroll"); }
+    finally { setBusy(false); }
+  }
+
+  const activePeriods = periods.filter((item) => item.status === "open");
+  const employeeOptions = useMemo(() => (meta?.employees ?? []).map((e) => ({ value: e.id, label: `${e.employee_code} · ${e.full_name}` })), [meta]);
+  const currencyOptions = useMemo(() => (meta?.currencies ?? []).map((c) => ({ value: c, label: c })), [meta]);
+  const periodOptions = useMemo(() => activePeriods.map((p) => ({ value: p.id, label: `${p.name} · ${p.period_start} — ${p.period_end}` })), [activePeriods]);
+
+  if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
+
+  return <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1500px]">
+    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm text-neutral-500">People & compensation</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Payroll</h1><p className="mt-2 max-w-2xl text-sm text-neutral-500">Salary profiles, payroll periods, employee payables and Finance ledger posting in one controlled workflow.</p></div></header>
+    {error ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+    {success ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div> : null}
+
+    <div className="mt-6 flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">{(["runs", "profiles", "periods"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-xl px-4 py-2.5 text-sm font-medium capitalize ${tab === item ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}>{item === "runs" ? "Payroll Runs" : item === "profiles" ? "Salary Profiles" : "Payroll Periods"}</button>)}</div>
+
+    {tab === "profiles" ? <section className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+      <form onSubmit={createProfile} className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">New salary profile</h2><div className="mt-4 space-y-4"><SearchableSelect label="Employee" name="employee_id" required options={employeeOptions} placeholder="Select employee"/><SearchableSelect label="Currency" name="currency" required options={currencyOptions} placeholder="Select currency"/><label className="block text-sm font-medium">Pay frequency<select name="pay_frequency" className="mt-2 h-11 w-full rounded-xl border bg-white px-3"><option value="monthly">Monthly</option><option value="biweekly">Biweekly</option><option value="weekly">Weekly</option></select></label><label className="block text-sm font-medium">Base salary<input name="base_salary" type="number" min="0.01" step="0.01" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">Effective from<input name="effective_from" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><button disabled={busy} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Plus className="size-4"/>Save profile</button></div></form>
+      <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Salary profiles</h2><div className="mt-4 space-y-3">{profiles.length ? profiles.map((p) => <div key={p.id} className="flex flex-col gap-3 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{p.employee_code} · {p.employee_name}</p><p className="mt-1 text-xs text-neutral-400">{p.pay_frequency} · effective {p.effective_from}</p></div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-xs ${p.is_active ? "bg-emerald-50 text-emerald-700" : "bg-neutral-100 text-neutral-500"}`}>{p.is_active ? "Active" : "Historical"}</span><span className="font-semibold">{money(p.base_salary, p.currency)}</span></div></div>) : <Empty text="No salary profiles yet."/>}</div></div>
+    </section> : null}
+
+    {tab === "periods" ? <section className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+      <form onSubmit={createPeriod} className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">New payroll period</h2><div className="mt-4 space-y-4"><label className="block text-sm font-medium">Period name<input name="name" required placeholder="August 2026" className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">Start date<input name="period_start" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">End date<input name="period_end" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">Pay date<input name="pay_date" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><button disabled={busy} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Plus className="size-4"/>Create period</button></div></form>
+      <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Payroll periods</h2><div className="mt-4 space-y-3">{periods.length ? periods.map((p) => <div key={p.id} className="flex items-center justify-between rounded-xl border p-4"><div><p className="font-medium">{p.name}</p><p className="mt-1 text-xs text-neutral-400">{p.period_start} — {p.period_end} · Pay {p.pay_date}</p></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs capitalize">{p.status}</span></div>) : <Empty text="No payroll periods yet."/>}</div></div>
+    </section> : null}
+
+    {tab === "runs" ? <section className="mt-5 space-y-5"><div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+      <form onSubmit={createRun} className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Generate payroll</h2><p className="mt-1 text-sm text-neutral-500">Creates a draft from active salary profiles. Review before approval.</p><div className="mt-4 space-y-4"><SearchableSelect label="Payroll period" name="period_id" required options={periodOptions} placeholder="Select open period"/><SearchableSelect label="Currency" name="currency" required options={currencyOptions} placeholder="Select currency"/><button disabled={busy} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Play className="size-4"/>Generate draft</button></div></form>
+      <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Payroll runs</h2><div className="mt-4 space-y-3">{runs.length ? runs.map((r) => <button key={r.id} onClick={() => void openRun(r.id)} className="flex w-full items-center justify-between rounded-xl border p-4 text-left hover:bg-neutral-50"><div><p className="font-medium">{r.run_number} · {r.period_name}</p><p className="mt-1 text-xs text-neutral-400">{r.employee_count} employees · {r.currency}</p></div><div className="text-right"><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs capitalize">{r.status}</span><p className="mt-2 font-semibold">{money(r.net_total, r.currency)}</p></div></button>) : <Empty text="No payroll runs yet."/>}</div></div></div>
+      {selectedRun ? <RunDetail run={selectedRun} accounts={meta?.accounts ?? []} busy={busy} onApprove={() => void runAction("approve")} onPay={(id) => void runAction("pay", id)} /> : null}
+    </section> : null}
+  </div></main>;
+}
+
+function RunDetail({ run, accounts, busy, onApprove, onPay }: { run: Run; accounts: Account[]; busy: boolean; onApprove: () => void; onPay: (id: string) => void }) {
+  const [accountId, setAccountId] = useState("");
+  const compatible = accounts.filter((a) => a.is_active && a.currency === run.currency).map((a) => ({ value: a.id, label: `${a.name} · ${a.currency}` }));
+  return <div className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{run.run_number}</p><h2 className="mt-1 text-xl font-semibold">{run.period_name}</h2><p className="mt-1 text-sm text-neutral-500">{run.employee_count} employees · {run.currency} · <span className="capitalize">{run.status}</span></p></div><div className="flex flex-col gap-2 sm:flex-row">{run.status === "draft" ? <button disabled={busy} onClick={onApprove} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><CheckCircle2 className="size-4"/>Approve payroll</button> : null}{run.status === "approved" ? <><div className="min-w-64"><SearchableSelect value={accountId} onValueChange={setAccountId} options={compatible} placeholder={`Select ${run.currency} account`} /></div><button disabled={busy || !accountId} onClick={() => onPay(accountId)} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><Banknote className="size-4"/>Pay payroll</button></> : null}</div></div>
+    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5"><Mini label="Gross" value={money(run.gross_total, run.currency)}/><Mini label="Allowances" value={money(run.allowance_total, run.currency)}/><Mini label="Deductions" value={money(run.deduction_total, run.currency)}/><Mini label="Tax" value={money(run.tax_total, run.currency)}/><Mini label="Net payroll" value={money(run.net_total, run.currency)}/></div>
+    <div className="mt-5 overflow-x-auto rounded-xl border"><table className="min-w-full text-sm"><thead className="bg-neutral-50 text-left text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-4 py-3">Employee</th><th className="px-4 py-3">Base</th><th className="px-4 py-3">Allowance</th><th className="px-4 py-3">Deduction</th><th className="px-4 py-3">Tax</th><th className="px-4 py-3">Net</th></tr></thead><tbody className="divide-y">{run.entries.map((e) => <tr key={e.id}><td className="px-4 py-3"><p className="font-medium">{e.employee_name}</p><p className="text-xs text-neutral-400">{e.employee_code}</p></td><td className="px-4 py-3">{money(e.base_salary, e.currency)}</td><td className="px-4 py-3">{money(e.allowance_total, e.currency)}</td><td className="px-4 py-3">{money(e.deduction_total, e.currency)}</td><td className="px-4 py-3">{money(e.tax_amount, e.currency)}</td><td className="px-4 py-3 font-semibold">{money(e.net_pay, e.currency)}</td></tr>)}</tbody></table></div>
+  </div>;
+}
+function Mini({ label, value }: { label: string; value: string }) { return <div className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-400">{label}</p><p className="mt-2 font-semibold">{value}</p></div>; }
+function Empty({ text }: { text: string }) { return <div className="flex min-h-36 flex-col items-center justify-center rounded-xl border border-dashed text-center text-sm text-neutral-400"><Users className="mb-2 size-5"/><p>{text}</p></div>; }
