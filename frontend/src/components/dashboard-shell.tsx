@@ -23,6 +23,7 @@ const navigation: NavigationItem[] = [
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
   { label: "Finance", icon: CircleDollarSign, href: "/dashboard/finance" },
   { label: "Accounting", icon: BookOpenText, href: "/dashboard/accounting" },
+  { label: "Loan Accounting", icon: HandCoins, href: "/dashboard/accounting/loans" },
   { label: "Transfers", icon: ArrowRightLeft, href: "/dashboard/finance/transfers" },
   { label: "Finance Controls", icon: CalendarRange, href: "/dashboard/finance/controls" },
   { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
@@ -45,6 +46,7 @@ function isActive(pathname: string, href: string) {
   if (href === "/dashboard/finance") {
     return pathname === href || (pathname.startsWith(`${href}/`) && !pathname.startsWith("/dashboard/finance/transfers") && !pathname.startsWith("/dashboard/finance/controls") && !pathname.startsWith("/dashboard/finance/auto-post"));
   }
+  if (href === "/dashboard/accounting") return pathname === href;
   if (href === "/dashboard/hr") return pathname === href;
   if (href === "/dashboard/capital") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
