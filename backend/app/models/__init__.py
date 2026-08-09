@@ -15,6 +15,7 @@ from app.models.company_settings import (
     OrganizationProfile,
 )
 from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
+from app.models.customer_advances import CustomerAdvance, CustomerAdvanceApplication
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
 from app.models.finance_controls import AccountingPeriod, RecurringExpense
@@ -53,7 +54,7 @@ from app.models.team import Department, Designation, Employee, EmployeeInvitatio
 from app.models.user import User
 
 __all__ = [
-    "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "CompanyInvestment", "CompanyLoan", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
+    "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "CompanyInvestment", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening", "JournalEntry", "JournalLine",
     "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill", "PayablePayment", "Payment", "PerformanceReview", "ProjectInvestor",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
