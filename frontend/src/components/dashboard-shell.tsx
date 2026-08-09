@@ -14,6 +14,7 @@ type NavigationItem = { label: string; icon: LucideIcon; href: string };
 const navigation: NavigationItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
   { label: "My Work", icon: BriefcaseBusiness, href: "/dashboard/my-work" },
+  { label: "My HR", icon: BriefcaseBusiness, href: "/dashboard/my-hr" },
   { label: "Notifications", icon: Bell, href: "/dashboard/notifications" },
   { label: "CRM", icon: ClipboardList, href: "/dashboard/crm" },
   { label: "Clients", icon: Users, href: "/dashboard/clients" },
@@ -26,7 +27,8 @@ const navigation: NavigationItem[] = [
   { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
   { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
-  { label: "Employees", icon: UsersRound, href: "/dashboard/employees" },
+  { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
+  { label: "Employees", icon: Users, href: "/dashboard/employees" },
   { label: "Reports", icon: BarChart3, href: "/dashboard/reports" },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
   { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs" },
