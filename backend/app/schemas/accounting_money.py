@@ -14,6 +14,8 @@ class AccountingMoneyEntryCreate(BaseModel):
     description: str = Field(min_length=1, max_length=500)
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
+    source_type: Literal["order", "project", "other"] | None = None
+    source_id: str | None = None
 
 
 class AccountingMoneyEntryRead(BaseModel):
@@ -24,6 +26,12 @@ class AccountingMoneyEntryRead(BaseModel):
     financial_account_name: str
     category_ledger_account_id: str
     category_ledger_account_name: str
+    source_type: str | None
+    source_id: str | None
+    client_id: str | None
+    order_id: str | None
+    project_id: str | None
+    source_label: str | None
     currency: str
     amount: Decimal
     description: str
