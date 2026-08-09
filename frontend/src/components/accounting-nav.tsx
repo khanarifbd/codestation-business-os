@@ -15,6 +15,7 @@ const items = [
   { label: "Payables", href: "/dashboard/accounting/payables", icon: Building2 },
   { label: "Reports", href: "/dashboard/reports", icon: FileText },
   { label: "Advanced", href: "/dashboard/accounting/advanced", icon: BookOpen },
+  { label: "Finance", href: "/dashboard/finance", icon: FileText },
 ];
 
 export function AccountingNav() {
@@ -23,7 +24,10 @@ export function AccountingNav() {
     <div className="overflow-x-auto pb-1">
       <nav className="flex min-w-max gap-1 rounded-2xl border border-neutral-200 bg-white p-1.5">
         {items.map(({ label, href, icon: Icon }) => {
-          const active = href === "/dashboard/accounting" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+          let active = href === "/dashboard/accounting" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+          if (href === "/dashboard/finance") {
+            active = pathname === "/dashboard/finance";
+          }
           return <Link key={label} href={href} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm transition ${active ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}><Icon className="size-4" /><span>{label}</span></Link>;
         })}
       </nav>
