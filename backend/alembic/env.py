@@ -23,6 +23,8 @@ from app.models import (  # noqa: F401
     FinancialAccount,
     FinancialTransaction,
     HRAnnouncement,
+    HRAnnouncementAcknowledgement,
+    HRHoliday,
     HRShift,
     Invoice,
     InvoiceItem,
