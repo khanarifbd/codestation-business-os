@@ -191,6 +191,12 @@ class PaymentCreate(BaseModel):
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
 
+    @property
+    def exchange_rate(self) -> Decimal | None:
+        if self.account_amount is None:
+            return None
+        return self.account_amount / self.invoice_amount
+
 
 class PaymentRead(BaseModel):
     id: str
