@@ -14,6 +14,7 @@ from app.models.crm import Client, Lead, LeadStatus
 from app.models.expenses import Expense, ExpenseCategory
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, Payment
 from app.models.orders import Order
+from app.models.payroll import PayrollPeriod, PayrollRun
 from app.models.projects import Project, ProjectTask
 from app.schemas.reports import (
     ReportAccountBalance,
@@ -166,6 +167,22 @@ def _financials(db: DbSession, org_id: str, start: date, end: date, currency: st
         data[code]["platform"] += _money(platform)
 
     if not client_id and not project_id:
+        payroll_query = (
+            select(PayrollRun.currency, func.sum(PayrollRun.gross_total))
+            .join(PayrollPeriod, PayrollPeriod.id == PayrollRun.period_id)
+            .where(
+                PayrollRun.organization_id == org_id,
+                PayrollRun.status.in_(["approved", "paid"]),
+                PayrollPeriod.period_end >= start,
+                PayrollPeriod.period_end <= end,
+            )
+            .group_by(PayrollRun.currency)
+        )
+        if currency:
+            payroll_query = payroll_query.where(PayrollRun.currency == currency)
+        for code, amount in db.execute(payroll_query).all():
+            data[code]["expenses"] += _money(amount)
+
         fee_query = (
             select(AccountTransfer.source_currency, func.sum(AccountTransfer.fee_amount))
             .where(
@@ -229,6 +246,23 @@ def _trend(db: DbSession, org_id: str, start: date, end: date, currency: str | N
         data[(month, code)]["expenses"] += _money(amount)
 
     if not client_id and not project_id:
+        payroll_period = func.to_char(func.date_trunc("month", PayrollPeriod.period_end), "YYYY-MM")
+        payroll_query = (
+            select(payroll_period, PayrollRun.currency, func.sum(PayrollRun.gross_total))
+            .join(PayrollPeriod, PayrollPeriod.id == PayrollRun.period_id)
+            .where(
+                PayrollRun.organization_id == org_id,
+                PayrollRun.status.in_(["approved", "paid"]),
+                PayrollPeriod.period_end >= start,
+                PayrollPeriod.period_end <= end,
+            )
+            .group_by(payroll_period, PayrollRun.currency)
+        )
+        if currency:
+            payroll_query = payroll_query.where(PayrollRun.currency == currency)
+        for month, code, amount in db.execute(payroll_query).all():
+            data[(month, code)]["expenses"] += _money(amount)
+
         tr_period = func.to_char(func.date_trunc("month", AccountTransfer.transfer_date), "YYYY-MM")
         fee_query = select(tr_period, AccountTransfer.source_currency, func.sum(AccountTransfer.fee_amount)).where(
             AccountTransfer.organization_id == org_id,
@@ -319,6 +353,7 @@ def report_meta(db: DbSession, tenant: ReportsViewer) -> ReportsMeta:
     currencies = set(db.scalars(select(FinancialAccount.currency).where(FinancialAccount.organization_id == org_id)).all())
     currencies.update(db.scalars(select(Invoice.currency).where(Invoice.organization_id == org_id)).all())
     currencies.update(db.scalars(select(Expense.expense_currency).where(Expense.organization_id == org_id)).all())
+    currencies.update(db.scalars(select(PayrollRun.currency).where(PayrollRun.organization_id == org_id)).all())
     clients = db.scalars(select(Client).where(Client.organization_id == org_id).order_by(Client.display_name)).all()
     projects = db.scalars(select(Project).where(Project.organization_id == org_id).order_by(Project.created_at.desc())).all()
     return ReportsMeta(
