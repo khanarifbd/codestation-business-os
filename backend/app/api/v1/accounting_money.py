@@ -4,7 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import LedgerAccount
@@ -32,9 +32,20 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
+def _financial_balance(db: DbSession, account: FinancialAccount) -> Decimal:
+    net = db.scalar(
+        select(func.coalesce(func.sum(case((FinancialTransaction.direction == "credit", FinancialTransaction.amount), else_=-FinancialTransaction.amount)), 0)).where(
+            FinancialTransaction.organization_id == account.organization_id,
+            FinancialTransaction.account_id == account.id,
+        )
+    ) or Decimal("0")
+    return _money(Decimal(account.opening_balance) + Decimal(net))
+
+
 def _read(db: DbSession, organization_id: str, item: AccountingMoneyEntry) -> AccountingMoneyEntryRead:
     row = db.execute(
         select(FinancialAccount.name, LedgerAccount.name)
+        .select_from(FinancialAccount)
         .join(LedgerAccount, LedgerAccount.id == item.category_ledger_account_id)
         .where(
             FinancialAccount.id == item.financial_account_id,
@@ -87,6 +98,9 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
         raise HTTPException(status_code=400, detail="Money received cannot be deposited into a credit card account")
 
     amount = _money(payload.amount)
+    if payload.kind == "expense" and financial.account_type != "credit_card" and _financial_balance(db, financial) < amount:
+        raise HTTPException(status_code=409, detail="Selected account does not have enough balance")
+
     item = AccountingMoneyEntry(
         organization_id=tenant.organization_id,
         kind=payload.kind,
