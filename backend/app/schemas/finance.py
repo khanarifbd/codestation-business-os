@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-AccountType = Literal["bank", "cash", "wallet", "gateway", "other"]
+AccountType = Literal["bank", "cash", "mobile_wallet", "credit_card", "payment_gateway", "petty_cash", "other"]
 InvoiceLifecycleAction = Literal["send", "cancel"]
 PaymentMethod = Literal["bank_transfer", "cash", "card", "payoneer", "wise", "stripe", "paypal", "other"]
 
@@ -178,33 +178,15 @@ class InvoiceDetail(InvoiceListItem):
 
 class InvoicePage(BaseModel):
     items: list[InvoiceListItem]
-
-
-class CurrencyInvoiceSummary(BaseModel):
-    currency: str
-    invoiced: Decimal
-    paid: Decimal
-    outstanding: Decimal
-
-
-class FinanceSummary(BaseModel):
-    invoice_count: int
-    draft_count: int
-    sent_count: int
-    partially_paid_count: int
-    paid_count: int
-    overdue_count: int
-    payment_count: int
-    account_count: int
-    by_currency: list[CurrencyInvoiceSummary]
+    next_cursor: str | None = None
 
 
 class PaymentCreate(BaseModel):
     invoice_id: str
     account_id: str
     payment_date: date | None = None
-    invoice_amount: Decimal = Field(gt=0, le=Decimal("1000000000000"))
-    exchange_rate: Decimal | None = Field(default=None, gt=0, le=Decimal("1000000000"))
+    invoice_amount: Decimal = Field(gt=0)
+    account_amount: Decimal | None = Field(default=None, gt=0)
     method: PaymentMethod = "bank_transfer"
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
@@ -231,6 +213,25 @@ class PaymentRead(BaseModel):
     created_at: datetime
 
 
+class CurrencyInvoiceSummary(BaseModel):
+    currency: str
+    invoiced: Decimal
+    paid: Decimal
+    outstanding: Decimal
+
+
+class FinanceSummary(BaseModel):
+    invoice_count: int
+    draft_count: int
+    sent_count: int
+    partially_paid_count: int
+    paid_count: int
+    overdue_count: int
+    payment_count: int
+    account_count: int
+    by_currency: list[CurrencyInvoiceSummary]
+
+
 class FinanceMetaClient(BaseModel):
     id: str
     code: str
@@ -251,7 +252,7 @@ class FinanceMetaOrder(BaseModel):
 class FinanceMetaProject(BaseModel):
     id: str
     number: str
-    order_id: str
+    order_id: str | None
     client_id: str
     name: str
     currency: str
