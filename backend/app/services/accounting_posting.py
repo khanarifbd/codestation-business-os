@@ -57,17 +57,17 @@ def system_account(db, organization_id: str, system_key: str) -> LedgerAccount:
 
 
 def _create_financial_ledger_mapping(db, financial: FinancialAccount) -> LedgerAccount:
-    parent = system_account(db, financial.organization_id, "cash_equivalents")
     suffix = financial.id.replace("-", "")[:12].upper()
-    code = f"1010-{suffix}"
+    is_credit_card = financial.account_type == "credit_card"
+    parent = None if is_credit_card else system_account(db, financial.organization_id, "cash_equivalents")
     item = LedgerAccount(
         organization_id=financial.organization_id,
-        code=code,
+        code=f"2050-{suffix}" if is_credit_card else f"1010-{suffix}",
         name=financial.name,
-        category="asset",
+        category="liability" if is_credit_card else "asset",
         subtype=financial.account_type,
-        normal_balance="debit",
-        parent_id=parent.id,
+        normal_balance="credit" if is_credit_card else "debit",
+        parent_id=parent.id if parent else None,
         system_key=f"financial_account:{financial.id}",
         is_system=False,
         is_active=True,
