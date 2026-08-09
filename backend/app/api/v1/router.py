@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.api.v1.accounting import router as accounting_router
 from app.api.v1.activity_logs import platform_activity_router, tenant_activity_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.capital import router as capital_router
@@ -57,6 +58,7 @@ api_router.include_router(orders_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
+api_router.include_router(accounting_router)
 api_router.include_router(finance_router)
 api_router.include_router(finance_pagination_router)
 api_router.include_router(finance_transfers_router)
