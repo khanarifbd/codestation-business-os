@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ArrowRightLeft, BadgeDollarSign, BarChart3, Bell, BriefcaseBusiness, Building2,
+  ArrowRightLeft, BadgeDollarSign, Banknote, BarChart3, Bell, BriefcaseBusiness, Building2,
   CalendarRange, CircleDollarSign, ClipboardList, FileClock, FileText, FolderKanban,
   LayoutDashboard, LogOut, Menu, ReceiptText, Settings, Users, UsersRound, X, Zap,
   type LucideIcon,
@@ -25,6 +25,7 @@ const navigation: NavigationItem[] = [
   { label: "Finance Controls", icon: CalendarRange, href: "/dashboard/finance/controls" },
   { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
   { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
+  { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
   { label: "Employees", icon: UsersRound, href: "/dashboard/employees" },
   { label: "Reports", icon: BarChart3, href: "/dashboard/reports" },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
