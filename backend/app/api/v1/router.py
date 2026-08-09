@@ -17,6 +17,7 @@ from app.api.v1.crm import router as crm_router
 from app.api.v1.crm_clients import router as crm_clients_router
 from app.api.v1.crm_status import router as crm_status_router
 from app.api.v1.crm_summary import router as crm_summary_router
+from app.api.v1.customer_advances import router as customer_advances_router
 from app.api.v1.exchange_rates import router as exchange_rates_router
 from app.api.v1.finance import router as finance_router
 from app.api.v1.finance_auto_post import router as finance_auto_post_router
@@ -70,6 +71,7 @@ api_router.include_router(accounting_loans_router)
 api_router.include_router(accounting_money_router)
 api_router.include_router(accounting_sync_router)
 api_router.include_router(accounting_reports_router)
+api_router.include_router(customer_advances_router)
 api_router.include_router(payables_router)
 api_router.include_router(finance_router)
 api_router.include_router(finance_pagination_router)
