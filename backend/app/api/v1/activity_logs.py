@@ -1,5 +1,5 @@
 import base64
-from datetime import datetime
+from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
@@ -48,6 +48,36 @@ def _apply_cursor(statement, cursor: str | None):
     )
 
 
+def _apply_filters(
+    statement,
+    *,
+    actor_user_id: str | None,
+    action: str | None,
+    entity_type: str | None,
+    outcome: str | None,
+    date_from: str | None,
+    date_to: str | None,
+):
+    if actor_user_id:
+        statement = statement.where(ActivityLog.actor_user_id == actor_user_id)
+    if action:
+        statement = statement.where(ActivityLog.action.ilike(f"%{action.strip()}%"))
+    if entity_type:
+        statement = statement.where(ActivityLog.entity_type == entity_type)
+    if outcome:
+        statement = statement.where(ActivityLog.outcome == outcome)
+    try:
+        if date_from:
+            start = datetime.combine(datetime.fromisoformat(date_from).date(), time.min, tzinfo=timezone.utc)
+            statement = statement.where(ActivityLog.created_at >= start)
+        if date_to:
+            end = datetime.combine(datetime.fromisoformat(date_to).date(), time.max, tzinfo=timezone.utc)
+            statement = statement.where(ActivityLog.created_at <= end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid activity log date filter") from exc
+    return statement
+
+
 def _page(db: DbSession, statement, limit: int, cursor: str | None) -> ActivityLogPage:
     statement = _apply_cursor(statement, cursor).order_by(
         ActivityLog.created_at.desc(), ActivityLog.id.desc()
@@ -72,18 +102,21 @@ def list_platform_activity_logs(
     action: str | None = None,
     entity_type: str | None = None,
     outcome: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> ActivityLogPage:
     statement = select(ActivityLog)
     if organization_id:
         statement = statement.where(ActivityLog.organization_id == organization_id)
-    if actor_user_id:
-        statement = statement.where(ActivityLog.actor_user_id == actor_user_id)
-    if action:
-        statement = statement.where(ActivityLog.action == action)
-    if entity_type:
-        statement = statement.where(ActivityLog.entity_type == entity_type)
-    if outcome:
-        statement = statement.where(ActivityLog.outcome == outcome)
+    statement = _apply_filters(
+        statement,
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type=entity_type,
+        outcome=outcome,
+        date_from=date_from,
+        date_to=date_to,
+    )
     return _page(db, statement, limit, cursor)
 
 
@@ -109,18 +142,21 @@ def list_tenant_activity_logs(
     action: str | None = None,
     entity_type: str | None = None,
     outcome: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
 ) -> ActivityLogPage:
     statement = select(ActivityLog).where(
         ActivityLog.organization_id == tenant.organization_id
     )
-    if actor_user_id:
-        statement = statement.where(ActivityLog.actor_user_id == actor_user_id)
-    if action:
-        statement = statement.where(ActivityLog.action == action)
-    if entity_type:
-        statement = statement.where(ActivityLog.entity_type == entity_type)
-    if outcome:
-        statement = statement.where(ActivityLog.outcome == outcome)
+    statement = _apply_filters(
+        statement,
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type=entity_type,
+        outcome=outcome,
+        date_from=date_from,
+        date_to=date_to,
+    )
     return _page(db, statement, limit, cursor)
 
 
