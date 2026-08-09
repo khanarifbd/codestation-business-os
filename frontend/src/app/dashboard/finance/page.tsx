@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Banknote, Building2, FileText, Loader2, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Banknote, Building2, ChevronDown, FileText, Loader2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
@@ -18,6 +18,7 @@ type InvoiceItem = { id:string; description:string; quantity:string|number; unit
 type InvoiceDetail = InvoiceRow & { quotation_id:string|null; tax_calculation_mode:string; seller_name_snapshot:string; seller_email_snapshot:string|null; seller_address_snapshot:string|null; seller_tax_identifier_snapshot:string|null; client_name_snapshot:string; client_contact_snapshot:string|null; client_email_snapshot:string|null; client_address_snapshot:string|null; client_tax_identifier_snapshot:string|null; subtotal:string|number; discount_total:string|number; tax_total:string|number; notes:string|null; terms_conditions:string|null; internal_notes:string|null; sent_at:string|null; paid_at:string|null; cancelled_at:string|null; items:InvoiceItem[] };
 type Payment = { id:string; payment_number:string; invoice_id:string; invoice_number:string; client_name:string; account_id:string; account_name:string; payment_date:string; invoice_currency:string; account_currency:string; invoice_amount:string|number; account_amount:string|number; exchange_rate:string|number; method:string; reference:string|null; notes:string|null; status:string; created_at:string };
 type LedgerRow = { id:string; transaction_date:string; direction:string; amount:string|number; currency:string; source_type:string; source_id:string; reference:string|null; description:string|null; created_at:string };
+type CursorPage<T> = { items:T[]; next_cursor:string|null };
 type Tab = "invoices" | "payments" | "accounts";
 type InvoiceSource = "order" | "project" | "client";
 type ManualLine = { description:string; quantity:string; unit_price:string; discount_percent:string; tax_rate:string };
@@ -38,10 +39,13 @@ export default function FinancePage() {
   const [summary,setSummary] = useState<Summary|null>(null);
   const [meta,setMeta] = useState<Meta>({clients:[],orders:[],projects:[],accounts:[]});
   const [invoices,setInvoices] = useState<InvoiceRow[]>([]);
+  const [invoiceCursor,setInvoiceCursor] = useState<string|null>(null);
   const [payments,setPayments] = useState<Payment[]>([]);
+  const [paymentCursor,setPaymentCursor] = useState<string|null>(null);
   const [accounts,setAccounts] = useState<Account[]>([]);
   const [paymentsLoaded,setPaymentsLoaded] = useState(false);
   const [tabLoading,setTabLoading] = useState(false);
+  const [loadingMore,setLoadingMore] = useState<"invoices"|"payments"|"ledger"|null>(null);
   const [loading,setLoading] = useState(true);
   const [saving,setSaving] = useState(false);
   const [error,setError] = useState<string|null>(null);
@@ -52,6 +56,7 @@ export default function FinancePage() {
   const [selectedInvoice,setSelectedInvoice] = useState<InvoiceDetail|null>(null);
   const [selectedAccount,setSelectedAccount] = useState<Account|null>(null);
   const [ledger,setLedger] = useState<LedgerRow[]>([]);
+  const [ledgerCursor,setLedgerCursor] = useState<string|null>(null);
 
   const api = useCallback(async (path:string, init?:RequestInit) => {
     const response = await fetch(`/api/finance${path}`, init);
@@ -61,42 +66,52 @@ export default function FinancePage() {
     return payload;
   },[router]);
 
+  const invoiceParams = useCallback((cursor?:string) => {
+    const params = new URLSearchParams({limit:"50"});
+    if (invoiceSearch.trim()) params.set("search",invoiceSearch.trim());
+    if (invoiceStatus) params.set("status",invoiceStatus);
+    if (cursor) params.set("cursor",cursor);
+    return params;
+  },[invoiceSearch,invoiceStatus]);
+
   const loadCore = useCallback(async (first=false) => {
     if (first) setLoading(true); setError(null);
     try {
       const [summaryData,metaData,invoiceData] = await Promise.all([
-        api("/summary"), api("/meta"), api("/invoices?limit=100"),
+        api("/summary"), api("/meta"), api("/invoice-page?limit=50"),
       ]);
-      const typedMeta=metaData as Meta;
-      setSummary(summaryData as Summary); setMeta(typedMeta); setInvoices((invoiceData as {items:InvoiceRow[]}).items); setAccounts(typedMeta.accounts);
+      const typedMeta=metaData as Meta; const page=invoiceData as CursorPage<InvoiceRow>;
+      setSummary(summaryData as Summary); setMeta(typedMeta); setInvoices(page.items); setInvoiceCursor(page.next_cursor); setAccounts(typedMeta.accounts);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load finance workspace."); }
     finally { if (first) setLoading(false); }
   },[api]);
 
   useEffect(() => { void loadCore(true); },[loadCore]);
 
+  async function refreshSummary() { setSummary(await api("/summary") as Summary); }
+  async function refreshMetaAccounts() { const data=await api("/meta") as Meta; setMeta(data); setAccounts(data.accounts); }
+
   async function ensurePayments(force=false) {
     if (paymentsLoaded && !force) return;
     setTabLoading(true); setError(null);
-    try { setPayments(await api("/payments?limit=100") as Payment[]); setPaymentsLoaded(true); }
+    try { const page=await api("/payment-page?limit=50") as CursorPage<Payment>; setPayments(page.items); setPaymentCursor(page.next_cursor); setPaymentsLoaded(true); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load payments."); }
     finally { setTabLoading(false); }
   }
 
-  function changeTab(next:Tab) {
-    setTab(next);
-    if (next==="payments") void ensurePayments();
-  }
+  async function loadMorePayments(){ if(!paymentCursor)return;setLoadingMore("payments");try{const page=await api(`/payment-page?limit=50&cursor=${encodeURIComponent(paymentCursor)}`) as CursorPage<Payment>;setPayments(current=>[...current,...page.items]);setPaymentCursor(page.next_cursor);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to load more payments.");}finally{setLoadingMore(null)}}
+  async function loadMoreInvoices(){ if(!invoiceCursor)return;setLoadingMore("invoices");try{const page=await api(`/invoice-page?${invoiceParams(invoiceCursor)}`) as CursorPage<InvoiceRow>;setInvoices(current=>[...current,...page.items]);setInvoiceCursor(page.next_cursor);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to load more invoices.");}finally{setLoadingMore(null)}}
+
+  function changeTab(next:Tab) { setTab(next); if (next==="payments") void ensurePayments(); }
 
   async function refreshInvoices() {
-    const params = new URLSearchParams({limit:"100"});
-    if (invoiceSearch.trim()) params.set("search",invoiceSearch.trim());
-    if (invoiceStatus) params.set("status",invoiceStatus);
-    setTabLoading(true);
-    try { const result = await api(`/invoices?${params}`) as {items:InvoiceRow[]}; setInvoices(result.items); }
+    setTabLoading(true); setError(null);
+    try { const page=await api(`/invoice-page?${invoiceParams()}`) as CursorPage<InvoiceRow>;setInvoices(page.items);setInvoiceCursor(page.next_cursor); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to filter invoices."); }
     finally { setTabLoading(false); }
   }
+
+  async function refreshInvoiceListAndSummary(){await Promise.all([refreshInvoices(),refreshSummary()])}
 
   async function openInvoice(id:string) {
     setSaving(true); setError(null);
@@ -110,30 +125,31 @@ export default function FinancePage() {
     setSaving(true); setError(null);
     try {
       const updated = await api(`/invoices/${selectedInvoice.id}/status`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})}) as InvoiceDetail;
-      setSelectedInvoice(updated); setMessage(`Invoice ${pretty(action)} successful.`); await loadCore();
+      setSelectedInvoice(updated); setInvoices(current=>current.map(item=>item.id===updated.id?updated:item)); setMessage(`Invoice ${pretty(action)} successful.`); await refreshSummary();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update invoice."); }
     finally { setSaving(false); }
   }
 
   async function toggleAccount(account:Account) {
     setSaving(true); setError(null);
-    try { await api(`/accounts/${account.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!account.is_active})}); setMessage(`Account ${account.is_active?"deactivated":"activated"}.`); await loadCore(); }
+    try { const updated=await api(`/accounts/${account.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!account.is_active})}) as Account;setAccounts(current=>current.map(item=>item.id===updated.id?updated:item));setMeta(current=>({...current,accounts:current.accounts.map(item=>item.id===updated.id?updated:item)}));setMessage(`Account ${account.is_active?"deactivated":"activated"}.`);await refreshSummary(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update account."); }
     finally { setSaving(false); }
   }
 
   async function openLedger(account:Account) {
     setSaving(true); setError(null);
-    try { setLedger(await api(`/accounts/${account.id}/ledger?limit=200`) as LedgerRow[]); setSelectedAccount(account); setModal("ledger"); }
+    try { const page=await api(`/accounts/${account.id}/ledger-page?limit=50`) as CursorPage<LedgerRow>;setLedger(page.items);setLedgerCursor(page.next_cursor);setSelectedAccount(account);setModal("ledger"); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load account ledger."); }
     finally { setSaving(false); }
   }
+  async function loadMoreLedger(){if(!selectedAccount||!ledgerCursor)return;setLoadingMore("ledger");try{const page=await api(`/accounts/${selectedAccount.id}/ledger-page?limit=50&cursor=${encodeURIComponent(ledgerCursor)}`) as CursorPage<LedgerRow>;setLedger(current=>[...current,...page.items]);setLedgerCursor(page.next_cursor);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to load more ledger entries.");}finally{setLoadingMore(null)}}
 
   const outstandingCount = (summary?.sent_count||0)+(summary?.partially_paid_count||0)+(summary?.overdue_count||0);
 
   if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
 
-  return <main className="min-h-screen bg-neutral-100 p-5 sm:p-7 lg:p-9"><div className="mx-auto max-w-[1500px]">
+  return <main className="min-h-screen bg-neutral-100 p-4 sm:p-7 lg:p-9"><div className="mx-auto max-w-[1500px]">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-neutral-500">Invoices, payments and accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Finance</h1><p className="mt-2 text-sm text-neutral-500">Invoice balances are driven by confirmed payments and account ledger postings.</p></div><div className="flex gap-2"><button onClick={()=>setModal("account")} className="rounded-xl border bg-white px-4 py-3 text-sm font-semibold">+ Account</button><button onClick={()=>setModal("invoice")} className="rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white">+ New invoice</button></div></div>
 
     <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><Metric label="Invoices" value={summary?.invoice_count||0} icon={FileText}/><Metric label="Draft" value={summary?.draft_count||0}/><Metric label="Outstanding" value={outstandingCount}/><Metric label="Paid" value={summary?.paid_count||0}/><Metric label="Payments" value={summary?.payment_count||0} icon={Banknote}/><Metric label="Accounts" value={summary?.account_count||0} icon={Building2}/></div>
@@ -143,28 +159,29 @@ export default function FinancePage() {
     {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
     {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-    <div className="mt-5 rounded-2xl border bg-white p-2 shadow-sm"><div className="flex gap-1">{(["invoices","payments","accounts"] as Tab[]).map((item)=><button key={item} onClick={()=>changeTab(item)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab===item?"bg-neutral-950 text-white":"text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"}`}>{pretty(item)}</button>)}</div></div>
+    <div className="mt-5 overflow-x-auto rounded-2xl border bg-white p-2 shadow-sm"><div className="flex min-w-max gap-1">{(["invoices","payments","accounts"] as Tab[]).map((item)=><button key={item} onClick={()=>changeTab(item)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab===item?"bg-neutral-950 text-white":"text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"}`}>{pretty(item)}</button>)}</div></div>
     {tabLoading ? <div className="mt-2 h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
 
     <section className="mt-5">
-      {tab === "invoices" ? <div className="rounded-2xl border bg-white shadow-sm"><div className="flex flex-col gap-3 border-b p-4 lg:flex-row"><input value={invoiceSearch} onChange={(e)=>setInvoiceSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==="Enter")void refreshInvoices();}} placeholder="Search invoice, client, subject..." className="h-11 flex-1 rounded-xl border px-3 text-sm"/><select value={invoiceStatus} onChange={(e)=>setInvoiceStatus(e.target.value)} className="h-11 rounded-xl border px-3 text-sm"><option value="">All statuses</option>{["draft","sent","partially_paid","paid","overdue","cancelled"].map((v)=><option key={v} value={v}>{pretty(v)}</option>)}</select><button disabled={tabLoading} onClick={()=>void refreshInvoices()} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">Apply</button></div><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Invoice</th><th>Client</th><th>Status</th><th>Issue / Due</th><th>Total</th><th>Paid</th><th>Balance</th><th className="pr-4 text-right">Action</th></tr></thead><tbody className="divide-y">{invoices.map((item)=><tr key={item.id}><td className="p-4"><p className="font-semibold">{item.invoice_number}</p><p className="mt-1 text-xs text-neutral-400">{item.subject||"—"}</p></td><td>{item.client_name}</td><td><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badge(item.display_status)}`}>{pretty(item.display_status)}</span></td><td><p>{item.issue_date}</p><p className="text-xs text-neutral-400">Due {item.due_date||"—"}</p></td><td>{money(item.total,item.currency)}</td><td>{money(item.amount_paid,item.currency)}</td><td className="font-semibold">{money(item.balance_due,item.currency)}</td><td className="pr-4 text-right"><button onClick={()=>void openInvoice(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table>{!invoices.length?<Empty text="No invoices found."/>:null}</div></div> : null}
+      {tab === "invoices" ? <div className="rounded-2xl border bg-white shadow-sm"><div className="flex flex-col gap-3 border-b p-4 lg:flex-row"><input value={invoiceSearch} onChange={(e)=>setInvoiceSearch(e.target.value)} onKeyDown={(e)=>{if(e.key==="Enter")void refreshInvoices();}} placeholder="Search invoice, client, subject..." className="h-11 flex-1 rounded-xl border px-3 text-sm"/><select value={invoiceStatus} onChange={(e)=>setInvoiceStatus(e.target.value)} className="h-11 rounded-xl border px-3 text-sm"><option value="">All statuses</option>{["draft","sent","partially_paid","paid","overdue","cancelled"].map((v)=><option key={v} value={v}>{pretty(v)}</option>)}</select><button disabled={tabLoading} onClick={()=>void refreshInvoices()} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">Apply</button></div><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Invoice</th><th>Client</th><th>Status</th><th>Issue / Due</th><th>Total</th><th>Paid</th><th>Balance</th><th className="pr-4 text-right">Action</th></tr></thead><tbody className="divide-y">{invoices.map((item)=><tr key={item.id}><td className="p-4"><p className="font-semibold">{item.invoice_number}</p><p className="mt-1 text-xs text-neutral-400">{item.subject||"—"}</p></td><td>{item.client_name}</td><td><span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badge(item.display_status)}`}>{pretty(item.display_status)}</span></td><td><p>{item.issue_date}</p><p className="text-xs text-neutral-400">Due {item.due_date||"—"}</p></td><td>{money(item.total,item.currency)}</td><td>{money(item.amount_paid,item.currency)}</td><td className="font-semibold">{money(item.balance_due,item.currency)}</td><td className="pr-4 text-right"><button onClick={()=>void openInvoice(item.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table>{!invoices.length?<Empty text="No invoices found."/>:null}</div>{invoiceCursor?<LoadMore loading={loadingMore==="invoices"} onClick={()=>void loadMoreInvoices()} label="Load more invoices"/>:null}</div> : null}
 
-      {tab === "payments" ? tabLoading && !paymentsLoaded ? <div className="flex min-h-52 items-center justify-center rounded-2xl border bg-white"><Loader2 className="size-6 animate-spin text-neutral-400"/></div> : <div className="rounded-2xl border bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm"><thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Payment</th><th>Invoice</th><th>Client</th><th>Account</th><th>Date</th><th>Invoice amount</th><th>Account amount</th><th>Method</th><th className="pr-4">Reference</th></tr></thead><tbody className="divide-y">{payments.map((item)=><tr key={item.id}><td className="p-4 font-semibold">{item.payment_number}</td><td>{item.invoice_number}</td><td>{item.client_name}</td><td>{item.account_name}</td><td>{item.payment_date}</td><td>{money(item.invoice_amount,item.invoice_currency)}</td><td>{money(item.account_amount,item.account_currency)}</td><td>{pretty(item.method)}</td><td className="pr-4">{item.reference||"—"}</td></tr>)}</tbody></table>{!payments.length?<Empty text="No payments recorded yet."/>:null}</div></div> : null}
+      {tab === "payments" ? tabLoading && !paymentsLoaded ? <div className="flex min-h-52 items-center justify-center rounded-2xl border bg-white"><Loader2 className="size-6 animate-spin text-neutral-400"/></div> : <div className="rounded-2xl border bg-white shadow-sm"><div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-sm"><thead className="border-b text-xs uppercase text-neutral-400"><tr><th className="p-4">Payment</th><th>Invoice</th><th>Client</th><th>Account</th><th>Date</th><th>Invoice amount</th><th>Account amount</th><th>Method</th><th className="pr-4">Reference</th></tr></thead><tbody className="divide-y">{payments.map((item)=><tr key={item.id}><td className="p-4 font-semibold">{item.payment_number}</td><td>{item.invoice_number}</td><td>{item.client_name}</td><td>{item.account_name}</td><td>{item.payment_date}</td><td>{money(item.invoice_amount,item.invoice_currency)}</td><td>{money(item.account_amount,item.account_currency)}</td><td>{pretty(item.method)}</td><td className="pr-4">{item.reference||"—"}</td></tr>)}</tbody></table>{!payments.length?<Empty text="No payments recorded yet."/>:null}</div>{paymentCursor?<LoadMore loading={loadingMore==="payments"} onClick={()=>void loadMorePayments()} label="Load more payments"/>:null}</div> : null}
 
       {tab === "accounts" ? <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{accounts.map((item)=><article key={item.id} className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{item.name}</p><p className="mt-1 text-xs text-neutral-400">{pretty(item.account_type)}{item.provider_name?` · ${item.provider_name}`:""}</p></div><span className={`rounded-full px-2.5 py-1 text-xs ${item.is_active?"bg-emerald-50 text-emerald-700":"bg-neutral-100 text-neutral-400"}`}>{item.is_active?"Active":"Inactive"}</span></div><p className="mt-6 text-xs text-neutral-400">Current balance</p><p className="mt-1 text-2xl font-semibold">{money(item.current_balance,item.currency)}</p><p className="mt-2 text-xs text-neutral-400">Opening {money(item.opening_balance,item.currency)}</p>{item.account_reference?<p className="mt-3 text-sm text-neutral-500">Ref: {item.account_reference}</p>:null}<div className="mt-5 flex gap-2"><button onClick={()=>void openLedger(item)} className="flex-1 rounded-lg border py-2 text-xs font-semibold">Ledger</button><button disabled={saving} onClick={()=>void toggleAccount(item)} className="flex-1 rounded-lg border py-2 text-xs font-semibold">{item.is_active?"Deactivate":"Activate"}</button></div></article>)}{!accounts.length?<div className="md:col-span-2 xl:col-span-3"><Empty text="Create your first bank, cash or wallet account."/></div>:null}</div> : null}
     </section>
   </div>
 
-  {modal === "invoice" ? <InvoiceCreateModal saving={saving} meta={meta} api={api} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Invoice draft created.");await loadCore();}} onError={setError}/> : null}
-  {modal === "account" ? <AccountModal saving={saving} api={api} onSaving={setSaving} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Financial account created.");await loadCore();}} onError={setError}/> : null}
+  {modal === "invoice" ? <InvoiceCreateModal saving={saving} meta={meta} api={api} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Invoice draft created.");await refreshInvoiceListAndSummary();}} onError={setError}/> : null}
+  {modal === "account" ? <AccountModal saving={saving} api={api} onSaving={setSaving} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Financial account created.");await Promise.all([refreshMetaAccounts(),refreshSummary()]);}} onError={setError}/> : null}
   {modal === "detail" && selectedInvoice ? <InvoiceModal invoice={selectedInvoice} saving={saving} onClose={()=>{setModal(null);setSelectedInvoice(null);}} onSend={()=>void invoiceAction("send")} onCancel={()=>void invoiceAction("cancel")} onPayment={()=>setModal("payment")} onPrint={()=>window.open(`/dashboard/finance/invoices/${selectedInvoice.id}/print`,`_blank`)}/> : null}
-  {modal === "payment" && selectedInvoice ? <PaymentModal invoice={selectedInvoice} accounts={accounts.filter((a)=>a.is_active)} saving={saving} api={api} onSaving={setSaving} onClose={()=>setModal("detail")} onSaved={async()=>{const detail=await api(`/invoices/${selectedInvoice.id}`) as InvoiceDetail;setSelectedInvoice(detail);setModal("detail");setMessage("Payment recorded and account ledger updated.");await Promise.all([loadCore(),ensurePayments(true)]);}} onError={setError}/> : null}
-  {modal === "ledger" && selectedAccount ? <LedgerModal account={selectedAccount} rows={ledger} onClose={()=>{setModal(null);setSelectedAccount(null);setLedger([]);}}/> : null}
+  {modal === "payment" && selectedInvoice ? <PaymentModal invoice={selectedInvoice} accounts={accounts.filter((a)=>a.is_active)} saving={saving} api={api} onSaving={setSaving} onClose={()=>setModal("detail")} onSaved={async()=>{const detail=await api(`/invoices/${selectedInvoice.id}`) as InvoiceDetail;setSelectedInvoice(detail);setModal("detail");setMessage("Payment recorded and account ledger updated.");await Promise.all([refreshInvoiceListAndSummary(),refreshMetaAccounts(),ensurePayments(true)]);}} onError={setError}/> : null}
+  {modal === "ledger" && selectedAccount ? <LedgerModal account={selectedAccount} rows={ledger} nextCursor={ledgerCursor} loading={loadingMore==="ledger"} onLoadMore={()=>void loadMoreLedger()} onClose={()=>{setModal(null);setSelectedAccount(null);setLedger([]);setLedgerCursor(null);}}/> : null}
   </main>;
 }
 
 function Metric({label,value,icon:Icon}:{label:string;value:number;icon?:typeof FileText}) { return <div className="rounded-2xl border bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p>{Icon?<Icon className="size-4 text-neutral-400"/>:null}</div><p className="mt-3 text-2xl font-semibold">{value}</p></div>; }
 function Empty({text}:{text:string}) { return <div className="py-12 text-center text-sm text-neutral-400">{text}</div>; }
+function LoadMore({loading,onClick,label}:{loading:boolean;onClick:()=>void;label:string}){return <div className="flex justify-center border-t p-4"><button disabled={loading} onClick={onClick} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"><ChevronDown className="size-4"/>{loading?"Loading…":label}</button></div>}
 function Modal({title,onClose,children,max="max-w-3xl"}:{title:string;onClose:()=>void;children:React.ReactNode;max?:string}) { return <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4" onMouseDown={(e)=>{if(e.target===e.currentTarget)onClose();}}><div className={`max-h-[94vh] w-full ${max} overflow-y-auto rounded-2xl bg-white shadow-2xl`}><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><h2 className="text-xl font-semibold">{title}</h2><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4"/></button></div><div className="p-6">{children}</div></div></div>; }
 function Field({label,children}:{label:string;children:React.ReactNode}) { return <label className="block text-sm font-medium">{label}{children}</label>; }
 const control="mt-2 h-11 w-full rounded-xl border px-3 text-sm";
@@ -188,4 +205,4 @@ function Total({label,value,strong=false}:{label:string;value:string;strong?:boo
 
 function PaymentModal({invoice,accounts,saving,api,onSaving,onClose,onSaved,onError}:{invoice:InvoiceDetail;accounts:Account[];saving:boolean;api:(p:string,i?:RequestInit)=>Promise<unknown>;onSaving:(v:boolean)=>void;onClose:()=>void;onSaved:()=>Promise<void>;onError:(v:string|null)=>void}) { const [accountId,setAccountId]=useState(accounts[0]?.id||"");const [amount,setAmount]=useState(String(invoice.balance_due));const [rate,setRate]=useState("1");const [date,setDate]=useState("");const [method,setMethod]=useState("bank_transfer");const [reference,setReference]=useState("");const [notes,setNotes]=useState("");const account=accounts.find((a)=>a.id===accountId);const cross=Boolean(account&&account.currency!==invoice.currency);const accountAmount=account?Number(amount||0)*Number(cross?rate:1):0;async function save(){onSaving(true);onError(null);try{await api("/payments",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({invoice_id:invoice.id,account_id:accountId,payment_date:date||null,invoice_amount:Number(amount),exchange_rate:cross?Number(rate):null,method,reference:reference||null,notes:notes||null})});await onSaved();}catch(reason){onError(reason instanceof Error?reason.message:"Unable to record payment.");}finally{onSaving(false);}}const accountOptions=[{value:"",label:"Select account..."},...accounts.map((a)=>({value:a.id,label:`${a.name} · ${a.currency}`}))];return <Modal title={`Record payment · ${invoice.invoice_number}`} onClose={onClose}><div className="rounded-xl bg-neutral-50 p-4"><p className="text-sm text-neutral-500">Balance due</p><p className="mt-1 text-2xl font-semibold">{money(invoice.balance_due,invoice.currency)}</p></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><SearchableSelect label="Deposit account" name="payment_account" value={accountId} onValueChange={setAccountId} options={accountOptions} searchPlaceholder="Search account..."/><Field label={`Amount (${invoice.currency})`}><input type="number" min="0.01" step="0.01" max={Number(invoice.balance_due)} className={control} value={amount} onChange={(e)=>setAmount(e.target.value)}/></Field>{cross?<Field label={`Exchange rate · 1 ${invoice.currency} = ? ${account?.currency}`}><input type="number" min="0.00000001" step="0.00000001" className={control} value={rate} onChange={(e)=>setRate(e.target.value)}/></Field>:null}<Field label="Payment date"><input type="date" className={control} value={date} onChange={(e)=>setDate(e.target.value)}/></Field><Field label="Method"><select className={control} value={method} onChange={(e)=>setMethod(e.target.value)}>{methods.map((v)=><option key={v} value={v}>{pretty(v)}</option>)}</select></Field><Field label="Reference"><input className={control} value={reference} onChange={(e)=>setReference(e.target.value)}/></Field><label className="sm:col-span-2 text-sm font-medium">Notes<textarea className={textarea} value={notes} onChange={(e)=>setNotes(e.target.value)}/></label></div>{account?<div className="mt-4 rounded-xl border p-4 text-sm"><span className="text-neutral-500">Account posting:</span> <strong>{money(accountAmount,account.currency)}</strong>{cross?<span className="ml-2 text-neutral-400">at rate {rate}</span>:null}</div>:null}<div className="mt-6 flex justify-end gap-2 border-t pt-5"><button onClick={onClose} className="h-11 rounded-xl border px-4 text-sm font-semibold">Back</button><button disabled={saving||!accountId||Number(amount)<=0||Number(amount)>Number(invoice.balance_due)||(cross&&Number(rate)<=0)} onClick={()=>void save()} className="h-11 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">Record payment</button></div></Modal>; }
 
-function LedgerModal({account,rows,onClose}:{account:Account;rows:LedgerRow[];onClose:()=>void}) { return <Modal title={`${account.name} · Ledger`} onClose={onClose} max="max-w-4xl"><div className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-400">Current balance</p><p className="mt-1 text-2xl font-semibold">{money(account.current_balance,account.currency)}</p><p className="mt-1 text-xs text-neutral-400">Opening balance {money(account.opening_balance,account.currency)}</p></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[700px] text-sm"><thead className="border-b text-left text-xs uppercase text-neutral-400"><tr><th className="py-3">Date</th><th>Type</th><th>Reference</th><th>Description</th><th className="text-right">Amount</th></tr></thead><tbody className="divide-y">{rows.map((row)=><tr key={row.id}><td className="py-3">{row.transaction_date}</td><td><span className={row.direction==="credit"?"text-emerald-700":"text-red-600"}>{pretty(row.direction)}</span></td><td>{row.reference||"—"}</td><td>{row.description||pretty(row.source_type)}</td><td className={`text-right font-semibold ${row.direction==="credit"?"text-emerald-700":"text-red-600"}`}>{row.direction==="credit"?"+":"-"}{money(row.amount,row.currency)}</td></tr>)}</tbody></table>{!rows.length?<Empty text="No ledger transactions yet."/>:null}</div></Modal>; }
+function LedgerModal({account,rows,nextCursor,loading,onLoadMore,onClose}:{account:Account;rows:LedgerRow[];nextCursor:string|null;loading:boolean;onLoadMore:()=>void;onClose:()=>void}) { return <Modal title={`${account.name} · Ledger`} onClose={onClose} max="max-w-4xl"><div className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-400">Current balance</p><p className="mt-1 text-2xl font-semibold">{money(account.current_balance,account.currency)}</p><p className="mt-1 text-xs text-neutral-400">Opening balance {money(account.opening_balance,account.currency)}</p></div><div className="mt-5 overflow-x-auto"><table className="w-full min-w-[700px] text-sm"><thead className="border-b text-left text-xs uppercase text-neutral-400"><tr><th className="py-3">Date</th><th>Type</th><th>Reference</th><th>Description</th><th className="text-right">Amount</th></tr></thead><tbody className="divide-y">{rows.map((row)=><tr key={row.id}><td className="py-3">{row.transaction_date}</td><td><span className={row.direction==="credit"?"text-emerald-700":"text-red-600"}>{pretty(row.direction)}</span></td><td>{row.reference||"—"}</td><td>{row.description||pretty(row.source_type)}</td><td className={`text-right font-semibold ${row.direction==="credit"?"text-emerald-700":"text-red-600"}`}>{row.direction==="credit"?"+":"-"}{money(row.amount,row.currency)}</td></tr>)}</tbody></table>{!rows.length?<Empty text="No ledger transactions yet."/>:null}</div>{nextCursor?<LoadMore loading={loading} onClick={onLoadMore} label="Load older ledger entries"/>:null}</Modal>; }
