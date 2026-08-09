@@ -29,6 +29,7 @@ const navigation: NavigationItem[] = [
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
   { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
   { label: "HR Setup", icon: SlidersHorizontal, href: "/dashboard/hr/setup" },
+  { label: "HR Operations", icon: BriefcaseBusiness, href: "/dashboard/hr/operations" },
   { label: "Employees", icon: Users, href: "/dashboard/employees" },
   { label: "Reports", icon: BarChart3, href: "/dashboard/reports" },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
