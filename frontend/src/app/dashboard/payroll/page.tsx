@@ -54,23 +54,25 @@ export default function PayrollPage() {
   }
   async function createProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(null); setSuccess(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const created = await api<Profile>("/api/payroll/salary-profiles", { method: "POST", body: JSON.stringify({
         employee_id: form.get("employee_id"), currency: form.get("currency"), pay_frequency: form.get("pay_frequency"),
         base_salary: form.get("base_salary"), effective_from: form.get("effective_from"), default_allowances: [], default_deductions: [],
       }) });
       setProfiles((current) => [created, ...current.map((item) => item.employee_id === created.employee_id ? { ...item, is_active: false } : item)]);
-      event.currentTarget.reset(); setSuccess("Salary profile saved.");
+      formElement.reset(); setSuccess("Salary profile saved.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save salary profile"); }
     finally { setBusy(false); }
   }
   async function createPeriod(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(null); setSuccess(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     try {
       const created = await api<Period>("/api/payroll/periods", { method: "POST", body: JSON.stringify({ name: form.get("name"), period_start: form.get("period_start"), period_end: form.get("period_end"), pay_date: form.get("pay_date") }) });
-      setPeriods((current) => [created, ...current]); event.currentTarget.reset(); setSuccess("Payroll period created.");
+      setPeriods((current) => [created, ...current]); formElement.reset(); setSuccess("Payroll period created.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to create payroll period"); }
     finally { setBusy(false); }
   }
