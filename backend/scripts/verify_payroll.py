@@ -6,7 +6,17 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from starlette.requests import Request
 
-from app.api.v1.payroll import approve_run, create_period, create_run, create_salary_profile, pay_run
+from app.api.v1.payroll import (
+    approve_run,
+    create_period,
+    create_run,
+    create_salary_profile,
+    list_periods,
+    list_runs,
+    list_salary_profiles,
+    pay_run,
+    payroll_meta,
+)
 from app.db.session import SessionLocal, engine
 from app.models.finance import FinancialTransaction
 from app.models.payroll import PayrollEntry, PayrollRun
@@ -81,6 +91,16 @@ def main() -> None:
     )
     db = SessionLocal()
     try:
+        # Verify the exact four reads used by the Payroll page on initial load.
+        bootstrap_meta = payroll_meta(db, tenant)  # type: ignore[arg-type]
+        bootstrap_profiles = list_salary_profiles(db, tenant)  # type: ignore[arg-type]
+        bootstrap_periods = list_periods(db, tenant)  # type: ignore[arg-type]
+        bootstrap_runs = list_runs(db, tenant)  # type: ignore[arg-type]
+        if not bootstrap_meta.currencies:
+            raise AssertionError("payroll meta did not return a currency")
+        if bootstrap_profiles or bootstrap_periods or bootstrap_runs:
+            raise AssertionError("fresh payroll fixture unexpectedly contains transactional payroll data")
+
         profile = create_salary_profile(
             SalaryProfileCreate(employee_id=str(employee_id), currency="BDT", pay_frequency="monthly", base_salary=Decimal("50000"),
                 default_allowances=[], default_deductions=[], effective_from=date(2098, 1, 1)),
@@ -118,7 +138,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("payroll verification passed: profile -> period -> run -> approve -> pay -> ledger")
+    print("payroll verification passed: bootstrap -> profile -> period -> run -> approve -> pay -> ledger")
 
 
 if __name__ == "__main__":
