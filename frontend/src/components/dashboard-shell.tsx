@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowRightLeft, BadgeDollarSign, Banknote, BarChart3, Bell, BriefcaseBusiness, Building2,
-  CalendarRange, CircleDollarSign, ClipboardList, FileClock, FileText, FolderKanban,
+  Calculator, CalendarRange, CircleDollarSign, ClipboardList, FileClock, FileText, FolderKanban,
   HandCoins, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X, Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -27,6 +27,7 @@ const navigation: NavigationItem[] = [
   { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
   { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
   { label: "Capital & Funding", icon: HandCoins, href: "/dashboard/capital" },
+  { label: "Funding Insights", icon: Calculator, href: "/dashboard/capital/insights" },
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
   { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
   { label: "HR Setup", icon: SlidersHorizontal, href: "/dashboard/hr/setup" },
@@ -44,6 +45,7 @@ function isActive(pathname: string, href: string) {
     return pathname === href || (pathname.startsWith(`${href}/`) && !pathname.startsWith("/dashboard/finance/transfers") && !pathname.startsWith("/dashboard/finance/controls") && !pathname.startsWith("/dashboard/finance/auto-post"));
   }
   if (href === "/dashboard/hr") return pathname === href;
+  if (href === "/dashboard/capital") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
