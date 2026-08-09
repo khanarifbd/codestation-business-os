@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ArrowRightLeft, BadgeDollarSign, Banknote, BarChart3, Bell, BriefcaseBusiness, Building2,
+  ArrowRightLeft, BadgeDollarSign, Banknote, BarChart3, Bell, BookOpenText, BriefcaseBusiness, Building2,
   Calculator, CalendarRange, CircleDollarSign, ClipboardList, FileClock, FileText, FolderKanban,
   HandCoins, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X, Zap,
   type LucideIcon,
@@ -22,6 +22,7 @@ const navigation: NavigationItem[] = [
   { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
   { label: "Finance", icon: CircleDollarSign, href: "/dashboard/finance" },
+  { label: "Accounting", icon: BookOpenText, href: "/dashboard/accounting" },
   { label: "Transfers", icon: ArrowRightLeft, href: "/dashboard/finance/transfers" },
   { label: "Finance Controls", icon: CalendarRange, href: "/dashboard/finance/controls" },
   { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
