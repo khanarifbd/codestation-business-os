@@ -9,14 +9,47 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
+from app.models.company_defaults import OrganizationExchangeRate
 from app.models.finance import FinancialAccount
 from app.models.finance_controls import AccountingPeriod
 
 MONEY = Decimal("0.01")
+RATE = Decimal("0.00000001")
 
 
 def money(value: Decimal | int | str) -> Decimal:
     return Decimal(value).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def to_base_amount(db, organization_id: str, base_currency: str, amount: Decimal, currency: str) -> tuple[Decimal, Decimal]:
+    """Return (base_amount, source_to_base_rate)."""
+    amount = Decimal(amount)
+    base = base_currency.upper()
+    source = currency.upper()
+    if source == base:
+        return money(amount), Decimal("1")
+    direct = db.scalar(
+        select(OrganizationExchangeRate).where(
+            OrganizationExchangeRate.organization_id == organization_id,
+            OrganizationExchangeRate.base_currency == source,
+            OrganizationExchangeRate.quote_currency == base,
+        )
+    )
+    if direct is not None:
+        rate = Decimal(direct.effective_rate)
+        return money(amount * rate), rate.quantize(RATE, rounding=ROUND_HALF_UP)
+    inverse = db.scalar(
+        select(OrganizationExchangeRate).where(
+            OrganizationExchangeRate.organization_id == organization_id,
+            OrganizationExchangeRate.base_currency == base,
+            OrganizationExchangeRate.quote_currency == source,
+        )
+    )
+    if inverse is not None:
+        inverse_rate = Decimal(inverse.effective_rate)
+        rate = Decimal("1") / inverse_rate
+        return money(amount * rate), rate.quantize(RATE, rounding=ROUND_HALF_UP)
+    raise HTTPException(status_code=409, detail=f"Accounting exchange rate is missing for {source}/{base}. Add the currency pair in Company Settings → Exchange Rates.")
 
 
 @dataclass(frozen=True)
