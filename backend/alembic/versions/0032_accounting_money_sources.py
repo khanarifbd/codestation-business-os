@@ -1,7 +1,7 @@
 """link accounting money entries to business sources
 
 Revision ID: 0032_accounting_money_sources
-Revises: 0031_accounting_payables
+Revises: 0031_payables
 Create Date: 2026-08-09
 """
 from collections.abc import Sequence
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0032_accounting_money_sources"
-down_revision: str | None = "0031_accounting_payables"
+down_revision: str | None = "0031_payables"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
