@@ -1,3 +1,4 @@
+from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.activity_log import ActivityLog
 from app.models.capital import CompanyInvestment, CompanyLoan, InvestmentReturn, InvestorPayout, LoanRepayment, ProjectInvestor
 from app.models.company_defaults import OrganizationExchangeRate, OrganizationSystemDefaults
@@ -50,8 +51,8 @@ from app.models.user import User
 
 __all__ = [
     "AccountTransfer", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "CompanyInvestment", "CompanyLoan", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
-    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening",
-    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LoanRepayment", "Membership", "Order", "OrderItem", "Payment", "PerformanceReview", "ProjectInvestor",
+    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening", "JournalEntry", "JournalLine",
+    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanRepayment", "Membership", "Order", "OrderItem", "Payment", "PerformanceReview", "ProjectInvestor",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
