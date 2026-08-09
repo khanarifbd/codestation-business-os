@@ -14,6 +14,7 @@ from app.api.v1.finance import router as finance_router
 from app.api.v1.finance_auto_post import router as finance_auto_post_router
 from app.api.v1.finance_controls import router as finance_controls_router
 from app.api.v1.finance_expenses import router as finance_expenses_router
+from app.api.v1.finance_pagination import router as finance_pagination_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
 from app.api.v1.health import router as health_router
 from app.api.v1.order_links import router as order_links_router
@@ -46,6 +47,7 @@ api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
 api_router.include_router(finance_router)
+api_router.include_router(finance_pagination_router)
 api_router.include_router(finance_transfers_router)
 api_router.include_router(finance_expenses_router)
 api_router.include_router(finance_controls_router)
