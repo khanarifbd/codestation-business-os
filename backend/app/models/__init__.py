@@ -15,6 +15,19 @@ from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
 from app.models.finance_controls import AccountingPeriod, RecurringExpense
+from app.models.hr import (
+    AttendanceRecord,
+    EmployeeHRDocument,
+    EmployeeLifecycleEvent,
+    EmployeeShiftAssignment,
+    HRAnnouncement,
+    HRShift,
+    JobCandidate,
+    JobOpening,
+    LeaveRequest,
+    LeaveType,
+    PerformanceReview,
+)
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
@@ -34,9 +47,9 @@ from app.models.team import Department, Designation, Employee, EmployeeInvitatio
 from app.models.user import User
 
 __all__ = [
-    "AccountTransfer", "AccountingPeriod", "ActivityLog", "Client", "Department", "Designation", "Employee", "EmployeeInvitation",
-    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "Invoice", "InvoiceItem",
-    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "Membership", "Order", "OrderItem", "Payment",
+    "AccountTransfer", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
+    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRShift", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening",
+    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "Membership", "Order", "OrderItem", "Payment", "PerformanceReview",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
