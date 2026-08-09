@@ -18,6 +18,7 @@ from app.api.v1.finance_pagination import router as finance_pagination_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
 from app.api.v1.health import router as health_router
 from app.api.v1.hr import router as hr_router
+from app.api.v1.hr_extended import router as hr_extended_router
 from app.api.v1.hr_self import router as hr_self_router
 from app.api.v1.hr_uploads import router as hr_uploads_router
 from app.api.v1.order_links import router as order_links_router
@@ -42,6 +43,7 @@ api_router.include_router(organizations_router)
 api_router.include_router(tenant_router)
 api_router.include_router(team_router)
 api_router.include_router(hr_router)
+api_router.include_router(hr_extended_router)
 api_router.include_router(hr_self_router)
 api_router.include_router(hr_uploads_router)
 api_router.include_router(crm_summary_router)
