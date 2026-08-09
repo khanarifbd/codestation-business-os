@@ -17,6 +17,7 @@ from app.api.v1.payroll import (
     pay_run,
     payroll_meta,
 )
+from app.api.v1.reports import reports_overview
 from app.db.session import SessionLocal, engine
 from app.models.finance import FinancialTransaction
 from app.models.payroll import PayrollEntry, PayrollRun
@@ -135,10 +136,23 @@ def main() -> None:
         persisted = db.scalar(select(PayrollRun).where(PayrollRun.id == run.id))
         if persisted is None or persisted.paid_account_id != account_id:
             raise AssertionError("payroll paid account was not persisted")
+
+        report = reports_overview(
+            db=db,
+            tenant=tenant,  # type: ignore[arg-type]
+            date_from=date(2098, 1, 1),
+            date_to=date(2098, 1, 31),
+            currency="BDT",
+            client_id=None,
+            project_id=None,
+        )
+        bdt = next((row for row in report.financials if row.currency == "BDT"), None)
+        if bdt is None or bdt.expenses < Decimal("50000.00"):
+            raise AssertionError("approved/paid payroll cost is missing from Reports expenses")
     finally:
         db.close()
 
-    print("payroll verification passed: bootstrap -> profile -> period -> run -> approve -> pay -> ledger")
+    print("payroll verification passed: bootstrap -> profile -> period -> run -> approve -> pay -> ledger -> reports")
 
 
 if __name__ == "__main__":
