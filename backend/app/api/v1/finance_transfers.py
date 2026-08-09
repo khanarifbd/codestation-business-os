@@ -6,7 +6,8 @@ from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
+from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction
@@ -41,33 +42,33 @@ def _clean(value: str | None) -> str | None:
 
 
 def _account_balance(db: DbSession, account: FinancialAccount) -> Decimal:
-    credit = db.scalar(
-        select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
+    net = db.scalar(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (FinancialTransaction.direction == "credit", FinancialTransaction.amount),
+                        else_=-FinancialTransaction.amount,
+                    )
+                ),
+                0,
+            )
+        ).where(
             FinancialTransaction.organization_id == account.organization_id,
             FinancialTransaction.account_id == account.id,
-            FinancialTransaction.direction == "credit",
         )
     ) or Decimal("0")
-    debit = db.scalar(
-        select(func.coalesce(func.sum(FinancialTransaction.amount), 0)).where(
-            FinancialTransaction.organization_id == account.organization_id,
-            FinancialTransaction.account_id == account.id,
-            FinancialTransaction.direction == "debit",
-        )
-    ) or Decimal("0")
-    return _money(Decimal(account.opening_balance) + Decimal(credit) - Decimal(debit))
+    return _money(Decimal(account.opening_balance) + Decimal(net))
 
 
-def _transfer_read(db: DbSession, transfer: AccountTransfer) -> AccountTransferRead:
-    source = db.get(FinancialAccount, transfer.from_account_id)
-    destination = db.get(FinancialAccount, transfer.to_account_id)
+def _transfer_read(transfer: AccountTransfer, source_name: str | None, destination_name: str | None) -> AccountTransferRead:
     return AccountTransferRead(
         id=transfer.id,
         transfer_number=transfer.transfer_number,
         from_account_id=transfer.from_account_id,
-        from_account_name=source.name if source else "—",
+        from_account_name=source_name or "—",
         to_account_id=transfer.to_account_id,
-        to_account_name=destination.name if destination else "—",
+        to_account_name=destination_name or "—",
         transfer_date=transfer.transfer_date,
         source_currency=transfer.source_currency,
         destination_currency=transfer.destination_currency,
@@ -90,15 +91,26 @@ def list_transfers(
     account_id: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
-    query = select(AccountTransfer).where(AccountTransfer.organization_id == tenant.organization_id)
+    source_account = aliased(FinancialAccount)
+    destination_account = aliased(FinancialAccount)
+    query = (
+        select(AccountTransfer, source_account.name, destination_account.name)
+        .join(source_account, source_account.id == AccountTransfer.from_account_id)
+        .join(destination_account, destination_account.id == AccountTransfer.to_account_id)
+        .where(AccountTransfer.organization_id == tenant.organization_id)
+    )
     if account_id:
         query = query.where(
             (AccountTransfer.from_account_id == account_id) | (AccountTransfer.to_account_id == account_id)
         )
-    rows = db.scalars(
-        query.order_by(AccountTransfer.transfer_date.desc(), AccountTransfer.created_at.desc()).limit(limit)
+    rows = db.execute(
+        query.order_by(
+            AccountTransfer.transfer_date.desc(),
+            AccountTransfer.created_at.desc(),
+            AccountTransfer.id.desc(),
+        ).limit(limit)
     ).all()
-    return [_transfer_read(db, row) for row in rows]
+    return [_transfer_read(transfer, source_name, destination_name) for transfer, source_name, destination_name in rows]
 
 
 @router.post("/transfers", response_model=AccountTransferRead, status_code=status.HTTP_201_CREATED)
@@ -256,4 +268,4 @@ def record_transfer(
     )
     db.commit()
     db.refresh(transfer)
-    return _transfer_read(db, transfer)
+    return _transfer_read(transfer, source.name, destination.name)
