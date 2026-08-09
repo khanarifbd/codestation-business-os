@@ -2,11 +2,22 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 AccountType = Literal["bank", "cash", "mobile_wallet", "credit_card", "payment_gateway", "petty_cash", "other"]
 InvoiceLifecycleAction = Literal["send", "cancel"]
 PaymentMethod = Literal["bank_transfer", "cash", "card", "payoneer", "wise", "stripe", "paypal", "other"]
+
+LEGACY_ACCOUNT_TYPE_ALIASES = {
+    "wallet": "mobile_wallet",
+    "gateway": "payment_gateway",
+}
+
+
+def _canonical_account_type(value):
+    if isinstance(value, str):
+        return LEGACY_ACCOUNT_TYPE_ALIASES.get(value.strip().lower(), value.strip().lower())
+    return value
 
 
 class FinancialAccountCreate(BaseModel):
@@ -19,6 +30,11 @@ class FinancialAccountCreate(BaseModel):
     opening_balance: Decimal = Field(default=Decimal("0"))
     notes: str | None = None
 
+    @field_validator("account_type", mode="before")
+    @classmethod
+    def normalize_account_type(cls, value):
+        return _canonical_account_type(value)
+
 
 class FinancialAccountUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=180)
@@ -28,6 +44,11 @@ class FinancialAccountUpdate(BaseModel):
     account_reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
     is_active: bool | None = None
+
+    @field_validator("account_type", mode="before")
+    @classmethod
+    def normalize_account_type(cls, value):
+        return _canonical_account_type(value)
 
 
 class FinancialAccountRead(BaseModel):
