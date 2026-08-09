@@ -4,9 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  ArrowRightLeft, BadgeDollarSign, Banknote, BarChart3, Bell, BookOpenText, BriefcaseBusiness, Building2,
-  Calculator, CalendarRange, CircleDollarSign, ClipboardList, FileClock, FileText, FolderKanban,
-  HandCoins, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X, Zap,
+  Banknote, BarChart3, Bell, BookOpenText, BriefcaseBusiness, Building2, ClipboardList, FileClock, FileText,
+  FolderKanban, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -21,15 +20,7 @@ const navigation: NavigationItem[] = [
   { label: "Quotations", icon: FileText, href: "/dashboard/quotations" },
   { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
-  { label: "Finance", icon: CircleDollarSign, href: "/dashboard/finance" },
-  { label: "Accounting", icon: BookOpenText, href: "/dashboard/accounting" },
-  { label: "Loan Accounting", icon: HandCoins, href: "/dashboard/accounting/loans" },
-  { label: "Transfers", icon: ArrowRightLeft, href: "/dashboard/finance/transfers" },
-  { label: "Finance Controls", icon: CalendarRange, href: "/dashboard/finance/controls" },
-  { label: "Auto Expenses", icon: Zap, href: "/dashboard/finance/auto-post" },
-  { label: "Expenses", icon: BadgeDollarSign, href: "/dashboard/expenses" },
-  { label: "Capital & Funding", icon: HandCoins, href: "/dashboard/capital" },
-  { label: "Funding Insights", icon: Calculator, href: "/dashboard/capital/insights" },
+  { label: "Finance & Accounts", icon: BookOpenText, href: "/dashboard/accounting" },
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
   { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
   { label: "HR Setup", icon: SlidersHorizontal, href: "/dashboard/hr/setup" },
@@ -43,12 +34,10 @@ const navigation: NavigationItem[] = [
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
-  if (href === "/dashboard/finance") {
-    return pathname === href || (pathname.startsWith(`${href}/`) && !pathname.startsWith("/dashboard/finance/transfers") && !pathname.startsWith("/dashboard/finance/controls") && !pathname.startsWith("/dashboard/finance/auto-post"));
+  if (href === "/dashboard/accounting") {
+    return pathname.startsWith("/dashboard/accounting") || pathname.startsWith("/dashboard/finance") || pathname.startsWith("/dashboard/expenses") || pathname.startsWith("/dashboard/capital");
   }
-  if (href === "/dashboard/accounting") return pathname === href;
   if (href === "/dashboard/hr") return pathname === href;
-  if (href === "/dashboard/capital") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
