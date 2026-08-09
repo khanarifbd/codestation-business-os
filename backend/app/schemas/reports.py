@@ -12,9 +12,6 @@ class ReportFinancialRow(BaseModel):
     expenses: Decimal
     platform_fees: Decimal
     transfer_fees: Decimal
-    investment_income: Decimal = Decimal("0")
-    loan_interest: Decimal = Decimal("0")
-    investor_profit_share: Decimal = Decimal("0")
     net_profit: Decimal
 
 
@@ -25,8 +22,6 @@ class ReportTrendRow(BaseModel):
     collected_revenue: Decimal
     expenses: Decimal
     transfer_fees: Decimal
-    investment_income: Decimal = Decimal("0")
-    finance_costs: Decimal = Decimal("0")
     net_profit: Decimal
 
 
