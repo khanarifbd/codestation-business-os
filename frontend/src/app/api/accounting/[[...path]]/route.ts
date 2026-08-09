@@ -43,5 +43,6 @@ async function proxy(request: NextRequest, context: RouteContext, method: string
 
 export async function GET(request: NextRequest, context: RouteContext) { return proxy(request, context, "GET"); }
 export async function POST(request: NextRequest, context: RouteContext) { return proxy(request, context, "POST"); }
+export async function PUT(request: NextRequest, context: RouteContext) { return proxy(request, context, "PUT"); }
 export async function PATCH(request: NextRequest, context: RouteContext) { return proxy(request, context, "PATCH"); }
 export async function DELETE(request: NextRequest, context: RouteContext) { return proxy(request, context, "DELETE"); }
