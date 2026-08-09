@@ -21,11 +21,14 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("1100", "Accounts Receivable", "asset", "accounts_receivable", "debit", "accounts_receivable", True),
     ("1200", "Other Current Assets", "asset", "other_current_assets", "debit", "other_current_assets", True),
     ("1300", "Supplier Advances", "asset", "supplier_advances", "debit", "supplier_advances", False),
+    ("1400", "Investments", "asset", "investments", "debit", "investments", False),
     ("1500", "Fixed Assets", "asset", "fixed_assets", "debit", "fixed_assets", True),
     ("2000", "Accounts Payable", "liability", "accounts_payable", "credit", "accounts_payable", True),
     ("2100", "Loans Payable", "liability", "loans_payable", "credit", "loans_payable", True),
     ("2200", "Taxes Payable", "liability", "taxes_payable", "credit", "taxes_payable", True),
     ("2300", "Customer Advances", "liability", "customer_advances", "credit", "customer_advances", False),
+    ("2400", "Payroll Withholdings Payable", "liability", "payroll_withholdings", "credit", "payroll_withholdings", False),
+    ("2500", "Investor Funds Payable", "liability", "investor_funds_payable", "credit", "investor_funds_payable", False),
     ("3000", "Owner's Equity", "equity", "owners_equity", "credit", "owners_equity", True),
     ("3100", "Opening Balance Equity", "equity", "opening_balance_equity", "credit", "opening_balance_equity", True),
     ("4000", "Sales Revenue", "income", "sales_revenue", "credit", "sales_revenue", True),
@@ -33,8 +36,10 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("4900", "Other Income", "income", "other_income", "credit", "other_income", True),
     ("5000", "Cost of Sales", "expense", "cost_of_sales", "debit", "cost_of_sales", True),
     ("6000", "Operating Expenses", "expense", "operating_expenses", "debit", "operating_expenses", True),
+    ("6050", "Payroll Expense", "expense", "payroll_expense", "debit", "payroll_expense", False),
     ("6100", "Interest Expense", "expense", "interest_expense", "debit", "interest_expense", True),
     ("6200", "Bank & Processing Fees", "expense", "bank_fees", "debit", "bank_fees", True),
+    ("6300", "Investor Profit Share Expense", "expense", "investor_profit_share", "debit", "investor_profit_share", False),
 ]
 
 
