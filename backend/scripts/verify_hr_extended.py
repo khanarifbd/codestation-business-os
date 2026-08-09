@@ -50,7 +50,7 @@ def main() -> None:
         if ack["announcement_id"] != policy["id"] or policy["id"] not in self_policy_acknowledgements(db, tenant): raise AssertionError("policy acknowledgement failed")  # type: ignore[arg-type]
         job = create_job(JobCreate(title=f"CI Ext Engineer {marker}", employment_type="full_time", location="Remote", openings=1), request("POST", "/hr/jobs"), db, tenant)  # type: ignore[arg-type]
         candidate = create_candidate(CandidateCreate(job_opening_id=job["id"], full_name="CI Ext Candidate", email=f"ci-ext-{marker}@example.com"), request("POST", "/hr/candidates"), db, tenant)  # type: ignore[arg-type]
-        converted = convert_candidate(candidate["id"], CandidateConvert(role_id=role_id), request("POST", f"/hr/candidates/{candidate['id']}/convert"), db, tenant)  # type: ignore[arg-type]
+        converted = convert_candidate(candidate["id"], CandidateConvert(role_id=role_id, employee_code=f"EMP-CI-{marker.upper()}"), request("POST", f"/hr/candidates/{candidate['id']}/convert"), db, tenant)  # type: ignore[arg-type]
         if converted["stage"] != "hired" or not converted["invitation_id"] or not converted["invite_token"]: raise AssertionError("candidate conversion failed")
     finally:
         db.close()
