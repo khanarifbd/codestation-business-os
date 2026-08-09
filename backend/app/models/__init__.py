@@ -31,6 +31,7 @@ from app.models.hr import (
     PerformanceReview,
 )
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
+from app.models.loan_accounting import LoanDisbursement, LoanFee, LoanScheduleItem
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
@@ -52,7 +53,7 @@ from app.models.user import User
 __all__ = [
     "AccountTransfer", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "CompanyInvestment", "CompanyLoan", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening", "JournalEntry", "JournalLine",
-    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanRepayment", "Membership", "Order", "OrderItem", "Payment", "PerformanceReview", "ProjectInvestor",
+    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "Payment", "PerformanceReview", "ProjectInvestor",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
