@@ -27,3 +27,20 @@ class CustomerAdvance(TenantOwnedMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CustomerAdvanceApplication(TenantOwnedMixin, Base):
+    __tablename__ = "customer_advance_applications"
+    __table_args__ = (
+        Index("ix_customer_advance_apps_org_advance", "organization_id", "advance_id", "application_date"),
+        Index("ix_customer_advance_apps_org_invoice", "organization_id", "invoice_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    advance_id: Mapped[str] = mapped_column(String(36), ForeignKey("customer_advances.id", ondelete="RESTRICT"), nullable=False)
+    invoice_id: Mapped[str] = mapped_column(String(36), ForeignKey("invoices.id", ondelete="RESTRICT"), nullable=False)
+    application_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
