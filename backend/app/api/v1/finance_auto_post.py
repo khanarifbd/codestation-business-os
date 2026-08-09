@@ -67,7 +67,7 @@ def _read(db: DbSession, item: RecurringExpense) -> AutoPostRow:
         auto_post=item.auto_post,
         eligible=eligible,
         eligibility_reason=reason,
-        retryable=bool(item.last_error if hasattr(item, "last_error") else item.auto_post_last_error) and item.is_active and item.auto_post and item.next_due_date <= today,
+        retryable=bool(item.auto_post_last_error) and item.is_active and item.auto_post and item.next_due_date <= today,
         last_attempt_at=item.auto_post_last_attempt_at,
         last_error=item.auto_post_last_error,
     )
