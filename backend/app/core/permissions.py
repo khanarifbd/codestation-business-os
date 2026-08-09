@@ -23,6 +23,8 @@ PERMISSION_CATALOG = [
     "projects.manage",
     "finance.view",
     "finance.manage",
+    "capital.view",
+    "capital.manage",
     "payroll.view",
     "payroll.manage",
     "hr.self",
