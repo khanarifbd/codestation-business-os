@@ -123,6 +123,6 @@ export default function FinancialCorrectionsPage() {
       <div className="mt-6 flex justify-end"><button type="button" disabled={!selected || reason.trim().length < 3 || saving} onClick={() => setConfirmOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40"><RotateCcw className="size-4" />Review reversal</button></div>
     </section>
 
-    <FinancialConfirmationDialog open={confirmOpen} title={`Reverse ${selected?.number ?? "transaction"}?`} description="Review carefully. This does not delete the original record; it posts the opposite business and accounting movements." confirmLabel={saving ? "Reversing…" : "Confirm reversal"} danger details={details} busy={saving} onCancel={() => setConfirmOpen(false)} onConfirm={() => void reverse()} />
+    <FinancialConfirmationDialog open={confirmOpen} title={`Reverse ${selected?.number ?? "transaction"}?`} description="Review carefully. This does not delete the original record; it posts the opposite business and accounting movements." confirmLabel="Confirm reversal" warning="This action preserves the original record and posts an auditable reversal. It should only be used to correct an incorrect financial posting." details={details} loading={saving} onCancel={() => setConfirmOpen(false)} onConfirm={() => void reverse()} />
   </div></main>;
 }
