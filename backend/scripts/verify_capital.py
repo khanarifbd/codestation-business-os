@@ -33,6 +33,7 @@ from app.api.v1.capital import (
 from app.api.v1.capital_insights import insights
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry
+from app.models.company_defaults import OrganizationExchangeRate
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.projects import Project
 
@@ -68,6 +69,15 @@ def main() -> None:
         acc = db.scalar(select(FinancialAccount).where(FinancialAccount.organization_id == tenant.organization_id, FinancialAccount.is_active.is_(True), FinancialAccount.currency == project.currency).order_by(FinancialAccount.created_at.asc()))
         if acc is None: raise AssertionError(f"capital fixture requires an active {project.currency} account")
         currency = project.currency
+
+        # The fixture project is intentionally foreign-currency. Real accounting must
+        # reject journal posting without a configured FX pair, so seed a deterministic
+        # test rate rather than weakening the production validation.
+        if currency != tenant.organization.currency:
+            fx = db.scalar(select(OrganizationExchangeRate).where(OrganizationExchangeRate.organization_id == tenant.organization_id, OrganizationExchangeRate.base_currency == currency, OrganizationExchangeRate.quote_currency == tenant.organization.currency))
+            if fx is None:
+                db.add(OrganizationExchangeRate(organization_id=tenant.organization_id, base_currency=currency, quote_currency=tenant.organization.currency, reference_rate=Decimal("110"), manual_rate=Decimal("110"), effective_rate=Decimal("110"), source="capital_ci_fixture"))
+                db.flush()
 
         # Legacy debt routes remain compatible while loans are managed from Accounting.
         loan = create_loan(LoanCreate(lender_name=f"CI Bank {marker}", lender_type="bank", currency=currency, principal_amount=Decimal("100000"), annual_interest_rate=Decimal("10"), loan_date=date(2096, 1, 1), account_id=acc.id, reference=f"LN-{marker}"), request("POST", "/capital/loans"), db, tenant)  # type: ignore[arg-type]
