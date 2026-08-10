@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.roles import MEMBERSHIP_ROLE_USER, MEMBERSHIP_STATUS_ACTIVE
@@ -18,6 +18,7 @@ class Membership(Base):
             "status",
             "organization_id",
         ),
+        Index("ix_memberships_org_owner", "organization_id", "is_owner"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -30,8 +31,13 @@ class Membership(Base):
     role_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("organization_roles.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    # Compatibility slug for built-in admin/user semantics. Custom authorization
+    # Compatibility slug for built-in admin/user/client semantics. Custom authorization
     # is driven by role_id and OrganizationRole.permissions.
     role: Mapped[str] = mapped_column(String(64), default=MEMBERSHIP_ROLE_USER, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default=MEMBERSHIP_STATUS_ACTIVE, nullable=False)
+    # Ownership is intentionally separate from the authorization role. A company can
+    # have many admins, but only the membership(s) explicitly marked owner represent
+    # business ownership. Employee/client relationships are derived from linked domain
+    # profiles, allowing the same user to hold multiple relationships in one company.
+    is_owner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)

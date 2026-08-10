@@ -11,6 +11,8 @@ from app.api.v1.activity_logs import platform_activity_router, tenant_activity_r
 from app.api.v1.auth import router as auth_router
 from app.api.v1.capital import router as capital_router
 from app.api.v1.capital_insights import router as capital_insights_router
+from app.api.v1.client_access import router as client_access_router
+from app.api.v1.client_portal import router as client_portal_router
 from app.api.v1.company_defaults import router as company_defaults_router
 from app.api.v1.company_settings import router as company_settings_router
 from app.api.v1.company_uploads import router as company_uploads_router
@@ -57,6 +59,7 @@ api_router.include_router(auth_router)
 api_router.include_router(invitation_router)
 api_router.include_router(organizations_router)
 api_router.include_router(tenant_router)
+api_router.include_router(client_portal_router)
 api_router.include_router(team_router)
 api_router.include_router(hr_router)
 api_router.include_router(hr_extended_router)
@@ -65,6 +68,7 @@ api_router.include_router(hr_uploads_router)
 api_router.include_router(crm_summary_router)
 api_router.include_router(crm_status_router)
 api_router.include_router(crm_clients_router)
+api_router.include_router(client_access_router)
 api_router.include_router(crm_router)
 api_router.include_router(sales_router)
 api_router.include_router(manual_orders_router)
