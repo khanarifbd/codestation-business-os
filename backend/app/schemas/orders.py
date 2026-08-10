@@ -14,6 +14,7 @@ class OrderStatusChange(BaseModel):
 
 
 class OrderItemInput(BaseModel):
+    product_id: str | None = None
     description: str = Field(min_length=1, max_length=4000)
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
     unit_price: Decimal = Field(ge=0, max_digits=16, decimal_places=4)
@@ -37,6 +38,9 @@ class ManualOrderCreate(BaseModel):
 class OrderItemRead(BaseModel):
     id: str
     quotation_item_id: str | None
+    product_id: str | None = None
+    sku_snapshot: str | None = None
+    item_type_snapshot: str | None = None
     sort_order: int
     description: str
     quantity: Decimal
@@ -48,6 +52,8 @@ class OrderItemRead(BaseModel):
     taxable_amount: Decimal
     tax_amount: Decimal
     line_total: Decimal
+    fulfilled_quantity: Decimal = Decimal("0")
+    remaining_quantity: Decimal = Decimal("0")
 
 
 class OrderListItem(BaseModel):
@@ -110,6 +116,18 @@ class OrderDetail(BaseModel):
     items: list[OrderItemRead]
     created_at: datetime
     updated_at: datetime
+
+
+class FulfillmentLineInput(BaseModel):
+    order_item_id: str
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
+
+
+class OrderFulfillmentCreate(BaseModel):
+    warehouse_id: str
+    fulfillment_date: date
+    reference: str | None = Field(default=None, max_length=180)
+    items: list[FulfillmentLineInput] = Field(min_length=1, max_length=200)
 
 
 class OrderSummary(BaseModel):
