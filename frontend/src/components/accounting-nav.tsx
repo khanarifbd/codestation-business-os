@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, BookOpen, Boxes, Building2, FileText, HandCoins, LayoutDashboard, Receipt, ReceiptText, Scale, TrendingUp, WalletCards } from "lucide-react";
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, BookOpen, Boxes, Building2, FileText, HandCoins, Landmark, LayoutDashboard, Receipt, ReceiptText, Scale, TrendingUp, WalletCards } from "lucide-react";
 
 const items = [
   { label: "Overview", href: "/dashboard/accounting", icon: LayoutDashboard },
@@ -17,6 +17,7 @@ const items = [
   { label: "Assets", href: "/dashboard/accounting/assets", icon: Boxes },
   { label: "Receivables", href: "/dashboard/accounting/receivables", icon: Receipt },
   { label: "Payables", href: "/dashboard/accounting/payables", icon: Building2 },
+  { label: "Tax", href: "/dashboard/accounting/tax", icon: Landmark },
   { label: "Reports", href: "/dashboard/accounting/reports", icon: FileText },
   { label: "Advanced", href: "/dashboard/accounting/advanced", icon: BookOpen },
 ];

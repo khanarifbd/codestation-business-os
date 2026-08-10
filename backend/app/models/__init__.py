@@ -66,6 +66,7 @@ from app.models.projects import (
 from app.models.reconciliation import BankReconciliation, BankReconciliationItem
 from app.models.sales import Quotation, QuotationItem
 from app.models.subscription import Subscription
+from app.models.tax import TaxCode
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
 
@@ -83,5 +84,5 @@ __all__ = [
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
-    "Subscription", "User", "Vendor",
+    "Subscription", "TaxCode", "User", "Vendor",
 ]

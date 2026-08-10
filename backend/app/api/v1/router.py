@@ -51,6 +51,7 @@ from app.api.v1.projects import router as projects_router
 from app.api.v1.reports_fast import router as reports_fast_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.sales import router as sales_router
+from app.api.v1.tax import router as tax_router
 from app.api.v1.team import invitation_router, router as team_router
 from app.api.v1.tenant import router as tenant_router
 from app.api.v1.workspace import router as workspace_router
@@ -90,6 +91,7 @@ api_router.include_router(accounting_money_router)
 api_router.include_router(accounting_reconciliation_router)
 api_router.include_router(accounting_sync_router)
 api_router.include_router(accounting_reports_router)
+api_router.include_router(tax_router)
 api_router.include_router(customer_advances_router)
 api_router.include_router(payables_router)
 api_router.include_router(finance_router)
