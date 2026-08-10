@@ -7,8 +7,8 @@ from starlette.requests import Request
 
 from app.api.v1.finance import change_invoice_status, create_account, create_invoice_from_order
 from app.api.v1.financial_safety import safe_record_payment
-from app.api.v1.router import api_router
 from app.db.session import SessionLocal, engine
+from app.main import app
 from app.models.finance import Invoice, Payment
 from app.models.orders import Order
 from app.schemas.finance import FinancialAccountCreate, InvoiceStatusAction, PaymentCreate
@@ -41,16 +41,17 @@ def make_request(method: str, path: str, idempotency_key: str | None = None) -> 
 
 def assert_safety_route_precedence() -> None:
     expected = {
-        "/finance/payments": "safe_record_payment",
-        "/finance/expenses": "safe_create_expense",
-        "/finance/transfers": "safe_record_transfer",
+        "/api/v1/finance/payments": "safe_record_payment",
+        "/api/v1/finance/expenses": "safe_create_expense",
+        "/api/v1/finance/transfers": "safe_record_transfer",
     }
     for path, endpoint_name in expected.items():
-        matches = [route for route in api_router.routes if getattr(route, "path", None) == path and "POST" in getattr(route, "methods", set())]
+        matches = [route for route in app.routes if getattr(route, "path", None) == path and "POST" in getattr(route, "methods", set())]
         if not matches:
             raise AssertionError(f"missing POST route: {path}")
         if getattr(matches[0].endpoint, "__name__", "") != endpoint_name:
-            raise AssertionError(f"financial safety route is not first for {path}")
+            actual = getattr(matches[0].endpoint, "__name__", "unknown")
+            raise AssertionError(f"financial safety route is not first for {path}: got {actual}")
 
 
 def main() -> None:
