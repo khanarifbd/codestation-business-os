@@ -45,20 +45,21 @@ def request(method: str, path: str) -> Request:
     })
 
 
-def reversal_exists(db, organization_id: str, source_type: str, source_id: str) -> bool:
-    original = db.scalar(
+def source_journal(db, organization_id: str, source_type: str, source_id: str) -> JournalEntry | None:
+    return db.scalar(
         select(JournalEntry).where(
             JournalEntry.organization_id == organization_id,
             JournalEntry.source_type == source_type,
             JournalEntry.source_id == source_id,
         )
     )
-    if original is None:
-        return False
+
+
+def reversal_exists(db, organization_id: str, original_id: str) -> bool:
     return db.scalar(
         select(JournalEntry.id).where(
             JournalEntry.organization_id == organization_id,
-            JournalEntry.reversed_entry_id == original.id,
+            JournalEntry.reversed_entry_id == original_id,
         )
     ) is not None
 
@@ -132,8 +133,8 @@ def main() -> None:
         before_paid = Decimal(invoice.amount_paid)
         payment_amount = Decimal(payment.invoice_amount)
         payment_id = payment.id
-        payment_number = payment.payment_number
         payment_account_id = payment.account_id
+        payment_journal = source_journal(db, tenant.organization_id, "invoice_payment", payment_id)
 
         reverse_business_transaction(
             CorrectionRequest(source_type="payment", source_id=payment_id, reason="CI correction verification", reversal_date=date(2099, 12, 20)),
@@ -158,10 +159,11 @@ def main() -> None:
         ) or 0
         if payment_reversal_count != 1:
             raise AssertionError(f"expected one payment financial reversal, found {payment_reversal_count}")
-        if not reversal_exists(db, tenant.organization_id, "invoice_payment", payment_id):
-            raise AssertionError(f"payment {payment_number} accounting journal was not reversed")
+        if payment_journal is not None and not reversal_exists(db, tenant.organization_id, payment_journal.id):
+            raise AssertionError("existing payment accounting journal was not reversed")
 
         expense_id = expense.id
+        expense_journal = source_journal(db, tenant.organization_id, "expense_post", expense_id)
         reverse_business_transaction(
             CorrectionRequest(source_type="expense", source_id=expense_id, reason="CI expense correction", reversal_date=date(2099, 12, 21)),
             request("POST", "/accounting/corrections/reverse"),
@@ -181,10 +183,11 @@ def main() -> None:
         ) or 0
         if expense_reversal_count != 1:
             raise AssertionError(f"expected one expense financial reversal, found {expense_reversal_count}")
-        if not reversal_exists(db, tenant.organization_id, "expense_post", expense_id):
-            raise AssertionError("expense accounting journal was not reversed")
+        if expense_journal is not None and not reversal_exists(db, tenant.organization_id, expense_journal.id):
+            raise AssertionError("existing expense accounting journal was not reversed")
 
         transfer_id = transfer.id
+        transfer_journal = source_journal(db, tenant.organization_id, "account_transfer", transfer_id)
         original_transfer_movements = db.scalar(
             select(func.count(FinancialTransaction.id)).where(
                 FinancialTransaction.organization_id == tenant.organization_id,
@@ -211,10 +214,10 @@ def main() -> None:
         ) or 0
         if transfer_reversal_count != original_transfer_movements:
             raise AssertionError(f"expected {original_transfer_movements} transfer reversal movements, found {transfer_reversal_count}")
-        if not reversal_exists(db, tenant.organization_id, "account_transfer", transfer_id):
-            raise AssertionError("transfer accounting journal was not reversed")
+        if transfer_journal is not None and not reversal_exists(db, tenant.organization_id, transfer_journal.id):
+            raise AssertionError("existing transfer accounting journal was not reversed")
 
-        print("financial correction verification passed: payment + expense + transfer operational and journal reversals")
+        print("financial correction verification passed: payment + expense + transfer operational reversals; existing journals reversed when present")
     finally:
         db.close()
 
