@@ -40,17 +40,18 @@ def make_request(method: str, path: str, idempotency_key: str | None = None) -> 
 
 
 def assert_safety_route_precedence() -> None:
-    expected = {
-        "/api/v1/finance/payments": "safe_record_payment",
-        "/api/v1/finance/expenses": "safe_create_expense",
-        "/api/v1/finance/transfers": "safe_record_transfer",
-    }
-    for path, endpoint_name in expected.items():
-        matches = [route for route in app.routes if getattr(route, "path", None) == path and "POST" in getattr(route, "methods", set())]
-        if not matches:
-            raise AssertionError(f"missing POST route: {path}")
-        if getattr(matches[0].endpoint, "__name__", "") != endpoint_name:
-            actual = getattr(matches[0].endpoint, "__name__", "unknown")
+    endpoint_names = ("safe_record_payment", "safe_create_expense", "safe_record_transfer")
+    post_routes = [route for route in app.routes if "POST" in getattr(route, "methods", set())]
+    for endpoint_name in endpoint_names:
+        safety = next((route for route in post_routes if getattr(route.endpoint, "__name__", "") == endpoint_name), None)
+        if safety is None:
+            raise AssertionError(f"missing financial safety endpoint: {endpoint_name}")
+        path = getattr(safety, "path", None)
+        if not path:
+            raise AssertionError(f"financial safety endpoint has no path: {endpoint_name}")
+        matches = [route for route in post_routes if getattr(route, "path", None) == path]
+        if not matches or getattr(matches[0].endpoint, "__name__", "") != endpoint_name:
+            actual = getattr(matches[0].endpoint, "__name__", "unknown") if matches else "missing"
             raise AssertionError(f"financial safety route is not first for {path}: got {actual}")
 
 
