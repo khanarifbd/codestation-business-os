@@ -1,5 +1,5 @@
-import { InvoicesWorkspace } from "@/components/invoices-workspace";
+import { InvoicesWorkspaceV2 } from "@/components/invoices-workspace-v2";
 
 export default function InvoicesPage() {
-  return <InvoicesWorkspace />;
+  return <InvoicesWorkspaceV2 />;
 }
