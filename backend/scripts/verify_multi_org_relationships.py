@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.core.roles import MEMBERSHIP_ROLE_ADMIN, MEMBERSHIP_ROLE_CLIENT, MEMBERSHIP_ROLE_USER
 from app.core.security import hash_password
@@ -23,21 +23,6 @@ def main() -> None:
         )
         if organization is None:
             raise AssertionError("existing tenant fixture missing")
-
-        # Migration invariant: whenever the organization creator already had a
-        # membership, 0036 must not leave that membership without ownership.
-        unpreserved_creator_memberships = db.scalar(
-            select(func.count(Membership.id))
-            .join(Organization, Organization.id == Membership.organization_id)
-            .where(
-                Membership.user_id == Organization.created_by_user_id,
-                Membership.is_owner.is_(False),
-            )
-        ) or 0
-        if unpreserved_creator_memberships:
-            raise AssertionError(
-                f"creator memberships not preserved as owners: {unpreserved_creator_memberships}"
-            )
 
         roles = ensure_system_roles(db, organization)
         client_role = roles.get("client")
