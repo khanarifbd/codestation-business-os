@@ -82,6 +82,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh(); }
 
+  // Print routes are document views, not application workspaces. Rendering the
+  // dashboard chrome here caused the responsive mobile header and shell height
+  // to leak into browser print/PDF output.
+  if (pathname.endsWith("/print")) return <>{children}</>;
+
   return <div className="min-h-screen bg-neutral-100 text-neutral-950 lg:flex">
     <aside className="hidden h-screen w-64 shrink-0 border-r border-neutral-200 bg-white p-4 lg:sticky lg:top-0 lg:flex lg:flex-col">
       <div className="px-3 py-4"><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h1 className="mt-1 text-lg font-semibold">Business OS</h1></div>
