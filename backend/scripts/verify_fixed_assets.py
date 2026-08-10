@@ -11,6 +11,7 @@ from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
+from app.services.activity_log import record_activity
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,9 @@ def main() -> None:
     db=SessionLocal(); marker=uuid4().hex[:8]
     try:
         account=FinancialAccount(organization_id=tenant.organization_id,name=f"CI Asset Bank {marker}",account_type="bank",currency=tenant.organization.currency,opening_balance=Decimal("100000"),is_active=True,created_by_user_id=tenant.user_id)
-        db.add(account);db.commit()
+        db.add(account); db.flush()
+        record_activity(db,action="ci.fixed_asset.fixture.create",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="financial_account",entity_id=account.id,after={"account_id":account.id,"opening_balance":"100000.00"},request=request("POST","/ci/fixed-asset-fixture"))
+        db.commit()
         asset=create_asset(AssetCreate(asset_code=f"FA-{marker}",name="CI Laptop",category="computer",currency=tenant.organization.currency,acquisition_cost=Decimal("12000"),salvage_value=Decimal("0"),acquisition_date=date(2098,1,1),in_service_date=date(2098,1,1),useful_life_months=12,record_mode="purchase",purchase_account_id=account.id,reference=f"FA-REF-{marker}"),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
         if asset["book_value"]!=Decimal("12000.00"): raise AssertionError("asset initial book value failed")
         tx=db.scalar(select(FinancialTransaction).where(FinancialTransaction.organization_id==tenant.organization_id,FinancialTransaction.source_type=="fixed_asset_acquisition",FinancialTransaction.source_id==asset["id"]))
