@@ -53,6 +53,7 @@ from app.models import (  # noqa: F401
     OrganizationSystemDefaults,
     Payment,
     PerformanceReview,
+    PostingIdempotency,
     Project,
     ProjectCredential,
     ProjectDocument,
