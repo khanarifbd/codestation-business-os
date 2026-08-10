@@ -1,6 +1,6 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.core.roles import MEMBERSHIP_ROLE_CLIENT, MEMBERSHIP_ROLE_USER
+from app.core.roles import MEMBERSHIP_ROLE_ADMIN, MEMBERSHIP_ROLE_CLIENT, MEMBERSHIP_ROLE_USER
 from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models.client_access import ClientMembership
@@ -10,7 +10,7 @@ from app.models.organization import Organization
 from app.models.team import Employee
 from app.models.user import User
 from app.services.membership_relationships import membership_relationships, primary_relationship
-from app.services.team import ensure_system_roles, next_employee_code
+from app.services.team import ensure_system_roles
 
 
 def main() -> None:
@@ -24,14 +24,50 @@ def main() -> None:
         if organization is None:
             raise AssertionError("existing tenant fixture missing")
 
+        # Migration invariant: whenever the organization creator already had a
+        # membership, 0036 must not leave that membership without ownership.
+        unpreserved_creator_memberships = db.scalar(
+            select(func.count(Membership.id))
+            .join(Organization, Organization.id == Membership.organization_id)
+            .where(
+                Membership.user_id == Organization.created_by_user_id,
+                Membership.is_owner.is_(False),
+            )
+        ) or 0
+        if unpreserved_creator_memberships:
+            raise AssertionError(
+                f"creator memberships not preserved as owners: {unpreserved_creator_memberships}"
+            )
+
+        roles = ensure_system_roles(db, organization)
+        client_role = roles.get("client")
+        if client_role is None or client_role.permissions:
+            raise AssertionError("client system role must exist with no staff permissions")
+
+        # The CI migration fixture is inserted after migration 0008 and therefore
+        # intentionally has no membership/role rows at seed time. Create its owner
+        # membership here to verify the new ownership relationship semantics.
         owner_membership = db.scalar(
             select(Membership).where(
                 Membership.organization_id == organization.id,
                 Membership.user_id == organization.created_by_user_id,
             )
         )
-        if owner_membership is None or not owner_membership.is_owner:
-            raise AssertionError("migration did not preserve the existing company owner")
+        if owner_membership is None:
+            owner_membership = Membership(
+                organization_id=organization.id,
+                user_id=organization.created_by_user_id,
+                role_id=roles["admin"].id,
+                role=MEMBERSHIP_ROLE_ADMIN,
+                status="active",
+                is_owner=True,
+            )
+            db.add(owner_membership)
+            db.flush()
+        else:
+            owner_membership.is_owner = True
+            db.flush()
+
         owner_relationships = membership_relationships(db, owner_membership)
         if "owner" not in owner_relationships:
             raise AssertionError(f"owner relationship missing: {owner_relationships}")
@@ -44,11 +80,6 @@ def main() -> None:
         )
         if client is None:
             raise AssertionError("client fixture missing")
-
-        roles = ensure_system_roles(db, organization)
-        client_role = roles.get("client")
-        if client_role is None or client_role.permissions:
-            raise AssertionError("client system role must exist with no staff permissions")
 
         email = "multi.relationship.fixture@codestation.example"
         user = db.scalar(select(User).where(User.email == email))
@@ -112,7 +143,7 @@ def main() -> None:
             employee = Employee(
                 organization_id=organization.id,
                 membership_id=membership.id,
-                employee_code=next_employee_code(db, organization.id),
+                employee_code=f"REL-{user.id[:8]}",
                 work_email=user.email,
                 employment_type="full_time",
                 employment_status="active",
@@ -130,7 +161,7 @@ def main() -> None:
 
         db.rollback()
 
-    print("multi-org relationship verification passed: owner preserved, client isolated, employee+client coexist")
+    print("multi-org relationship verification passed: ownership, client isolation, employee+client coexist")
 
 
 if __name__ == "__main__":
