@@ -6,6 +6,7 @@ from starlette.requests import Request
 
 from app.api.v1.finance import create_invoice_from_order
 from app.db.session import SessionLocal, engine
+from app.models.finance import Invoice
 from app.models.orders import Order
 from app.services.accounting_sync import _invoice_product_revenue
 
@@ -40,8 +41,10 @@ def main() -> None:
     try:
         order=db.scalar(select(Order).where(Order.organization_id==tenant.organization_id,Order.subject=="Product order").order_by(Order.created_at.desc()))
         if order is None: raise AssertionError("inventory sales fixture order missing")
-        invoice=create_invoice_from_order(order.id,request(),db,tenant)  # type: ignore[arg-type]
-        product_revenue=_invoice_product_revenue(db,tenant.organization_id,db.get(type(db.scalar(select(__import__('app.models.finance',fromlist=['Invoice']).Invoice).where(__import__('app.models.finance',fromlist=['Invoice']).Invoice.id==invoice.id))),invoice.id) if False else db.scalar(select(__import__('app.models.finance',fromlist=['Invoice']).Invoice).where(__import__('app.models.finance',fromlist=['Invoice']).Invoice.id==invoice.id)))
+        created=create_invoice_from_order(order.id,request(),db,tenant)  # type: ignore[arg-type]
+        invoice=db.scalar(select(Invoice).where(Invoice.id==created.id,Invoice.organization_id==tenant.organization_id))
+        if invoice is None: raise AssertionError("product order invoice missing")
+        product_revenue=_invoice_product_revenue(db,tenant.organization_id,invoice)
         if product_revenue != Decimal("720.00"):
             raise AssertionError(f"expected product revenue 720.00, got {product_revenue}")
     finally:
