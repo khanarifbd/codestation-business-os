@@ -32,6 +32,7 @@ from app.models.customer_advances import CustomerAdvance, CustomerAdvanceApplica
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
 from app.models.finance_controls import AccountingPeriod, RecurringExpense
+from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
 from app.models.hr import (
     AttendanceRecord,
     EmployeeHRDocument,
@@ -62,18 +63,20 @@ from app.models.projects import (
     ProjectTask,
     ProjectWorkLog,
 )
+from app.models.reconciliation import BankReconciliation, BankReconciliationItem
 from app.models.sales import Quotation, QuotationItem
 from app.models.subscription import Subscription
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
 
 __all__ = [
-    "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "ClientMembership",
-    "CompanyInvestment", "CompanyInvestmentFunding", "CompanyInvestor", "CompanyInvestorFunding", "CompanyInvestorPayout", "CompanyLoan",
-    "CustomerAdvance", "CustomerAdvanceApplication", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation",
-    "EmployeeLifecycleEvent", "EmployeeShiftAssignment", "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction",
-    "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem",
-    "JobCandidate", "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
+    "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AssetDepreciationEntry", "AttendanceRecord",
+    "BankReconciliation", "BankReconciliationItem", "Client", "ClientMembership", "CompanyInvestment", "CompanyInvestmentFunding",
+    "CompanyInvestor", "CompanyInvestorFunding", "CompanyInvestorPayout", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication",
+    "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
+    "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "FixedAsset", "HRAnnouncement",
+    "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate",
+    "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
     "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill",
     "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationDocumentSequence",

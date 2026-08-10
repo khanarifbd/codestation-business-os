@@ -23,6 +23,7 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("1300", "Supplier Advances", "asset", "supplier_advances", "debit", "supplier_advances", False),
     ("1400", "Investments", "asset", "investments", "debit", "investments", False),
     ("1500", "Fixed Assets", "asset", "fixed_assets", "debit", "fixed_assets", True),
+    ("1510", "Accumulated Depreciation", "asset", "accumulated_depreciation", "credit", "accumulated_depreciation", False),
     ("2000", "Accounts Payable", "liability", "accounts_payable", "credit", "accounts_payable", True),
     ("2100", "Loans Payable", "liability", "loans_payable", "credit", "loans_payable", True),
     ("2200", "Taxes Payable", "liability", "taxes_payable", "credit", "taxes_payable", True),
@@ -40,6 +41,7 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("6100", "Interest Expense", "expense", "interest_expense", "debit", "interest_expense", True),
     ("6200", "Bank & Processing Fees", "expense", "bank_fees", "debit", "bank_fees", True),
     ("6300", "Investor Profit Share Expense", "expense", "investor_profit_share", "debit", "investor_profit_share", False),
+    ("6400", "Depreciation Expense", "expense", "depreciation_expense", "debit", "depreciation_expense", False),
 ]
 
 
