@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, FileText, Plus, Search, Send, X } from "lucide-react";
+import { ExternalLink, FileText, Plus, Search, Send, Share2, X } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
 import { SearchableSelect } from "@/components/searchable-select";
@@ -80,6 +80,23 @@ export function InvoicesWorkspaceV2() {
   function resetSource(next: Source) { setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", notes: "", lines: [blank()] }); setError(null); }
   function clearFilters() { setQuery(""); setStatusFilter("all"); setCurrencyFilter("all"); setDueFilter("all"); }
 
+  async function shareInvoice(invoice: Invoice) {
+    setError(null); setMessage(null);
+    const relativeUrl = `/dashboard/finance/invoices/${invoice.id}/print`;
+    const shareUrl = `${window.location.origin}${relativeUrl}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Invoice ${invoice.invoice_number}`, text: `${invoice.invoice_number} · ${invoice.client_name}`, url: shareUrl });
+        return;
+      }
+      await navigator.clipboard.writeText(shareUrl);
+      setMessage(`Invoice ${invoice.invoice_number} link copied to clipboard.`);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setError("Could not share this invoice. Open PDF View and use your browser share or copy the URL.");
+    }
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setError(null); setMessage(null);
     try {
@@ -142,7 +159,7 @@ export function InvoicesWorkspaceV2() {
         <select value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All balances</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select>
         <button type="button" onClick={clearFilters} disabled={!query && statusFilter === "all" && currencyFilter === "all" && dueFilter === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button>
       </div><p className="mt-3 text-xs text-neutral-400">Showing {filteredInvoices.length} of {invoices.length} invoices</p></div>
-      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th><th className="px-4 py-3">Actions</th></tr></thead><tbody>{filteredInvoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className={`text-xs ${invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 ? "font-medium text-red-600" : "text-neutral-400"}`}>Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td><td className="px-4 py-3"><div className="flex justify-end gap-2"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><ExternalLink className="size-3.5" />{invoice.status === "draft" ? "Open / Edit" : "Open"}</Link>{invoice.status === "draft" ? <button disabled={saving} onClick={() => void sendInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white"><Send className="size-3.5" />Send</button> : Number(invoice.balance_due) > 0 ? <Link href="/dashboard/accounting/money-in" className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white">Collect</Link> : <span className="px-3 py-2 text-xs text-neutral-400">Paid</span>}</div></td></tr>)}</tbody></table>{!loading && !filteredInvoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No matching invoices</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody>{filteredInvoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className={`text-xs ${invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 ? "font-medium text-red-600" : "text-neutral-400"}`}>Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td><td className="px-4 py-3"><div className="flex min-w-max justify-end gap-2"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><ExternalLink className="size-3.5" />{invoice.status === "draft" ? "Open / Edit" : "Open"}</Link><Link href={`/dashboard/finance/invoices/${invoice.id}/print`} target="_blank" className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><FileText className="size-3.5" />PDF View</Link><button type="button" onClick={() => void shareInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><Share2 className="size-3.5" />Share</button>{invoice.status === "draft" ? <button disabled={saving} onClick={() => void sendInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white"><Send className="size-3.5" />Send</button> : Number(invoice.balance_due) > 0 ? <Link href={`/dashboard/accounting/money-in?invoice_id=${invoice.id}`} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white">Collect</Link> : <span className="px-3 py-2 text-xs text-neutral-400">Paid</span>}</div></td></tr>)}</tbody></table>{!loading && !filteredInvoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No matching invoices</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
     </section>
   </div></main>;
 }
