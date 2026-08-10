@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { FileText, Plus, Send, X } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
+import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type Source = "client" | "order" | "project";
@@ -103,6 +104,22 @@ export function InvoicesWorkspace() {
     finally { setSaving(false); }
   }
 
+  const projectOptions = meta.projects.filter((p) => p.status !== "cancelled").map((p) => ({
+    value: p.id,
+    label: `${p.number} · ${p.name} · ${money(p.contract_value, p.currency)}`,
+    keywords: `${p.number} ${p.name} ${p.currency} ${p.contract_value}`,
+  }));
+  const orderOptions = meta.orders.filter((o) => o.status !== "cancelled").map((o) => ({
+    value: o.id,
+    label: `${o.number} · ${o.client_name} · ${money(o.total, o.currency)}`,
+    keywords: `${o.number} ${o.client_name} ${o.currency} ${o.total}`,
+  }));
+  const clientOptions = meta.clients.map((c) => ({
+    value: c.id,
+    label: `${c.code} · ${c.name}`,
+    keywords: `${c.code} ${c.name} ${c.currency ?? ""}`,
+  }));
+
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Invoices</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Create invoices from projects, orders or directly for a client. Collect actual payments from Money In.</p></div><button onClick={() => setShowForm(true)} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Plus className="size-4" />New invoice</button></div>
     <AccountingNav />
@@ -113,13 +130,13 @@ export function InvoicesWorkspace() {
       <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">Create invoice</h2><p className="mt-1 text-sm text-neutral-500">Choose where the invoice comes from. Project and order details are copied automatically.</p></div><button onClick={() => setShowForm(false)} className="rounded-lg p-2 hover:bg-neutral-100"><X className="size-5" /></button></div>
       <div className="mt-4 flex flex-wrap gap-2">{(["project", "order", "client"] as Source[]).map((item) => <button type="button" key={item} onClick={() => resetSource(item)} className={`rounded-xl px-4 py-2 text-sm font-medium ${source === item ? "bg-neutral-950 text-white" : "border"}`}>{item === "client" ? "Manual client invoice" : item === "project" ? "From project" : "From order"}</button>)}</div>
       <form onSubmit={submit} className="mt-5 space-y-4">
-        {source === "project" ? <Field label="Project"><select required value={form.source_id} onChange={(e) => setForm((v) => ({ ...v, source_id: e.target.value }))} className="w-full rounded-xl border bg-white px-3 py-2.5"><option value="">Select project</option>{meta.projects.filter((p) => p.status !== "cancelled").map((p) => <option key={p.id} value={p.id}>{p.number} · {p.name} · {money(p.contract_value, p.currency)}</option>)}</select></Field> : null}
-        {source === "order" ? <Field label="Order"><select required value={form.source_id} onChange={(e) => setForm((v) => ({ ...v, source_id: e.target.value }))} className="w-full rounded-xl border bg-white px-3 py-2.5"><option value="">Select order</option>{meta.orders.filter((o) => o.status !== "cancelled").map((o) => <option key={o.id} value={o.id}>{o.number} · {o.client_name} · {money(o.total, o.currency)}</option>)}</select></Field> : null}
+        {source === "project" ? <SearchableSelect label="Project" required value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={projectOptions} placeholder="Select project" searchPlaceholder="Search project by number, name, amount or currency..." clearable={false} /> : null}
+        {source === "order" ? <SearchableSelect label="Order" required value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={orderOptions} placeholder="Select order" searchPlaceholder="Search order by number, client, amount or currency..." clearable={false} /> : null}
         {source === "client" ? <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            <Field label="Client"><select required value={form.client_id} onChange={(e) => { const id = e.target.value; const c = meta.clients.find((item) => item.id === id); setForm((v) => ({ ...v, client_id: id, currency: c?.currency ?? v.currency })); }} className="w-full rounded-xl border bg-white px-3 py-2.5"><option value="">Select client</option>{meta.clients.map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}</select></Field>
+            <SearchableSelect label="Client" required value={form.client_id} onValueChange={(id) => { const c = meta.clients.find((item) => item.id === id); setForm((v) => ({ ...v, client_id: id, currency: c?.currency ?? v.currency })); }} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client by code or name..." clearable={false} />
             <Field label="Subject"><input value={form.subject} onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" placeholder="Website development" /></Field>
-            <Field label="Currency"><select required value={form.currency} onChange={(e) => setForm((v) => ({ ...v, currency: e.target.value }))} className="w-full rounded-xl border bg-white px-3 py-2.5"><option value="">Select currency</option>{CURRENCY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+            <SearchableSelect label="Currency" required value={form.currency} onValueChange={(value) => setForm((v) => ({ ...v, currency: value }))} options={CURRENCY_OPTIONS} placeholder="Select currency" searchPlaceholder="Search currency by code or name..." clearable={false} />
             <Field label="Issue date"><input required type="date" value={form.issue_date} onChange={(e) => setForm((v) => ({ ...v, issue_date: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
             <Field label="Due date"><input type="date" value={form.due_date} onChange={(e) => setForm((v) => ({ ...v, due_date: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
           </div>
