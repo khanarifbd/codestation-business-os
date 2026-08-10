@@ -5,6 +5,7 @@ export function MoneyInput({
   currency,
   value,
   onValueChange,
+  onChange,
   required = false,
   min = 0,
   max,
@@ -16,7 +17,8 @@ export function MoneyInput({
   label?: string;
   currency?: string | null;
   value: string;
-  onValueChange: (value: string) => void;
+  onValueChange?: (value: string) => void;
+  onChange?: (value: string) => void;
   required?: boolean;
   min?: number;
   max?: number;
@@ -25,6 +27,7 @@ export function MoneyInput({
   hint?: string;
   readOnly?: boolean;
 }) {
+  const handleChange = onValueChange ?? onChange;
   return (
     <label className="block text-sm font-medium text-neutral-600">
       {label ? <span className="mb-1.5 block">{label}</span> : null}
@@ -41,7 +44,7 @@ export function MoneyInput({
           max={max}
           step={step}
           value={value}
-          onChange={(event) => onValueChange(event.target.value)}
+          onChange={(event) => handleChange?.(event.target.value)}
           placeholder={placeholder}
           className="min-w-0 flex-1 bg-transparent px-3 text-sm font-normal outline-none placeholder:text-neutral-300"
         />
