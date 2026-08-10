@@ -20,7 +20,7 @@ class Order(TenantOwnedMixin, Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     order_number: Mapped[str] = mapped_column(String(40), nullable=False)
-    quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="RESTRICT"), nullable=False)
+    quotation_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="RESTRICT"), nullable=True)
     client_id: Mapped[str] = mapped_column(String(36), ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False)
     source_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True)
     assigned_employee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
