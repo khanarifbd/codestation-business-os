@@ -35,7 +35,6 @@ const staffNavigation: NavigationItem[] = [
   { label: "Settings", icon: Settings, href: "/dashboard/settings" },
 ];
 const clientPortalItem: NavigationItem = { label: "Client Portal", icon: Building2, href: "/dashboard/client-portal" };
-const clientAccessItem: NavigationItem = { label: "Client Access", icon: Users, href: "/dashboard/client-access" };
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
@@ -67,7 +66,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const relationships = workspaceContext?.relationships ?? [];
   const clientOnly = workspaceContext?.primary_relationship === "client";
   const hasClientRelationship = relationships.includes("client");
-  const canManageClientAccess = Boolean(workspaceContext?.is_owner || workspaceContext?.role_slug === "admin");
 
   useEffect(() => {
     if (clientOnly && pathname !== "/dashboard/client-portal") {
@@ -78,11 +76,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const navigation = useMemo(() => {
     if (clientOnly) return [clientPortalItem];
     const items = [...staffNavigation];
-    const clientsIndex = items.findIndex((item) => item.href === "/dashboard/clients");
-    if (canManageClientAccess) items.splice(clientsIndex + 1, 0, clientAccessItem);
     if (hasClientRelationship) items.splice(1, 0, clientPortalItem);
     return items;
-  }, [canManageClientAccess, clientOnly, hasClientRelationship]);
+  }, [clientOnly, hasClientRelationship]);
 
   async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh(); }
 

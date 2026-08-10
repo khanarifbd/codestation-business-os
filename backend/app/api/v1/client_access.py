@@ -1,8 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.core.roles import (
@@ -14,7 +14,7 @@ from app.core.roles import (
 from app.models.client_access import ClientMembership
 from app.models.crm import Client
 from app.models.membership import Membership
-from app.models.team import Employee
+from app.models.team import Employee, OrganizationRole
 from app.models.user import User
 from app.services.activity_log import record_activity
 from app.services.team import ensure_system_roles
@@ -52,6 +52,18 @@ class ClientAccessCreate(BaseModel):
     is_primary_contact: bool = True
 
 
+class ClientAccessStatusItem(BaseModel):
+    client_id: str
+    enabled: bool
+    active_access_count: int
+    has_email: bool
+
+
+class ClientAccessStatusResponse(BaseModel):
+    can_manage: bool
+    items: list[ClientAccessStatusItem]
+
+
 def _client(db: DbSession, organization_id: str, client_id: str) -> Client:
     client = db.scalar(
         select(Client).where(
@@ -62,6 +74,17 @@ def _client(db: DbSession, organization_id: str, client_id: str) -> Client:
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
     return client
+
+
+def _can_manage(db: DbSession, tenant: TenantContext) -> bool:
+    role = db.scalar(
+        select(OrganizationRole).where(
+            OrganizationRole.id == tenant.membership.role_id,
+            OrganizationRole.organization_id == tenant.organization_id,
+            OrganizationRole.is_active.is_(True),
+        )
+    )
+    return bool(role and ("*" in role.permissions or "clients.manage" in role.permissions))
 
 
 def _access_users(db: DbSession, organization_id: str, client_id: str) -> list[ClientAccessUser]:
@@ -101,6 +124,80 @@ def _record(db: DbSession, client: Client) -> ClientAccessRecord:
         status=client.status,
         users=_access_users(db, client.organization_id, client.id),
     )
+
+
+def _deactivate_membership_if_orphaned(db: DbSession, organization_id: str, membership_id: str) -> None:
+    membership = db.get(Membership, membership_id)
+    if membership is None or membership.is_owner:
+        return
+
+    has_employee = db.scalar(
+        select(Employee.id)
+        .where(
+            Employee.organization_id == organization_id,
+            Employee.membership_id == membership.id,
+            Employee.employment_status == "active",
+        )
+        .limit(1)
+    )
+    has_client_access = db.scalar(
+        select(ClientMembership.id)
+        .where(
+            ClientMembership.organization_id == organization_id,
+            ClientMembership.membership_id == membership.id,
+            ClientMembership.status == "active",
+        )
+        .limit(1)
+    )
+    if has_employee is None and has_client_access is None:
+        membership.status = MEMBERSHIP_STATUS_LEFT
+
+
+@router.get("/status", response_model=ClientAccessStatusResponse)
+def get_client_access_status(
+    db: DbSession,
+    tenant: ClientAccessViewer,
+    client_ids: str = Query(..., min_length=1),
+) -> ClientAccessStatusResponse:
+    requested_ids = list(dict.fromkeys(item.strip() for item in client_ids.split(",") if item.strip()))[:100]
+    if not requested_ids:
+        return ClientAccessStatusResponse(can_manage=_can_manage(db, tenant), items=[])
+
+    clients = db.scalars(
+        select(Client).where(
+            Client.organization_id == tenant.organization_id,
+            Client.id.in_(requested_ids),
+        )
+    ).all()
+    client_map = {client.id: client for client in clients}
+
+    access_counts = dict(
+        db.execute(
+            select(ClientMembership.client_id, func.count(ClientMembership.id))
+            .where(
+                ClientMembership.organization_id == tenant.organization_id,
+                ClientMembership.client_id.in_(requested_ids),
+                ClientMembership.status == "active",
+            )
+            .group_by(ClientMembership.client_id)
+        ).all()
+    )
+
+    items = []
+    for client_id in requested_ids:
+        client = client_map.get(client_id)
+        if client is None:
+            continue
+        count = int(access_counts.get(client_id, 0))
+        items.append(
+            ClientAccessStatusItem(
+                client_id=client.id,
+                enabled=count > 0,
+                active_access_count=count,
+                has_email=bool(client.email or client.billing_email),
+            )
+        )
+    return ClientAccessStatusResponse(can_manage=_can_manage(db, tenant), items=items)
 
 
 @router.get("", response_model=list[ClientAccessRecord])
@@ -232,6 +329,49 @@ def grant_client_access(
     return _record(db, client)
 
 
+@router.delete("/client/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+def disable_client_access(
+    client_id: str,
+    request: Request,
+    db: DbSession,
+    tenant: ClientAccessManager,
+) -> None:
+    client = _client(db, tenant.organization_id, client_id)
+    accesses = db.scalars(
+        select(ClientMembership).where(
+            ClientMembership.organization_id == tenant.organization_id,
+            ClientMembership.client_id == client.id,
+            ClientMembership.status == "active",
+        )
+    ).all()
+    if not accesses:
+        return
+
+    membership_ids = {access.membership_id for access in accesses}
+    access_ids = [access.id for access in accesses]
+    for access in accesses:
+        access.status = "revoked"
+    db.flush()
+
+    for membership_id in membership_ids:
+        _deactivate_membership_if_orphaned(db, tenant.organization_id, membership_id)
+
+    record_activity(
+        db,
+        action="client.access.disabled",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="client",
+        entity_id=client.id,
+        message=f"Client portal access disabled for {client.display_name}",
+        before={"active_access_count": len(accesses), "access_ids": access_ids},
+        after={"active_access_count": 0},
+        request=request,
+    )
+    db.commit()
+
+
 @router.delete("/{access_id}", status_code=status.HTTP_204_NO_CONTENT)
 def revoke_client_access(
     access_id: str,
@@ -257,28 +397,7 @@ def revoke_client_access(
     }
     access.status = "revoked"
     db.flush()
-
-    if membership is not None and not membership.is_owner:
-        has_employee = db.scalar(
-            select(Employee.id)
-            .where(
-                Employee.organization_id == tenant.organization_id,
-                Employee.membership_id == membership.id,
-                Employee.employment_status == "active",
-            )
-            .limit(1)
-        )
-        has_client_access = db.scalar(
-            select(ClientMembership.id)
-            .where(
-                ClientMembership.organization_id == tenant.organization_id,
-                ClientMembership.membership_id == membership.id,
-                ClientMembership.status == "active",
-            )
-            .limit(1)
-        )
-        if has_employee is None and has_client_access is None:
-            membership.status = MEMBERSHIP_STATUS_LEFT
+    _deactivate_membership_if_orphaned(db, tenant.organization_id, access.membership_id)
 
     record_activity(
         db,

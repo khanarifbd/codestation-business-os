@@ -21,6 +21,8 @@ type ClientDetail = Client & {
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
 type Meta = { employees: EmployeeOption[]; default_country_code: string | null; default_currency: string | null };
 type Summary = { total: number; active: number; inactive: number };
+type PortalAccessStatus = { client_id: string; enabled: boolean; active_access_count: number; has_email: boolean };
+type PortalAccessStatusResponse = { can_manage: boolean; items: PortalAccessStatus[] };
 
 const inputClass = "mt-2 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm outline-none transition focus:border-neutral-500";
 const textareaClass = "mt-2 min-h-24 w-full rounded-xl border border-neutral-200 bg-white px-3 py-3 text-sm outline-none transition focus:border-neutral-500";
@@ -45,6 +47,9 @@ export default function ClientsPage() {
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [portalAccess, setPortalAccess] = useState<Record<string, PortalAccessStatus>>({});
+  const [canManagePortalAccess, setCanManagePortalAccess] = useState(false);
+  const [portalWorkingId, setPortalWorkingId] = useState<string | null>(null);
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(`/api/crm${path}`, init);
@@ -53,6 +58,25 @@ export default function ClientsPage() {
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new Error(payload?.detail ?? "Client request failed.");
     return payload;
+  }, [router]);
+
+  const loadPortalStatuses = useCallback(async (clientIds: string[]) => {
+    if (!clientIds.length) return;
+    try {
+      const response = await fetch(`/api/client-access?client_ids=${encodeURIComponent(clientIds.join(","))}`, { cache: "no-store" });
+      if (response.status === 401) { router.replace("/login"); return; }
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Unable to load client portal access.");
+      const statusPayload = payload as PortalAccessStatusResponse;
+      setCanManagePortalAccess(statusPayload.can_manage);
+      setPortalAccess((current) => {
+        const next = { ...current };
+        for (const item of statusPayload.items) next[item.client_id] = item;
+        return next;
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load client portal access.");
+    }
   }, [router]);
 
   const queryString = useMemo(() => {
@@ -68,9 +92,10 @@ export default function ClientsPage() {
     try {
       const page = await api(`/clients?${queryString}`) as { items: Client[]; next_cursor: string | null };
       setClients(page.items); setNextCursor(page.next_cursor);
+      void loadPortalStatuses(page.items.map((item) => item.id));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load clients."); }
     finally { setLoading(false); setFiltering(false); }
-  }, [api, queryString]);
+  }, [api, loadPortalStatuses, queryString]);
 
   const loadSummary = useCallback(async () => {
     setSummary(await api("/clients/summary") as Summary);
@@ -83,12 +108,13 @@ export default function ClientsPage() {
       if (!active) return;
       const page = pagePayload as { items: Client[]; next_cursor: string | null };
       setClients(page.items); setNextCursor(page.next_cursor); setSummary(totals as Summary); setMeta(crmMeta as Meta);
+      void loadPortalStatuses(page.items.map((item) => item.id));
     }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load clients."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
     // bootstrap only: filter changes are handled by the dedicated list effect below
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api]);
+  }, [api, loadPortalStatuses]);
 
   useEffect(() => {
     if (loading) return;
@@ -107,7 +133,7 @@ export default function ClientsPage() {
 
   async function loadMore() {
     if (!nextCursor) return; setLoadingMore(true);
-    try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/clients?${params}`) as { items: Client[]; next_cursor: string | null }; setClients((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); }
+    try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/clients?${params}`) as { items: Client[]; next_cursor: string | null }; setClients((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); void loadPortalStatuses(payload.items.map((item) => item.id)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load more clients."); }
     finally { setLoadingMore(false); }
   }
@@ -149,6 +175,35 @@ export default function ClientsPage() {
     finally { setSaving(false); }
   }
 
+  async function togglePortalAccess(client: Client) {
+    const current = portalAccess[client.id];
+    if (!current || !canManagePortalAccess || portalWorkingId !== null) return;
+    if (!current.enabled && !current.has_email) {
+      setError("Add an email or billing email to this client before enabling portal access.");
+      return;
+    }
+
+    setPortalWorkingId(client.id); setError(null); setMessage(null);
+    try {
+      const response = current.enabled
+        ? await fetch(`/api/client-access?client_id=${encodeURIComponent(client.id)}`, { method: "DELETE" })
+        : await fetch("/api/client-access", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ client_id: client.id, is_primary_contact: true }),
+          });
+      const payload = response.status === 204 ? null : await response.json().catch(() => null);
+      if (response.status === 401) { router.replace("/login"); return; }
+      if (!response.ok) throw new Error(payload?.detail ?? "Unable to update client portal access.");
+      setMessage(current.enabled ? `Portal access disabled for ${client.display_name}` : `Portal access enabled for ${client.display_name}`);
+      await loadPortalStatuses([client.id]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to update client portal access.");
+    } finally {
+      setPortalWorkingId(null);
+    }
+  }
+
   function clientPayload(form: FormData) {
     return {
       client_type: text(form, "client_type") ?? "company", display_name: text(form, "display_name"), legal_name: text(form, "legal_name"),
@@ -165,7 +220,7 @@ export default function ClientsPage() {
     {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}{error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     <section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(260px,1fr)_220px_auto] sm:p-5"><form onSubmit={(e) => { e.preventDefault(); setSearch(searchDraft.trim()); }} className="relative"><Search className="absolute left-3 top-3.5 size-4 text-neutral-400" /><input value={searchDraft} onChange={(e) => setSearchDraft(e.target.value)} placeholder="Search client code, name, email, phone..." className="h-11 w-full rounded-xl border pl-9 pr-3 text-sm outline-none focus:border-neutral-500" /></form><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select><button onClick={() => { setSearchDraft(""); setSearch(""); setStatusFilter(""); }} className="h-11 rounded-xl border px-4 text-sm font-medium">Reset</button></div>
       {filtering ? <div className="h-0.5 w-full overflow-hidden bg-neutral-100"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
-      {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : clients.length === 0 ? <div className="px-6 py-20 text-center"><Building2 className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No clients found</h2><p className="mt-1 text-sm text-neutral-500">Convert a CRM lead or create a client directly.</p></div> : <><div className="overflow-x-auto"><table className="w-full min-w-[950px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Contact</th><th className="px-4 py-3 font-medium">Country</th><th className="px-4 py-3 font-medium">Assigned</th><th className="px-4 py-3 font-medium">Status</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{clients.map((client) => <tr key={client.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{client.display_name}</p><p className="mt-1 text-xs text-neutral-400">{client.client_code} · {client.client_type}</p></td><td className="px-4 py-4"><p>{client.contact_name ?? "—"}</p><p className="mt-1 text-xs text-neutral-400">{client.email ?? client.phone ?? "No contact"}</p></td><td className="px-4 py-4">{client.country_code ?? "—"}{client.currency ? ` · ${client.currency}` : ""}</td><td className="px-4 py-4">{client.assigned_employee_name ?? "Unassigned"}</td><td className="px-4 py-4"><Status status={client.status} /></td><td className="px-6 py-4 text-right"><button onClick={() => void openClient(client.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table></div>{nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}</>}
+      {loading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : clients.length === 0 ? <div className="px-6 py-20 text-center"><Building2 className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No clients found</h2><p className="mt-1 text-sm text-neutral-500">Convert a CRM lead or create a client directly.</p></div> : <><div className="overflow-x-auto"><table className="w-full min-w-[1120px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Contact</th><th className="px-4 py-3 font-medium">Country</th><th className="px-4 py-3 font-medium">Assigned</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">Portal access</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{clients.map((client) => <tr key={client.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{client.display_name}</p><p className="mt-1 text-xs text-neutral-400">{client.client_code} · {client.client_type}</p></td><td className="px-4 py-4"><p>{client.contact_name ?? "—"}</p><p className="mt-1 text-xs text-neutral-400">{client.email ?? client.phone ?? "No contact"}</p></td><td className="px-4 py-4">{client.country_code ?? "—"}{client.currency ? ` · ${client.currency}` : ""}</td><td className="px-4 py-4">{client.assigned_employee_name ?? "Unassigned"}</td><td className="px-4 py-4"><Status status={client.status} /></td><td className="px-4 py-4"><PortalAccessToggle status={portalAccess[client.id]} canManage={canManagePortalAccess} working={portalWorkingId === client.id} onToggle={() => void togglePortalAccess(client)} /></td><td className="px-6 py-4 text-right"><button onClick={() => void openClient(client.id)} className="rounded-lg border px-3 py-2 text-xs font-semibold">Open</button></td></tr>)}</tbody></table></div>{nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}</>}
     </section>
   </div>
 
@@ -181,6 +236,15 @@ function ClientForm({ meta, detail, saving, onSubmit, onCancel }: { meta: Meta; 
 
 function ClientDrawer({ detail, loading, meta, saving, onClose, onSave, onStatus, onQuotation }: { detail: ClientDetail | null; loading: boolean; meta: Meta | null; saving: boolean; onClose: () => void; onSave: (event: FormEvent<HTMLFormElement>) => void; onStatus: () => void; onQuotation: () => void }) {
   return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Client master</p><h2 className="mt-1 text-xl font-semibold">{detail?.display_name ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail || !meta ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6"><div className="flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">{detail.client_code}</p><div className="mt-2"><Status status={detail.status} /></div>{detail.source_lead_code ? <p className="mt-2 text-xs text-neutral-500">Originated from CRM · {detail.source_lead_code} · {detail.source_lead_status}</p> : <p className="mt-2 text-xs text-neutral-400">Direct client record</p>}</div><div className="flex flex-wrap gap-2"><button disabled={detail.status !== "active"} onClick={onQuotation} className="flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-30"><FileText className="size-4" /> Create Quotation</button><button disabled={saving} onClick={onStatus} className="h-10 rounded-xl border px-4 text-sm font-semibold">{detail.status === "active" ? "Deactivate" : "Activate"}</button></div></div><ClientForm meta={meta} detail={detail} saving={saving} onSubmit={onSave} /></div>}</aside></div>;
+}
+
+function PortalAccessToggle({ status, canManage, working, onToggle }: { status?: PortalAccessStatus; canManage: boolean; working: boolean; onToggle: () => void }) {
+  if (!status) return <span className="text-xs text-neutral-400">Loading...</span>;
+  const unavailable = !status.enabled && !status.has_email;
+  const disabled = working || !canManage || unavailable;
+  const label = status.enabled ? "Enabled" : unavailable ? "No email" : "Disabled";
+  const title = !canManage ? "Your role can view clients but cannot manage portal access." : unavailable ? "Add an email or billing email before enabling portal access." : status.enabled ? "Disable client portal access" : "Enable client portal access";
+  return <div className="inline-flex items-center gap-2.5"><button type="button" role="switch" aria-checked={status.enabled} aria-label={`${label} client portal access`} title={title} disabled={disabled} onClick={onToggle} className={`relative h-6 w-11 shrink-0 rounded-full transition ${status.enabled ? "bg-emerald-500" : "bg-neutral-200"} disabled:cursor-not-allowed disabled:opacity-60`}><span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition ${status.enabled ? "left-[22px]" : "left-0.5"}`} /></button><span className={`text-xs font-medium ${status.enabled ? "text-emerald-700" : "text-neutral-500"}`}>{working ? "Updating..." : label}</span></div>;
 }
 
 function Stat({ label, value, icon: Icon }: { label: string; value: number | string; icon: typeof Building2 }) { return <article className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-4 text-2xl font-semibold">{value}</p></article>; }
