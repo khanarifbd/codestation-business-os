@@ -35,6 +35,7 @@ from app.api.v1.hr import router as hr_router
 from app.api.v1.hr_extended import router as hr_extended_router
 from app.api.v1.hr_self import router as hr_self_router
 from app.api.v1.hr_uploads import router as hr_uploads_router
+from app.api.v1.manual_orders import router as manual_orders_router
 from app.api.v1.order_links import router as order_links_router
 from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
@@ -66,6 +67,7 @@ api_router.include_router(crm_status_router)
 api_router.include_router(crm_clients_router)
 api_router.include_router(crm_router)
 api_router.include_router(sales_router)
+api_router.include_router(manual_orders_router)
 api_router.include_router(orders_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
