@@ -47,6 +47,7 @@ from app.models.hr import (
     PerformanceReview,
 )
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
+from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, PurchaseReceiptItem, StockMovement, Warehouse
 from app.models.loan_accounting import LoanDisbursement, LoanFee, LoanScheduleItem
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
@@ -76,13 +77,13 @@ __all__ = [
     "CompanyInvestor", "CompanyInvestorFunding", "CompanyInvestorPayout", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication",
     "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "FixedAsset", "HRAnnouncement",
-    "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate",
+    "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InventoryBalance", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate",
     "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
     "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill",
-    "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
+    "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
-    "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "SalaryProfile", "Project", "ProjectCredential",
-    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
-    "Subscription", "TaxCode", "User", "Vendor",
+    "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
+    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
+    "Subscription", "TaxCode", "User", "Vendor", "Warehouse",
 ]
