@@ -81,7 +81,7 @@ def get_client_portal_context(db: DbSession, tenant: CurrentTenant) -> ClientPor
         .where(
             Invoice.organization_id == tenant.organization_id,
             Invoice.client_id.in_(client_ids),
-            Invoice.status != "cancelled",
+            Invoice.status.notin_(["draft", "cancelled"]),
         )
         .group_by(Invoice.currency)
         .order_by(Invoice.currency.asc())
