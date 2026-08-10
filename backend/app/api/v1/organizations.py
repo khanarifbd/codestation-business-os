@@ -19,6 +19,11 @@ from app.schemas.organization import (
 from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
 from app.services.crm import ensure_crm_defaults
+from app.services.membership_relationships import (
+    membership_relationships,
+    membership_role,
+    primary_relationship,
+)
 from app.services.team import ensure_system_roles, next_employee_code
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
@@ -42,11 +47,24 @@ def _unique_slug(db: DbSession, name: str) -> str:
             return candidate
 
 
-def _membership_response(organization: Organization, membership: Membership) -> OrganizationMembershipRead:
+def _membership_response(
+    db: DbSession,
+    organization: Organization,
+    membership: Membership,
+) -> OrganizationMembershipRead:
+    role = membership_role(db, membership)
+    relationships = membership_relationships(db, membership)
     return OrganizationMembershipRead(
         organization=OrganizationRead.model_validate(organization),
+        membership_id=membership.id,
+        role_id=membership.role_id,
         role=membership.role,
+        role_name=role.name if role else membership.role.title(),
+        role_slug=role.slug if role else membership.role,
         status=membership.status,
+        is_owner=membership.is_owner,
+        relationships=relationships,
+        primary_relationship=primary_relationship(relationships),
     )
 
 
@@ -79,6 +97,7 @@ def create_organization(
         role_id=roles["admin"].id,
         role=MEMBERSHIP_ROLE_ADMIN,
         status="active",
+        is_owner=True,
     )
     db.add(membership)
     db.flush()
@@ -127,6 +146,8 @@ def create_organization(
             "status": organization.status,
             "membership_role": membership.role,
             "organization_role_id": membership.role_id,
+            "is_owner": membership.is_owner,
+            "relationships": ["owner", "employee"],
             "employee_code": employee.employee_code,
             "subscription_plan": subscription.plan_code,
             "subscription_status": subscription.status,
@@ -139,7 +160,7 @@ def create_organization(
     db.commit()
     db.refresh(organization)
     db.refresh(membership)
-    return _membership_response(organization, membership)
+    return _membership_response(db, organization, membership)
 
 
 @router.get("", response_model=list[OrganizationMembershipRead])
@@ -153,7 +174,7 @@ def list_organizations(
         .where(Membership.user_id == current_user.id, Membership.status == "active")
         .order_by(Organization.name.asc())
     ).all()
-    return [_membership_response(organization, membership) for membership, organization in rows]
+    return [_membership_response(db, organization, membership) for membership, organization in rows]
 
 
 @router.get("/{organization_id}", response_model=OrganizationMembershipRead)
@@ -175,4 +196,4 @@ def get_organization(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
     membership, organization = row
-    return _membership_response(organization, membership)
+    return _membership_response(db, organization, membership)
