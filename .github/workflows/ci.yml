@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: business_os
+          POSTGRES_PASSWORD: business_os_ci
+          POSTGRES_DB: codestation_business_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U business_os -d codestation_business_os"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://business_os:business_os_ci@127.0.0.1:5432/codestation_business_os
+      JWT_SECRET_KEY: ci-only-secret
+      PROJECT_CREDENTIAL_ENCRYPTION_KEY: ci-only-project-credential-key-0123456789abcdef
+      SUPER_ADMIN_EMAIL: admin@codestationai.com
+      SUPER_ADMIN_PASSWORD: ci-super-admin-password
+      SUPER_ADMIN_NAME: CodeStation AI Super Admin
+      PYTHONPATH: .
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - run: uv run python -m compileall app alembic scripts
+      - run: uv run alembic upgrade 0008_team_roles
+      - run: uv run python scripts/seed_existing_tenant_fixture.py
+      - run: uv run alembic upgrade head
+      - run: uv run python scripts/verify_performance_indexes.py
+      - run: uv run python scripts/verify_crm_migration_fixture.py
+      - run: uv run python scripts/verify_crm_won_flow.py
+      - run: uv run python scripts/verify_sales.py
+      - run: uv run python scripts/verify_orders.py
+      - run: uv run python scripts/verify_projects.py
+      - run: uv run python scripts/verify_project_execution.py
+      - run: uv run python scripts/verify_finance.py
+      - run: uv run python scripts/verify_finance_performance.py
+      - run: uv run python scripts/verify_transfers.py
+      - run: uv run python scripts/verify_expenses.py
+      - run: uv run python scripts/verify_finance_controls.py
+      - run: uv run python scripts/verify_recurring_auto_post.py
+      - run: uv run python scripts/verify_payroll.py
+      - run: uv run python scripts/verify_hr.py
+      - run: uv run python scripts/verify_hr_extended.py
+      - run: uv run python scripts/verify_capital.py
+      - run: uv run python scripts/verify_accounting_loans.py
+      - run: uv run python scripts/verify_reports.py
+      - run: uv run python scripts/verify_reports_performance.py
+      - run: uv run python scripts/verify_tenant_isolation.py
+      - run: uv run python scripts/verify_audit.py
+      - run: uv run python -c "from app.main import app; print(app.title)"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1

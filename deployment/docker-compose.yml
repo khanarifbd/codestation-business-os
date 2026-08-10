@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - business_os_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    env_file:
+      - ../.env.staging
+    environment:
+      ENVIRONMENT: staging
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LOCAL_STORAGE_PATH: /data/uploads
+      MAX_DOCUMENT_UPLOAD_MB: 20
+    volumes:
+      - business_os_uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8100:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health')"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  finance-scheduler:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    env_file:
+      - ../.env.staging
+    environment:
+      ENVIRONMENT: staging
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      RECURRING_AUTO_POST_INTERVAL_SECONDS: 3600
+    command: ["sh", "-c", "uv run --no-sync alembic upgrade head && uv run --no-sync python scripts/run_recurring_auto_post.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: unless-stopped
+    environment:
+      INTERNAL_API_URL: http://backend:8000/api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3100:3000"
+
+volumes:
+  business_os_postgres:
+  business_os_uploads:

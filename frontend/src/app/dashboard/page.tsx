@@ -1,0 +1,107 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, ArrowRight, BarChart3, CircleDollarSign, FolderKanban, Loader2, ReceiptText, Users } from "lucide-react";
+
+type TenantContext = { organization: { id: string; name: string; country_code: string; timezone: string; currency: string }; role: string };
+type FinancialRow = { currency: string; invoiced_revenue: string; collected_revenue: string; receivables: string; expenses: string; platform_fees: string; transfer_fees: string; net_profit: string };
+type Overview = { date_from: string; date_to: string; financials: FinancialRow[]; accounts: { account_id: string; account_name: string; account_type: string; currency: string; balance: string }[]; operations: { active_clients: number; open_orders: number; active_projects: number; overdue_tasks: number; due_followups: number; open_invoices: number }; projects: { project_id: string; project_number: string; project_name: string; client_name: string; currency: string; estimated_profit: string; margin_percent: string | null }[] };
+type Preset = "month" | "last_month" | "quarter" | "year";
+
+function iso(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function presetRange(preset: Preset) {
+  const now = new Date();
+  if (preset === "last_month") {
+    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth(), 0);
+    return { from: iso(start), to: iso(end), label: "Last month" };
+  }
+  if (preset === "quarter") {
+    const quarterStart = Math.floor(now.getMonth() / 3) * 3;
+    return { from: iso(new Date(now.getFullYear(), quarterStart, 1)), to: iso(now), label: "This quarter" };
+  }
+  if (preset === "year") return { from: iso(new Date(now.getFullYear(), 0, 1)), to: iso(now), label: "This year" };
+  return { from: iso(new Date(now.getFullYear(), now.getMonth(), 1)), to: iso(now), label: "This month" };
+}
+function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+
+export default function DashboardPage() {
+  const router = useRouter();
+  const [tenant, setTenant] = useState<TenantContext | null>(null);
+  const [data, setData] = useState<Overview | null>(null);
+  const [preset, setPreset] = useState<Preset>("month");
+  const [loading, setLoading] = useState(true);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => { void (async () => {
+    const range = presetRange("month");
+    try {
+      const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
+      const [tenantResponse, reportResponse] = await Promise.all([
+        fetch("/api/tenant", { cache: "no-store" }),
+        fetch(`/api/reports/overview?${params}`, { cache: "no-store" }),
+      ]);
+      if (tenantResponse.status === 401 || reportResponse.status === 401) { router.replace("/login"); return; }
+      if (!tenantResponse.ok) throw new Error("Unable to load company workspace");
+      setTenant(await tenantResponse.json() as TenantContext);
+      if (reportResponse.ok) setData(await reportResponse.json() as Overview);
+      else if (reportResponse.status !== 403) throw new Error("Unable to load dashboard metrics");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load dashboard"); }
+    finally { setLoading(false); }
+  })(); }, [router]);
+
+  async function changePreset(next: Preset) {
+    if (next === preset) return;
+    const range = presetRange(next);
+    setPreset(next); setReportLoading(true); setError(null);
+    const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
+    try {
+      const response = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
+      if (response.status === 401) { router.replace("/login"); return; }
+      if (!response.ok) throw new Error("Unable to load dashboard metrics");
+      setData(await response.json() as Overview);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load dashboard metrics"); }
+    finally { setReportLoading(false); }
+  }
+
+  const company = tenant?.organization;
+  const rangeLabel = presetRange(preset).label;
+  const financialDisplay = useMemo(() => {
+    if (!data || !company) return { primary: null as FinancialRow | null, others: [] as FinancialRow[], note: "" };
+    const base = data.financials.find((row) => row.currency === company.currency) ?? null;
+    if (base) {
+      const others = data.financials.filter((row) => row.currency !== base.currency && Number(row.net_profit) !== 0);
+      const extra = others.map((row) => money(row.net_profit, row.currency)).join(" + ");
+      return { primary: base, others, note: extra ? `+ ${extra} · Across ${others.length + 1} currencies` : `Company base currency · ${company.currency}` };
+    }
+    if (data.financials.length === 1) {
+      const only = data.financials[0];
+      return { primary: only, others: [], note: `No ${company.currency} activity in this period · showing ${only.currency}` };
+    }
+    return { primary: null, others: data.financials, note: data.financials.length ? "Multiple currencies · open Reports for the full breakdown" : `No ${company.currency} financial activity in this period` };
+  }, [data, company]);
+  const primary = financialDisplay.primary;
+
+  if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400"/></main>;
+  if (!tenant || !company) return <main className="p-8 text-sm text-red-700">{error ?? "Workspace unavailable"}</main>;
+  if (!data) return <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1500px]"><h1 className="text-3xl font-semibold">{company.name}</h1><div className="mt-6 rounded-2xl border bg-white p-6"><p className="font-semibold">Employee workspace</p><p className="mt-2 text-sm text-neutral-500">Business financial reports are restricted by role permissions. Your project and task workspace remains available from Projects.</p></div></div></main>;
+
+  return <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1500px]">
+    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm text-neutral-500">Business overview · {data.date_from} — {data.date_to}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{company.name}</h1></div><div className="flex flex-wrap items-center gap-2"><select value={preset} disabled={reportLoading} onChange={(e) => void changePreset(e.target.value as Preset)} className="h-11 rounded-xl border bg-white px-3 text-sm font-medium disabled:opacity-60"><option value="month">This month</option><option value="last_month">Last month</option><option value="quarter">This quarter</option><option value="year">This year</option></select><Link href="/dashboard/reports" className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><BarChart3 className="size-4"/>Open reports</Link></div></header>
+    {reportLoading ? <div className="mt-3 h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
+    {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+
+    <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Card label="Active clients" value={String(data.operations.active_clients)} note="Current client base" icon={Users}/><Card label="Open orders" value={String(data.operations.open_orders)} note="Not completed or cancelled" icon={ReceiptText}/><Card label="Active projects" value={String(data.operations.active_projects)} note="Planned, active or on hold" icon={FolderKanban}/><Card label="Period net profit" value={primary ? money(primary.net_profit, primary.currency) : data.financials.length ? "Multi-currency" : `${company.currency} 0.00`} note={financialDisplay.note || "Revenue less expenses and fees"} icon={CircleDollarSign}/></div>
+
+    <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_0.65fr]"><section className="rounded-2xl border bg-white p-5 sm:p-6 shadow-sm"><div className="flex items-center justify-between"><div><p className="text-sm text-neutral-500">{rangeLabel}</p><h2 className="mt-1 text-xl font-semibold">Financial snapshot</h2></div><CircleDollarSign className="size-6 text-neutral-300"/></div><div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{primary ? <><Mini label="Invoiced" value={money(primary.invoiced_revenue, primary.currency)}/><Mini label="Collected" value={money(primary.collected_revenue, primary.currency)}/><Mini label="Receivable" value={money(primary.receivables, primary.currency)}/><Mini label="Expenses" value={money(primary.expenses, primary.currency)}/></> : <p className="text-sm text-neutral-400">{data.financials.length ? "Financial activity spans multiple currencies. Review the breakdown below." : `No ${company.currency} financial activity in this period.`}</p>}</div>{financialDisplay.others.length ? <div className="mt-5 border-t pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Other currencies</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{financialDisplay.others.map((row) => <div key={row.currency} className="flex items-center justify-between rounded-xl bg-neutral-50 px-4 py-3 text-sm"><span className="font-semibold">{row.currency}</span><span>Net {money(row.net_profit, row.currency)}</span></div>)}</div></div> : null}</section><section className="rounded-2xl border bg-white p-5 sm:p-6 shadow-sm"><p className="text-sm text-neutral-500">Needs attention</p><h2 className="mt-1 text-xl font-semibold">Operations</h2><div className="mt-5 space-y-3"><AlertRow label="Overdue tasks" value={data.operations.overdue_tasks} href="/dashboard/projects"/><AlertRow label="Due follow-ups" value={data.operations.due_followups} href="/dashboard/crm"/><AlertRow label="Open invoices" value={data.operations.open_invoices} href="/dashboard/finance"/></div></section></div>
+
+    <div className="mt-5 grid gap-5 xl:grid-cols-2"><section className="rounded-2xl border bg-white p-5 sm:p-6 shadow-sm"><div className="flex items-center justify-between"><h2 className="font-semibold">Account position</h2><Link href="/dashboard/finance" className="text-xs font-semibold text-neutral-500">Finance →</Link></div><div className="mt-4 divide-y">{data.accounts.slice(0, 8).map((row) => <div key={row.account_id} className="flex items-center justify-between gap-3 py-3 text-sm"><div className="min-w-0"><p className="truncate font-medium">{row.account_name}</p><p className="text-xs capitalize text-neutral-400">{row.account_type}</p></div><p className="shrink-0 font-semibold">{money(row.balance, row.currency)}</p></div>)}</div></section><section className="rounded-2xl border bg-white p-5 sm:p-6 shadow-sm"><div className="flex items-center justify-between"><h2 className="font-semibold">Project profitability</h2><Link href="/dashboard/reports" className="text-xs font-semibold text-neutral-500">Full report →</Link></div><div className="mt-4 divide-y">{data.projects.slice(0, 6).map((row) => <div key={row.project_id} className="flex items-center justify-between gap-4 py-3 text-sm"><div className="min-w-0"><p className="truncate font-medium">{row.project_number} · {row.project_name}</p><p className="truncate text-xs text-neutral-400">{row.client_name}</p></div><div className="shrink-0 text-right"><p className="font-semibold">{money(row.estimated_profit, row.currency)}</p><p className="text-xs text-neutral-400">{row.margin_percent == null ? "—" : `${Number(row.margin_percent).toFixed(1)}% margin`}</p></div></div>)}</div></section></div>
+  </div></main>;
+}
+
+function Card({ label, value, note, icon: Icon }: { label: string; value: string; note: string; icon: typeof Users }) { return <article className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-300"/></div><p className="mt-4 break-words text-2xl font-semibold tracking-tight sm:text-3xl">{value}</p><p className="mt-2 text-xs text-neutral-400">{note}</p></article>; }
+function Mini({ label, value }: { label: string; value: string }) { return <div className="rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-400">{label}</p><p className="mt-2 break-words font-semibold">{value}</p></div>; }
+function AlertRow({ label, value, href }: { label: string; value: number; href: string }) { return <Link href={href} className="flex items-center justify-between rounded-xl border px-4 py-3 hover:bg-neutral-50"><div className="flex items-center gap-3"><AlertTriangle className={`size-4 ${value ? "text-amber-500" : "text-neutral-300"}`}/><span className="text-sm font-medium">{label}</span></div><div className="flex items-center gap-2"><span className="text-sm font-semibold">{value}</span><ArrowRight className="size-3.5 text-neutral-300"/></div></Link>; }
