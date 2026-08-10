@@ -24,34 +24,28 @@ class Quotation(TenantOwnedMixin, Base):
     source_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True)
     assigned_employee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-
     status: Mapped[str] = mapped_column(String(24), default="draft", nullable=False)
     subject: Mapped[str | None] = mapped_column(String(220), nullable=True)
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     tax_calculation_mode: Mapped[str] = mapped_column(String(16), default="exclusive", nullable=False)
-
     seller_name_snapshot: Mapped[str] = mapped_column(String(220), nullable=False)
     seller_email_snapshot: Mapped[str | None] = mapped_column(String(320), nullable=True)
     seller_address_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     seller_tax_identifier_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
-
     client_name_snapshot: Mapped[str] = mapped_column(String(220), nullable=False)
     client_contact_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
     client_email_snapshot: Mapped[str | None] = mapped_column(String(320), nullable=True)
     client_address_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_tax_identifier_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
-
     subtotal: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
     discount_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
     total: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
-
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     terms_conditions: Mapped[str | None] = mapped_column(Text, nullable=True)
     internal_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -64,10 +58,14 @@ class QuotationItem(TenantOwnedMixin, Base):
     __tablename__ = "quotation_items"
     __table_args__ = (
         Index("ix_quotation_items_org_quotation_order", "organization_id", "quotation_id", "sort_order"),
+        Index("ix_quotation_items_org_product", "organization_id", "product_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    product_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    item_type_snapshot: Mapped[str | None] = mapped_column(String(24), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
