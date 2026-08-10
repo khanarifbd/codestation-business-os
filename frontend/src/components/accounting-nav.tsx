@@ -10,7 +10,7 @@ const items = [
   { label: "Invoices", href: "/dashboard/accounting/invoices", icon: ReceiptText },
   { label: "Money In", href: "/dashboard/accounting/money-in", icon: ArrowDownLeft },
   { label: "Money Out", href: "/dashboard/accounting/money-out", icon: ArrowUpRight },
-  { label: "Transfers", href: "/dashboard/finance/transfers", icon: ArrowLeftRight },
+  { label: "Transfers", href: "/dashboard/accounting/transfers", icon: ArrowLeftRight },
   { label: "Loans", href: "/dashboard/accounting/loans", icon: HandCoins },
   { label: "Receivables", href: "/dashboard/accounting/receivables", icon: Receipt },
   { label: "Payables", href: "/dashboard/accounting/payables", icon: Building2 },
