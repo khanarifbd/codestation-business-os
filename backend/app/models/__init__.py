@@ -39,6 +39,7 @@ from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
 from app.models.payables import PayableBill, PayablePayment
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, SalaryProfile
+from app.models.posting_idempotency import PostingIdempotency
 from app.models.projects import (
     Project,
     ProjectCredential,
@@ -56,7 +57,7 @@ from app.models.user import User
 __all__ = [
     "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "CompanyInvestment", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening", "JournalEntry", "JournalLine",
-    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill", "PayablePayment", "Payment", "PerformanceReview", "ProjectInvestor",
+    "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill", "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "ProjectInvestor",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
     "OrganizationDocumentSequence", "OrganizationFinancialSettings", "OrganizationIdentifier",
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
