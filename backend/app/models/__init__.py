@@ -2,6 +2,7 @@ from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.activity_log import ActivityLog
 from app.models.capital import CompanyInvestment, CompanyLoan, InvestmentReturn, InvestorPayout, LoanRepayment, ProjectInvestor
+from app.models.client_access import ClientMembership
 from app.models.company_defaults import OrganizationExchangeRate, OrganizationSystemDefaults
 from app.models.company_settings import (
     OrganizationAddress,
@@ -55,7 +56,7 @@ from app.models.team import Department, Designation, Employee, EmployeeInvitatio
 from app.models.user import User
 
 __all__ = [
-    "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "CompanyInvestment", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
+    "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AttendanceRecord", "Client", "ClientMembership", "CompanyInvestment", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication", "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "HRAnnouncement", "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate", "JobOpening", "JournalEntry", "JournalLine",
     "Lead", "LeadInteraction", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType", "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill", "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "ProjectInvestor",
     "Organization", "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate",
