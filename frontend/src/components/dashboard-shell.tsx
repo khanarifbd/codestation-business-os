@@ -20,6 +20,7 @@ const navigation: NavigationItem[] = [
   { label: "Quotations", icon: FileText, href: "/dashboard/quotations" },
   { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
+  { label: "Invoices", icon: FileText, href: "/dashboard/accounting/invoices" },
   { label: "Finance & Accounts", icon: BookOpenText, href: "/dashboard/accounting" },
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
   { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
@@ -34,7 +35,9 @@ const navigation: NavigationItem[] = [
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
+  if (href === "/dashboard/accounting/invoices") return pathname.startsWith("/dashboard/accounting/invoices");
   if (href === "/dashboard/accounting") {
+    if (pathname.startsWith("/dashboard/accounting/invoices")) return false;
     return pathname.startsWith("/dashboard/accounting") || pathname.startsWith("/dashboard/finance") || pathname.startsWith("/dashboard/expenses") || pathname.startsWith("/dashboard/capital");
   }
   if (href === "/dashboard/hr") return pathname === href;
