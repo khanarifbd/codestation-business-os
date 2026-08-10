@@ -2,14 +2,36 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 OrderStatus = Literal["confirmed", "in_progress", "completed", "cancelled"]
+TaxCalculationMode = Literal["exclusive", "inclusive"]
 
 
 class OrderStatusChange(BaseModel):
     status: Literal["in_progress", "completed", "cancelled"]
+
+
+class OrderItemInput(BaseModel):
+    description: str = Field(min_length=1, max_length=4000)
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
+    unit_price: Decimal = Field(ge=0, max_digits=16, decimal_places=4)
+    discount_percent: Decimal = Field(default=Decimal("0"), ge=0, le=100, max_digits=7, decimal_places=4)
+    tax_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100, max_digits=8, decimal_places=4)
+
+
+class ManualOrderCreate(BaseModel):
+    client_id: str
+    subject: str | None = Field(default=None, max_length=220)
+    order_date: date
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    tax_calculation_mode: TaxCalculationMode | None = None
+    assigned_employee_id: str | None = None
+    notes: str | None = None
+    terms_conditions: str | None = None
+    internal_notes: str | None = None
+    items: list[OrderItemInput] = Field(min_length=1, max_length=200)
 
 
 class OrderItemRead(BaseModel):
@@ -31,8 +53,8 @@ class OrderItemRead(BaseModel):
 class OrderListItem(BaseModel):
     id: str
     order_number: str
-    quotation_id: str
-    quotation_number: str
+    quotation_id: str | None
+    quotation_number: str | None
     client_id: str
     client_name: str
     status: str
@@ -54,8 +76,8 @@ class OrderPage(BaseModel):
 class OrderDetail(BaseModel):
     id: str
     order_number: str
-    quotation_id: str
-    quotation_number: str
+    quotation_id: str | None
+    quotation_number: str | None
     client_id: str
     source_lead_id: str | None
     assigned_employee_id: str | None
