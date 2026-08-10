@@ -9,8 +9,9 @@ from typing import Any
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from app.models.common import new_uuid, utc_now
 from app.models.posting_idempotency import PostingIdempotency
 
 
@@ -39,6 +40,16 @@ def _fingerprint(action: str, payload: BaseModel | dict[str, Any] | Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _lookup(db, *, organization_id: str, action: str, key: str) -> PostingIdempotency | None:
+    return db.scalar(
+        select(PostingIdempotency).where(
+            PostingIdempotency.organization_id == organization_id,
+            PostingIdempotency.action == action,
+            PostingIdempotency.idempotency_key == key,
+        )
+    )
+
+
 def reserve_posting(
     db,
     request: Request,
@@ -53,43 +64,45 @@ def reserve_posting(
     bucket = int(time.time() // AUTO_WINDOW_SECONDS)
     key = explicit_key or f"auto:{fingerprint[:48]}:{bucket}"
 
-    existing = db.scalar(
-        select(PostingIdempotency).where(
-            PostingIdempotency.organization_id == organization_id,
-            PostingIdempotency.action == action,
-            PostingIdempotency.idempotency_key == key,
-        )
-    )
+    existing = _lookup(db, organization_id=organization_id, action=action, key=key)
     if existing is not None:
         if existing.request_fingerprint != fingerprint:
             raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
         return existing, True
 
-    item = PostingIdempotency(
-        organization_id=organization_id,
-        action=action,
-        idempotency_key=key,
-        request_fingerprint=fingerprint,
-        created_by_user_id=user_id,
-    )
-    try:
-        with db.begin_nested():
-            db.add(item)
-            db.flush()
-        return item, False
-    except IntegrityError:
-        existing = db.scalar(
-            select(PostingIdempotency).where(
-                PostingIdempotency.organization_id == organization_id,
-                PostingIdempotency.action == action,
-                PostingIdempotency.idempotency_key == key,
-            )
+    table = PostingIdempotency.__table__
+    item_id = new_uuid()
+    insert_statement = (
+        pg_insert(table)
+        .values(
+            id=item_id,
+            organization_id=organization_id,
+            action=action,
+            idempotency_key=key,
+            request_fingerprint=fingerprint,
+            created_by_user_id=user_id,
+            created_at=utc_now(),
+            completed_at=None,
+            resource_type=None,
+            resource_id=None,
         )
-        if existing is None:
-            raise
-        if existing.request_fingerprint != fingerprint:
-            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
-        return existing, True
+        .on_conflict_do_nothing(
+            index_elements=[
+                table.c.organization_id,
+                table.c.action,
+                table.c.idempotency_key,
+            ]
+        )
+        .returning(table.c.id)
+    )
+    inserted_id = db.execute(insert_statement).scalar_one_or_none()
+
+    item = _lookup(db, organization_id=organization_id, action=action, key=key)
+    if item is None:
+        raise RuntimeError("Unable to reserve financial idempotency key")
+    if item.request_fingerprint != fingerprint:
+        raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
+    return item, inserted_id is None
 
 
 def completed_resource(item: PostingIdempotency, resource_type: str) -> str:
