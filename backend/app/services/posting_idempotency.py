@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models.posting_idempotency import PostingIdempotency
 
 
 HEADER_NAMES = ("Idempotency-Key", "X-Idempotency-Key")
+AUTO_WINDOW_SECONDS = 120
 
 
 def _request_key(request: Request) -> str | None:
@@ -45,11 +47,11 @@ def reserve_posting(
     user_id: str,
     action: str,
     payload: BaseModel | dict[str, Any] | Any,
-) -> PostingIdempotency | None:
-    key = _request_key(request)
-    if key is None:
-        return None
+) -> tuple[PostingIdempotency, bool]:
     fingerprint = _fingerprint(action, payload)
+    explicit_key = _request_key(request)
+    bucket = int(time.time() // AUTO_WINDOW_SECONDS)
+    key = explicit_key or f"auto:{fingerprint[:48]}:{bucket}"
 
     existing = db.scalar(
         select(PostingIdempotency).where(
@@ -61,7 +63,7 @@ def reserve_posting(
     if existing is not None:
         if existing.request_fingerprint != fingerprint:
             raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
-        return existing
+        return existing, True
 
     item = PostingIdempotency(
         organization_id=organization_id,
@@ -74,7 +76,7 @@ def reserve_posting(
         with db.begin_nested():
             db.add(item)
             db.flush()
-        return item
+        return item, False
     except IntegrityError:
         existing = db.scalar(
             select(PostingIdempotency).where(
@@ -87,20 +89,29 @@ def reserve_posting(
             raise
         if existing.request_fingerprint != fingerprint:
             raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
-        return existing
+        return existing, True
 
 
-def completed_resource(item: PostingIdempotency | None, resource_type: str) -> str | None:
-    if item is None or item.resource_id is None:
-        return None
+def completed_resource(item: PostingIdempotency, resource_type: str) -> str:
+    if item.resource_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="A matching financial request is already being processed or may have completed. Review transaction history before retrying.",
+        )
     if item.resource_type != resource_type:
         raise HTTPException(status_code=409, detail="Idempotency record points to an unexpected resource type")
     return item.resource_id
 
 
-def complete_posting(item: PostingIdempotency | None, *, resource_type: str, resource_id: str) -> None:
-    if item is None:
-        return
-    item.resource_type = resource_type
-    item.resource_id = resource_id
-    item.completed_at = datetime.now(timezone.utc)
+def complete_posting(db, item: PostingIdempotency, *, resource_type: str, resource_id: str) -> None:
+    db.execute(
+        update(PostingIdempotency)
+        .where(PostingIdempotency.id == item.id)
+        .values(
+            resource_type=resource_type,
+            resource_id=resource_id,
+            completed_at=datetime.now(timezone.utc),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
