@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Banknote, BarChart3, Bell, BookOpenText, BriefcaseBusiness, Building2, ClipboardList, FileClock, FileText,
+  Banknote, BarChart3, Bell, BookOpenText, Boxes, BriefcaseBusiness, Building2, ClipboardList, FileClock, FileText,
   FolderKanban, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X,
   type LucideIcon,
 } from "lucide-react";
@@ -21,6 +21,7 @@ const staffNavigation: NavigationItem[] = [
   { label: "Clients", icon: Users, href: "/dashboard/clients" },
   { label: "Quotations", icon: FileText, href: "/dashboard/quotations" },
   { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
+  { label: "Inventory", icon: Boxes, href: "/dashboard/inventory" },
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
   { label: "Invoices", icon: FileText, href: "/dashboard/accounting/invoices" },
   { label: "Finance & Accounts", icon: BookOpenText, href: "/dashboard/accounting" },
@@ -82,9 +83,6 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   async function logout() { await fetch("/api/auth/logout", { method: "POST" }); router.replace("/login"); router.refresh(); }
 
-  // Print routes are document views, not application workspaces. Rendering the
-  // dashboard chrome here caused the responsive mobile header and shell height
-  // to leak into browser print/PDF output.
   if (pathname.endsWith("/print")) return <>{children}</>;
 
   return <div className="min-h-screen bg-neutral-100 text-neutral-950 lg:flex">
