@@ -85,6 +85,22 @@ def _rows(db: DbSession, organization_id: str, start: date | None, end: date):
     return db.execute(query).all()
 
 
+def _cash_flow_bucket(source_type: str) -> str:
+    """Classify by economic substance, not by incidental route/module naming."""
+    source = (source_type or "").lower()
+    financing_prefixes = (
+        "loan_", "capital_", "owner_", "investor_", "company_investor_", "project_investor_",
+    )
+    investing_prefixes = (
+        "fixed_asset", "asset_purchase", "asset_sale", "company_investment_", "investment_return",
+    )
+    if source.startswith(investing_prefixes):
+        return "investing"
+    if source.startswith(financing_prefixes):
+        return "financing"
+    return "operating"
+
+
 @router.get("/financial-statements", response_model=FinancialStatementsRead)
 def financial_statements(
     db: DbSession,
@@ -143,21 +159,12 @@ def financial_statements(
     current_earnings = _money(cumulative_income - cumulative_expenses)
     total_equity = _money(recorded_equity + current_earnings)
 
-    operating = Decimal("0")
-    investing = Decimal("0")
-    financing = Decimal("0")
-    financing_prefixes = ("loan_", "capital_", "investment", "investor", "owner_")
-    investing_prefixes = ("fixed_asset", "asset_purchase", "asset_sale")
+    operating = Decimal("0"); investing = Decimal("0"); financing = Decimal("0")
     for entry_id, cash_delta in cash_by_entry.items():
-        source = entry_source.get(entry_id, "")
-        if source.startswith(financing_prefixes):
-            financing += cash_delta
-        elif source.startswith(investing_prefixes):
-            investing += cash_delta
-        elif source == "account_transfer":
-            operating += cash_delta
-        else:
-            operating += cash_delta
+        bucket = _cash_flow_bucket(entry_source.get(entry_id, ""))
+        if bucket == "financing": financing += cash_delta
+        elif bucket == "investing": investing += cash_delta
+        else: operating += cash_delta
     operating = _money(operating); investing = _money(investing); financing = _money(financing)
 
     return FinancialStatementsRead(
