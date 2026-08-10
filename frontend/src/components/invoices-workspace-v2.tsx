@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, FileText, Plus, Send, X } from "lucide-react";
+import { ExternalLink, FileText, Plus, Search, Send, X } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
 import { SearchableSelect } from "@/components/searchable-select";
+import { getApiErrorMessage } from "@/lib/api-error";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type Source = "client" | "order" | "project";
@@ -19,7 +20,7 @@ type Line = { description: string; quantity: string; unit_price: string; discoun
 const blank = (): Line => ({ description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
 const today = () => new Date().toISOString().slice(0, 10);
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
-function apiError(payload: unknown, fallback: string) { if (!payload || typeof payload !== "object") return fallback; const detail = (payload as { detail?: unknown }).detail; if (typeof detail === "string") return detail; if (Array.isArray(detail)) return detail.map((item) => item && typeof item === "object" && "msg" in item ? String((item as { msg: unknown }).msg) : String(item)).join(" · "); return fallback; }
+function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 
 export function InvoicesWorkspaceV2() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -31,6 +32,10 @@ export function InvoicesWorkspaceV2() {
   const [showForm, setShowForm] = useState(false);
   const [source, setSource] = useState<Source>("project");
   const [form, setForm] = useState({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", notes: "", lines: [blank()] });
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [currencyFilter, setCurrencyFilter] = useState("all");
+  const [dueFilter, setDueFilter] = useState<"all" | "overdue" | "outstanding" | "paid">("all");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -41,8 +46,8 @@ export function InvoicesWorkspaceV2() {
       ]);
       const metaPayload = await metaResponse.json();
       const invoicePayload = await invoiceResponse.json();
-      if (!metaResponse.ok) throw new Error(apiError(metaPayload, "Could not load invoice setup"));
-      if (!invoiceResponse.ok) throw new Error(apiError(invoicePayload, "Could not load invoices"));
+      if (!metaResponse.ok) throw new Error(getApiErrorMessage(metaPayload, "Could not load invoice setup"));
+      if (!invoiceResponse.ok) throw new Error(getApiErrorMessage(invoicePayload, "Could not load invoices"));
       setMeta(metaPayload); setInvoices(invoicePayload.items ?? []);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load invoices"); }
     finally { setLoading(false); }
@@ -52,8 +57,28 @@ export function InvoicesWorkspaceV2() {
   const projectOptions = useMemo(() => meta.projects.filter((p) => p.status !== "cancelled").map((p) => ({ value: p.id, label: `${p.number} · ${p.name} · ${money(p.contract_value, p.currency)}`, keywords: `${p.number} ${p.name} ${p.currency} ${p.contract_value}` })), [meta.projects]);
   const orderOptions = useMemo(() => meta.orders.filter((o) => o.status !== "cancelled").map((o) => ({ value: o.id, label: `${o.number} · ${o.client_name} · ${money(o.total, o.currency)}`, keywords: `${o.number} ${o.client_name} ${o.currency} ${o.total}` })), [meta.orders]);
   const clientOptions = useMemo(() => meta.clients.map((c) => ({ value: c.id, label: `${c.code} · ${c.name}`, keywords: `${c.code} ${c.name}` })), [meta.clients]);
+  const statusOptions = useMemo(() => ["all", ...Array.from(new Set(invoices.map((invoice) => invoice.status)))], [invoices]);
+  const currencyOptions = useMemo(() => ["all", ...Array.from(new Set(invoices.map((invoice) => invoice.currency)))], [invoices]);
+  const filteredInvoices = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    const currentDate = today();
+    return invoices.filter((invoice) => {
+      if (needle && !`${invoice.invoice_number} ${invoice.client_name} ${invoice.subject ?? ""} ${invoice.currency}`.toLowerCase().includes(needle)) return false;
+      if (statusFilter !== "all" && invoice.status !== statusFilter) return false;
+      if (currencyFilter !== "all" && invoice.currency !== currencyFilter) return false;
+      const balanceDue = Number(invoice.balance_due || 0);
+      const overdue = Boolean(invoice.due_date && invoice.due_date < currentDate && balanceDue > 0 && !["draft", "cancelled"].includes(invoice.status));
+      if (dueFilter === "overdue" && !overdue) return false;
+      if (dueFilter === "outstanding" && balanceDue <= 0) return false;
+      if (dueFilter === "paid" && balanceDue > 0) return false;
+      return true;
+    });
+  }, [currencyFilter, dueFilter, invoices, query, statusFilter]);
+  const overdueCount = useMemo(() => invoices.filter((invoice) => invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
+  const outstandingCount = useMemo(() => invoices.filter((invoice) => Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
 
   function resetSource(next: Source) { setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", notes: "", lines: [blank()] }); setError(null); }
+  function clearFilters() { setQuery(""); setStatusFilter("all"); setCurrencyFilter("all"); setDueFilter("all"); }
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setError(null); setMessage(null);
@@ -63,7 +88,7 @@ export function InvoicesWorkspaceV2() {
       else if (source === "order") response = await fetch(`/api/finance/invoices/from-order/${form.source_id}`, { method: "POST" });
       else response = await fetch("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: "exclusive", notes: form.notes || null, items: form.lines.map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
       const payload = await response.json();
-      if (!response.ok) throw new Error(apiError(payload, "Could not create invoice"));
+      if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not create invoice"));
       setMessage(`Invoice ${payload.invoice_number} created as draft. Open it to review or edit before sending.`);
       setShowForm(false); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create invoice"); }
@@ -75,7 +100,7 @@ export function InvoicesWorkspaceV2() {
     try {
       const response = await fetch(`/api/finance/invoices/${invoice.id}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "send" }) });
       const payload = await response.json();
-      if (!response.ok) throw new Error(apiError(payload, "Could not send invoice"));
+      if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not send invoice"));
       setMessage(`Invoice ${invoice.invoice_number} sent. It is now locked for editing.`); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send invoice"); }
     finally { setSaving(false); }
@@ -108,7 +133,17 @@ export function InvoicesWorkspaceV2() {
       </form>
     </section> : null}
 
-    <section className="overflow-hidden rounded-2xl border bg-white"><div className="border-b p-5"><h2 className="font-semibold">Invoice list</h2><p className="mt-1 text-sm text-neutral-500">Open any invoice for full details. Drafts stay editable until Send.</p></div><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th><th className="px-4 py-3">Actions</th></tr></thead><tbody>{invoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className="text-xs text-neutral-400">Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td><td className="px-4 py-3"><div className="flex justify-end gap-2"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><ExternalLink className="size-3.5" />{invoice.status === "draft" ? "Open / Edit" : "Open"}</Link>{invoice.status === "draft" ? <button disabled={saving} onClick={() => void sendInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white"><Send className="size-3.5" />Send</button> : Number(invoice.balance_due) > 0 ? <Link href="/dashboard/accounting/money-in" className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white">Collect</Link> : <span className="px-3 py-2 text-xs text-neutral-400">Paid</span>}</div></td></tr>)}</tbody></table>{!loading && !invoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No invoices yet</p></div> : null}</div></section>
+    <section className="overflow-hidden rounded-2xl border bg-white">
+      <div className="border-b p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">Invoice list</h2><p className="mt-1 text-sm text-neutral-500">Search, filter and open any invoice. Drafts remain editable until Send.</p></div><div className="flex flex-wrap gap-2 text-xs text-neutral-500"><span className="rounded-full bg-neutral-100 px-3 py-1.5">{invoices.length} total</span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-amber-700">{outstandingCount} outstanding</span><span className="rounded-full bg-red-50 px-3 py-1.5 text-red-700">{overdueCount} overdue</span></div></div></div>
+      <div className="border-b bg-neutral-50/60 p-4"><div className="grid gap-3 lg:grid-cols-[minmax(260px,1.6fr)_repeat(3,minmax(150px,0.7fr))_auto]">
+        <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search invoice, client, subject..." className="h-11 w-full rounded-xl border bg-white pl-10 pr-3 text-sm outline-none focus:border-neutral-500"/></label>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All statuses</option>{statusOptions.filter((status) => status !== "all").map((status) => <option key={status} value={status}>{pretty(status)}</option>)}</select>
+        <select value={currencyFilter} onChange={(event) => setCurrencyFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All currencies</option>{currencyOptions.filter((currency) => currency !== "all").map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
+        <select value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All balances</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select>
+        <button type="button" onClick={clearFilters} disabled={!query && statusFilter === "all" && currencyFilter === "all" && dueFilter === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button>
+      </div><p className="mt-3 text-xs text-neutral-400">Showing {filteredInvoices.length} of {invoices.length} invoices</p></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th><th className="px-4 py-3">Actions</th></tr></thead><tbody>{filteredInvoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className={`text-xs ${invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 ? "font-medium text-red-600" : "text-neutral-400"}`}>Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td><td className="px-4 py-3"><div className="flex justify-end gap-2"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><ExternalLink className="size-3.5" />{invoice.status === "draft" ? "Open / Edit" : "Open"}</Link>{invoice.status === "draft" ? <button disabled={saving} onClick={() => void sendInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white"><Send className="size-3.5" />Send</button> : Number(invoice.balance_due) > 0 ? <Link href="/dashboard/accounting/money-in" className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white">Collect</Link> : <span className="px-3 py-2 text-xs text-neutral-400">Paid</span>}</div></td></tr>)}</tbody></table>{!loading && !filteredInvoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No matching invoices</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
+    </section>
   </div></main>;
 }
 
