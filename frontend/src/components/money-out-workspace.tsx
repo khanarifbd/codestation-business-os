@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowUpRight, Building2, FolderKanban, HandCoins, ReceiptText, Users } from "lucide-react";
+import { ArrowUpRight, Building2, FolderKanban, HandCoins, ReceiptText, Search, Users } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
 import { MoneyInput } from "@/components/money-input";
@@ -36,6 +36,10 @@ export function MoneyOutWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState({ project_id: "", client_id: "", category_id: "", vendor_id: "", account_id: "", expense_amount: "", account_amount: "", expense_date: today(), description: "", payment_method: "bank_transfer", reference: "", tax_amount: "0", notes: "" });
+  const [expenseQuery, setExpenseQuery] = useState("");
+  const [expensePurposeFilter, setExpensePurposeFilter] = useState<"all" | Purpose>("all");
+  const [expenseCurrencyFilter, setExpenseCurrencyFilter] = useState("all");
+  const [expenseCategoryFilter, setExpenseCategoryFilter] = useState("all");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -68,12 +72,31 @@ export function MoneyOutWorkspace() {
   const categoryOptions = useMemo(() => meta.categories.filter((item) => item.is_active).map((item) => ({ value: item.id, label: item.name, keywords: item.cost_type })), [meta.categories]);
   const accountOptions = useMemo(() => meta.accounts.filter((item) => item.is_active).map((item) => ({ value: item.id, label: `${item.name} · ${money(item.current_balance, item.currency)}`, keywords: `${item.name} ${item.currency}` })), [meta.accounts]);
   const vendorOptions = useMemo(() => meta.vendors.filter((item) => item.is_active).map((item) => ({ value: item.id, label: item.name })), [meta.vendors]);
+  const expenseCurrencies = useMemo(() => Array.from(new Set(expenses.map((expense) => expense.expense_currency))), [expenses]);
+  const expenseCategories = useMemo(() => Array.from(new Set(expenses.map((expense) => expense.category_name))).sort(), [expenses]);
+  const filteredExpenses = useMemo(() => {
+    const needle = expenseQuery.trim().toLowerCase();
+    return expenses.filter((expense) => {
+      if (needle && !`${expense.expense_number} ${expense.description} ${expense.category_name} ${expense.account_name} ${expense.client_name ?? ""} ${expense.project_name ?? ""} ${expense.expense_currency}`.toLowerCase().includes(needle)) return false;
+      const expensePurpose: Purpose = expense.project_name ? "project" : expense.client_name ? "client" : "company";
+      if (expensePurposeFilter !== "all" && expensePurpose !== expensePurposeFilter) return false;
+      if (expenseCurrencyFilter !== "all" && expense.expense_currency !== expenseCurrencyFilter) return false;
+      if (expenseCategoryFilter !== "all" && expense.category_name !== expenseCategoryFilter) return false;
+      return true;
+    });
+  }, [expenseCategoryFilter, expenseCurrencyFilter, expensePurposeFilter, expenseQuery, expenses]);
+  const expenseTotals = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const expense of filteredExpenses) totals.set(expense.expense_currency, (totals.get(expense.expense_currency) ?? 0) + Number(expense.expense_amount || 0));
+    return [...totals.entries()];
+  }, [filteredExpenses]);
 
   function changePurpose(next: Purpose) {
     setPurpose(next);
     setForm((current) => ({ ...current, project_id: "", client_id: "", account_amount: "" }));
     setMessage(null); setError(null);
   }
+  function clearExpenseFilters() { setExpenseQuery(""); setExpensePurposeFilter("all"); setExpenseCurrencyFilter("all"); setExpenseCategoryFilter("all"); }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -129,7 +152,17 @@ export function MoneyOutWorkspace() {
         <div className="flex justify-end md:col-span-2 lg:col-span-3"><button disabled={saving || loading} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"><ArrowUpRight className="size-4" />{saving ? "Saving…" : "Confirm payment"}</button></div>
       </form>
     </section>
-    <section className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Recent expenses</h2><p className="mt-1 text-sm text-neutral-500">Company, project and client-related expenses share one source of truth.</p><div className="mt-4 overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-2 py-3">Date</th><th className="px-2 py-3">Expense</th><th className="px-2 py-3">Purpose</th><th className="px-2 py-3">Category</th><th className="px-2 py-3">Account</th><th className="px-2 py-3 text-right">Amount</th></tr></thead><tbody>{expenses.map((expense) => <tr key={expense.id} className="border-b last:border-0"><td className="px-2 py-3 text-neutral-500">{expense.expense_date}</td><td className="px-2 py-3"><p className="font-medium">{expense.description}</p><p className="text-xs text-neutral-400">{expense.expense_number}</p></td><td className="px-2 py-3">{expense.project_name ? `Project · ${expense.project_name}` : expense.client_name ? `Client · ${expense.client_name}` : "Company"}</td><td className="px-2 py-3">{expense.category_name}</td><td className="px-2 py-3">{expense.account_name}</td><td className="px-2 py-3 text-right font-medium">{money(expense.expense_amount, expense.expense_currency)}</td></tr>)}</tbody></table>{!loading && !expenses.length ? <p className="py-10 text-center text-sm text-neutral-400">No expenses recorded yet.</p> : null}</div></section>
+    <section className="overflow-hidden rounded-2xl border bg-white">
+      <div className="border-b p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">Expense history</h2><p className="mt-1 text-sm text-neutral-500">Search and filter company, project and client-related expenses from one source of truth.</p></div><div className="flex flex-wrap gap-2">{expenseTotals.map(([currency, value]) => <span key={currency} className="rounded-full bg-neutral-100 px-3 py-1.5 text-xs font-medium">{money(value, currency)}</span>)}</div></div></div>
+      <div className="border-b bg-neutral-50/60 p-4"><div className="grid gap-3 lg:grid-cols-[minmax(250px,1.5fr)_repeat(3,minmax(150px,0.7fr))_auto]">
+        <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"/><input value={expenseQuery} onChange={(event) => setExpenseQuery(event.target.value)} placeholder="Search expense, project, client, account..." className="h-11 w-full rounded-xl border bg-white pl-10 pr-3 text-sm outline-none focus:border-neutral-500"/></label>
+        <select value={expensePurposeFilter} onChange={(event) => setExpensePurposeFilter(event.target.value as "all" | Purpose)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All purposes</option><option value="company">Company</option><option value="project">Project</option><option value="client">Client</option></select>
+        <select value={expenseCategoryFilter} onChange={(event) => setExpenseCategoryFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All categories</option>{expenseCategories.map((category) => <option key={category} value={category}>{category}</option>)}</select>
+        <select value={expenseCurrencyFilter} onChange={(event) => setExpenseCurrencyFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All currencies</option>{expenseCurrencies.map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
+        <button type="button" onClick={clearExpenseFilters} disabled={!expenseQuery && expensePurposeFilter === "all" && expenseCurrencyFilter === "all" && expenseCategoryFilter === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button>
+      </div><p className="mt-3 text-xs text-neutral-400">Showing {filteredExpenses.length} of {expenses.length} recent expenses</p></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Date</th><th className="px-4 py-3">Expense</th><th className="px-4 py-3">Purpose</th><th className="px-4 py-3">Category</th><th className="px-4 py-3">Account</th><th className="px-4 py-3 text-right">Amount</th></tr></thead><tbody>{filteredExpenses.map((expense) => <tr key={expense.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3 text-neutral-500">{expense.expense_date}</td><td className="px-4 py-3"><p className="font-medium">{expense.description}</p><p className="text-xs font-medium text-neutral-400">{expense.expense_number}</p></td><td className="px-4 py-3">{expense.project_name ? `Project · ${expense.project_name}` : expense.client_name ? `Client · ${expense.client_name}` : "Company"}</td><td className="px-4 py-3">{expense.category_name}</td><td className="px-4 py-3">{expense.account_name}</td><td className="px-4 py-3 text-right font-medium">{money(expense.expense_amount, expense.expense_currency)}</td></tr>)}</tbody></table>{!loading && !filteredExpenses.length ? <div className="py-12 text-center"><ReceiptText className="mx-auto size-8 text-neutral-300"/><p className="mt-3 font-medium">No matching expenses</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
+    </section>
   </div></main>;
 }
 
