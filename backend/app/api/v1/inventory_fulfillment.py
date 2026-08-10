@@ -12,7 +12,7 @@ from app.models.inventory import Product, Warehouse
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.models.orders import Order, OrderItem
 from app.schemas.orders import OrderFulfillmentCreate
-from app.services.accounting_posting import PostingLine, post_journal, system_account
+from app.services.accounting_posting import PostingLine, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
@@ -55,24 +55,23 @@ def fulfill_order(order_id: str, payload: OrderFulfillmentCreate, request: Reque
     order_items={x.id:x for x in db.scalars(select(OrderItem).where(OrderItem.organization_id==tenant.organization_id,OrderItem.order_id==order.id,OrderItem.id.in_(ids))).all()}
     if len(order_items)!=len(ids): raise HTTPException(404,"One or more order items were not found")
     fulfillment=OrderFulfillment(organization_id=tenant.organization_id,fulfillment_number=f"FUL-{payload.fulfillment_date.strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}",order_id=order.id,warehouse_id=warehouse.id,fulfillment_date=payload.fulfillment_date,status="posted",reference=payload.reference.strip() if payload.reference and payload.reference.strip() else None,created_by_user_id=tenant.user_id)
-    db.add(fulfillment);db.flush();total_cogs=Decimal("0")
+    db.add(fulfillment);db.flush();total_cogs_original=Decimal("0")
     for line in payload.items:
         item=order_items[line.order_item_id]
         if item.product_id is None or item.item_type_snapshot!="stock_item": raise HTTPException(400,"Only tracked stock-item order lines can be fulfilled")
         product=db.scalar(select(Product).where(Product.id==item.product_id,Product.organization_id==tenant.organization_id,Product.item_type=="stock_item",Product.track_inventory.is_(True),Product.is_active.is_(True)))
         if product is None: raise HTTPException(409,f"Product {item.sku_snapshot or item.product_id} is not an active tracked stock item")
         fulfilled_before=Decimal(db.scalar(select(func.coalesce(func.sum(OrderFulfillmentItem.quantity),0)).where(OrderFulfillmentItem.organization_id==tenant.organization_id,OrderFulfillmentItem.order_item_id==item.id)) or 0)
-        remaining=Decimal(item.quantity)-fulfilled_before
-        quantity=Decimal(line.quantity)
+        remaining=Decimal(item.quantity)-fulfilled_before; quantity=Decimal(line.quantity)
         if quantity>remaining: raise HTTPException(409,f"Fulfillment exceeds remaining quantity for {item.sku_snapshot or item.description}. Remaining {remaining}")
         movement=_stock_out(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.fulfillment_date,quantity=quantity,source_type="order_fulfillment",source_id=fulfillment.id,reference=fulfillment.reference,reason=f"Fulfilled order {order.order_number}")
-        movement.movement_type="sale"
-        line_cost=abs(Decimal(movement.total_cost));total_cogs+=line_cost
+        movement.movement_type="sale"; line_cost=abs(Decimal(movement.total_cost));total_cogs_original+=line_cost
         db.add(OrderFulfillmentItem(organization_id=tenant.organization_id,fulfillment_id=fulfillment.id,order_item_id=item.id,product_id=product.id,quantity=quantity,unit_cost=movement.unit_cost,total_cost=line_cost))
-    total_cogs=money(total_cogs)
-    if total_cogs>0:
+    total_cogs_original=money(total_cogs_original)
+    if total_cogs_original>0:
         cogs=system_account(db,tenant.organization_id,"cost_of_sales");inventory=_inventory_ledger(db,tenant.organization_id,tenant.user_id)
-        post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=fulfillment.fulfillment_date,source_type="inventory_order_fulfillment",source_id=fulfillment.id,lines=[PostingLine(ledger_account_id=cogs.id,debit=total_cogs,currency=order.currency,description=f"COGS for {order.order_number}"),PostingLine(ledger_account_id=inventory.id,credit=total_cogs,currency=order.currency,description=f"Inventory issued for {order.order_number}")],reference=fulfillment.reference,memo=f"Fulfillment {fulfillment.fulfillment_number} · {order.order_number}")
+        base_amount,rate=to_base_amount(db,tenant.organization_id,tenant.organization.currency,total_cogs_original,order.currency)
+        post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=fulfillment.fulfillment_date,source_type="inventory_order_fulfillment",source_id=fulfillment.id,lines=[PostingLine(ledger_account_id=cogs.id,debit=base_amount,currency=order.currency,exchange_rate_to_base=rate,original_amount=total_cogs_original,description=f"COGS for {order.order_number}"),PostingLine(ledger_account_id=inventory.id,credit=base_amount,currency=order.currency,exchange_rate_to_base=rate,original_amount=total_cogs_original,description=f"Inventory issued for {order.order_number}")],reference=fulfillment.reference,memo=f"Fulfillment {fulfillment.fulfillment_number} · {order.order_number}")
     if order.status=="confirmed": order.status="in_progress"
-    record_activity(db,action="inventory.order.fulfilled",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="order_fulfillment",entity_id=fulfillment.id,after={"order_id":order.id,"order_number":order.order_number,"warehouse_id":warehouse.id,"line_count":len(payload.items),"total_cogs":str(total_cogs),"currency":order.currency},message=f"Fulfillment {fulfillment.fulfillment_number} posted for order {order.order_number}",request=request)
-    db.commit();return {"id":fulfillment.id,"fulfillment_number":fulfillment.fulfillment_number,"status":fulfillment.status,"total_cogs":total_cogs,"currency":order.currency}
+    record_activity(db,action="inventory.order.fulfilled",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="order_fulfillment",entity_id=fulfillment.id,after={"order_id":order.id,"order_number":order.order_number,"warehouse_id":warehouse.id,"line_count":len(payload.items),"total_cogs":str(total_cogs_original),"currency":order.currency},message=f"Fulfillment {fulfillment.fulfillment_number} posted for order {order.order_number}",request=request)
+    db.commit();return {"id":fulfillment.id,"fulfillment_number":fulfillment.fulfillment_number,"status":fulfillment.status,"total_cogs":total_cogs_original,"currency":order.currency}
