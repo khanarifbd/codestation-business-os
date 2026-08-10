@@ -44,6 +44,7 @@ export function MoneyInWorkspace() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [preselectionApplied, setPreselectionApplied] = useState(false);
   const [form, setForm] = useState({ source_id: "", account_id: "", amount: "", date: today(), method: "bank_transfer", category_id: "", description: "", reference: "", notes: "" });
 
   const load = useCallback(async () => {
@@ -74,6 +75,19 @@ export function MoneyInWorkspace() {
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (loading || preselectionApplied || !invoices.length || typeof window === "undefined") return;
+    const invoiceId = new URLSearchParams(window.location.search).get("invoice_id");
+    if (invoiceId) {
+      const invoice = invoices.find((item) => item.id === invoiceId);
+      if (invoice) {
+        setSourceType("invoice");
+        setForm((current) => ({ ...current, source_id: invoice.id, amount: String(invoice.balance_due) }));
+        setMessage(`Ready to collect ${invoice.invoice_number} from ${invoice.client_name}. Choose where the money was received and confirm the amount.`);
+      }
+    }
+    setPreselectionApplied(true);
+  }, [loading, invoices, preselectionApplied]);
 
   const sourceInvoice = useMemo(() => sourceType === "invoice"
     ? invoices.find((invoice) => invoice.id === form.source_id) ?? null
