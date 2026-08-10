@@ -27,6 +27,7 @@ from app.api.v1.finance_expenses import router as finance_expenses_router
 from app.api.v1.finance_invoice_drafts import router as finance_invoice_drafts_router
 from app.api.v1.finance_pagination import router as finance_pagination_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
+from app.api.v1.financial_corrections import router as financial_corrections_router
 from app.api.v1.financial_safety import router as financial_safety_router
 from app.api.v1.health import router as health_router
 from app.api.v1.hr import router as hr_router
@@ -69,6 +70,7 @@ api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
 api_router.include_router(financial_safety_router)
+api_router.include_router(financial_corrections_router)
 api_router.include_router(accounting_router)
 api_router.include_router(accounting_accounts_router)
 api_router.include_router(accounting_loans_router)
