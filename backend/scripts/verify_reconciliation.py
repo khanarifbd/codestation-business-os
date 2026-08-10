@@ -10,6 +10,7 @@ from app.api.v1.accounting_reconciliation import ReconciliationCreate, create_re
 from app.db.session import SessionLocal, engine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.reconciliation import BankReconciliation, BankReconciliationItem
+from app.services.activity_log import record_activity
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,9 @@ def main() -> None:
         db.add(account); db.flush()
         incoming = FinancialTransaction(organization_id=tenant.organization_id, account_id=account.id, transaction_date=date(2097,1,5), direction="credit", amount=Decimal("100"), currency="BDT", source_type="reconciliation_ci", source_id=str(uuid4()), reference=f"REC-IN-{marker}", description="Statement deposit", created_by_user_id=tenant.user_id)
         outgoing = FinancialTransaction(organization_id=tenant.organization_id, account_id=account.id, transaction_date=date(2097,1,7), direction="debit", amount=Decimal("20"), currency="BDT", source_type="reconciliation_ci", source_id=str(uuid4()), reference=f"REC-OUT-{marker}", description="Statement fee", created_by_user_id=tenant.user_id)
-        db.add_all([incoming,outgoing]); db.commit()
+        db.add_all([incoming,outgoing]); db.flush()
+        record_activity(db, action="ci.reconciliation.fixture.create", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="financial_account", entity_id=account.id, after={"account_id":account.id,"transaction_ids":[incoming.id,outgoing.id]}, request=request("POST","/ci/reconciliation-fixture"))
+        db.commit()
 
         rec = create_reconciliation(ReconciliationCreate(account_id=account.id, statement_end_date=date(2097,1,31), statement_ending_balance=Decimal("1080")), request("POST","/accounting/reconciliations"), db, tenant)  # type: ignore[arg-type]
         if rec["difference"] != Decimal("80.00"): raise AssertionError(f"unexpected initial difference {rec['difference']}")
