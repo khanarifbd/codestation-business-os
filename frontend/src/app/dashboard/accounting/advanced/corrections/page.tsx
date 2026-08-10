@@ -9,7 +9,7 @@ import { FinancialConfirmationDialog } from "@/components/financial-confirmation
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
 
-type CorrectionType = "payment" | "expense" | "transfer";
+type CorrectionType = "payment" | "expense" | "transfer" | "payable_payment" | "loan_disbursement" | "loan_repayment";
 type Candidate = {
   source_type: CorrectionType;
   source_id: string;
@@ -20,6 +20,17 @@ type Candidate = {
   title: string;
   subtitle: string;
 };
+
+type TypeOption = { value: CorrectionType; title: string; help: string };
+
+const correctionTypes: TypeOption[] = [
+  { value: "payment", title: "Customer payment", help: "Invoice collection recorded in Money In" },
+  { value: "expense", title: "Expense", help: "Posted company, project or client expense" },
+  { value: "transfer", title: "Account transfer", help: "Transfer between your own financial accounts" },
+  { value: "payable_payment", title: "Supplier payment", help: "Payment made against a supplier bill" },
+  { value: "loan_disbursement", title: "Loan received", help: "Loan principal disbursed into a business account" },
+  { value: "loan_repayment", title: "Loan repayment", help: "Principal, interest or fee paid to a lender" },
+];
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -53,6 +64,7 @@ export default function FinancialCorrectionsPage() {
 
   const filtered = useMemo(() => candidates.filter((item) => item.source_type === type), [candidates, type]);
   const selected = useMemo(() => filtered.find((item) => item.source_id === sourceId) ?? null, [filtered, sourceId]);
+  const selectedType = correctionTypes.find((item) => item.value === type) ?? correctionTypes[0];
   const options = useMemo(() => filtered.map((item) => ({
     value: item.source_id,
     label: `${item.title} · ${money(item.amount, item.currency)}`,
@@ -85,14 +97,14 @@ export default function FinancialCorrectionsPage() {
 
   const details = selected ? [
     { label: "Transaction", value: selected.title },
-    { label: "Type", value: pretty(selected.source_type) },
+    { label: "Type", value: selectedType.title },
     { label: "Original date", value: selected.date },
     { label: "Amount", value: money(selected.amount, selected.currency), emphasis: true },
     { label: "Reversal date", value: reversalDate },
     { label: "Reason", value: reason.trim() || "—" },
   ] : [];
 
-  return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-5xl space-y-6">
+  return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-6xl space-y-6">
     <div>
       <Link href="/dashboard/accounting/advanced" className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Advanced accounting</Link>
       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts</p>
@@ -105,20 +117,25 @@ export default function FinancialCorrectionsPage() {
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
     <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
-      <div className="flex gap-3"><ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-700" /><div><h2 className="font-semibold text-amber-950">Reversal is permanent accounting history</h2><p className="mt-1 text-sm text-amber-800">The original record stays visible. Business OS creates the opposite financial movement and, when a journal exists, a linked reversal journal. Use a clear reason so future reviewers understand the correction.</p></div></div>
+      <div className="flex gap-3"><ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-700" /><div><h2 className="font-semibold text-amber-950">Reversal is permanent accounting history</h2><p className="mt-1 text-sm text-amber-800">The original record stays visible. Business OS creates the opposite financial movement and a linked reversal journal. Loan disbursements with dependent principal repayments are protected—you must reverse those repayments first.</p></div></div>
     </section>
 
     <section className="rounded-2xl border bg-white p-5">
       <h2 className="text-lg font-semibold">Choose transaction to correct</h2>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">{(["payment", "expense", "transfer"] as CorrectionType[]).map((item) => <button key={item} type="button" onClick={() => changeType(item)} className={`rounded-xl border px-4 py-3 text-left ${type === item ? "border-neutral-950 bg-neutral-950 text-white" : "bg-white hover:bg-neutral-50"}`}><p className="font-medium">{pretty(item)}</p><p className={`mt-1 text-xs ${type === item ? "text-neutral-300" : "text-neutral-500"}`}>{item === "payment" ? "Customer invoice collection" : item === "expense" ? "Posted company/project/client expense" : "Transfer between own accounts"}</p></button>)}</div>
+      <p className="mt-1 text-sm text-neutral-500">Select the business event first. Business OS will restore the related receivable, payable, account or loan balance automatically.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{correctionTypes.map((item) => <button key={item.value} type="button" onClick={() => changeType(item.value)} className={`rounded-xl border px-4 py-3 text-left ${type === item.value ? "border-neutral-950 bg-neutral-950 text-white" : "bg-white hover:bg-neutral-50"}`}><p className="font-medium">{item.title}</p><p className={`mt-1 text-xs ${type === item.value ? "text-neutral-300" : "text-neutral-500"}`}>{item.help}</p></button>)}</div>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <SearchableSelect label={`${pretty(type)} record`} required clearable={false} value={sourceId} onValueChange={setSourceId} options={options} placeholder={loading ? "Loading…" : `Select ${type}`} searchPlaceholder={`Search ${type} number, date, amount...`} />
+        <SearchableSelect label={`${selectedType.title} record`} required clearable={false} value={sourceId} onValueChange={setSourceId} options={options} placeholder={loading ? "Loading…" : filtered.length ? `Select ${selectedType.title.toLowerCase()}` : "No reversible records"} searchPlaceholder={`Search ${selectedType.title.toLowerCase()} by number, date, amount...`} />
         <label className="text-sm"><span className="mb-1.5 block font-medium text-neutral-600">Reversal date</span><input type="date" required value={reversalDate} onChange={(event) => setReversalDate(event.target.value)} className="w-full rounded-xl border px-3 py-2.5" /></label>
-        <label className="text-sm md:col-span-2"><span className="mb-1.5 block font-medium text-neutral-600">Reason for correction</span><textarea required minLength={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Payment was entered against the wrong invoice" className="min-h-24 w-full rounded-xl border px-3 py-2.5" /></label>
+        <label className="text-sm md:col-span-2"><span className="mb-1.5 block font-medium text-neutral-600">Reason for correction</span><textarea required minLength={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Example: Supplier payment was recorded from the wrong bank account" className="min-h-24 w-full rounded-xl border px-3 py-2.5" /></label>
       </div>
 
       {selected ? <div className="mt-5 rounded-xl border bg-neutral-50 p-4 text-sm"><p className="font-medium">{selected.title}</p><p className="mt-1 text-neutral-500">{selected.subtitle}</p><div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-neutral-500"><span>Original date: {selected.date}</span><span>Amount: <strong className="text-neutral-900">{money(selected.amount, selected.currency)}</strong></span></div></div> : null}
+
+      {type === "loan_disbursement" ? <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">Loan disbursement reversal is dependency-aware. If part of that principal was already repaid, reverse the related repayment first.</div> : null}
+      {type === "payable_payment" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a supplier payment re-opens the bill for the reversed amount and restores the selected financial account balance.</div> : null}
+      {type === "loan_repayment" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a loan repayment restores principal outstanding and reverses interest/fee expense together with the cash movement.</div> : null}
 
       <div className="mt-6 flex justify-end"><button type="button" disabled={!selected || reason.trim().length < 3 || saving} onClick={() => setConfirmOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40"><RotateCcw className="size-4" />Review reversal</button></div>
     </section>
