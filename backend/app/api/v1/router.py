@@ -27,6 +27,7 @@ from app.api.v1.finance_expenses import router as finance_expenses_router
 from app.api.v1.finance_invoice_drafts import router as finance_invoice_drafts_router
 from app.api.v1.finance_pagination import router as finance_pagination_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
+from app.api.v1.financial_safety import router as financial_safety_router
 from app.api.v1.health import router as health_router
 from app.api.v1.hr import router as hr_router
 from app.api.v1.hr_extended import router as hr_extended_router
@@ -76,6 +77,7 @@ api_router.include_router(accounting_sync_router)
 api_router.include_router(accounting_reports_router)
 api_router.include_router(customer_advances_router)
 api_router.include_router(payables_router)
+api_router.include_router(financial_safety_router)
 api_router.include_router(finance_router)
 api_router.include_router(finance_invoice_drafts_router)
 api_router.include_router(finance_pagination_router)
