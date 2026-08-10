@@ -5,6 +5,7 @@ from app.api.v1.accounting_accounts import router as accounting_accounts_router
 from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
 from app.api.v1.accounting_loans import router as accounting_loans_router
 from app.api.v1.accounting_money import router as accounting_money_router
+from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
 from app.api.v1.accounting_reports import router as accounting_reports_router
 from app.api.v1.accounting_sync import router as accounting_sync_router
 from app.api.v1.activity_logs import platform_activity_router, tenant_activity_router
@@ -84,6 +85,7 @@ api_router.include_router(accounting_accounts_router)
 api_router.include_router(accounting_loans_router)
 api_router.include_router(accounting_loan_details_router)
 api_router.include_router(accounting_money_router)
+api_router.include_router(accounting_reconciliation_router)
 api_router.include_router(accounting_sync_router)
 api_router.include_router(accounting_reports_router)
 api_router.include_router(customer_advances_router)
