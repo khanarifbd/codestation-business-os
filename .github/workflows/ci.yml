@@ -65,6 +65,7 @@ jobs:
       - run: uv run python scripts/verify_financial_idempotency.py
       - run: uv run python scripts/verify_finance_controls.py
       - run: uv run python scripts/verify_reconciliation.py
+      - run: uv run python scripts/verify_fixed_assets.py
       - run: uv run python scripts/verify_recurring_auto_post.py
       - run: uv run python scripts/verify_payroll.py
       - run: uv run python scripts/verify_hr.py
