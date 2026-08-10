@@ -10,14 +10,25 @@ async function proxy(request: NextRequest, method: "GET" | "POST" | "DELETE") {
   }
 
   const accessId = request.nextUrl.searchParams.get("access_id");
-  if (method === "DELETE" && !accessId) {
-    return NextResponse.json({ detail: "access_id is required" }, { status: 400 });
+  const clientId = request.nextUrl.searchParams.get("client_id");
+  const clientIds = request.nextUrl.searchParams.get("client_ids");
+  if (method === "DELETE" && !accessId && !clientId) {
+    return NextResponse.json({ detail: "access_id or client_id is required" }, { status: 400 });
+  }
+
+  let upstreamPath = "/crm/client-access";
+  if (method === "GET" && clientIds) {
+    upstreamPath = `/crm/client-access/status?client_ids=${encodeURIComponent(clientIds)}`;
+  } else if (method === "DELETE" && clientId) {
+    upstreamPath = `/crm/client-access/client/${encodeURIComponent(clientId)}`;
+  } else if (method === "DELETE" && accessId) {
+    upstreamPath = `/crm/client-access/${encodeURIComponent(accessId)}`;
   }
 
   const body = method === "POST" ? await request.text() : undefined;
   const { upstream, rotatedTokens } = await authenticatedBackendFetch(
     request,
-    method === "DELETE" ? `/crm/client-access/${encodeURIComponent(accessId!)}` : "/crm/client-access",
+    upstreamPath,
     {
       method,
       headers: {
