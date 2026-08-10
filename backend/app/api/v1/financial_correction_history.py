@@ -27,19 +27,24 @@ def correction_history(db: DbSession, tenant: AccountingViewer, limit: int = 100
         .limit(row_limit)
     ).all()
 
-    return [
-        {
-            "id": item.id,
-            "source_type": (item.entity_type or item.action.removeprefix("finance.").removesuffix(".reversed")),
-            "source_id": item.entity_id,
-            "action": item.action,
-            "message": item.message,
-            "reason": (item.after_data or {}).get("reason"),
-            "reversal_date": (item.after_data or {}).get("reversal_date"),
-            "reversal_journal_id": (item.after_data or {}).get("reversal_journal_id"),
-            "status": (item.after_data or {}).get("status", "reversed"),
-            "actor_user_id": item.actor_user_id,
-            "created_at": item.created_at,
-        }
-        for item in rows
-    ]
+    result: list[dict] = []
+    for item in rows:
+        source_type = item.entity_type or item.action.removeprefix("finance.").removesuffix(".reversed")
+        after_data = item.after_data or {}
+        result.append(
+            {
+                "id": item.id,
+                "source_type": source_type,
+                "source_id": item.entity_id,
+                "action": item.action,
+                "message": item.message,
+                "reason": after_data.get("reason"),
+                "reversal_date": after_data.get("reversal_date"),
+                "reversal_journal_id": after_data.get("reversal_journal_id"),
+                "status": "voided" if source_type == "expense" else "reversed",
+                "resulting_source_status": after_data.get("status"),
+                "actor_user_id": item.actor_user_id,
+                "created_at": item.created_at,
+            }
+        )
+    return result
