@@ -39,6 +39,7 @@ from app.api.v1.hr import router as hr_router
 from app.api.v1.hr_extended import router as hr_extended_router
 from app.api.v1.hr_self import router as hr_self_router
 from app.api.v1.hr_uploads import router as hr_uploads_router
+from app.api.v1.inventory import router as inventory_router
 from app.api.v1.manual_orders import router as manual_orders_router
 from app.api.v1.order_links import router as order_links_router
 from app.api.v1.orders import router as orders_router
@@ -79,6 +80,7 @@ api_router.include_router(orders_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
+api_router.include_router(inventory_router)
 api_router.include_router(financial_safety_router)
 api_router.include_router(financial_corrections_router)
 api_router.include_router(financial_correction_history_router)
