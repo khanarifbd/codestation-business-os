@@ -21,7 +21,7 @@ def upgrade() -> None:
     op.create_index("ix_memberships_org_owner", "memberships", ["organization_id", "is_owner"])
 
     # Existing company creators are the initial owners. This preserves the current
-    # production-development data while separating ownership from admin permission.
+    # development data while separating ownership from admin permission.
     op.execute(
         """
         UPDATE memberships AS membership
@@ -54,6 +54,7 @@ def upgrade() -> None:
             name="uq_client_memberships_org_client_membership",
         ),
     )
+    op.create_index("ix_client_memberships_organization_id", "client_memberships", ["organization_id"])
     op.create_index(
         "ix_client_memberships_org_membership",
         "client_memberships",
@@ -69,6 +70,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_client_memberships_org_client", table_name="client_memberships")
     op.drop_index("ix_client_memberships_org_membership", table_name="client_memberships")
+    op.drop_index("ix_client_memberships_organization_id", table_name="client_memberships")
     op.drop_table("client_memberships")
     op.drop_index("ix_memberships_org_owner", table_name="memberships")
     op.drop_column("memberships", "is_owner")
