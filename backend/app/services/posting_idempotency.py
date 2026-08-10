@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+
+from app.models.posting_idempotency import PostingIdempotency
+
+
+HEADER_NAMES = ("Idempotency-Key", "X-Idempotency-Key")
+
+
+def _request_key(request: Request) -> str | None:
+    value = next((request.headers.get(name) for name in HEADER_NAMES if request.headers.get(name)), None)
+    if value is None:
+        return None
+    value = value.strip()
+    if len(value) < 8 or len(value) > 128:
+        raise HTTPException(status_code=400, detail="Idempotency key must be between 8 and 128 characters")
+    return value
+
+
+def _fingerprint(action: str, payload: BaseModel | dict[str, Any] | Any) -> str:
+    if isinstance(payload, BaseModel):
+        body = payload.model_dump(mode="json")
+    elif isinstance(payload, dict):
+        body = payload
+    else:
+        body = payload
+    encoded = json.dumps({"action": action, "payload": body}, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def reserve_posting(
+    db,
+    request: Request,
+    *,
+    organization_id: str,
+    user_id: str,
+    action: str,
+    payload: BaseModel | dict[str, Any] | Any,
+) -> PostingIdempotency | None:
+    key = _request_key(request)
+    if key is None:
+        return None
+    fingerprint = _fingerprint(action, payload)
+
+    existing = db.scalar(
+        select(PostingIdempotency).where(
+            PostingIdempotency.organization_id == organization_id,
+            PostingIdempotency.action == action,
+            PostingIdempotency.idempotency_key == key,
+        )
+    )
+    if existing is not None:
+        if existing.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
+        return existing
+
+    item = PostingIdempotency(
+        organization_id=organization_id,
+        action=action,
+        idempotency_key=key,
+        request_fingerprint=fingerprint,
+        created_by_user_id=user_id,
+    )
+    try:
+        with db.begin_nested():
+            db.add(item)
+            db.flush()
+        return item
+    except IntegrityError:
+        existing = db.scalar(
+            select(PostingIdempotency).where(
+                PostingIdempotency.organization_id == organization_id,
+                PostingIdempotency.action == action,
+                PostingIdempotency.idempotency_key == key,
+            )
+        )
+        if existing is None:
+            raise
+        if existing.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request")
+        return existing
+
+
+def completed_resource(item: PostingIdempotency | None, resource_type: str) -> str | None:
+    if item is None or item.resource_id is None:
+        return None
+    if item.resource_type != resource_type:
+        raise HTTPException(status_code=409, detail="Idempotency record points to an unexpected resource type")
+    return item.resource_id
+
+
+def complete_posting(item: PostingIdempotency | None, *, resource_type: str, resource_id: str) -> None:
+    if item is None:
+        return
+    item.resource_type = resource_type
+    item.resource_id = resource_id
+    item.completed_at = datetime.now(timezone.utc)
