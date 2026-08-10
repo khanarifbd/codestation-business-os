@@ -175,7 +175,7 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
     loan_repayments = db.execute(
         select(LoanRepayment, CompanyLoan.lender_name, CompanyLoan.currency, repayment_cash.c.amount)
         .join(CompanyLoan, CompanyLoan.id == LoanRepayment.loan_id)
-        .outerjoin(
+        .join(
             repayment_cash,
             and_(
                 repayment_cash.c.organization_id == tenant.organization_id,
@@ -251,13 +251,12 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
     for repayment, lender_name, currency, cash_amount in loan_repayments:
         if _already_reversed(db, tenant.organization_id, repayment.id, "loan_repayment_reversal"):
             continue
-        amount = Decimal(cash_amount) if cash_amount is not None else Decimal(repayment.principal_amount) + Decimal(repayment.interest_amount)
         items.append({
             "source_type": "loan_repayment",
             "source_id": repayment.id,
             "number": repayment.reference or repayment.id[:8].upper(),
             "date": repayment.payment_date,
-            "amount": amount,
+            "amount": Decimal(cash_amount),
             "currency": currency,
             "title": f"Loan repayment · {lender_name}",
             "subtitle": f"Principal {currency} {repayment.principal_amount} · Interest {currency} {repayment.interest_amount}",
@@ -537,6 +536,8 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         )
         if loan is None:
             raise HTTPException(status_code=409, detail="Loan agreement is no longer available")
+        if _source_cash_amount(db, tenant.organization_id, "loan_repayment_accounting", repayment.id) <= 0:
+            raise HTTPException(status_code=409, detail="Only repayments posted through the accounting loan workflow can be reversed here")
 
         journal = reverse_source_journal(
             db,
