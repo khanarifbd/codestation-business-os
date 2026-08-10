@@ -21,6 +21,7 @@ def membership_relationships(db: Session, membership: Membership) -> list[str]:
         .where(
             Employee.organization_id == membership.organization_id,
             Employee.membership_id == membership.id,
+            Employee.employment_status == "active",
         )
         .limit(1)
     )
