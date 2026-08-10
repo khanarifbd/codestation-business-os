@@ -68,7 +68,7 @@ def _order_query(organization_id: str):
     return (
         select(Order, Client.display_name, Quotation.quotation_number, user_alias.full_name)
         .join(Client, Client.id == Order.client_id)
-        .join(Quotation, Quotation.id == Order.quotation_id)
+        .outerjoin(Quotation, Quotation.id == Order.quotation_id)
         .outerjoin(employee_alias, employee_alias.id == Order.assigned_employee_id)
         .outerjoin(membership_alias, membership_alias.id == employee_alias.membership_id)
         .outerjoin(user_alias, user_alias.id == membership_alias.user_id)
