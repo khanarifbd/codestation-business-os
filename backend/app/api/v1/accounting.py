@@ -20,6 +20,7 @@ from app.schemas.accounting import (
     TrialBalanceRead,
     TrialBalanceRow,
 )
+from app.services.accounting_posting import to_base_amount
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/accounting", tags=["Accounting"])
 AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 AccountingManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
 MONEY = Decimal("0.01")
+RATE = Decimal("0.00000001")
 
 
 def _money(value: Decimal) -> Decimal:
@@ -140,14 +142,63 @@ def create_manual_journal(payload: JournalEntryCreate, request: Request, db: DbS
         account = by_id[account_id]
         if not account.is_active: raise HTTPException(status_code=409, detail=f"Ledger account {account.code} is inactive")
         if not account.allow_manual_posting: raise HTTPException(status_code=409, detail=f"Manual posting is disabled for ledger account {account.code}")
-    debit_total = _money(sum((_money(line.debit) for line in payload.lines), Decimal("0"))); credit_total = _money(sum((_money(line.credit) for line in payload.lines), Decimal("0")))
-    if debit_total <= 0 or debit_total != credit_total: raise HTTPException(status_code=400, detail="Journal entry must have equal non-zero debit and credit totals")
+
+    base_currency = tenant.organization.currency.upper()
+    normalized_lines: list[dict[str, object]] = []
+    for line in payload.lines:
+        source_currency = line.currency.upper()
+        original_amount = _money(line.original_amount)
+        submitted_debit = _money(line.debit)
+        submitted_credit = _money(line.credit)
+        submitted_amount = max(submitted_debit, submitted_credit)
+        submitted_rate = Decimal(line.exchange_rate_to_base).quantize(RATE, rounding=ROUND_HALF_UP)
+
+        if source_currency == base_currency:
+            if submitted_amount != original_amount:
+                raise HTTPException(status_code=400, detail="Base-currency journal amount must match original amount")
+            base_amount = original_amount
+            effective_rate = Decimal("1.00000000")
+        elif submitted_rate != Decimal("1.00000000"):
+            expected_base = _money(original_amount * submitted_rate)
+            if submitted_amount != expected_base:
+                raise HTTPException(status_code=400, detail=f"Journal base amount does not match original amount × exchange rate for {source_currency}")
+            base_amount = submitted_amount
+            effective_rate = submitted_rate
+        else:
+            # The Accounting Adjustment UI submits the source amount and rate=1 when
+            # the accountant chooses a foreign currency. Resolve the organization FX
+            # rate on the backend so frontend calculations can never define ledger truth.
+            if submitted_amount != original_amount:
+                raise HTTPException(status_code=400, detail="Foreign-currency journal without an explicit rate must submit the original source amount")
+            base_amount, effective_rate = to_base_amount(
+                db,
+                tenant.organization_id,
+                base_currency,
+                original_amount,
+                source_currency,
+            )
+
+        normalized_lines.append({
+            "source": line,
+            "currency": source_currency,
+            "rate": effective_rate,
+            "debit": base_amount if submitted_debit > 0 else Decimal("0"),
+            "credit": base_amount if submitted_credit > 0 else Decimal("0"),
+            "original_amount": original_amount,
+        })
+
+    debit_total = _money(sum((_money(Decimal(item["debit"])) for item in normalized_lines), Decimal("0")))
+    credit_total = _money(sum((_money(Decimal(item["credit"])) for item in normalized_lines), Decimal("0")))
+    if debit_total <= 0 or debit_total != credit_total:
+        raise HTTPException(status_code=400, detail="Journal entry must have equal non-zero debit and credit totals in base currency")
+
     entry = JournalEntry(organization_id=tenant.organization_id, entry_number=f"JE-{payload.entry_date.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}", entry_date=payload.entry_date, status="posted", source_type="manual", reference=_clean(payload.reference), memo=_clean(payload.memo), created_by_user_id=tenant.user_id, posted_by_user_id=tenant.user_id)
     db.add(entry); db.flush()
-    for line in payload.lines:
-        db.add(JournalLine(organization_id=tenant.organization_id, journal_entry_id=entry.id, ledger_account_id=line.ledger_account_id, description=_clean(line.description), currency=line.currency.upper(), exchange_rate_to_base=line.exchange_rate_to_base, debit=_money(line.debit), credit=_money(line.credit), original_amount=_money(line.original_amount)))
+    for item in normalized_lines:
+        line = item["source"]
+        db.add(JournalLine(organization_id=tenant.organization_id, journal_entry_id=entry.id, ledger_account_id=line.ledger_account_id, description=_clean(line.description), currency=str(item["currency"]), exchange_rate_to_base=Decimal(item["rate"]), debit=_money(Decimal(item["debit"])), credit=_money(Decimal(item["credit"])), original_amount=_money(Decimal(item["original_amount"]))))
     db.flush()
-    record_activity(db, action="accounting.journal.posted", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="journal_entry", entity_id=entry.id, after={"entry_number": entry.entry_number, "entry_date": entry.entry_date.isoformat(), "debit": str(debit_total), "credit": str(credit_total), "source_type": entry.source_type}, message=f"Journal entry posted: {entry.entry_number}", request=request)
+    record_activity(db, action="accounting.journal.posted", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="journal_entry", entity_id=entry.id, after={"entry_number": entry.entry_number, "entry_date": entry.entry_date.isoformat(), "debit": str(debit_total), "credit": str(credit_total), "base_currency": base_currency, "source_type": entry.source_type}, message=f"Journal entry posted: {entry.entry_number}", request=request)
     db.commit(); db.refresh(entry)
     return _journal_read(db, tenant.organization_id, entry)
 

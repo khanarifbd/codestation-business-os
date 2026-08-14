@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
@@ -12,6 +12,7 @@ from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.company_defaults import OrganizationExchangeRate
 from app.models.finance import FinancialAccount
 from app.models.finance_controls import AccountingPeriod
+from app.models.organization import Organization
 
 MONEY = Decimal("0.01")
 RATE = Decimal("0.00000001")
@@ -119,6 +120,95 @@ class PostingLine:
     original_amount: Decimal | None = None
 
 
+def _normalize_implicit_foreign_lines(db, organization_id: str, lines: list[PostingLine]) -> list[PostingLine]:
+    """Convert legacy/direct source-currency lines into organization base currency.
+
+    PostingLine debit/credit values are ledger/reporting amounts and therefore must be
+    in the organization's base currency. Existing accounting sync flows already pass
+    explicit base values, exchange rates and original amounts. Some direct accounting
+    actions historically passed only source-currency values. We normalize only those
+    implicit foreign lines, leaving explicitly converted postings untouched.
+    """
+    base_currency = db.scalar(select(Organization.currency).where(Organization.id == organization_id))
+    if base_currency is None:
+        raise HTTPException(status_code=404, detail="Organization not found for accounting journal")
+    base_currency = base_currency.upper()
+
+    implicit_indexes: list[int] = []
+    implicit_currencies: set[str] = set()
+    original_debit = Decimal("0")
+    original_credit = Decimal("0")
+
+    for index, line in enumerate(lines):
+        currency = line.currency.upper()
+        if currency == base_currency:
+            continue
+        if line.original_amount is not None or Decimal(line.exchange_rate_to_base) != Decimal("1"):
+            continue
+        line_debit = money(line.debit)
+        line_credit = money(line.credit)
+        implicit_indexes.append(index)
+        implicit_currencies.add(currency)
+        original_debit += line_debit
+        original_credit += line_credit
+
+    if not implicit_indexes:
+        return lines
+    if len(implicit_currencies) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Mixed-currency journal lines require explicit base amounts and exchange rates",
+        )
+
+    source_currency = next(iter(implicit_currencies))
+    _, rate = to_base_amount(db, organization_id, base_currency, Decimal("1"), source_currency)
+    normalized = list(lines)
+
+    for index in implicit_indexes:
+        source = normalized[index]
+        source_debit = money(source.debit)
+        source_credit = money(source.credit)
+        if (source_debit > 0) == (source_credit > 0):
+            raise HTTPException(status_code=400, detail="Each journal line must contain either a debit or a credit")
+        original_amount = max(source_debit, source_credit)
+        base_amount = money(original_amount * rate)
+        normalized[index] = replace(
+            source,
+            debit=base_amount if source_debit > 0 else Decimal("0"),
+            credit=base_amount if source_credit > 0 else Decimal("0"),
+            currency=source_currency,
+            exchange_rate_to_base=rate,
+            original_amount=original_amount,
+        )
+
+    # When a balanced foreign-currency entry has multiple lines on one side (for
+    # example loan principal = net cash + fee), independent cent rounding can leave
+    # a one/few-cent base-currency difference. Adjust one implicit line only by the
+    # rounding residual; material differences are still rejected by post_journal.
+    if money(original_debit) == money(original_credit):
+        debit_total = money(sum((money(line.debit) for line in normalized), Decimal("0")))
+        credit_total = money(sum((money(line.credit) for line in normalized), Decimal("0")))
+        difference = money(debit_total - credit_total)
+        maximum_rounding_residual = MONEY * Decimal(max(1, len(implicit_indexes)))
+        if difference != 0 and abs(difference) <= maximum_rounding_residual:
+            target_side = "credit" if difference > 0 else "debit"
+            candidates = [
+                index
+                for index in implicit_indexes
+                if money(getattr(normalized[index], target_side)) > 0
+            ]
+            if candidates:
+                target_index = max(candidates, key=lambda index: money(getattr(normalized[index], target_side)))
+                target = normalized[target_index]
+                adjustment = abs(difference)
+                if target_side == "credit":
+                    normalized[target_index] = replace(target, credit=money(target.credit + adjustment))
+                else:
+                    normalized[target_index] = replace(target, debit=money(target.debit + adjustment))
+
+    return normalized
+
+
 def ensure_open_period(db, organization_id: str, entry_date: date) -> None:
     closed = db.scalar(select(AccountingPeriod.id).where(AccountingPeriod.organization_id == organization_id, AccountingPeriod.status == "closed", AccountingPeriod.start_date <= entry_date, AccountingPeriod.end_date >= entry_date))
     if closed:
@@ -176,10 +266,18 @@ def post_journal(db, *, organization_id: str, user_id: str, entry_date: date, so
         return existing
     if len(lines) < 2:
         raise HTTPException(status_code=400, detail="Accounting journal requires at least two lines")
+
+    source_debit = money(sum((money(line.debit) for line in lines), Decimal("0")))
+    source_credit = money(sum((money(line.credit) for line in lines), Decimal("0")))
+    if source_debit <= 0 or source_debit != source_credit:
+        raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals")
+
+    lines = _normalize_implicit_foreign_lines(db, organization_id, lines)
     debit = money(sum((money(line.debit) for line in lines), Decimal("0")))
     credit = money(sum((money(line.credit) for line in lines), Decimal("0")))
     if debit <= 0 or debit != credit:
-        raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals")
+        raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals in base currency")
+
     entry = JournalEntry(
         organization_id=organization_id,
         entry_number=f"JE-{entry_date.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}",
