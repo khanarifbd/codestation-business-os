@@ -68,13 +68,22 @@ def main() -> None:
     )
     db = SessionLocal()
     try:
+        active_invoiced_order_ids = select(Invoice.order_id).where(
+            Invoice.organization_id == tenant.organization_id,
+            Invoice.status != "cancelled",
+            Invoice.order_id.is_not(None),
+        )
         order = db.scalar(
             select(Order)
-            .where(Order.organization_id == tenant.organization_id, Order.status != "cancelled")
+            .where(
+                Order.organization_id == tenant.organization_id,
+                Order.status != "cancelled",
+                Order.id.not_in(active_invoiced_order_ids),
+            )
             .order_by(Order.created_at.desc())
         )
         if order is None:
-            raise AssertionError("idempotency verification requires an order fixture")
+            raise AssertionError("idempotency verification requires an uninvoiced order fixture")
 
         suffix = uuid4().hex[:8]
         account = create_account(
