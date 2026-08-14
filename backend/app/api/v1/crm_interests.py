@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import delete, or_, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.crm import Lead, LeadInterest
+from app.models.inventory import Product
+from app.models.tax import TaxCode
 from app.schemas.crm import LeadInterestRead, LeadInterestReplace
+from app.schemas.sales import SalesCatalogOption
 from app.services.activity_log import record_activity
 from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
@@ -41,6 +45,52 @@ def _read(item: LeadInterest) -> LeadInterestRead:
         estimated_unit_price=item.estimated_unit_price,
         notes=item.notes,
     )
+
+
+@router.get("/catalog-options", response_model=list[SalesCatalogOption])
+def crm_catalog_options(
+    db: DbSession,
+    tenant: CrmViewer,
+    currency: str | None = None,
+    search: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[SalesCatalogOption]:
+    query = select(Product).where(
+        Product.organization_id == tenant.organization_id,
+        Product.is_active.is_(True),
+    )
+    if currency:
+        query = query.where(Product.currency == currency.upper())
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.where(or_(Product.sku.ilike(needle), Product.name.ilike(needle), Product.description.ilike(needle)))
+    products = db.scalars(query.order_by(Product.name.asc()).limit(limit)).all()
+    result: list[SalesCatalogOption] = []
+    for product in products:
+        tax_rate = None
+        if product.tax_code_id:
+            tax_rate = db.scalar(
+                select(TaxCode.rate).where(
+                    TaxCode.id == product.tax_code_id,
+                    TaxCode.organization_id == tenant.organization_id,
+                    TaxCode.tax_kind == "sales",
+                    TaxCode.is_active.is_(True),
+                )
+            )
+        result.append(
+            SalesCatalogOption(
+                id=product.id,
+                sku=product.sku,
+                name=product.name,
+                description=product.description,
+                item_type=product.item_type,
+                unit=product.unit,
+                currency=product.currency,
+                selling_price=product.selling_price,
+                tax_rate=Decimal(tax_rate) if tax_rate is not None else None,
+            )
+        )
+    return result
 
 
 @router.get("/leads/{lead_id}/interests", response_model=list[LeadInterestRead])
