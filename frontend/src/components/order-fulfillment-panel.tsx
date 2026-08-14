@@ -1,6 +1,6 @@
 "use client";
 
-import { History, Loader2, PackageCheck, Truck, Warehouse as WarehouseIcon } from "lucide-react";
+import { History, Loader2, PackageCheck, RotateCcw, Truck, Warehouse as WarehouseIcon } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -54,6 +54,9 @@ type Fulfillment = {
   base_currency: string;
   total_cogs: string | number;
   total_cogs_base: string | number;
+  reversal_date: string | null;
+  reversal_reason: string | null;
+  reversed_at: string | null;
   items: FulfillmentItem[];
   created_at: string;
 };
@@ -61,12 +64,13 @@ type Fulfillment = {
 const today = () => new Date().toISOString().slice(0, 10);
 const quantityText = (value: string | number) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 const money = (value: string | number, currency: string) => `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const operationKey = (prefix: string) => typeof crypto !== "undefined" && "randomUUID" in crypto
+  ? `${prefix}-${crypto.randomUUID()}`
+  : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 export function OrderFulfillmentPanel({
   orderId,
-  orderNumber,
   status,
-  currency,
   items,
   disabled = false,
   onFulfilled,
@@ -95,6 +99,10 @@ export function OrderFulfillmentPanel({
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [reversing, setReversing] = useState(false);
+  const [reverseId, setReverseId] = useState<string | null>(null);
+  const [reverseDate, setReverseDate] = useState(today());
+  const [reverseReason, setReverseReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -159,12 +167,9 @@ export function OrderFulfillmentPanel({
     setError(null);
     setMessage(null);
     try {
-      const key = typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? `fulfill-${crypto.randomUUID()}`
-        : `fulfill-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const created = await request(`/api/sales/orders/${encodeURIComponent(orderId)}/fulfillments`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": key },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": operationKey("fulfill") },
         body: JSON.stringify({
           warehouse_id: warehouseId,
           fulfillment_date: fulfillmentDate,
@@ -180,6 +185,44 @@ export function OrderFulfillmentPanel({
       setError(reason instanceof Error ? reason.message : "Unable to fulfill this order.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function beginReverse(entry: Fulfillment) {
+    setReverseId(entry.id);
+    setReverseDate(today());
+    setReverseReason("");
+    setError(null);
+    setMessage(null);
+  }
+
+  async function reverse(entry: Fulfillment) {
+    const reason = reverseReason.trim();
+    if (reason.length < 3) {
+      setError("Enter a clear reversal reason (at least 3 characters).");
+      return;
+    }
+    setReversing(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const reversed = await request(
+        `/api/sales/orders/${encodeURIComponent(orderId)}/fulfillments/${encodeURIComponent(entry.id)}/reverse`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Idempotency-Key": operationKey("fulfill-reverse") },
+          body: JSON.stringify({ reversal_date: reverseDate, reason }),
+        },
+      ) as Fulfillment;
+      setReverseId(null);
+      setReverseReason("");
+      setMessage(`${reversed.fulfillment_number} reversed. Stock and COGS were restored using the original carrying cost.`);
+      await onFulfilled(`${reversed.fulfillment_number} reversed`);
+      await load();
+    } catch (reasonValue) {
+      setError(reasonValue instanceof Error ? reasonValue.message : "Unable to reverse this fulfillment.");
+    } finally {
+      setReversing(false);
     }
   }
 
@@ -243,12 +286,33 @@ export function OrderFulfillmentPanel({
 
         <div className="mt-6 border-t pt-5">
           <div className="flex items-center gap-2"><History className="size-4 text-neutral-400" /><h4 className="text-sm font-semibold">Fulfillment history</h4></div>
-          {history.length === 0 ? <p className="mt-3 text-sm text-neutral-400">No stock has been dispatched for this order yet.</p> : <div className="mt-3 space-y-3">{history.map((entry) => (
-            <article key={entry.id} className="rounded-xl border p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-sm font-semibold">{entry.fulfillment_number}</p><p className="mt-1 text-xs text-neutral-400">{entry.fulfillment_date} · {entry.warehouse_name}{entry.reference ? ` · ${entry.reference}` : ""}</p></div><div className="text-left sm:text-right"><p className="text-xs text-neutral-400">Inventory cost issued</p><p className="mt-1 text-sm font-semibold">{money(entry.total_cogs, entry.currency)}</p>{entry.base_currency !== entry.currency ? <p className="mt-0.5 text-xs text-neutral-500">Reporting: {money(entry.total_cogs_base, entry.base_currency)}</p> : null}</div></div>
-              <div className="mt-3 flex flex-wrap gap-2">{entry.items.map((item) => <span key={item.id} className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">{item.item_name} · {quantityText(item.quantity)}</span>)}</div>
-            </article>
-          ))}</div>}
+          {history.length === 0 ? <p className="mt-3 text-sm text-neutral-400">No stock has been dispatched for this order yet.</p> : <div className="mt-3 space-y-3">{history.map((entry) => {
+            const reversed = entry.status === "reversed";
+            const reversingThis = reverseId === entry.id;
+            return (
+              <article key={entry.id} className={`rounded-xl border p-4 ${reversed ? "bg-neutral-50 opacity-80" : ""}`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-semibold">{entry.fulfillment_number}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${reversed ? "bg-neutral-200 text-neutral-600" : "bg-emerald-100 text-emerald-700"}`}>{reversed ? "Reversed" : "Posted"}</span></div>
+                    <p className="mt-1 text-xs text-neutral-400">{entry.fulfillment_date} · {entry.warehouse_name}{entry.reference ? ` · ${entry.reference}` : ""}</p>
+                    {reversed ? <p className="mt-2 text-xs text-neutral-500">Reversed {entry.reversal_date || "—"}{entry.reversal_reason ? ` · ${entry.reversal_reason}` : ""}</p> : null}
+                  </div>
+                  <div className="text-left sm:text-right"><p className="text-xs text-neutral-400">Inventory cost {reversed ? "restored" : "issued"}</p><p className="mt-1 text-sm font-semibold">{money(entry.total_cogs, entry.currency)}</p>{entry.base_currency !== entry.currency ? <p className="mt-0.5 text-xs text-neutral-500">Reporting: {money(entry.total_cogs_base, entry.base_currency)}</p> : null}</div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">{entry.items.map((item) => <span key={item.id} className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">{item.item_name} · {quantityText(item.quantity)}</span>)}</div>
+                {!reversed && status !== "cancelled" ? <div className="mt-4 border-t pt-3">
+                  {!reversingThis ? <button disabled={disabled || saving || reversing} type="button" onClick={() => beginReverse(entry)} className="flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold text-neutral-700 disabled:opacity-50"><RotateCcw className="size-3.5" />Reverse fulfillment</button> : <div className="space-y-3 rounded-xl bg-amber-50 p-3">
+                    <p className="text-xs leading-5 text-amber-800">Reversal returns the exact dispatched quantity and historical carrying cost, and reverses the COGS journal. This action is auditable.</p>
+                    <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">
+                      <label className="text-xs font-medium text-neutral-600">Reversal date<input type="date" value={reverseDate} onChange={(event) => setReverseDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border bg-white px-2 text-sm outline-none" /></label>
+                      <label className="text-xs font-medium text-neutral-600">Reason<input value={reverseReason} onChange={(event) => setReverseReason(event.target.value)} placeholder="Why is this dispatch being reversed?" className="mt-1 h-10 w-full rounded-lg border bg-white px-3 text-sm outline-none" /></label>
+                    </div>
+                    <div className="flex flex-wrap gap-2"><button disabled={reversing || reverseReason.trim().length < 3} type="button" onClick={() => void reverse(entry)} className="flex h-9 items-center gap-2 rounded-lg bg-neutral-950 px-3 text-xs font-semibold text-white disabled:opacity-50">{reversing ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}{reversing ? "Reversing..." : "Confirm reversal"}</button><button disabled={reversing} type="button" onClick={() => { setReverseId(null); setReverseReason(""); }} className="h-9 rounded-lg border bg-white px-3 text-xs font-semibold disabled:opacity-50">Keep fulfillment</button></div>
+                  </div>}
+                </div> : null}
+              </article>
+            );
+          })}</div>}
         </div>
       </div>
     </section>
