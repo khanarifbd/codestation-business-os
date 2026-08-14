@@ -50,6 +50,8 @@ class OrderItemRead(BaseModel):
     unit_snapshot: str
     description: str
     quantity: Decimal
+    fulfilled_quantity: Decimal = Decimal("0")
+    remaining_quantity: Decimal = Decimal("0")
     unit_price: Decimal
     discount_percent: Decimal
     tax_rate: Decimal
@@ -128,3 +130,48 @@ class OrderSummary(BaseModel):
     in_progress: int
     completed: int
     cancelled: int
+
+
+class FulfillmentLineInput(BaseModel):
+    order_item_id: str
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
+
+
+class FulfillmentCreate(BaseModel):
+    warehouse_id: str
+    fulfillment_date: date
+    reference: str | None = Field(default=None, max_length=180)
+    items: list[FulfillmentLineInput] = Field(min_length=1, max_length=200)
+
+
+class FulfillmentItemRead(BaseModel):
+    id: str
+    order_item_id: str
+    product_id: str
+    item_name: str
+    sku: str | None
+    quantity: Decimal
+    currency: str
+    base_currency: str
+    unit_cost: Decimal
+    total_cost: Decimal
+    unit_cost_base: Decimal
+    total_cost_base: Decimal
+    effective_rate_to_base: Decimal
+
+
+class FulfillmentRead(BaseModel):
+    id: str
+    fulfillment_number: str
+    order_id: str
+    warehouse_id: str
+    warehouse_name: str
+    fulfillment_date: date
+    status: str
+    reference: str | None
+    currency: str
+    base_currency: str
+    total_cogs: Decimal
+    total_cogs_base: Decimal
+    items: list[FulfillmentItemRead]
+    created_at: datetime
