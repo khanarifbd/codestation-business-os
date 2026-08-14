@@ -10,16 +10,17 @@ from starlette.requests import Request
 from app.api.v1.accounting_sync import sync_accounting
 from app.api.v1.crm_interests import replace_lead_interests
 from app.api.v1.finance import change_invoice_status, create_invoice_from_order
-from app.api.v1.orders import create_order_from_quotation
+from app.api.v1.orders import change_order_status, create_order_from_quotation
 from app.api.v1.sales import change_quotation_status, create_quotation
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import InvoiceItem
+from app.models.inventory import StockMovement
 from app.models.orders import OrderItem
 from app.models.sales import QuotationItem
-from app.models.inventory import StockMovement
 from app.schemas.crm import LeadInterestInput, LeadInterestReplace
 from app.schemas.finance import InvoiceStatusAction
+from app.schemas.orders import OrderStatusChange
 from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange
 from app.services.accounting_posting import ensure_default_chart
 from app.services.activity_log import record_activity
@@ -211,10 +212,67 @@ def main() -> None:
         credits = db.scalar(select(func.coalesce(func.sum(JournalLine.credit), 0)).where(JournalLine.journal_entry_id == journal.id)) or Decimal("0")
         if Decimal(debits) != Decimal(credits):
             raise AssertionError("sales catalog invoice journal is not balanced")
+
+        expect(
+            409,
+            lambda: change_order_status(
+                order.id,
+                OrderStatusChange(status="cancelled"),
+                req("PATCH", f"/sales/orders/{order.id}/status"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+        )
+        db.rollback()
+
+        cancelled_invoice = change_invoice_status(
+            invoice.id,
+            InvoiceStatusAction(action="cancel"),
+            req("PATCH", f"/finance/invoices/{invoice.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if cancelled_invoice.status != "cancelled":
+            raise AssertionError("invoice cancellation failed")
+        reversal = db.scalar(
+            select(JournalEntry).where(
+                JournalEntry.organization_id == tenant.organization_id,
+                JournalEntry.reversed_entry_id == journal.id,
+                JournalEntry.status == "posted",
+            )
+        )
+        if reversal is None:
+            raise AssertionError("cancelled issued invoice did not reverse AR/revenue journal")
+        reversal_rows = db.execute(
+            select(LedgerAccount.system_key, JournalLine.debit, JournalLine.credit)
+            .join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id)
+            .where(JournalLine.journal_entry_id == reversal.id)
+        ).all()
+        by_key = {key: (Decimal(debit), Decimal(credit)) for key, debit, credit in reversal_rows}
+        if by_key.get("accounts_receivable") != (Decimal("0.00"), Decimal("400.00")):
+            raise AssertionError(f"invoice cancellation did not credit AR correctly: {by_key}")
+        if by_key.get("sales_revenue") != (Decimal("200.00"), Decimal("0.00")):
+            raise AssertionError(f"invoice cancellation did not reverse sales revenue correctly: {by_key}")
+        if by_key.get("service_revenue") != (Decimal("200.00"), Decimal("0.00")):
+            raise AssertionError(f"invoice cancellation did not reverse service revenue correctly: {by_key}")
+        reversal_debits = sum(value[0] for value in by_key.values())
+        reversal_credits = sum(value[1] for value in by_key.values())
+        if reversal_debits != reversal_credits:
+            raise AssertionError("invoice cancellation reversal journal is not balanced")
+
+        cancelled_order = change_order_status(
+            order.id,
+            OrderStatusChange(status="cancelled"),
+            req("PATCH", f"/sales/orders/{order.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if cancelled_order.status != "cancelled":
+            raise AssertionError("order did not cancel after invoice reversal")
     finally:
         db.close()
 
-    print("sales catalog verification passed: lead requirements -> quotation -> order -> invoice -> revenue split")
+    print("sales catalog verification passed: lead -> quotation -> order -> invoice -> revenue split -> invoice reversal -> order cancellation")
 
 
 if __name__ == "__main__":
