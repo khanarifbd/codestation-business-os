@@ -37,6 +37,7 @@ from app.schemas.finance import (
 )
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.journal_reversal import reverse_source_journal
 from app.services.sales import calculate_line, calculate_totals
 from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
@@ -532,35 +533,18 @@ def finance_meta(db: DbSession, tenant: FinanceViewer) -> FinanceMeta:
         .order_by(Client.display_name.asc())
         .limit(300)
     ).all()
-    invoiced_order_ids = select(Invoice.order_id).where(
-        Invoice.organization_id == tenant.organization_id,
-        Invoice.status != "cancelled",
-        Invoice.order_id.is_not(None),
-    )
+    invoiced_order_ids = select(Invoice.order_id).where(Invoice.organization_id == tenant.organization_id, Invoice.status != "cancelled", Invoice.order_id.is_not(None))
     order_rows = db.execute(
         select(Order, Client.display_name)
         .join(Client, Client.id == Order.client_id)
-        .where(
-            Order.organization_id == tenant.organization_id,
-            Order.status != "cancelled",
-            Order.id.not_in(invoiced_order_ids),
-        )
+        .where(Order.organization_id == tenant.organization_id, Order.status != "cancelled", Order.id.not_in(invoiced_order_ids))
         .order_by(Order.created_at.desc())
         .limit(200)
     ).all()
-    invoiced_project_ids = select(Invoice.project_id).where(
-        Invoice.organization_id == tenant.organization_id,
-        Invoice.status != "cancelled",
-        Invoice.project_id.is_not(None),
-    )
+    invoiced_project_ids = select(Invoice.project_id).where(Invoice.organization_id == tenant.organization_id, Invoice.status != "cancelled", Invoice.project_id.is_not(None))
     projects = db.scalars(
         select(Project)
-        .where(
-            Project.organization_id == tenant.organization_id,
-            Project.status != "cancelled",
-            Project.id.not_in(invoiced_project_ids),
-            Project.order_id.not_in(invoiced_order_ids),
-        )
+        .where(Project.organization_id == tenant.organization_id, Project.status != "cancelled", Project.id.not_in(invoiced_project_ids), Project.order_id.not_in(invoiced_order_ids))
         .order_by(Project.created_at.desc())
         .limit(200)
     ).all()
@@ -667,12 +651,7 @@ def list_invoices(db: DbSession, tenant: FinanceViewer, search: str | None = Non
         query = query.where(Invoice.invoice_number.ilike(needle) | Invoice.subject.ilike(needle) | Invoice.client_name_snapshot.ilike(needle))
     if invoice_status == "overdue":
         today = _tenant_today(tenant.organization.timezone)
-        query = query.where(
-            Invoice.status.not_in(["draft", "cancelled", "paid"]),
-            Invoice.balance_due > 0,
-            Invoice.due_date.is_not(None),
-            Invoice.due_date < today,
-        )
+        query = query.where(Invoice.status.not_in(["draft", "cancelled", "paid"]), Invoice.balance_due > 0, Invoice.due_date.is_not(None), Invoice.due_date < today)
     items = db.scalars(query.order_by(Invoice.created_at.desc()).limit(limit)).all()
     return InvoicePage(items=[_invoice_list_item(item, tenant.organization.timezone) for item in items])
 
@@ -718,6 +697,7 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
         raise HTTPException(status_code=404, detail="Invoice not found")
     previous = invoice.status
     now = datetime.now(timezone.utc)
+    reversal_journal = None
     if payload.action == "send":
         if invoice.status != "draft":
             raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
@@ -726,6 +706,15 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
     elif payload.action == "cancel":
         if invoice.status in {"paid", "cancelled"} or invoice.amount_paid > 0:
             raise HTTPException(status_code=409, detail="Invoices with payments cannot be cancelled; use a payment reversal workflow")
+        reversal_journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="invoice_issue",
+            source_id=invoice.id,
+            reversal_date=_tenant_today(tenant.organization.timezone),
+            reason=f"Invoice {invoice.invoice_number} cancelled",
+        )
         invoice.status = "cancelled"
         invoice.cancelled_at = now
     db.flush()
@@ -738,7 +727,7 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
         entity_type="invoice",
         entity_id=invoice.id,
         before={"status": previous},
-        after={"status": invoice.status},
+        after={"status": invoice.status, "reversal_journal_entry_id": reversal_journal.id if reversal_journal else None},
         message=f"Invoice {invoice.invoice_number} changed from {previous} to {invoice.status}",
         request=request,
     )
