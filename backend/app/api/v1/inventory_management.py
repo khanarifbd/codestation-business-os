@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.expenses import Vendor
-from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, Warehouse
+from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, StockMovement, Warehouse
 from app.models.tax import TaxCode
 from app.schemas.inventory_management import CategoryUpdate, ProductUpdate, SupplierCreate, SupplierUpdate, WarehouseUpdate
 from app.services.activity_log import record_activity
@@ -100,9 +100,14 @@ def update_product(product_id: str, payload: ProductUpdate, request: Request, db
     row = db.scalar(select(Product).where(Product.id == product_id, Product.organization_id == tenant.organization_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=404, detail="Product or service not found")
-    before = {"sku": row.sku, "name": row.name, "item_type": row.item_type, "selling_price": str(row.selling_price), "reorder_level": str(row.reorder_level), "is_active": row.is_active}
+    before = {"sku": row.sku, "name": row.name, "item_type": row.item_type, "currency": row.currency, "selling_price": str(row.selling_price), "reorder_level": str(row.reorder_level), "is_active": row.is_active}
     data = payload.model_dump(exclude_unset=True)
     new_type = data.get("item_type", row.item_type)
+    requested_currency = data.get("currency")
+    new_currency = requested_currency.upper() if requested_currency else row.currency
+    has_stock_history = bool(db.scalar(select(StockMovement.id).where(StockMovement.organization_id == tenant.organization_id, StockMovement.product_id == row.id).limit(1)))
+    if has_stock_history and (new_type != row.item_type or new_currency != row.currency):
+        raise HTTPException(status_code=409, detail="Stock item type and currency cannot change after inventory activity. Deactivate this item and create a new catalog item to preserve historical valuation.")
     if new_type != "stock_item" and row.item_type == "stock_item":
         on_hand = db.scalar(select(func.coalesce(func.sum(InventoryBalance.on_hand_quantity), 0)).where(InventoryBalance.organization_id == tenant.organization_id, InventoryBalance.product_id == row.id)) or 0
         if Decimal(on_hand) != 0:
@@ -125,11 +130,13 @@ def update_product(product_id: str, payload: ProductUpdate, request: Request, db
         elif field in {"name", "unit"} and value is not None: value = value.strip()
         elif field == "currency" and value is not None: value = value.upper()
         setattr(row, field, value)
-    if row.item_type != "stock_item":
+    if row.item_type == "stock_item":
+        row.track_inventory = True
+    else:
         row.track_inventory = False
         row.allow_negative_stock = False
         row.reorder_level = Decimal("0")
-    record_activity(db, action="inventory.product.updated", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="product", entity_id=row.id, before=before, after={"sku": row.sku, "name": row.name, "item_type": row.item_type, "selling_price": str(row.selling_price), "reorder_level": str(row.reorder_level), "is_active": row.is_active}, message=f"Inventory item updated: {row.sku} · {row.name}", request=request)
+    record_activity(db, action="inventory.product.updated", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="product", entity_id=row.id, before=before, after={"sku": row.sku, "name": row.name, "item_type": row.item_type, "currency": row.currency, "selling_price": str(row.selling_price), "reorder_level": str(row.reorder_level), "is_active": row.is_active}, message=f"Inventory item updated: {row.sku} · {row.name}", request=request)
     db.commit(); db.refresh(row); return product_read(db, tenant.organization_id, row)
 
 
