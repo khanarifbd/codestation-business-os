@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -13,6 +13,7 @@ class OrderFulfillment(TenantOwnedMixin, Base):
     __tablename__ = "order_fulfillments"
     __table_args__ = (
         UniqueConstraint("organization_id", "fulfillment_number", name="uq_order_fulfillments_org_number"),
+        CheckConstraint("reversal_date IS NULL OR reversal_date >= fulfillment_date", name="ck_order_fulfillment_reversal_date"),
         Index("ix_order_fulfillments_org_order_date", "organization_id", "order_id", "fulfillment_date"),
     )
 
