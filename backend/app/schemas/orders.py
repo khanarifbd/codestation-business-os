@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 OrderStatus = Literal["confirmed", "in_progress", "completed", "cancelled"]
 TaxCalculationMode = Literal["exclusive", "inclusive"]
+CustomSalesItemType = Literal["service", "non_stock_item"]
 
 
 class OrderStatusChange(BaseModel):
@@ -14,6 +15,10 @@ class OrderStatusChange(BaseModel):
 
 
 class OrderItemInput(BaseModel):
+    product_id: str | None = None
+    item_name: str | None = Field(default=None, max_length=220)
+    item_type: CustomSalesItemType = "service"
+    unit: str = Field(default="unit", min_length=1, max_length=40)
     description: str = Field(min_length=1, max_length=4000)
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
     unit_price: Decimal = Field(ge=0, max_digits=16, decimal_places=4)
@@ -37,7 +42,12 @@ class ManualOrderCreate(BaseModel):
 class OrderItemRead(BaseModel):
     id: str
     quotation_item_id: str | None
+    product_id: str | None
     sort_order: int
+    item_name_snapshot: str
+    sku_snapshot: str | None
+    item_type_snapshot: str
+    unit_snapshot: str
     description: str
     quantity: Decimal
     unit_price: Decimal
