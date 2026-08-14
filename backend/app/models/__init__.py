@@ -48,6 +48,7 @@ from app.models.hr import (
 )
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, PurchaseReceiptItem, StockMovement, Warehouse
+from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.models.loan_accounting import LoanDisbursement, LoanFee, LoanScheduleItem
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
@@ -79,7 +80,7 @@ __all__ = [
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "FixedAsset", "HRAnnouncement",
     "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InventoryBalance", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate",
     "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadInterest", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
-    "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderItem", "PayableBill",
+    "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderFulfillment", "OrderFulfillmentItem", "OrderItem", "PayableBill",
     "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
