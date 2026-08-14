@@ -38,6 +38,7 @@ from app.schemas.finance import (
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.sales import calculate_line, calculate_totals
+from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
@@ -196,7 +197,12 @@ def _invoice_detail(db: DbSession, invoice: Invoice, timezone_name: str) -> Invo
             InvoiceItemRead(
                 id=item.id,
                 source_order_item_id=item.source_order_item_id,
+                product_id=item.product_id,
                 sort_order=item.sort_order,
+                item_name_snapshot=item.item_name_snapshot,
+                sku_snapshot=item.sku_snapshot,
+                item_type_snapshot=item.item_type_snapshot,
+                unit_snapshot=item.unit_snapshot,
                 description=item.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
@@ -266,16 +272,29 @@ def _create_manual_invoice(payload: InvoiceCreate, request: Request, db: DbSessi
     if due_date < issue_date:
         raise HTTPException(status_code=400, detail="Invoice due date cannot be before issue date")
     currency = (payload.currency or client.currency or tenant.organization.currency).upper()
-    calculated = [
-        calculate_line(
-            quantity=item.quantity,
-            unit_price=item.unit_price,
-            discount_percent=item.discount_percent,
-            tax_rate=item.tax_rate,
+
+    prepared = []
+    calculated = []
+    for source in payload.items:
+        snapshot = resolve_sales_line(
+            db,
+            organization_id=tenant.organization_id,
+            currency=currency,
+            product_id=source.product_id,
+            item_name=source.item_name,
+            item_type=source.item_type,
+            unit=source.unit,
+            description=source.description,
+        )
+        line = calculate_line(
+            quantity=source.quantity,
+            unit_price=source.unit_price,
+            discount_percent=source.discount_percent,
+            tax_rate=source.tax_rate,
             tax_calculation_mode=payload.tax_calculation_mode,
         )
-        for item in payload.items
-    ]
+        prepared.append((source, snapshot, line))
+        calculated.append(line)
     totals = calculate_totals(calculated)
     seller_name, seller_email, seller_address, seller_tax = _seller_snapshot(db, tenant)
     client_name, client_contact, client_email, client_address, client_tax = _client_snapshot(client)
@@ -310,39 +329,75 @@ def _create_manual_invoice(payload: InvoiceCreate, request: Request, db: DbSessi
         terms_conditions=_clean(payload.terms_conditions),
         internal_notes=_clean(payload.internal_notes),
     )
-    db.add(invoice); db.flush()
-    for index, (source, line) in enumerate(zip(payload.items, calculated, strict=True)):
-        db.add(InvoiceItem(
-            organization_id=tenant.organization_id,
-            invoice_id=invoice.id,
-            sort_order=index,
-            description=source.description.strip(),
-            quantity=source.quantity,
-            unit_price=source.unit_price,
-            discount_percent=source.discount_percent,
-            tax_rate=source.tax_rate,
-            line_subtotal=line.line_subtotal,
-            discount_amount=line.discount_amount,
-            taxable_amount=line.taxable_amount,
-            tax_amount=line.tax_amount,
-            line_total=line.line_total,
-        ))
+    db.add(invoice)
+    db.flush()
+    for index, (source, snapshot, line) in enumerate(prepared):
+        db.add(
+            InvoiceItem(
+                organization_id=tenant.organization_id,
+                invoice_id=invoice.id,
+                product_id=snapshot.product_id,
+                sort_order=index,
+                item_name_snapshot=snapshot.item_name,
+                sku_snapshot=snapshot.sku,
+                item_type_snapshot=snapshot.item_type,
+                unit_snapshot=snapshot.unit,
+                description=snapshot.description,
+                quantity=source.quantity,
+                unit_price=source.unit_price,
+                discount_percent=source.discount_percent,
+                tax_rate=source.tax_rate,
+                line_subtotal=line.line_subtotal,
+                discount_amount=line.discount_amount,
+                taxable_amount=line.taxable_amount,
+                tax_amount=line.tax_amount,
+                line_total=line.line_total,
+            )
+        )
     db.flush()
     record_activity(
-        db, action="finance.invoice.created", scope="tenant", actor_user_id=tenant.user_id,
-        organization_id=tenant.organization_id, entity_type="invoice", entity_id=invoice.id,
+        db,
+        action="finance.invoice.created",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="invoice",
+        entity_id=invoice.id,
         after={"invoice_number": invoice.invoice_number, "client_id": client.id, "currency": currency, "total": str(invoice.total), "status": invoice.status},
-        message=f"Invoice {invoice.invoice_number} created for {client.display_name}", request=request,
+        message=f"Invoice {invoice.invoice_number} created for {client.display_name}",
+        request=request,
     )
-    db.commit(); db.refresh(invoice)
+    db.commit()
+    db.refresh(invoice)
     return _invoice_detail(db, invoice, tenant.organization.timezone)
+
+
+def _existing_source_invoice(db: DbSession, organization_id: str, *, order_id: str | None = None, project_id: str | None = None) -> Invoice | None:
+    query = select(Invoice).where(Invoice.organization_id == organization_id, Invoice.status != "cancelled")
+    if project_id:
+        query = query.where(Invoice.project_id == project_id)
+    elif order_id:
+        query = query.where(Invoice.order_id == order_id)
+    else:
+        return None
+    return db.scalar(query.order_by(Invoice.created_at.desc()).limit(1))
 
 
 def _create_invoice_from_order(order: Order, project_id: str | None, request: Request, db: DbSession, tenant: TenantContext) -> InvoiceDetail:
     if order.status == "cancelled":
         raise HTTPException(status_code=409, detail="Cancelled orders cannot be invoiced")
+    if project_id:
+        existing_project = _existing_source_invoice(db, tenant.organization_id, project_id=project_id)
+        if existing_project:
+            raise HTTPException(status_code=409, detail=f"Project already has active invoice {existing_project.invoice_number}")
+    existing_order = _existing_source_invoice(db, tenant.organization_id, order_id=order.id)
+    if existing_order:
+        raise HTTPException(status_code=409, detail=f"Order already has active invoice {existing_order.invoice_number}")
+
     items = db.scalars(
-        select(OrderItem).where(OrderItem.organization_id == tenant.organization_id, OrderItem.order_id == order.id).order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
+        select(OrderItem)
+        .where(OrderItem.organization_id == tenant.organization_id, OrderItem.order_id == order.id)
+        .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
     ).all()
     if not items:
         raise HTTPException(status_code=409, detail="Order has no line items")
@@ -382,33 +437,48 @@ def _create_invoice_from_order(order: Order, project_id: str | None, request: Re
         terms_conditions=order.terms_conditions,
         internal_notes=order.internal_notes,
     )
-    db.add(invoice); db.flush()
+    db.add(invoice)
+    db.flush()
     for item in items:
-        db.add(InvoiceItem(
-            organization_id=tenant.organization_id,
-            invoice_id=invoice.id,
-            source_order_item_id=item.id,
-            sort_order=item.sort_order,
-            description=item.description,
-            quantity=item.quantity,
-            unit_price=item.unit_price,
-            discount_percent=item.discount_percent,
-            tax_rate=item.tax_rate,
-            line_subtotal=item.line_subtotal,
-            discount_amount=item.discount_amount,
-            taxable_amount=item.taxable_amount,
-            tax_amount=item.tax_amount,
-            line_total=item.line_total,
-        ))
+        db.add(
+            InvoiceItem(
+                organization_id=tenant.organization_id,
+                invoice_id=invoice.id,
+                source_order_item_id=item.id,
+                product_id=item.product_id,
+                sort_order=item.sort_order,
+                item_name_snapshot=item.item_name_snapshot,
+                sku_snapshot=item.sku_snapshot,
+                item_type_snapshot=item.item_type_snapshot,
+                unit_snapshot=item.unit_snapshot,
+                description=item.description,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                discount_percent=item.discount_percent,
+                tax_rate=item.tax_rate,
+                line_subtotal=item.line_subtotal,
+                discount_amount=item.discount_amount,
+                taxable_amount=item.taxable_amount,
+                tax_amount=item.tax_amount,
+                line_total=item.line_total,
+            )
+        )
     db.flush()
     record_activity(
-        db, action="finance.invoice.created_from_order", scope="tenant", actor_user_id=tenant.user_id,
-        organization_id=tenant.organization_id, entity_type="invoice", entity_id=invoice.id,
+        db,
+        action="finance.invoice.created_from_order",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="invoice",
+        entity_id=invoice.id,
         after={"invoice_number": invoice.invoice_number, "order_id": order.id, "project_id": project_id, "currency": invoice.currency, "total": str(invoice.total)},
         metadata={"source_order_id": order.id, "source_project_id": project_id},
-        message=f"Invoice {invoice.invoice_number} created from order {order.order_number}", request=request,
+        message=f"Invoice {invoice.invoice_number} created from order {order.order_number}",
+        request=request,
     )
-    db.commit(); db.refresh(invoice)
+    db.commit()
+    db.refresh(invoice)
     return _invoice_detail(db, invoice, tenant.organization.timezone)
 
 
@@ -456,11 +526,44 @@ def finance_summary(db: DbSession, tenant: FinanceViewer) -> FinanceSummary:
 
 @router.get("/meta", response_model=FinanceMeta)
 def finance_meta(db: DbSession, tenant: FinanceViewer) -> FinanceMeta:
-    clients = db.scalars(select(Client).where(Client.organization_id == tenant.organization_id, Client.status == "active").order_by(Client.display_name.asc()).limit(300)).all()
-    order_rows = db.execute(
-        select(Order, Client.display_name).join(Client, Client.id == Order.client_id).where(Order.organization_id == tenant.organization_id, Order.status != "cancelled").order_by(Order.created_at.desc()).limit(200)
+    clients = db.scalars(
+        select(Client)
+        .where(Client.organization_id == tenant.organization_id, Client.status == "active")
+        .order_by(Client.display_name.asc())
+        .limit(300)
     ).all()
-    projects = db.scalars(select(Project).where(Project.organization_id == tenant.organization_id, Project.status != "cancelled").order_by(Project.created_at.desc()).limit(200)).all()
+    invoiced_order_ids = select(Invoice.order_id).where(
+        Invoice.organization_id == tenant.organization_id,
+        Invoice.status != "cancelled",
+        Invoice.order_id.is_not(None),
+    )
+    order_rows = db.execute(
+        select(Order, Client.display_name)
+        .join(Client, Client.id == Order.client_id)
+        .where(
+            Order.organization_id == tenant.organization_id,
+            Order.status != "cancelled",
+            Order.id.not_in(invoiced_order_ids),
+        )
+        .order_by(Order.created_at.desc())
+        .limit(200)
+    ).all()
+    invoiced_project_ids = select(Invoice.project_id).where(
+        Invoice.organization_id == tenant.organization_id,
+        Invoice.status != "cancelled",
+        Invoice.project_id.is_not(None),
+    )
+    projects = db.scalars(
+        select(Project)
+        .where(
+            Project.organization_id == tenant.organization_id,
+            Project.status != "cancelled",
+            Project.id.not_in(invoiced_project_ids),
+            Project.order_id.not_in(invoiced_order_ids),
+        )
+        .order_by(Project.created_at.desc())
+        .limit(200)
+    ).all()
     return FinanceMeta(
         clients=[FinanceMetaClient(id=item.id, code=item.client_code, name=item.display_name, currency=item.currency) for item in clients],
         orders=[FinanceMetaOrder(id=order.id, number=order.order_number, client_id=order.client_id, client_name=client_name, currency=order.currency, total=order.total, status=order.status) for order, client_name in order_rows],
@@ -488,12 +591,22 @@ def create_account(payload: FinancialAccountCreate, request: Request, db: DbSess
         notes=_clean(payload.notes),
         created_by_user_id=tenant.user_id,
     )
-    db.add(account); db.flush()
-    record_activity(db, action="finance.account.created", scope="tenant", actor_user_id=tenant.user_id,
-        organization_id=tenant.organization_id, entity_type="financial_account", entity_id=account.id,
+    db.add(account)
+    db.flush()
+    record_activity(
+        db,
+        action="finance.account.created",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="financial_account",
+        entity_id=account.id,
         after={"name": account.name, "account_type": account.account_type, "currency": account.currency, "opening_balance": str(account.opening_balance)},
-        message=f"Financial account created: {account.name}", request=request)
-    db.commit(); db.refresh(account)
+        message=f"Financial account created: {account.name}",
+        request=request,
+    )
+    db.commit()
+    db.refresh(account)
     return _account_read(db, account)
 
 
@@ -504,31 +617,51 @@ def update_account(account_id: str, payload: FinancialAccountUpdate, request: Re
         raise HTTPException(status_code=404, detail="Financial account not found")
     before = {"name": account.name, "account_type": account.account_type, "is_active": account.is_active}
     for field, value in payload.model_dump(exclude_unset=True).items():
-        if isinstance(value, str): value = _clean(value)
-        if field == "name" and not value: raise HTTPException(status_code=400, detail="Account name cannot be empty")
+        if isinstance(value, str):
+            value = _clean(value)
+        if field == "name" and not value:
+            raise HTTPException(status_code=400, detail="Account name cannot be empty")
         setattr(account, field, value)
     db.flush()
-    record_activity(db, action="finance.account.updated", scope="tenant", actor_user_id=tenant.user_id,
-        organization_id=tenant.organization_id, entity_type="financial_account", entity_id=account.id,
-        before=before, after={"name": account.name, "account_type": account.account_type, "is_active": account.is_active},
-        message=f"Financial account updated: {account.name}", request=request)
-    db.commit(); db.refresh(account)
+    record_activity(
+        db,
+        action="finance.account.updated",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="financial_account",
+        entity_id=account.id,
+        before=before,
+        after={"name": account.name, "account_type": account.account_type, "is_active": account.is_active},
+        message=f"Financial account updated: {account.name}",
+        request=request,
+    )
+    db.commit()
+    db.refresh(account)
     return _account_read(db, account)
 
 
 @router.get("/accounts/{account_id}/ledger", response_model=list[LedgerTransactionRead])
 def account_ledger(account_id: str, db: DbSession, tenant: FinanceViewer, limit: Annotated[int, Query(ge=1, le=500)] = 100):
     account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == account_id, FinancialAccount.organization_id == tenant.organization_id))
-    if account is None: raise HTTPException(status_code=404, detail="Financial account not found")
-    rows = db.scalars(select(FinancialTransaction).where(FinancialTransaction.organization_id == tenant.organization_id, FinancialTransaction.account_id == account.id).order_by(FinancialTransaction.transaction_date.desc(), FinancialTransaction.created_at.desc()).limit(limit)).all()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Financial account not found")
+    rows = db.scalars(
+        select(FinancialTransaction)
+        .where(FinancialTransaction.organization_id == tenant.organization_id, FinancialTransaction.account_id == account.id)
+        .order_by(FinancialTransaction.transaction_date.desc(), FinancialTransaction.created_at.desc())
+        .limit(limit)
+    ).all()
     return [LedgerTransactionRead.model_validate(item, from_attributes=True) for item in rows]
 
 
 @router.get("/invoices", response_model=InvoicePage)
 def list_invoices(db: DbSession, tenant: FinanceViewer, search: str | None = None, invoice_status: str | None = Query(default=None, alias="status"), client_id: str | None = None, limit: Annotated[int, Query(ge=1, le=200)] = 100):
     query = select(Invoice).where(Invoice.organization_id == tenant.organization_id)
-    if invoice_status and invoice_status != "overdue": query = query.where(Invoice.status == invoice_status)
-    if client_id: query = query.where(Invoice.client_id == client_id)
+    if invoice_status and invoice_status != "overdue":
+        query = query.where(Invoice.status == invoice_status)
+    if client_id:
+        query = query.where(Invoice.client_id == client_id)
     if search:
         needle = f"%{search.strip()}%"
         query = query.where(Invoice.invoice_number.ilike(needle) | Invoice.subject.ilike(needle) | Invoice.client_name_snapshot.ilike(needle))
@@ -552,46 +685,65 @@ def create_invoice(payload: InvoiceCreate, request: Request, db: DbSession, tena
 @router.post("/invoices/from-order/{order_id}", response_model=InvoiceDetail, status_code=status.HTTP_201_CREATED)
 def create_invoice_from_order(order_id: str, request: Request, db: DbSession, tenant: FinanceManager):
     order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == tenant.organization_id))
-    if order is None: raise HTTPException(status_code=404, detail="Order not found")
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
     return _create_invoice_from_order(order, None, request, db, tenant)
 
 
 @router.post("/invoices/from-project/{project_id}", response_model=InvoiceDetail, status_code=status.HTTP_201_CREATED)
 def create_invoice_from_project(project_id: str, request: Request, db: DbSession, tenant: FinanceManager):
     project = db.scalar(select(Project).where(Project.id == project_id, Project.organization_id == tenant.organization_id))
-    if project is None: raise HTTPException(status_code=404, detail="Project not found")
-    if project.status == "cancelled": raise HTTPException(status_code=409, detail="Cancelled projects cannot be invoiced")
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Cancelled projects cannot be invoiced")
     order = db.scalar(select(Order).where(Order.id == project.order_id, Order.organization_id == tenant.organization_id))
-    if order is None: raise HTTPException(status_code=409, detail="Project source order is not available")
+    if order is None:
+        raise HTTPException(status_code=409, detail="Project source order is not available")
     return _create_invoice_from_order(order, project.id, request, db, tenant)
 
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceDetail)
 def get_invoice(invoice_id: str, db: DbSession, tenant: FinanceViewer):
     invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == tenant.organization_id))
-    if invoice is None: raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
     return _invoice_detail(db, invoice, tenant.organization.timezone)
 
 
 @router.patch("/invoices/{invoice_id}/status", response_model=InvoiceDetail)
 def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request: Request, db: DbSession, tenant: FinanceManager):
     invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == tenant.organization_id).with_for_update())
-    if invoice is None: raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
     previous = invoice.status
     now = datetime.now(timezone.utc)
     if payload.action == "send":
-        if invoice.status != "draft": raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
-        invoice.status = "sent"; invoice.sent_at = now
+        if invoice.status != "draft":
+            raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
+        invoice.status = "sent"
+        invoice.sent_at = now
     elif payload.action == "cancel":
         if invoice.status in {"paid", "cancelled"} or invoice.amount_paid > 0:
             raise HTTPException(status_code=409, detail="Invoices with payments cannot be cancelled; use a payment reversal workflow")
-        invoice.status = "cancelled"; invoice.cancelled_at = now
+        invoice.status = "cancelled"
+        invoice.cancelled_at = now
     db.flush()
-    record_activity(db, action="finance.invoice.status_changed", scope="tenant", actor_user_id=tenant.user_id,
-        organization_id=tenant.organization_id, entity_type="invoice", entity_id=invoice.id,
-        before={"status": previous}, after={"status": invoice.status},
-        message=f"Invoice {invoice.invoice_number} changed from {previous} to {invoice.status}", request=request)
-    db.commit(); db.refresh(invoice)
+    record_activity(
+        db,
+        action="finance.invoice.status_changed",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="invoice",
+        entity_id=invoice.id,
+        before={"status": previous},
+        after={"status": invoice.status},
+        message=f"Invoice {invoice.invoice_number} changed from {previous} to {invoice.status}",
+        request=request,
+    )
+    db.commit()
+    db.refresh(invoice)
     return _invoice_detail(db, invoice, tenant.organization.timezone)
 
 
@@ -602,12 +754,24 @@ def _payment_read(db: DbSession, payment: Payment) -> PaymentRead:
         .where(Invoice.id == payment.invoice_id, Invoice.organization_id == payment.organization_id)
     ).first()
     return PaymentRead(
-        id=payment.id, payment_number=payment.payment_number, invoice_id=payment.invoice_id,
-        invoice_number=row.invoice_number if row else "—", client_name=row.client_name_snapshot if row else "—",
-        account_id=payment.account_id, account_name=row.name if row else "—", payment_date=payment.payment_date,
-        invoice_currency=payment.invoice_currency, account_currency=payment.account_currency,
-        invoice_amount=payment.invoice_amount, account_amount=payment.account_amount, exchange_rate=payment.exchange_rate,
-        method=payment.method, reference=payment.reference, notes=payment.notes, status=payment.status, created_at=payment.created_at,
+        id=payment.id,
+        payment_number=payment.payment_number,
+        invoice_id=payment.invoice_id,
+        invoice_number=row.invoice_number if row else "—",
+        client_name=row.client_name_snapshot if row else "—",
+        account_id=payment.account_id,
+        account_name=row.name if row else "—",
+        payment_date=payment.payment_date,
+        invoice_currency=payment.invoice_currency,
+        account_currency=payment.account_currency,
+        invoice_amount=payment.invoice_amount,
+        account_amount=payment.account_amount,
+        exchange_rate=payment.exchange_rate,
+        method=payment.method,
+        reference=payment.reference,
+        notes=payment.notes,
+        status=payment.status,
+        created_at=payment.created_at,
     )
 
 
@@ -619,16 +783,29 @@ def list_payments(db: DbSession, tenant: FinanceViewer, invoice_id: str | None =
         .join(FinancialAccount, FinancialAccount.id == Payment.account_id)
         .where(Payment.organization_id == tenant.organization_id)
     )
-    if invoice_id: query = query.where(Payment.invoice_id == invoice_id)
+    if invoice_id:
+        query = query.where(Payment.invoice_id == invoice_id)
     rows = db.execute(query.order_by(Payment.payment_date.desc(), Payment.created_at.desc()).limit(limit)).all()
     return [
         PaymentRead(
-            id=payment.id, payment_number=payment.payment_number, invoice_id=payment.invoice_id,
-            invoice_number=invoice_number, client_name=client_name,
-            account_id=payment.account_id, account_name=account_name, payment_date=payment.payment_date,
-            invoice_currency=payment.invoice_currency, account_currency=payment.account_currency,
-            invoice_amount=payment.invoice_amount, account_amount=payment.account_amount, exchange_rate=payment.exchange_rate,
-            method=payment.method, reference=payment.reference, notes=payment.notes, status=payment.status, created_at=payment.created_at,
+            id=payment.id,
+            payment_number=payment.payment_number,
+            invoice_id=payment.invoice_id,
+            invoice_number=invoice_number,
+            client_name=client_name,
+            account_id=payment.account_id,
+            account_name=account_name,
+            payment_date=payment.payment_date,
+            invoice_currency=payment.invoice_currency,
+            account_currency=payment.account_currency,
+            invoice_amount=payment.invoice_amount,
+            account_amount=payment.account_amount,
+            exchange_rate=payment.exchange_rate,
+            method=payment.method,
+            reference=payment.reference,
+            notes=payment.notes,
+            status=payment.status,
+            created_at=payment.created_at,
         )
         for payment, invoice_number, client_name, account_name in rows
     ]
@@ -637,17 +814,22 @@ def list_payments(db: DbSession, tenant: FinanceViewer, invoice_id: str | None =
 @router.post("/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
 def record_payment(payload: PaymentCreate, request: Request, db: DbSession, tenant: FinanceManager):
     invoice = db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == tenant.organization_id).with_for_update())
-    if invoice is None: raise HTTPException(status_code=404, detail="Invoice not found")
-    if invoice.status == "draft": raise HTTPException(status_code=409, detail="Send the invoice before recording payment")
-    if invoice.status in {"paid", "cancelled"}: raise HTTPException(status_code=409, detail=f"Cannot record payment against a {invoice.status} invoice")
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.status == "draft":
+        raise HTTPException(status_code=409, detail="Send the invoice before recording payment")
+    if invoice.status in {"paid", "cancelled"}:
+        raise HTTPException(status_code=409, detail=f"Cannot record payment against a {invoice.status} invoice")
     if payload.invoice_amount > invoice.balance_due:
         raise HTTPException(status_code=409, detail=f"Payment exceeds invoice balance {invoice.balance_due} {invoice.currency}")
     account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == payload.account_id, FinancialAccount.organization_id == tenant.organization_id).with_for_update())
-    if account is None or not account.is_active: raise HTTPException(status_code=404, detail="Active financial account not found")
+    if account is None or not account.is_active:
+        raise HTTPException(status_code=404, detail="Active financial account not found")
     if account.currency == invoice.currency:
         exchange_rate = Decimal("1")
     else:
-        if payload.exchange_rate is None: raise HTTPException(status_code=400, detail=f"Exchange rate is required for {invoice.currency} to {account.currency}")
+        if payload.exchange_rate is None:
+            raise HTTPException(status_code=400, detail=f"Exchange rate is required for {invoice.currency} to {account.currency}")
         exchange_rate = Decimal(payload.exchange_rate).quantize(RATE, rounding=ROUND_HALF_UP)
     account_amount = _money(payload.invoice_amount * exchange_rate)
     payment_date = payload.payment_date or _tenant_today(tenant.organization.timezone)
@@ -668,30 +850,57 @@ def record_payment(payload: PaymentCreate, request: Request, db: DbSession, tena
         status="confirmed",
         created_by_user_id=tenant.user_id,
     )
-    db.add(payment); db.flush()
-    db.add(FinancialTransaction(
-        organization_id=tenant.organization_id,
-        account_id=account.id,
-        transaction_date=payment_date,
-        direction="credit",
-        amount=account_amount,
-        currency=account.currency,
-        source_type="payment",
-        source_id=payment.id,
-        reference=payment.reference or payment.payment_number,
-        description=f"Payment {payment.payment_number} for invoice {invoice.invoice_number}",
-        created_by_user_id=tenant.user_id,
-    ))
+    db.add(payment)
+    db.flush()
+    db.add(
+        FinancialTransaction(
+            organization_id=tenant.organization_id,
+            account_id=account.id,
+            transaction_date=payment_date,
+            direction="credit",
+            amount=account_amount,
+            currency=account.currency,
+            source_type="payment",
+            source_id=payment.id,
+            reference=payment.reference or payment.payment_number,
+            description=f"Payment {payment.payment_number} for invoice {invoice.invoice_number}",
+            created_by_user_id=tenant.user_id,
+        )
+    )
     invoice.amount_paid = _money(invoice.amount_paid + payment.invoice_amount)
     invoice.balance_due = _money(invoice.total - invoice.amount_paid)
     if invoice.balance_due <= 0:
-        invoice.balance_due = Decimal("0.00"); invoice.status = "paid"; invoice.paid_at = datetime.now(timezone.utc)
+        invoice.balance_due = Decimal("0.00")
+        invoice.status = "paid"
+        invoice.paid_at = datetime.now(timezone.utc)
     elif invoice.amount_paid > 0:
-        invoice.status = "partially_paid"; invoice.paid_at = None
+        invoice.status = "partially_paid"
+        invoice.paid_at = None
     db.flush()
-    record_activity(db, action="finance.payment.recorded", scope="tenant", actor_user_id=tenant.user_id,
-        organization_id=tenant.organization_id, entity_type="payment", entity_id=payment.id,
-        after={"payment_number": payment.payment_number, "invoice_id": invoice.id, "invoice_amount": str(payment.invoice_amount), "invoice_currency": invoice.currency, "account_id": account.id, "account_amount": str(account_amount), "account_currency": account.currency, "exchange_rate": str(exchange_rate), "invoice_status": invoice.status, "balance_due": str(invoice.balance_due)},
-        metadata={"ledger_direction": "credit"}, message=f"Payment {payment.payment_number} recorded for invoice {invoice.invoice_number}", request=request)
-    db.commit(); db.refresh(payment)
+    record_activity(
+        db,
+        action="finance.payment.recorded",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="payment",
+        entity_id=payment.id,
+        after={
+            "payment_number": payment.payment_number,
+            "invoice_id": invoice.id,
+            "invoice_amount": str(payment.invoice_amount),
+            "invoice_currency": invoice.currency,
+            "account_id": account.id,
+            "account_amount": str(account_amount),
+            "account_currency": account.currency,
+            "exchange_rate": str(exchange_rate),
+            "invoice_status": invoice.status,
+            "balance_due": str(invoice.balance_due),
+        },
+        metadata={"ledger_direction": "credit"},
+        message=f"Payment {payment.payment_number} recorded for invoice {invoice.invoice_number}",
+        request=request,
+    )
+    db.commit()
+    db.refresh(payment)
     return _payment_read(db, payment)
