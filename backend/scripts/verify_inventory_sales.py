@@ -18,6 +18,7 @@ from app.models.inventory import InventoryBalance, StockMovement
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.schemas.inventory import ProductCreate, PurchaseLineInput, PurchaseReceiptCreate, WarehouseCreate
 from app.schemas.orders import FulfillmentCreate, FulfillmentLineInput, ManualOrderCreate, OrderItemInput, OrderStatusChange
+from app.services.activity_log import record_activity
 
 
 @dataclass(frozen=True)
@@ -106,7 +107,14 @@ def journal_amounts(db, organization_id: str, fulfillment_id: str) -> tuple[Deci
     return Decimal(debit), Decimal(credit)
 
 
-def upsert_direct_rate(db, organization_id: str, source_currency: str, base_currency: str, rate: Decimal) -> None:
+def upsert_direct_rate(
+    db,
+    organization_id: str,
+    user_id: str,
+    source_currency: str,
+    base_currency: str,
+    rate: Decimal,
+) -> None:
     row = db.scalar(
         select(OrganizationExchangeRate).where(
             OrganizationExchangeRate.organization_id == organization_id,
@@ -114,6 +122,7 @@ def upsert_direct_rate(db, organization_id: str, source_currency: str, base_curr
             OrganizationExchangeRate.quote_currency == base_currency,
         )
     )
+    before = None
     if row is None:
         row = OrganizationExchangeRate(
             organization_id=organization_id,
@@ -126,12 +135,46 @@ def upsert_direct_rate(db, organization_id: str, source_currency: str, base_curr
             synced_at=datetime.now(timezone.utc),
         )
         db.add(row)
+        db.flush()
+        action = "company.exchange_rate.created"
+        method = "POST"
     else:
+        before = {
+            "base_currency": row.base_currency,
+            "quote_currency": row.quote_currency,
+            "reference_rate": str(row.reference_rate) if row.reference_rate is not None else None,
+            "manual_rate": str(row.manual_rate) if row.manual_rate is not None else None,
+            "effective_rate": str(row.effective_rate),
+            "source": row.source,
+        }
         row.reference_rate = rate
         row.manual_rate = rate
         row.effective_rate = rate
         row.source = "manual"
         row.synced_at = datetime.now(timezone.utc)
+        action = "company.exchange_rate.updated"
+        method = "PATCH"
+    after = {
+        "base_currency": row.base_currency,
+        "quote_currency": row.quote_currency,
+        "reference_rate": str(row.reference_rate) if row.reference_rate is not None else None,
+        "manual_rate": str(row.manual_rate) if row.manual_rate is not None else None,
+        "effective_rate": str(row.effective_rate),
+        "source": row.source,
+    }
+    record_activity(
+        db,
+        action=action,
+        scope="tenant",
+        actor_user_id=user_id,
+        organization_id=organization_id,
+        entity_type="organization_exchange_rate",
+        entity_id=row.id,
+        before=before,
+        after=after,
+        message=f"Verification exchange rate {source_currency}/{base_currency} set to {rate}",
+        request=req(method, "/company-settings/exchange-rates"),
+    )
     db.commit()
 
 
@@ -359,7 +402,7 @@ def main() -> None:
         # units per foreign currency, then change current settings to 130. Fulfillment
         # must relieve inventory/COGS at the stored historical 120 rate.
         foreign_currency = alternate_currency(base_currency)
-        upsert_direct_rate(db, tenant.organization_id, foreign_currency, base_currency, Decimal("120"))
+        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("120"))
         fx_product = create_product(
             ProductCreate(
                 sku=f"FX-{marker}",
@@ -408,7 +451,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
-        upsert_direct_rate(db, tenant.organization_id, foreign_currency, base_currency, Decimal("130"))
+        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("130"))
         fx_fulfillment = fulfill_order(
             fx_order.id,
             FulfillmentCreate(
