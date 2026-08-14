@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,6 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.crm import Client
+from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.sales import Quotation, QuotationItem
@@ -97,6 +99,68 @@ def _list_item(row) -> OrderListItem:
     )
 
 
+def _fulfilled_quantities(db: DbSession, organization_id: str, order_item_ids: list[str]) -> dict[str, Decimal]:
+    if not order_item_ids:
+        return {}
+    rows = db.execute(
+        select(OrderFulfillmentItem.order_item_id, func.coalesce(func.sum(OrderFulfillmentItem.quantity), 0))
+        .join(
+            OrderFulfillment,
+            (OrderFulfillment.id == OrderFulfillmentItem.fulfillment_id)
+            & (OrderFulfillment.organization_id == organization_id),
+        )
+        .where(
+            OrderFulfillmentItem.organization_id == organization_id,
+            OrderFulfillmentItem.order_item_id.in_(order_item_ids),
+            OrderFulfillment.status == "posted",
+        )
+        .group_by(OrderFulfillmentItem.order_item_id)
+    ).all()
+    return {str(order_item_id): Decimal(quantity or 0) for order_item_id, quantity in rows}
+
+
+def _stock_items(db: DbSession, organization_id: str, order_id: str) -> list[OrderItem]:
+    return db.scalars(
+        select(OrderItem)
+        .where(
+            OrderItem.organization_id == organization_id,
+            OrderItem.order_id == order_id,
+            OrderItem.item_type_snapshot == "stock_item",
+            OrderItem.product_id.is_not(None),
+        )
+        .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
+    ).all()
+
+
+def _assert_stock_fulfilled(db: DbSession, organization_id: str, order: Order) -> None:
+    items = _stock_items(db, organization_id, order.id)
+    if not items:
+        return
+    fulfilled = _fulfilled_quantities(db, organization_id, [item.id for item in items])
+    remaining = []
+    for item in items:
+        balance = Decimal(item.quantity) - fulfilled.get(item.id, Decimal("0"))
+        if balance > 0:
+            remaining.append(f"{item.item_name_snapshot}: {balance.normalize()} {item.unit_snapshot}")
+    if remaining:
+        preview = ", ".join(remaining[:3])
+        if len(remaining) > 3:
+            preview += f" and {len(remaining) - 3} more"
+        raise HTTPException(status_code=409, detail=f"Fulfill all stock items before completing this order. Remaining: {preview}")
+
+
+def _has_posted_fulfillment(db: DbSession, organization_id: str, order_id: str) -> bool:
+    return bool(
+        db.scalar(
+            select(OrderFulfillment.id).where(
+                OrderFulfillment.organization_id == organization_id,
+                OrderFulfillment.order_id == order_id,
+                OrderFulfillment.status == "posted",
+            ).limit(1)
+        )
+    )
+
+
 def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
     row = db.execute(_order_query(organization_id).where(Order.id == order_id)).first()
     if row is None:
@@ -107,6 +171,7 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
         .where(OrderItem.organization_id == organization_id, OrderItem.order_id == order.id)
         .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
     ).all()
+    fulfilled = _fulfilled_quantities(db, organization_id, [item.id for item in items])
     return OrderDetail(
         id=order.id,
         order_number=order.order_number,
@@ -153,6 +218,8 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
                 unit_snapshot=item.unit_snapshot,
                 description=item.description,
                 quantity=item.quantity,
+                fulfilled_quantity=fulfilled.get(item.id, Decimal("0")) if item.item_type_snapshot == "stock_item" and item.product_id else Decimal("0"),
+                remaining_quantity=max(Decimal(item.quantity) - fulfilled.get(item.id, Decimal("0")), Decimal("0")) if item.item_type_snapshot == "stock_item" and item.product_id else Decimal("0"),
                 unit_price=item.unit_price,
                 discount_percent=item.discount_percent,
                 tax_rate=item.tax_rate,
@@ -362,6 +429,13 @@ def change_order_status(
     }
     if payload.status not in allowed.get(order.status, set()):
         raise HTTPException(status_code=409, detail=f"Order cannot move from {order.status} to {payload.status}")
+    if payload.status == "completed":
+        _assert_stock_fulfilled(db, tenant.organization_id, order)
+    if payload.status == "cancelled" and _has_posted_fulfillment(db, tenant.organization_id, order.id):
+        raise HTTPException(
+            status_code=409,
+            detail="This order has posted stock fulfillment and cannot be cancelled directly. Record the stock return/reversal before cancelling the order.",
+        )
 
     previous = order.status
     now = datetime.now(timezone.utc)
