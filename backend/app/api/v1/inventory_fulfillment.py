@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.api.v1.inventory import _balance, _ledger, _stock_out, cost, money, qty
-from app.models.inventory import InventoryBalance, Product, Warehouse
+from app.api.v1.inventory import _balance, _ledger, _stock_in, _stock_out, cost, money, qty
+from app.models.inventory import Product, Warehouse
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.models.orders import Order, OrderItem
-from app.schemas.orders import FulfillmentCreate, FulfillmentItemRead, FulfillmentRead
+from app.schemas.orders import FulfillmentCreate, FulfillmentItemRead, FulfillmentRead, FulfillmentReverse
 from app.services.accounting_posting import PostingLine, post_journal, system_account
 from app.services.activity_log import record_activity
+from app.services.journal_reversal import reverse_source_journal
 from app.services.posting_idempotency import complete_posting, completed_resource, reserve_posting
 from app.tenancy.context import TenantContext
 
@@ -93,6 +94,9 @@ def _fulfillment_read(db: DbSession, organization_id: str, fulfillment_id: str) 
         base_currency=fulfillment.base_currency,
         total_cogs=fulfillment.total_cogs,
         total_cogs_base=fulfillment.total_cogs_base,
+        reversal_date=fulfillment.reversal_date,
+        reversal_reason=fulfillment.reversal_reason,
+        reversed_at=fulfillment.reversed_at,
         items=[
             FulfillmentItemRead(
                 id=item.id,
@@ -117,38 +121,19 @@ def _fulfillment_read(db: DbSession, organization_id: str, fulfillment_id: str) 
 
 @router.get("/orders/{order_id}/fulfillments", response_model=list[FulfillmentRead])
 def list_order_fulfillments(order_id: str, db: DbSession, tenant: Viewer) -> list[FulfillmentRead]:
-    order_exists = db.scalar(
-        select(Order.id).where(
-            Order.id == order_id,
-            Order.organization_id == tenant.organization_id,
-        )
-    )
+    order_exists = db.scalar(select(Order.id).where(Order.id == order_id, Order.organization_id == tenant.organization_id))
     if order_exists is None:
         raise HTTPException(status_code=404, detail="Order not found")
     ids = db.scalars(
         select(OrderFulfillment.id)
-        .where(
-            OrderFulfillment.organization_id == tenant.organization_id,
-            OrderFulfillment.order_id == order_id,
-            OrderFulfillment.status == "posted",
-        )
+        .where(OrderFulfillment.organization_id == tenant.organization_id, OrderFulfillment.order_id == order_id)
         .order_by(OrderFulfillment.fulfillment_date.desc(), OrderFulfillment.created_at.desc())
     ).all()
     return [_fulfillment_read(db, tenant.organization_id, fulfillment_id) for fulfillment_id in ids]
 
 
-@router.post(
-    "/orders/{order_id}/fulfillments",
-    response_model=FulfillmentRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def fulfill_order(
-    order_id: str,
-    payload: FulfillmentCreate,
-    request: Request,
-    db: DbSession,
-    tenant: Manager,
-) -> FulfillmentRead:
+@router.post("/orders/{order_id}/fulfillments", response_model=FulfillmentRead, status_code=status.HTTP_201_CREATED)
+def fulfill_order(order_id: str, payload: FulfillmentCreate, request: Request, db: DbSession, tenant: Manager) -> FulfillmentRead:
     idempotency, repeated = reserve_posting(
         db,
         request,
@@ -158,43 +143,21 @@ def fulfill_order(
         payload={"order_id": order_id, **payload.model_dump(mode="json")},
     )
     if repeated:
-        resource_id = completed_resource(idempotency, "order_fulfillment")
-        return _fulfillment_read(db, tenant.organization_id, resource_id)
+        return _fulfillment_read(db, tenant.organization_id, completed_resource(idempotency, "order_fulfillment"))
 
-    order = db.scalar(
-        select(Order)
-        .where(
-            Order.id == order_id,
-            Order.organization_id == tenant.organization_id,
-        )
-        .with_for_update()
-    )
+    order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == tenant.organization_id).with_for_update())
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status not in {"confirmed", "in_progress"}:
         raise HTTPException(status_code=409, detail=f"Order in {order.status} status cannot be fulfilled")
-
-    warehouse = db.scalar(
-        select(Warehouse).where(
-            Warehouse.id == payload.warehouse_id,
-            Warehouse.organization_id == tenant.organization_id,
-            Warehouse.is_active.is_(True),
-        )
-    )
+    warehouse = db.scalar(select(Warehouse).where(Warehouse.id == payload.warehouse_id, Warehouse.organization_id == tenant.organization_id, Warehouse.is_active.is_(True)))
     if warehouse is None:
         raise HTTPException(status_code=404, detail="Active warehouse not found")
 
     requested_ids = [line.order_item_id for line in payload.items]
     if len(set(requested_ids)) != len(requested_ids):
         raise HTTPException(status_code=400, detail="Use one fulfillment line per order item")
-
-    order_items = db.scalars(
-        select(OrderItem).where(
-            OrderItem.organization_id == tenant.organization_id,
-            OrderItem.order_id == order.id,
-            OrderItem.id.in_(requested_ids),
-        )
-    ).all()
+    order_items = db.scalars(select(OrderItem).where(OrderItem.organization_id == tenant.organization_id, OrderItem.order_id == order.id, OrderItem.id.in_(requested_ids))).all()
     by_id = {item.id: item for item in order_items}
     if len(by_id) != len(requested_ids):
         raise HTTPException(status_code=404, detail="One or more order items were not found for this order")
@@ -208,58 +171,30 @@ def fulfill_order(
         if item.item_type_snapshot != "stock_item" or item.product_id is None:
             raise HTTPException(status_code=409, detail=f"{item.item_name_snapshot} is not a tracked stock line and does not require inventory fulfillment")
         requested_quantity = qty(line.quantity)
-        already_fulfilled = fulfilled.get(item.id, Decimal("0"))
-        remaining = qty(Decimal(item.quantity) - already_fulfilled)
+        remaining = qty(Decimal(item.quantity) - fulfilled.get(item.id, Decimal("0")))
         if requested_quantity > remaining:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Cannot fulfill {requested_quantity} {item.unit_snapshot} of {item.item_name_snapshot}; only {remaining} remains on the order",
-            )
+            raise HTTPException(status_code=409, detail=f"Cannot fulfill {requested_quantity} {item.unit_snapshot} of {item.item_name_snapshot}; only {remaining} remains on the order")
         product = products.get(item.product_id)
         if product is None:
-            product = db.scalar(
-                select(Product).where(
-                    Product.id == item.product_id,
-                    Product.organization_id == tenant.organization_id,
-                    Product.item_type == "stock_item",
-                    Product.track_inventory.is_(True),
-                )
-            )
+            product = db.scalar(select(Product).where(Product.id == item.product_id, Product.organization_id == tenant.organization_id, Product.item_type == "stock_item", Product.track_inventory.is_(True)))
             if product is None:
                 raise HTTPException(status_code=409, detail=f"Tracked stock product for {item.item_name_snapshot} is no longer available")
             products[product.id] = product
         if product.currency.upper() != order.currency.upper():
-            raise HTTPException(
-                status_code=409,
-                detail=f"Order line {item.item_name_snapshot} uses {product.currency}, but order currency is {order.currency}. Resolve the historical sales currency mismatch before fulfillment.",
-            )
+            raise HTTPException(status_code=409, detail=f"Order line {item.item_name_snapshot} uses {product.currency}, but order currency is {order.currency}. Resolve the historical sales currency mismatch before fulfillment.")
         requested_by_product[product.id] = requested_by_product.get(product.id, Decimal("0")) + requested_quantity
         normalized_lines.append((item, requested_quantity))
 
-    # Lock and validate every affected inventory balance before creating any stock
-    # movement. Fulfillment intentionally disallows negative stock even if a catalog
-    # item permits legacy negative adjustments; COGS needs a known carrying value.
-    locked_balances: dict[str, InventoryBalance] = {}
     for product_id in sorted(requested_by_product):
         balance = _balance(db, tenant.organization_id, product_id, warehouse.id, lock=True)
-        locked_balances[product_id] = balance
         required = qty(requested_by_product[product_id])
         available = qty(balance.on_hand_quantity)
         if required > available:
             product = products[product_id]
-            raise HTTPException(
-                status_code=409,
-                detail=f"Insufficient stock for {product.sku} in {warehouse.name}. Required {required}, available {available}",
-            )
+            raise HTTPException(status_code=409, detail=f"Insufficient stock for {product.sku} in {warehouse.name}. Required {required}, available {available}")
         if balance.inventory_value_base is None or balance.average_unit_cost_base is None:
             product = products[product_id]
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"Historical base-currency carrying cost is missing for {product.sku} in {warehouse.name}. "
-                    "Reconcile the opening inventory value before fulfillment; Business OS will not revalue historical stock using today's FX rate."
-                ),
-            )
+            raise HTTPException(status_code=409, detail=f"Historical base-currency carrying cost is missing for {product.sku} in {warehouse.name}. Reconcile the opening inventory value before fulfillment; Business OS will not revalue historical stock using today's FX rate.")
 
     base_currency = tenant.organization.currency.upper()
     fulfillment = OrderFulfillment(
@@ -302,42 +237,29 @@ def fulfill_order(
         base_cost = cost(abs(Decimal(movement.total_cost_base or 0)))
         source_unit = cost(abs(Decimal(movement.unit_cost)))
         base_unit = cost(abs(Decimal(movement.unit_cost_base or 0)))
-        effective_rate = _rate(base_cost, source_cost)
         total_cogs += source_cost
         total_cogs_base += base_cost
         movement_ids.append(movement.id)
-        db.add(
-            OrderFulfillmentItem(
-                organization_id=tenant.organization_id,
-                fulfillment_id=fulfillment.id,
-                order_item_id=item.id,
-                product_id=product.id,
-                quantity=requested_quantity,
-                currency=product.currency.upper(),
-                base_currency=base_currency,
-                unit_cost=source_unit,
-                total_cost=source_cost,
-                unit_cost_base=base_unit,
-                total_cost_base=base_cost,
-                effective_rate_to_base=effective_rate,
-            )
-        )
+        db.add(OrderFulfillmentItem(
+            organization_id=tenant.organization_id,
+            fulfillment_id=fulfillment.id,
+            order_item_id=item.id,
+            product_id=product.id,
+            quantity=requested_quantity,
+            currency=product.currency.upper(),
+            base_currency=base_currency,
+            unit_cost=source_unit,
+            total_cost=source_cost,
+            unit_cost_base=base_unit,
+            total_cost_base=base_cost,
+            effective_rate_to_base=_rate(base_cost, source_cost),
+        ))
 
     fulfillment.total_cogs = cost(total_cogs)
     fulfillment.total_cogs_base = cost(total_cogs_base)
-
     journal_amount = money(total_cogs_base)
     if journal_amount > 0:
-        inventory_ledger = _ledger(
-            db,
-            tenant.organization_id,
-            tenant.user_id,
-            system_key="inventory_asset",
-            code="1450",
-            name="Inventory Asset",
-            category="asset",
-            normal_balance="debit",
-        )
+        inventory_ledger = _ledger(db, tenant.organization_id, tenant.user_id, system_key="inventory_asset", code="1450", name="Inventory Asset", category="asset", normal_balance="debit")
         cogs_ledger = system_account(db, tenant.organization_id, "cost_of_sales")
         source_amount = cost(total_cogs)
         journal_rate = _rate(journal_amount, source_amount)
@@ -349,31 +271,15 @@ def fulfill_order(
             source_type="inventory_sale_cogs",
             source_id=fulfillment.id,
             lines=[
-                PostingLine(
-                    ledger_account_id=cogs_ledger.id,
-                    debit=journal_amount,
-                    currency=order.currency.upper(),
-                    exchange_rate_to_base=journal_rate,
-                    original_amount=source_amount,
-                    description=f"COGS for {fulfillment.fulfillment_number}",
-                ),
-                PostingLine(
-                    ledger_account_id=inventory_ledger.id,
-                    credit=journal_amount,
-                    currency=order.currency.upper(),
-                    exchange_rate_to_base=journal_rate,
-                    original_amount=source_amount,
-                    description=f"Inventory issued for {order.order_number}",
-                ),
+                PostingLine(ledger_account_id=cogs_ledger.id, debit=journal_amount, currency=order.currency.upper(), exchange_rate_to_base=journal_rate, original_amount=source_amount, description=f"COGS for {fulfillment.fulfillment_number}"),
+                PostingLine(ledger_account_id=inventory_ledger.id, credit=journal_amount, currency=order.currency.upper(), exchange_rate_to_base=journal_rate, original_amount=source_amount, description=f"Inventory issued for {order.order_number}"),
             ],
             reference=fulfillment.fulfillment_number,
             memo=f"Inventory fulfillment for order {order.order_number}",
         )
-
     if order.status == "confirmed":
         order.status = "in_progress"
         order.started_at = datetime.now(timezone.utc)
-
     db.flush()
     record_activity(
         db,
@@ -383,26 +289,109 @@ def fulfill_order(
         organization_id=tenant.organization_id,
         entity_type="order_fulfillment",
         entity_id=fulfillment.id,
-        after={
-            "fulfillment_number": fulfillment.fulfillment_number,
-            "order_id": order.id,
-            "order_number": order.order_number,
-            "warehouse_id": warehouse.id,
-            "warehouse_name": warehouse.name,
-            "item_count": len(normalized_lines),
-            "currency": fulfillment.currency,
-            "total_cogs": str(fulfillment.total_cogs),
-            "base_currency": base_currency,
-            "total_cogs_base": str(fulfillment.total_cogs_base),
-            "stock_movement_ids": movement_ids,
-        },
+        after={"fulfillment_number": fulfillment.fulfillment_number, "order_id": order.id, "order_number": order.order_number, "warehouse_id": warehouse.id, "warehouse_name": warehouse.name, "item_count": len(normalized_lines), "currency": fulfillment.currency, "total_cogs": str(fulfillment.total_cogs), "base_currency": base_currency, "total_cogs_base": str(fulfillment.total_cogs_base), "stock_movement_ids": movement_ids},
         message=f"Order {order.order_number} fulfilled from {warehouse.name} ({fulfillment.fulfillment_number})",
         request=request,
     )
-    complete_posting(
+    complete_posting(db, idempotency, resource_type="order_fulfillment", resource_id=fulfillment.id)
+    return _fulfillment_read(db, tenant.organization_id, fulfillment.id)
+
+
+@router.post("/orders/{order_id}/fulfillments/{fulfillment_id}/reverse", response_model=FulfillmentRead)
+def reverse_fulfillment(order_id: str, fulfillment_id: str, payload: FulfillmentReverse, request: Request, db: DbSession, tenant: Manager) -> FulfillmentRead:
+    idempotency, repeated = reserve_posting(
         db,
-        idempotency,
-        resource_type="order_fulfillment",
-        resource_id=fulfillment.id,
+        request,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        action="order_fulfillment.reverse",
+        payload={"order_id": order_id, "fulfillment_id": fulfillment_id, **payload.model_dump(mode="json")},
     )
+    if repeated:
+        return _fulfillment_read(db, tenant.organization_id, completed_resource(idempotency, "order_fulfillment"))
+
+    order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == tenant.organization_id).with_for_update())
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Cancelled orders cannot reverse fulfillment")
+    fulfillment = db.scalar(select(OrderFulfillment).where(OrderFulfillment.id == fulfillment_id, OrderFulfillment.organization_id == tenant.organization_id, OrderFulfillment.order_id == order.id).with_for_update())
+    if fulfillment is None:
+        raise HTTPException(status_code=404, detail="Order fulfillment not found")
+    if fulfillment.status != "posted":
+        raise HTTPException(status_code=409, detail=f"Fulfillment is already {fulfillment.status}")
+    warehouse = db.scalar(select(Warehouse).where(Warehouse.id == fulfillment.warehouse_id, Warehouse.organization_id == tenant.organization_id))
+    if warehouse is None:
+        raise HTTPException(status_code=409, detail="Original fulfillment warehouse no longer exists")
+    items = db.scalars(select(OrderFulfillmentItem).where(OrderFulfillmentItem.organization_id == tenant.organization_id, OrderFulfillmentItem.fulfillment_id == fulfillment.id).order_by(OrderFulfillmentItem.created_at.asc())).all()
+    if not items:
+        raise HTTPException(status_code=409, detail="Fulfillment has no inventory lines to reverse")
+    products = {product.id: product for product in db.scalars(select(Product).where(Product.organization_id == tenant.organization_id, Product.id.in_([item.product_id for item in items]))).all()}
+    if len(products) != len({item.product_id for item in items}):
+        raise HTTPException(status_code=409, detail="A fulfillment product is no longer available for reversal")
+    for item in items:
+        product = products[item.product_id]
+        if product.currency.upper() != item.currency.upper():
+            raise HTTPException(status_code=409, detail=f"Catalog currency for {product.sku} changed after fulfillment. Restore {item.currency} before reversing historical stock.")
+
+    reversal_journal = reverse_source_journal(
+        db,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        source_type="inventory_sale_cogs",
+        source_id=fulfillment.id,
+        reversal_date=payload.reversal_date,
+        reason=payload.reason,
+    )
+    if Decimal(fulfillment.total_cogs_base) > 0 and reversal_journal is None:
+        raise HTTPException(status_code=409, detail="COGS accounting entry is missing; stock reversal was not posted")
+
+    movement_ids: list[str] = []
+    for item in items:
+        product = products[item.product_id]
+        movement = _stock_in(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            product=product,
+            warehouse=warehouse,
+            movement_date=payload.reversal_date,
+            quantity=qty(item.quantity),
+            incoming_total_cost=cost(item.total_cost),
+            incoming_total_cost_base=cost(item.total_cost_base),
+            base_currency=item.base_currency,
+            source_type="order_fulfillment_reversal",
+            source_id=fulfillment.id,
+            reference=fulfillment.reference or order.order_number,
+            reason=payload.reason.strip(),
+        )
+        movement.movement_type = "sale_reversal"
+        movement_ids.append(movement.id)
+
+    previous_order_status = order.status
+    if order.status == "completed":
+        order.status = "in_progress"
+        order.completed_at = None
+        if order.started_at is None:
+            order.started_at = datetime.now(timezone.utc)
+    fulfillment.status = "reversed"
+    fulfillment.reversal_date = payload.reversal_date
+    fulfillment.reversal_reason = payload.reason.strip()
+    fulfillment.reversed_by_user_id = tenant.user_id
+    fulfillment.reversed_at = datetime.now(timezone.utc)
+    db.flush()
+    record_activity(
+        db,
+        action="sales.order.fulfillment_reversed",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="order_fulfillment",
+        entity_id=fulfillment.id,
+        before={"status": "posted", "order_status": previous_order_status},
+        after={"status": fulfillment.status, "order_status": order.status, "reversal_date": str(payload.reversal_date), "reason": fulfillment.reversal_reason, "stock_movement_ids": movement_ids, "reversal_journal_entry_id": reversal_journal.id if reversal_journal else None},
+        message=f"Fulfillment {fulfillment.fulfillment_number} reversed for order {order.order_number}",
+        request=request,
+    )
+    complete_posting(db, idempotency, resource_type="order_fulfillment", resource_id=fulfillment.id)
     return _fulfillment_read(db, tenant.organization_id, fulfillment.id)
