@@ -48,12 +48,9 @@ def resolve_sales_line(
     item_name: str | None,
     item_type: str | None,
     unit: str | None,
-    description: str,
+    description: str | None,
 ) -> SalesLineSnapshot:
     document_currency = currency.upper()
-    clean_description = description.strip()
-    if not clean_description:
-        raise HTTPException(status_code=400, detail="Line description is required")
 
     if product_id:
         product = db.scalar(
@@ -70,6 +67,7 @@ def resolve_sales_line(
                 status_code=400,
                 detail=f"Catalog item {product.sku} uses {product.currency}; document uses {document_currency}",
             )
+        clean_description = _clean(description) or _clean(product.description) or product.name
         tax_rate = None
         if product.tax_code_id:
             tax_rate = db.scalar(
@@ -91,6 +89,9 @@ def resolve_sales_line(
             suggested_tax_rate=Decimal(tax_rate) if tax_rate is not None else None,
         )
 
+    clean_description = _clean(description) or _clean(item_name)
+    if not clean_description:
+        raise HTTPException(status_code=400, detail="Line name or description is required")
     custom_type = (item_type or "service").strip().lower()
     if custom_type not in CUSTOM_ITEM_TYPES:
         raise HTTPException(
