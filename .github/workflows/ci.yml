@@ -71,6 +71,7 @@ jobs:
       - run: uv run python scripts/verify_inventory.py
       - run: uv run python scripts/verify_inventory_management.py
       - run: uv run python scripts/verify_inventory_workflows.py
+      - run: uv run python scripts/verify_inventory_sales.py
       - run: uv run python scripts/verify_sales_catalog_flow.py
       - run: uv run python scripts/verify_recurring_auto_post.py
       - run: uv run python scripts/verify_payroll.py
@@ -96,7 +97,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       - run: corepack enable
