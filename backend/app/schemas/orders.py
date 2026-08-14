@@ -144,6 +144,11 @@ class FulfillmentCreate(BaseModel):
     items: list[FulfillmentLineInput] = Field(min_length=1, max_length=200)
 
 
+class FulfillmentReverse(BaseModel):
+    reversal_date: date
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 class FulfillmentItemRead(BaseModel):
     id: str
     order_item_id: str
@@ -173,5 +178,8 @@ class FulfillmentRead(BaseModel):
     base_currency: str
     total_cogs: Decimal
     total_cogs_base: Decimal
+    reversal_date: date | None
+    reversal_reason: str | None
+    reversed_at: datetime | None
     items: list[FulfillmentItemRead]
     created_at: datetime
