@@ -101,6 +101,7 @@ def dashboard_summary(db: DbSession, tenant: Viewer):
             )
 
     return {
+        "base_currency": tenant.organization.currency.upper(),
         "stock_products": stock_products,
         "service_items": service_items,
         "inventory_values": inventory_values,
