@@ -35,7 +35,7 @@ class Product(TenantOwnedMixin, Base):
     barcode: Mapped[str | None] = mapped_column(String(120), nullable=True)
     name: Mapped[str] = mapped_column(String(220), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    item_type: Mapped[str] = mapped_column(String(24), default="stock_item", nullable=False)  # stock_item, non_stock_item, service
+    item_type: Mapped[str] = mapped_column(String(24), default="stock_item", nullable=False)
     category_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("product_categories.id", ondelete="SET NULL"), nullable=True)
     unit: Mapped[str] = mapped_column(String(40), default="unit", nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -80,6 +80,10 @@ class InventoryBalance(TenantOwnedMixin, Base):
     on_hand_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"), nullable=False)
     average_unit_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"), nullable=False)
     inventory_value: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=Decimal("0"), nullable=False)
+    # Base-currency carrying values are nullable for pre-migration foreign stock whose
+    # historical FX cannot be inferred safely. New stock movements always maintain them.
+    average_unit_cost_base: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
+    inventory_value_base: Mapped[Decimal | None] = mapped_column(Numeric(22, 4), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
@@ -95,12 +99,16 @@ class StockMovement(TenantOwnedMixin, Base):
     product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
     warehouse_id: Mapped[str] = mapped_column(String(36), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False)
     movement_date: Mapped[date] = mapped_column(Date, nullable=False)
-    movement_type: Mapped[str] = mapped_column(String(32), nullable=False)  # purchase, sale, return_in, return_out, adjustment_in, adjustment_out, transfer_in, transfer_out
-    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)  # signed
+    movement_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     unit_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     total_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
     quantity_after: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     average_cost_after: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    base_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    unit_cost_base: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
+    total_cost_base: Mapped[Decimal | None] = mapped_column(Numeric(22, 4), nullable=True)
+    average_cost_base_after: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
     source_type: Mapped[str] = mapped_column(String(48), nullable=False)
     source_id: Mapped[str] = mapped_column(String(36), nullable=False)
     reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
@@ -124,6 +132,8 @@ class PurchaseReceipt(TenantOwnedMixin, Base):
     warehouse_id: Mapped[str] = mapped_column(String(36), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False)
     receipt_date: Mapped[date] = mapped_column(Date, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    base_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    exchange_rate_to_base: Mapped[Decimal | None] = mapped_column(Numeric(24, 10), nullable=True)
     subtotal: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     recoverable_tax_total: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
@@ -151,5 +161,6 @@ class PurchaseReceiptItem(TenantOwnedMixin, Base):
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     recoverable_tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     inventory_cost: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    inventory_cost_base: Mapped[Decimal | None] = mapped_column(Numeric(22, 4), nullable=True)
     line_total: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
