@@ -18,12 +18,16 @@ from app.models.company_settings import (
     OrganizationIdentifier,
     OrganizationProfile,
 )
-from app.models.crm import Client, Lead
+from app.models.crm import Client, Lead, LeadInterest
+from app.models.inventory import Product
 from app.models.membership import Membership
 from app.models.sales import Quotation, QuotationItem
+from app.models.tax import TaxCode
 from app.models.team import Employee
 from app.models.user import User
 from app.schemas.sales import (
+    LeadQuotationInterest,
+    LeadQuotationSource,
     QuotationCreate,
     QuotationDetail,
     QuotationItemRead,
@@ -32,6 +36,7 @@ from app.schemas.sales import (
     QuotationStatusChange,
     QuotationSummary,
     QuotationUpdate,
+    SalesCatalogOption,
     SalesClientOption,
     SalesEmployeeOption,
     SalesMeta,
@@ -39,6 +44,7 @@ from app.schemas.sales import (
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.sales import calculate_line, calculate_totals
+from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
@@ -169,7 +175,13 @@ def _list_item(row) -> QuotationListItem:
 def _item_read(item: QuotationItem) -> QuotationItemRead:
     return QuotationItemRead(
         id=item.id,
+        product_id=item.product_id,
+        lead_interest_id=item.lead_interest_id,
         sort_order=item.sort_order,
+        item_name_snapshot=item.item_name_snapshot,
+        sku_snapshot=item.sku_snapshot,
+        item_type_snapshot=item.item_type_snapshot,
+        unit_snapshot=item.unit_snapshot,
         description=item.description,
         quantity=item.quantity,
         unit_price=item.unit_price,
@@ -236,6 +248,56 @@ def _detail(db: DbSession, organization_id: str, quotation_id: str) -> Quotation
     )
 
 
+def _source_lead_for_client(
+    db: DbSession,
+    *,
+    organization_id: str,
+    client_id: str,
+    explicit_lead_id: str | None,
+) -> str | None:
+    if explicit_lead_id:
+        lead = db.scalar(
+            select(Lead).where(
+                Lead.id == explicit_lead_id,
+                Lead.organization_id == organization_id,
+                Lead.converted_client_id == client_id,
+            )
+        )
+        if lead is None:
+            raise HTTPException(status_code=400, detail="Source lead is not converted to the selected client")
+        return lead.id
+    candidates = db.scalars(
+        select(Lead.id)
+        .where(Lead.organization_id == organization_id, Lead.converted_client_id == client_id)
+        .order_by(Lead.converted_at.desc().nullslast(), Lead.created_at.desc())
+        .limit(2)
+    ).all()
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _lead_interest(
+    db: DbSession,
+    *,
+    organization_id: str,
+    quotation: Quotation,
+    interest_id: str | None,
+) -> LeadInterest | None:
+    if not interest_id:
+        return None
+    if not quotation.source_lead_id:
+        raise HTTPException(status_code=400, detail="Lead requirement can only be used on a quotation linked to that lead")
+    item = db.scalar(
+        select(LeadInterest).where(
+            LeadInterest.id == interest_id,
+            LeadInterest.organization_id == organization_id,
+            LeadInterest.lead_id == quotation.source_lead_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=400, detail="Lead requirement does not belong to this quotation source lead")
+    return item
+
+
 def _replace_items(db: DbSession, quotation: Quotation, payload_items) -> None:
     existing = db.scalars(
         select(QuotationItem).where(
@@ -249,6 +311,29 @@ def _replace_items(db: DbSession, quotation: Quotation, payload_items) -> None:
 
     calculated_lines = []
     for index, payload in enumerate(payload_items):
+        interest = _lead_interest(
+            db,
+            organization_id=quotation.organization_id,
+            quotation=quotation,
+            interest_id=getattr(payload, "lead_interest_id", None),
+        )
+        payload_product_id = getattr(payload, "product_id", None)
+        if interest and payload_product_id and interest.product_id and payload_product_id != interest.product_id:
+            raise HTTPException(status_code=400, detail="Catalog item does not match the selected lead requirement")
+        product_id = payload_product_id or (interest.product_id if interest else None)
+        item_name = getattr(payload, "item_name", None) or (interest.item_name_snapshot if interest else None)
+        item_type = getattr(payload, "item_type", None) or (interest.item_type_snapshot if interest else "service")
+        unit = getattr(payload, "unit", None) or (interest.unit_snapshot if interest else "unit")
+        snapshot = resolve_sales_line(
+            db,
+            organization_id=quotation.organization_id,
+            currency=quotation.currency,
+            product_id=product_id,
+            item_name=item_name,
+            item_type=item_type,
+            unit=unit,
+            description=payload.description,
+        )
         calculated = calculate_line(
             quantity=payload.quantity,
             unit_price=payload.unit_price,
@@ -261,8 +346,14 @@ def _replace_items(db: DbSession, quotation: Quotation, payload_items) -> None:
             QuotationItem(
                 organization_id=quotation.organization_id,
                 quotation_id=quotation.id,
+                product_id=snapshot.product_id,
+                lead_interest_id=interest.id if interest else None,
                 sort_order=index,
-                description=payload.description.strip(),
+                item_name_snapshot=snapshot.item_name,
+                sku_snapshot=snapshot.sku,
+                item_type_snapshot=snapshot.item_type,
+                unit_snapshot=snapshot.unit,
+                description=snapshot.description,
                 quantity=payload.quantity,
                 unit_price=payload.unit_price,
                 discount_percent=payload.discount_percent,
@@ -274,6 +365,37 @@ def _replace_items(db: DbSession, quotation: Quotation, payload_items) -> None:
                 line_total=calculated.line_total,
             )
         )
+    totals = calculate_totals(calculated_lines)
+    quotation.subtotal = totals.subtotal
+    quotation.discount_total = totals.discount_total
+    quotation.tax_total = totals.tax_total
+    quotation.total = totals.total
+
+
+def _recalculate_items(db: DbSession, quotation: Quotation) -> None:
+    rows = db.scalars(
+        select(QuotationItem)
+        .where(
+            QuotationItem.organization_id == quotation.organization_id,
+            QuotationItem.quotation_id == quotation.id,
+        )
+        .order_by(QuotationItem.sort_order.asc())
+    ).all()
+    calculated_lines = []
+    for item in rows:
+        calculated = calculate_line(
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            discount_percent=item.discount_percent,
+            tax_rate=item.tax_rate,
+            tax_calculation_mode=quotation.tax_calculation_mode,
+        )
+        calculated_lines.append(calculated)
+        item.line_subtotal = calculated.line_subtotal
+        item.discount_amount = calculated.discount_amount
+        item.taxable_amount = calculated.taxable_amount
+        item.tax_amount = calculated.tax_amount
+        item.line_total = calculated.line_total
     totals = calculate_totals(calculated_lines)
     quotation.subtotal = totals.subtotal
     quotation.discount_total = totals.discount_total
@@ -299,6 +421,101 @@ def get_sales_meta(db: DbSession, tenant: QuotationViewer) -> SalesMeta:
         default_tax_rate=(financial.default_tax_rate if financial else Decimal("0")),
         default_validity_days=(defaults.quotation_validity_days if defaults else 30),
         employees=_employee_options(db, tenant.organization_id),
+    )
+
+
+@router.get("/catalog-options", response_model=list[SalesCatalogOption])
+def get_catalog_options(
+    db: DbSession,
+    tenant: QuotationViewer,
+    currency: str | None = None,
+    search: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> list[SalesCatalogOption]:
+    query = select(Product).where(
+        Product.organization_id == tenant.organization_id,
+        Product.is_active.is_(True),
+    )
+    if currency:
+        query = query.where(Product.currency == currency.upper())
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.where(or_(Product.sku.ilike(needle), Product.name.ilike(needle), Product.description.ilike(needle)))
+    products = db.scalars(query.order_by(Product.name.asc()).limit(limit)).all()
+    result: list[SalesCatalogOption] = []
+    for product in products:
+        tax_rate = None
+        if product.tax_code_id:
+            tax_rate = db.scalar(
+                select(TaxCode.rate).where(
+                    TaxCode.id == product.tax_code_id,
+                    TaxCode.organization_id == tenant.organization_id,
+                    TaxCode.tax_kind == "sales",
+                    TaxCode.is_active.is_(True),
+                )
+            )
+        result.append(
+            SalesCatalogOption(
+                id=product.id,
+                sku=product.sku,
+                name=product.name,
+                description=product.description,
+                item_type=product.item_type,
+                unit=product.unit,
+                currency=product.currency,
+                selling_price=product.selling_price,
+                tax_rate=tax_rate,
+            )
+        )
+    return result
+
+
+@router.get("/lead-quotation-source/{lead_id}", response_model=LeadQuotationSource)
+def get_lead_quotation_source(lead_id: str, db: DbSession, tenant: QuotationViewer) -> LeadQuotationSource:
+    lead = db.scalar(select(Lead).where(Lead.id == lead_id, Lead.organization_id == tenant.organization_id))
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if not lead.converted_client_id:
+        raise HTTPException(status_code=409, detail="Convert this lead to a client before creating a quotation")
+    client = db.scalar(
+        select(Client).where(
+            Client.id == lead.converted_client_id,
+            Client.organization_id == tenant.organization_id,
+            Client.status == "active",
+        )
+    )
+    if client is None:
+        raise HTTPException(status_code=409, detail="Converted client is not active")
+    currency = (lead.currency or client.currency or tenant.organization.currency).upper()
+    interests = db.scalars(
+        select(LeadInterest)
+        .where(
+            LeadInterest.organization_id == tenant.organization_id,
+            LeadInterest.lead_id == lead.id,
+        )
+        .order_by(LeadInterest.sort_order.asc(), LeadInterest.created_at.asc())
+    ).all()
+    return LeadQuotationSource(
+        lead_id=lead.id,
+        lead_code=lead.lead_code,
+        client_id=client.id,
+        client_name=client.display_name,
+        currency=currency,
+        subject=f"Proposal for {lead.company_name or lead.contact_name}",
+        interests=[
+            LeadQuotationInterest(
+                id=item.id,
+                product_id=item.product_id,
+                item_name=item.item_name_snapshot,
+                description=item.description,
+                item_type=item.item_type_snapshot,
+                unit=item.unit_snapshot,
+                currency=item.currency,
+                quantity=item.quantity,
+                estimated_unit_price=item.estimated_unit_price,
+            )
+            for item in interests
+        ],
     )
 
 
@@ -352,14 +569,7 @@ def quotation_summary(db: DbSession, tenant: QuotationViewer) -> QuotationSummar
             func.count(Quotation.id).filter(Quotation.status == "cancelled"),
         ).where(Quotation.organization_id == organization_id)
     ).one()
-    return QuotationSummary(
-        total=row[0],
-        draft=row[1],
-        sent=row[2],
-        accepted=row[3],
-        rejected=row[4],
-        cancelled=row[5],
-    )
+    return QuotationSummary(total=row[0], draft=row[1], sent=row[2], accepted=row[3], rejected=row[4], cancelled=row[5])
 
 
 @router.get("/quotations", response_model=QuotationPage)
@@ -375,13 +585,7 @@ def list_quotations(
     query = _quotation_query(tenant.organization_id)
     if search:
         needle = f"%{search.strip()}%"
-        query = query.where(
-            or_(
-                Quotation.quotation_number.ilike(needle),
-                Quotation.subject.ilike(needle),
-                Client.display_name.ilike(needle),
-            )
-        )
+        query = query.where(or_(Quotation.quotation_number.ilike(needle), Quotation.subject.ilike(needle), Client.display_name.ilike(needle)))
     if quotation_status:
         query = query.where(Quotation.status == quotation_status)
     if client_id:
@@ -404,12 +608,7 @@ def get_quotation(quotation_id: str, db: DbSession, tenant: QuotationViewer) -> 
 
 
 @router.post("/quotations", response_model=QuotationDetail, status_code=status.HTTP_201_CREATED)
-def create_quotation(
-    payload: QuotationCreate,
-    request: Request,
-    db: DbSession,
-    tenant: QuotationManager,
-) -> QuotationDetail:
+def create_quotation(payload: QuotationCreate, request: Request, db: DbSession, tenant: QuotationManager) -> QuotationDetail:
     client = db.scalar(
         select(Client).where(
             Client.id == payload.client_id,
@@ -423,35 +622,26 @@ def create_quotation(
         raise HTTPException(status_code=400, detail="Valid until date cannot be before issue date")
     _active_employee(db, tenant.organization_id, payload.assigned_employee_id)
 
-    financial = db.scalar(
-        select(OrganizationFinancialSettings).where(
-            OrganizationFinancialSettings.organization_id == tenant.organization_id
-        )
-    )
-    profile = db.scalar(
-        select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id)
-    )
+    financial = db.scalar(select(OrganizationFinancialSettings).where(OrganizationFinancialSettings.organization_id == tenant.organization_id))
+    profile = db.scalar(select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id))
     address = db.scalar(
         select(OrganizationAddress)
         .where(
             OrganizationAddress.organization_id == tenant.organization_id,
             OrganizationAddress.address_type.in_(["billing", "office", "registered"]),
         )
-        .order_by(
-            (OrganizationAddress.address_type == "billing").desc(),
-            (OrganizationAddress.address_type == "office").desc(),
-        )
+        .order_by((OrganizationAddress.address_type == "billing").desc(), (OrganizationAddress.address_type == "office").desc())
     )
     identifier = db.scalar(
         select(OrganizationIdentifier)
         .where(OrganizationIdentifier.organization_id == tenant.organization_id)
         .order_by(OrganizationIdentifier.is_primary.desc(), OrganizationIdentifier.created_at.asc())
     )
-    source_lead_id = db.scalar(
-        select(Lead.id)
-        .where(Lead.organization_id == tenant.organization_id, Lead.converted_client_id == client.id)
-        .order_by(Lead.converted_at.desc().nullslast())
-        .limit(1)
+    source_lead_id = _source_lead_for_client(
+        db,
+        organization_id=tenant.organization_id,
+        client_id=client.id,
+        explicit_lead_id=payload.source_lead_id,
     )
 
     quotation = Quotation(
@@ -465,18 +655,9 @@ def create_quotation(
         subject=_clean(payload.subject),
         issue_date=payload.issue_date,
         valid_until=payload.valid_until,
-        currency=(
-            payload.currency
-            or client.currency
-            or (financial.accounting_currency if financial else tenant.organization.currency)
-        ).upper(),
-        tax_calculation_mode=(
-            payload.tax_calculation_mode
-            or (financial.tax_calculation_mode if financial else "exclusive")
-        ),
-        seller_name_snapshot=(
-            profile.legal_name if profile and profile.legal_name else tenant.organization.name
-        ),
+        currency=(payload.currency or client.currency or (financial.accounting_currency if financial else tenant.organization.currency)).upper(),
+        tax_calculation_mode=(payload.tax_calculation_mode or (financial.tax_calculation_mode if financial else "exclusive")),
+        seller_name_snapshot=(profile.legal_name if profile and profile.legal_name else tenant.organization.name),
         seller_email_snapshot=((profile.billing_email or profile.primary_email) if profile else None),
         seller_address_snapshot=_address_text(address),
         seller_tax_identifier_snapshot=(identifier.value if identifier else None),
@@ -505,6 +686,7 @@ def create_quotation(
         after={
             "quotation_number": quotation.quotation_number,
             "client_id": quotation.client_id,
+            "source_lead_id": quotation.source_lead_id,
             "status": quotation.status,
             "currency": quotation.currency,
             "subtotal": str(quotation.subtotal),
@@ -551,6 +733,8 @@ def update_quotation(
     changes = payload.model_dump(exclude_unset=True, exclude={"items"})
     if "assigned_employee_id" in changes:
         _active_employee(db, tenant.organization_id, changes["assigned_employee_id"])
+    if "currency" in changes and changes["currency"] and changes["currency"].upper() != quotation.currency and payload.items is None:
+        raise HTTPException(status_code=400, detail="Changing quotation currency requires resubmitting line items")
     for field, value in changes.items():
         if field == "currency" and value:
             value = value.upper()
@@ -562,24 +746,7 @@ def update_quotation(
     if payload.items is not None:
         _replace_items(db, quotation, payload.items)
     elif "tax_calculation_mode" in changes:
-        existing_items = db.scalars(
-            select(QuotationItem)
-            .where(
-                QuotationItem.organization_id == tenant.organization_id,
-                QuotationItem.quotation_id == quotation.id,
-            )
-            .order_by(QuotationItem.sort_order.asc())
-        ).all()
-
-        class ExistingPayload:
-            def __init__(self, item):
-                self.description = item.description
-                self.quantity = item.quantity
-                self.unit_price = item.unit_price
-                self.discount_percent = item.discount_percent
-                self.tax_rate = item.tax_rate
-
-        _replace_items(db, quotation, [ExistingPayload(item) for item in existing_items])
+        _recalculate_items(db, quotation)
     db.flush()
     after = {
         "subject": quotation.subject,
@@ -635,10 +802,7 @@ def change_quotation_status(
         "cancelled": set(),
     }
     if payload.status not in allowed.get(quotation.status, set()):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Quotation cannot move from {quotation.status} to {payload.status}",
-        )
+        raise HTTPException(status_code=409, detail=f"Quotation cannot move from {quotation.status} to {payload.status}")
 
     previous = quotation.status
     now = datetime.now(timezone.utc)
@@ -663,10 +827,7 @@ def change_quotation_status(
         entity_id=quotation.id,
         before={"status": previous},
         after={"status": quotation.status},
-        message=(
-            f"Quotation {quotation.quotation_number} status changed "
-            f"from {previous} to {quotation.status}"
-        ),
+        message=f"Quotation {quotation.quotation_number} status changed from {previous} to {quotation.status}",
         request=request,
     )
     db.commit()
