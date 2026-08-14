@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.models.accounting import JournalEntry
 from app.models.capital import CompanyInvestment, InvestmentReturn, InvestorPayout, ProjectInvestor
 from app.models.expenses import Expense, ExpenseCategory
-from app.models.finance import AccountTransfer, FinancialAccount, Invoice, Payment
+from app.models.finance import AccountTransfer, FinancialAccount, Invoice, InvoiceItem, Payment
 from app.models.payroll import PayrollPeriod, PayrollRun
 from app.services.accounting_posting import PostingLine, financial_ledger_account, money, post_journal, system_account, to_base_amount
 
@@ -21,6 +21,31 @@ def _already_posted(db, organization_id: str, source_type: str, source_id: str) 
             JournalEntry.source_id == source_id,
         )
     ) is not None
+
+
+def _invoice_revenue_split(db, invoice: Invoice) -> tuple[Decimal, Decimal]:
+    items = db.scalars(
+        select(InvoiceItem).where(
+            InvoiceItem.organization_id == invoice.organization_id,
+            InvoiceItem.invoice_id == invoice.id,
+        )
+    ).all()
+    product_revenue = Decimal("0")
+    service_revenue = Decimal("0")
+    for item in items:
+        net_revenue = Decimal(item.taxable_amount)
+        if invoice.tax_calculation_mode == "inclusive":
+            net_revenue -= Decimal(item.tax_amount)
+        if item.item_type_snapshot in {"stock_item", "non_stock_item"}:
+            product_revenue += net_revenue
+        else:
+            service_revenue += net_revenue
+    expected = money(Decimal(invoice.total) - Decimal(invoice.tax_total))
+    product_revenue = money(product_revenue)
+    service_revenue = money(service_revenue)
+    delta = money(expected - product_revenue - service_revenue)
+    service_revenue = money(service_revenue + delta)
+    return product_revenue, service_revenue
 
 
 def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_currency: str) -> dict:
@@ -82,14 +107,50 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
             continue
         try:
             ar = system_account(db, organization_id, "accounts_receivable")
-            revenue = system_account(db, organization_id, "service_revenue")
+            service_ledger = system_account(db, organization_id, "service_revenue")
+            sales_ledger = system_account(db, organization_id, "sales_revenue")
             tax_payable = system_account(db, organization_id, "taxes_payable")
             total_base, rate = to_base_amount(db, organization_id, base_currency, Decimal(invoice.total), invoice.currency)
             tax_base, _ = to_base_amount(db, organization_id, base_currency, Decimal(invoice.tax_total), invoice.currency) if Decimal(invoice.tax_total) > 0 else (Decimal("0"), rate)
             revenue_base = money(total_base - tax_base)
-            lines = [PostingLine(ledger_account_id=ar.id, debit=total_base, currency=invoice.currency, exchange_rate_to_base=rate, original_amount=invoice.total, description=f"Invoice {invoice.invoice_number}")]
-            if revenue_base > 0:
-                lines.append(PostingLine(ledger_account_id=revenue.id, credit=revenue_base, currency=invoice.currency, exchange_rate_to_base=rate, original_amount=money(Decimal(invoice.total) - Decimal(invoice.tax_total)), description=invoice.subject or invoice.invoice_number))
+            product_original, service_original = _invoice_revenue_split(db, invoice)
+            product_base = money(product_original * rate) if product_original > 0 else Decimal("0")
+            if product_base > revenue_base:
+                product_base = revenue_base
+            service_base = money(revenue_base - product_base)
+            lines = [
+                PostingLine(
+                    ledger_account_id=ar.id,
+                    debit=total_base,
+                    currency=invoice.currency,
+                    exchange_rate_to_base=rate,
+                    original_amount=invoice.total,
+                    description=f"Invoice {invoice.invoice_number}",
+                )
+            ]
+            if product_base > 0:
+                lines.append(
+                    PostingLine(
+                        ledger_account_id=sales_ledger.id,
+                        credit=product_base,
+                        currency=invoice.currency,
+                        exchange_rate_to_base=rate,
+                        original_amount=product_original,
+                        description=invoice.subject or invoice.invoice_number,
+                    )
+                )
+            if service_base > 0:
+                service_original = money(service_original + (money(Decimal(invoice.total) - Decimal(invoice.tax_total)) - product_original - service_original))
+                lines.append(
+                    PostingLine(
+                        ledger_account_id=service_ledger.id,
+                        credit=service_base,
+                        currency=invoice.currency,
+                        exchange_rate_to_base=rate,
+                        original_amount=service_original,
+                        description=invoice.subject or invoice.invoice_number,
+                    )
+                )
             if tax_base > 0:
                 lines.append(PostingLine(ledger_account_id=tax_payable.id, credit=tax_base, currency=invoice.currency, exchange_rate_to_base=rate, original_amount=invoice.tax_total, description=f"Tax on {invoice.invoice_number}"))
             post_journal(db, organization_id=organization_id, user_id=user_id, entry_date=invoice.issue_date, source_type="invoice_issue", source_id=invoice.id, lines=lines, reference=invoice.invoice_number, memo=f"Invoice issued to {invoice.client_name_snapshot}")
