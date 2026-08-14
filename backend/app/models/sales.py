@@ -64,11 +64,19 @@ class QuotationItem(TenantOwnedMixin, Base):
     __tablename__ = "quotation_items"
     __table_args__ = (
         Index("ix_quotation_items_org_quotation_order", "organization_id", "quotation_id", "sort_order"),
+        Index("ix_quotation_items_org_product", "organization_id", "product_id"),
+        Index("ix_quotation_items_org_lead_interest", "organization_id", "lead_interest_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    product_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    lead_interest_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("lead_interests.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    item_name_snapshot: Mapped[str] = mapped_column(String(220), nullable=False)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    item_type_snapshot: Mapped[str] = mapped_column(String(24), default="service", nullable=False)
+    unit_snapshot: Mapped[str] = mapped_column(String(40), default="unit", nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(16, 4), nullable=False)
