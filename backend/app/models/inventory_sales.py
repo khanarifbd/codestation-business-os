@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -27,6 +27,10 @@ class OrderFulfillment(TenantOwnedMixin, Base):
     base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
     total_cogs: Mapped[Decimal] = mapped_column(Numeric(22, 4), default=Decimal("0"), nullable=False)
     total_cogs_base: Mapped[Decimal] = mapped_column(Numeric(22, 4), default=Decimal("0"), nullable=False)
+    reversal_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reversal_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reversed_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
