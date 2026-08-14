@@ -13,7 +13,6 @@ from app.api.v1.payables import create_payable_bill
 from app.db.session import SessionLocal, engine
 from app.models.accounting import LedgerAccount
 from app.models.capital import CompanyLoan, LoanRepayment
-from app.models.company_defaults import OrganizationExchangeRate
 from app.models.finance import Invoice, Payment
 from app.models.loan_accounting import LoanDisbursement
 from app.models.orders import Order
@@ -92,37 +91,51 @@ def main() -> None:
         # (the seeded order is USD while the Existing Tenant Fixture is BDT). A valid
         # organization FX rate is part of the accounting precondition; idempotency
         # should not depend on the former behavior of silently treating USD as BDT.
+        # Fixture setup uses raw SQL, like the migration fixture seed, so the runtime
+        # audit guard remains strict for all application ORM writes.
         account_currency = account.currency.upper()
         base_currency = tenant.organization.currency.upper()
         if account_currency != base_currency:
-            direct_rate = db.scalar(
-                select(OrganizationExchangeRate).where(
-                    OrganizationExchangeRate.organization_id == tenant.organization_id,
-                    OrganizationExchangeRate.base_currency == account_currency,
-                    OrganizationExchangeRate.quote_currency == base_currency,
-                )
-            )
-            inverse_rate = db.scalar(
-                select(OrganizationExchangeRate).where(
-                    OrganizationExchangeRate.organization_id == tenant.organization_id,
-                    OrganizationExchangeRate.base_currency == base_currency,
-                    OrganizationExchangeRate.quote_currency == account_currency,
-                )
-            )
-            if direct_rate is None and inverse_rate is None:
-                fixture_rate = Decimal("120.00000000")
-                db.add(
-                    OrganizationExchangeRate(
-                        organization_id=tenant.organization_id,
-                        base_currency=account_currency,
-                        quote_currency=base_currency,
-                        reference_rate=fixture_rate,
-                        manual_rate=fixture_rate,
-                        effective_rate=fixture_rate,
-                        source="ci_financial_idempotency",
+            with engine.begin() as connection:
+                rate_exists = connection.execute(
+                    text("""
+                        SELECT 1
+                        FROM organization_exchange_rates
+                        WHERE organization_id = :organization_id
+                          AND (
+                              (base_currency = :account_currency AND quote_currency = :base_currency)
+                              OR
+                              (base_currency = :base_currency AND quote_currency = :account_currency)
+                          )
+                        LIMIT 1
+                    """),
+                    {
+                        "organization_id": tenant.organization_id,
+                        "account_currency": account_currency,
+                        "base_currency": base_currency,
+                    },
+                ).scalar()
+                if rate_exists is None:
+                    fixture_rate = Decimal("120.00000000")
+                    connection.execute(
+                        text("""
+                            INSERT INTO organization_exchange_rates
+                                (id, organization_id, base_currency, quote_currency,
+                                 reference_rate, manual_rate, effective_rate, source,
+                                 synced_at, created_at, updated_at)
+                            VALUES
+                                (:id, :organization_id, :account_currency, :base_currency,
+                                 :rate, :rate, :rate, 'ci_financial_idempotency',
+                                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """),
+                        {
+                            "id": str(uuid4()),
+                            "organization_id": tenant.organization_id,
+                            "account_currency": account_currency,
+                            "base_currency": base_currency,
+                            "rate": fixture_rate,
+                        },
                     )
-                )
-                db.commit()
 
         invoice = create_invoice_from_order(
             order.id, make_request("POST", f"/api/v1/finance/invoices/from-order/{order.id}"), db, tenant,  # type: ignore[arg-type]
