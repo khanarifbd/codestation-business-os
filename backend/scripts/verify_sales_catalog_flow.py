@@ -4,9 +4,10 @@ from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from starlette.requests import Request
 
+from app.api.v1.accounting_sync import sync_accounting
 from app.api.v1.crm_interests import replace_lead_interests
 from app.api.v1.finance import change_invoice_status, create_invoice_from_order
 from app.api.v1.orders import create_order_from_quotation
@@ -21,7 +22,7 @@ from app.schemas.crm import LeadInterestInput, LeadInterestReplace
 from app.schemas.finance import InvoiceStatusAction
 from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange
 from app.services.accounting_posting import ensure_default_chart
-from app.services.accounting_sync import sync_operational_accounting
+from app.services.activity_log import record_activity
 
 
 @dataclass(frozen=True)
@@ -174,16 +175,27 @@ def main() -> None:
         if sent_invoice.status != "sent":
             raise AssertionError("invoice send failed")
 
-        stock_count = db.scalar(select(text("count(*)")).select_from(StockMovement).where(StockMovement.organization_id == tenant.organization_id, StockMovement.source_id.in_([quotation.id, order.id, invoice.id]))) or 0
+        stock_count = db.scalar(select(func.count()).select_from(StockMovement).where(StockMovement.organization_id == tenant.organization_id, StockMovement.source_id.in_([quotation.id, order.id, invoice.id]))) or 0
         if stock_count != 0:
             raise AssertionError("lead/quotation/order/invoice flow must not move inventory before fulfillment")
 
         ensure_default_chart(db, tenant.organization_id, tenant.user_id)
+        record_activity(
+            db,
+            action="accounting.default_chart.verified",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="organization",
+            entity_id=tenant.organization_id,
+            after={"source": "verify_sales_catalog_flow"},
+            message="Default chart prepared for sales catalog accounting verification",
+            request=req("POST", "/accounting/chart-of-accounts/defaults"),
+        )
         db.commit()
-        result = sync_operational_accounting(db, organization_id=tenant.organization_id, user_id=tenant.user_id, base_currency=currency)
-        db.commit()
-        if result["errors"]:
-            raise AssertionError(f"accounting sync errors: {result['errors']}")
+        result = sync_accounting(req("POST", "/accounting/sync"), db, tenant)  # type: ignore[arg-type]
+        if result.errors:
+            raise AssertionError(f"accounting sync errors: {result.errors}")
         journal = db.scalar(select(JournalEntry).where(JournalEntry.organization_id == tenant.organization_id, JournalEntry.source_type == "invoice_issue", JournalEntry.source_id == invoice.id))
         if journal is None:
             raise AssertionError("invoice issue journal missing")
@@ -195,8 +207,8 @@ def main() -> None:
         revenue = {key: Decimal(value) for key, value in revenue_rows}
         if revenue.get("sales_revenue") != Decimal("200.00") or revenue.get("service_revenue") != Decimal("200.00"):
             raise AssertionError(f"invoice revenue classification failed: {revenue}")
-        debits = db.scalar(select(text("coalesce(sum(debit),0)")).select_from(JournalLine).where(JournalLine.journal_entry_id == journal.id))
-        credits = db.scalar(select(text("coalesce(sum(credit),0)")).select_from(JournalLine).where(JournalLine.journal_entry_id == journal.id))
+        debits = db.scalar(select(func.coalesce(func.sum(JournalLine.debit), 0)).where(JournalLine.journal_entry_id == journal.id)) or Decimal("0")
+        credits = db.scalar(select(func.coalesce(func.sum(JournalLine.credit), 0)).where(JournalLine.journal_entry_id == journal.id)) or Decimal("0")
         if Decimal(debits) != Decimal(credits):
             raise AssertionError("sales catalog invoice journal is not balanced")
     finally:
