@@ -25,6 +25,11 @@ def upgrade() -> None:
         ["id"],
         ondelete="RESTRICT",
     )
+    op.create_check_constraint(
+        "ck_order_fulfillment_reversal_date",
+        "order_fulfillments",
+        "reversal_date IS NULL OR reversal_date >= fulfillment_date",
+    )
 
     # Business OS already has a distinct non_stock_item type. Make catalog semantics
     # deterministic for historical documents: stock_item always means inventory-tracked,
@@ -43,6 +48,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint("ck_order_fulfillment_reversal_date", "order_fulfillments", type_="check")
     op.drop_constraint("fk_order_fulfillments_reversed_by_user", "order_fulfillments", type_="foreignkey")
     op.drop_column("order_fulfillments", "reversed_at")
     op.drop_column("order_fulfillments", "reversed_by_user_id")
