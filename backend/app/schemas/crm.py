@@ -93,6 +93,10 @@ class LeadInterestRead(BaseModel):
     notes: str | None
 
 
+class LeadInterestReplace(BaseModel):
+    interests: list[LeadInterestInput] = Field(default_factory=list, max_length=100)
+
+
 class LeadCreate(BaseModel):
     lead_type: Literal["company", "individual"] = "company"
     company_name: str | None = Field(default=None, max_length=220)
@@ -113,7 +117,6 @@ class LeadCreate(BaseModel):
     probability_percent: int = Field(default=0, ge=0, le=100)
     next_follow_up_at: datetime | None = None
     notes: str | None = None
-    interests: list[LeadInterestInput] = Field(default_factory=list, max_length=100)
 
 
 class LeadUpdate(BaseModel):
@@ -136,7 +139,6 @@ class LeadUpdate(BaseModel):
     probability_percent: int | None = Field(default=None, ge=0, le=100)
     next_follow_up_at: datetime | None = None
     notes: str | None = None
-    interests: list[LeadInterestInput] | None = Field(default=None, max_length=100)
 
 
 class LeadListItem(BaseModel):
@@ -198,7 +200,7 @@ class LeadDetail(BaseModel):
     city: str | None
     address_line1: str | None
     notes: str | None
-    interests: list[LeadInterestRead]
+    interests: list[LeadInterestRead] = Field(default_factory=list)
     interactions: list[LeadInteractionRead]
 
 
