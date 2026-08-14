@@ -145,7 +145,12 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
             OrderItemRead(
                 id=item.id,
                 quotation_item_id=item.quotation_item_id,
+                product_id=item.product_id,
                 sort_order=item.sort_order,
+                item_name_snapshot=item.item_name_snapshot,
+                sku_snapshot=item.sku_snapshot,
+                item_type_snapshot=item.item_type_snapshot,
+                unit_snapshot=item.unit_snapshot,
                 description=item.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
@@ -232,9 +237,7 @@ def create_order_from_quotation(
     if quotation.status != "accepted":
         raise HTTPException(status_code=409, detail="Only accepted quotations can be converted to an order")
 
-    existing = db.scalar(
-        select(Order).where(Order.organization_id == tenant.organization_id, Order.quotation_id == quotation.id)
-    )
+    existing = db.scalar(select(Order).where(Order.organization_id == tenant.organization_id, Order.quotation_id == quotation.id))
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Quotation already has order {existing.order_number}")
 
@@ -287,7 +290,12 @@ def create_order_from_quotation(
                 organization_id=tenant.organization_id,
                 order_id=order.id,
                 quotation_item_id=item.id,
+                product_id=item.product_id,
                 sort_order=item.sort_order,
+                item_name_snapshot=item.item_name_snapshot,
+                sku_snapshot=item.sku_snapshot,
+                item_type_snapshot=item.item_type_snapshot,
+                unit_snapshot=item.unit_snapshot,
                 description=item.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
