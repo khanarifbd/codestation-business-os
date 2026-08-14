@@ -4,6 +4,8 @@ import { CheckCircle2, ClipboardCheck, FolderKanban, Loader2, PlayCircle, Search
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { OrderFulfillmentPanel, type FulfillmentOrderItem } from "@/components/order-fulfillment-panel";
+
 type Summary = { total: number; confirmed: number; in_progress: number; completed: number; cancelled: number };
 type OrderRow = {
   id: string;
@@ -22,10 +24,10 @@ type OrderRow = {
   created_at: string;
   updated_at: string;
 };
-type OrderItem = {
-  id: string;
+type OrderItem = FulfillmentOrderItem & {
+  quotation_item_id: string | null;
+  sort_order: number;
   description: string;
-  quantity: string | number;
   unit_price: string | number;
   discount_percent: string | number;
   tax_rate: string | number;
@@ -233,6 +235,15 @@ export default function OrdersPage() {
     } finally { setSaving(false); }
   }
 
+  async function refreshAfterFulfillment(fulfillmentNumber: string) {
+    if (!detail) return;
+    setError(null);
+    const updated = await api(`/orders/${detail.id}`) as OrderDetail;
+    setDetail(updated);
+    setMessage(`${fulfillmentNumber} posted for ${updated.order_number}. Inventory and COGS are updated.`);
+    await Promise.all([refreshSummary(), refreshList()]);
+  }
+
   async function loadMore() {
     if (!nextCursor) return;
     setLoadingMore(true);
@@ -280,18 +291,24 @@ export default function OrdersPage() {
         </section>
       </div>
 
-      {(detailLoading || detail) ? <OrderDrawer detail={detail} loading={detailLoading} saving={saving} onClose={() => { setDetail(null); if (requestedOrderId) router.replace("/dashboard/orders"); }} onStatus={changeStatus} onProject={(orderId) => router.push(`/dashboard/projects?order_id=${encodeURIComponent(orderId)}`)} /> : null}
+      {(detailLoading || detail) ? <OrderDrawer detail={detail} loading={detailLoading} saving={saving} onClose={() => { setDetail(null); if (requestedOrderId) router.replace("/dashboard/orders"); }} onStatus={changeStatus} onProject={(orderId) => router.push(`/dashboard/projects?order_id=${encodeURIComponent(orderId)}`)} onFulfilled={refreshAfterFulfillment} /> : null}
     </main>
   );
 }
 
-function OrderDrawer({ detail, loading, saving, onClose, onStatus, onProject }: { detail: OrderDetail | null; loading: boolean; saving: boolean; onClose: () => void; onStatus: (status: "in_progress" | "completed" | "cancelled") => Promise<void>; onProject: (orderId: string) => void }) {
-  return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Order</p><h2 className="mt-1 text-xl font-semibold">{detail?.order_number ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6">
-    <div className="rounded-2xl border p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Execution status</p><div className="mt-2"><StatusBadge status={detail.status} /></div></div><div className="flex flex-wrap gap-2">{detail.status === "confirmed" ? <><ActionButton disabled={saving} onClick={() => void onStatus("in_progress")} label="Start Order" primary /><ActionButton disabled={saving} onClick={() => void onStatus("cancelled")} label="Cancel" /></> : null}{detail.status === "in_progress" ? <><ActionButton disabled={saving} onClick={() => void onStatus("completed")} label="Complete" primary /><ActionButton disabled={saving} onClick={() => void onStatus("cancelled")} label="Cancel" /></> : null}</div></div>{detail.status === "completed" ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"><strong>Order completed.</strong> This execution state is final.</div> : null}<button onClick={() => onProject(detail.id)} className="mt-4 flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" /> Project workspace</button></div>
+function OrderDrawer({ detail, loading, saving, onClose, onStatus, onProject, onFulfilled }: { detail: OrderDetail | null; loading: boolean; saving: boolean; onClose: () => void; onStatus: (status: "in_progress" | "completed" | "cancelled") => Promise<void>; onProject: (orderId: string) => void; onFulfilled: (fulfillmentNumber: string) => Promise<void> }) {
+  const stockRemaining = detail?.items.some((item) => item.item_type_snapshot === "stock_item" && item.product_id && Number(item.remaining_quantity || 0) > 0) ?? false;
+  const hasPostedFulfillment = detail?.items.some((item) => item.item_type_snapshot === "stock_item" && Number(item.fulfilled_quantity || 0) > 0) ?? false;
+
+  return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-4xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Order</p><h2 className="mt-1 text-xl font-semibold">{detail?.order_number ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6">
+    <div className="rounded-2xl border p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Execution status</p><div className="mt-2"><StatusBadge status={detail.status} /></div></div><div className="flex flex-wrap gap-2">{detail.status === "confirmed" ? <><ActionButton disabled={saving} onClick={() => void onStatus("in_progress")} label="Start Order" primary /><ActionButton disabled={saving || hasPostedFulfillment} onClick={() => void onStatus("cancelled")} label="Cancel" title={hasPostedFulfillment ? "Return fulfilled stock before cancelling" : undefined} /></> : null}{detail.status === "in_progress" ? <><ActionButton disabled={saving || stockRemaining} onClick={() => void onStatus("completed")} label={stockRemaining ? "Fulfill stock first" : "Complete"} primary title={stockRemaining ? "All tracked stock lines must be fulfilled before completion" : undefined} /><ActionButton disabled={saving || hasPostedFulfillment} onClick={() => void onStatus("cancelled")} label="Cancel" title={hasPostedFulfillment ? "Return fulfilled stock before cancelling" : undefined} /></> : null}</div></div>{detail.status === "completed" ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"><strong>Order completed.</strong> This execution state is final.</div> : null}{hasPostedFulfillment && detail.status !== "completed" ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">Posted stock fulfillment cannot be cancelled directly. A stock return/reversal is required first.</div> : null}<button onClick={() => onProject(detail.id)} className="mt-4 flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" /> Project workspace</button></div>
+
+    <OrderFulfillmentPanel orderId={detail.id} orderNumber={detail.order_number} status={detail.status} currency={detail.currency} items={detail.items} disabled={saving} onFulfilled={onFulfilled} />
+
     <div className="grid gap-4 sm:grid-cols-2"><Info label="Client" value={detail.client_name_snapshot} /><Info label="Quotation" value={detail.quotation_number} /><Info label="Order date" value={detail.order_date} /><Info label="Assigned" value={detail.assigned_employee_name ?? "Unassigned"} /><Info label="Currency" value={detail.currency} /><Info label="Tax mode" value={detail.tax_calculation_mode} /></div>
     <div className="grid gap-5 lg:grid-cols-2"><Snapshot title="From" name={detail.seller_name_snapshot} email={detail.seller_email_snapshot} address={detail.seller_address_snapshot} tax={detail.seller_tax_identifier_snapshot} /><Snapshot title="To" name={detail.client_name_snapshot} email={detail.client_email_snapshot} address={detail.client_address_snapshot} tax={detail.client_tax_identifier_snapshot} /></div>
     {detail.subject ? <div><p className="text-xs uppercase tracking-wide text-neutral-400">Subject</p><p className="mt-1 font-medium">{detail.subject}</p></div> : null}
-    <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[720px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Description</th><th className="px-3 py-3 text-right">Qty</th><th className="px-3 py-3 text-right">Price</th><th className="px-3 py-3 text-right">Disc.</th><th className="px-3 py-3 text-right">Tax</th><th className="px-4 py-3 text-right">Total</th></tr></thead><tbody className="divide-y">{detail.items.map((item) => <tr key={item.id}><td className="px-4 py-3">{item.description}</td><td className="px-3 py-3 text-right">{Number(item.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right">{money(item.unit_price, detail.currency)}</td><td className="px-3 py-3 text-right">{Number(item.discount_percent)}%</td><td className="px-3 py-3 text-right">{Number(item.tax_rate)}%</td><td className="px-4 py-3 text-right font-medium">{money(item.line_total, detail.currency)}</td></tr>)}</tbody></table></div>
+    <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[860px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Item</th><th className="px-3 py-3 text-right">Ordered</th><th className="px-3 py-3 text-right">Fulfilled</th><th className="px-3 py-3 text-right">Remaining</th><th className="px-3 py-3 text-right">Price</th><th className="px-4 py-3 text-right">Total</th></tr></thead><tbody className="divide-y">{detail.items.map((item) => { const stock = item.item_type_snapshot === "stock_item" && item.product_id; return <tr key={item.id}><td className="px-4 py-3"><p className="font-medium">{item.item_name_snapshot}</p><p className="mt-1 max-w-md text-xs text-neutral-400">{item.sku_snapshot ? `${item.sku_snapshot} · ` : ""}{item.description}</p><p className="mt-1 text-[11px] text-neutral-400">{item.item_type_snapshot.replaceAll("_", " ")} · {item.unit_snapshot} · Disc. {Number(item.discount_percent)}% · Tax {Number(item.tax_rate)}%</p></td><td className="px-3 py-3 text-right">{Number(item.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right">{stock ? Number(item.fulfilled_quantity).toLocaleString() : "—"}</td><td className={`px-3 py-3 text-right ${stock && Number(item.remaining_quantity) > 0 ? "font-semibold text-amber-700" : ""}`}>{stock ? Number(item.remaining_quantity).toLocaleString() : "—"}</td><td className="px-3 py-3 text-right">{money(item.unit_price, detail.currency)}</td><td className="px-4 py-3 text-right font-medium">{money(item.line_total, detail.currency)}</td></tr>; })}</tbody></table></div>
     <div className="ml-auto max-w-sm rounded-2xl border bg-neutral-50 p-5"><TotalRow label="Subtotal" value={money(detail.subtotal, detail.currency)} /><TotalRow label="Discount" value={`- ${money(detail.discount_total, detail.currency)}`} /><TotalRow label="Tax" value={money(detail.tax_total, detail.currency)} /><div className="mt-4 border-t pt-4"><TotalRow label="Total" value={money(detail.total, detail.currency)} strong /></div></div>
     {detail.notes ? <TextBlock label="Client notes" value={detail.notes} /> : null}{detail.terms_conditions ? <TextBlock label="Terms & conditions" value={detail.terms_conditions} /> : null}{detail.internal_notes ? <TextBlock label="Internal notes" value={detail.internal_notes} muted /> : null}
   </div>}</aside></div>;
@@ -303,4 +320,4 @@ function Info({ label, value }: { label: string; value: string }) { return <div 
 function Snapshot({ title, name, email, address, tax }: { title: string; name: string; email: string | null; address: string | null; tax: string | null }) { return <div className="rounded-2xl border p-4"><p className="text-xs uppercase tracking-wide text-neutral-400">{title}</p><p className="mt-2 font-semibold">{name}</p>{email ? <p className="mt-1 text-sm text-neutral-500">{email}</p> : null}{address ? <p className="mt-1 text-sm leading-5 text-neutral-500">{address}</p> : null}{tax ? <p className="mt-2 text-xs text-neutral-400">Tax ID: {tax}</p> : null}</div>; }
 function TotalRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) { return <div className={`mt-2 flex items-center justify-between gap-4 text-sm ${strong ? "text-base font-semibold" : "text-neutral-600"}`}><span>{label}</span><span>{value}</span></div>; }
 function TextBlock({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) { return <div className={`rounded-2xl border p-4 ${muted ? "bg-neutral-50" : ""}`}><p className="text-xs uppercase tracking-wide text-neutral-400">{label}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6">{value}</p></div>; }
-function ActionButton({ label, onClick, disabled, primary = false }: { label: string; onClick: () => void; disabled?: boolean; primary?: boolean }) { return <button disabled={disabled} onClick={onClick} className={`h-10 rounded-xl px-4 text-sm font-semibold disabled:opacity-50 ${primary ? "bg-neutral-950 text-white" : "border bg-white"}`}>{label}</button>; }
+function ActionButton({ label, onClick, disabled, primary = false, title }: { label: string; onClick: () => void; disabled?: boolean; primary?: boolean; title?: string }) { return <button title={title} disabled={disabled} onClick={onClick} className={`h-10 rounded-xl px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${primary ? "bg-neutral-950 text-white" : "border bg-white"}`}>{label}</button>; }
