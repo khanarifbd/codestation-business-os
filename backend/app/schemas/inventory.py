@@ -38,10 +38,14 @@ class ProductCreate(BaseModel):
 
     @model_validator(mode="after")
     def normalize_tracking(self):
-        if self.item_type != "stock_item":
-            self.track_inventory = False
-        elif self.track_inventory is None:
+        if self.item_type == "stock_item":
+            if self.track_inventory is False:
+                raise ValueError("Stock products must track inventory. Use non_stock_item when stock tracking is not required.")
             self.track_inventory = True
+        else:
+            self.track_inventory = False
+            self.allow_negative_stock = False
+            self.reorder_level = Decimal("0")
         return self
 
 

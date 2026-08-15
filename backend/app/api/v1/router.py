@@ -20,6 +20,7 @@ from app.api.v1.company_settings import router as company_settings_router
 from app.api.v1.company_uploads import router as company_uploads_router
 from app.api.v1.crm import router as crm_router
 from app.api.v1.crm_clients import router as crm_clients_router
+from app.api.v1.crm_interests import router as crm_interests_router
 from app.api.v1.crm_status import router as crm_status_router
 from app.api.v1.crm_summary import router as crm_summary_router
 from app.api.v1.customer_advances import router as customer_advances_router
@@ -40,6 +41,7 @@ from app.api.v1.hr_extended import router as hr_extended_router
 from app.api.v1.hr_self import router as hr_self_router
 from app.api.v1.hr_uploads import router as hr_uploads_router
 from app.api.v1.inventory import router as inventory_router
+from app.api.v1.inventory_fulfillment import router as inventory_fulfillment_router
 from app.api.v1.inventory_management import router as inventory_management_router
 from app.api.v1.inventory_workflows import router as inventory_workflows_router
 from app.api.v1.manual_orders import router as manual_orders_router
@@ -74,11 +76,13 @@ api_router.include_router(hr_uploads_router)
 api_router.include_router(crm_summary_router)
 api_router.include_router(crm_status_router)
 api_router.include_router(crm_clients_router)
+api_router.include_router(crm_interests_router)
 api_router.include_router(client_access_router)
 api_router.include_router(crm_router)
 api_router.include_router(sales_router)
 api_router.include_router(manual_orders_router)
 api_router.include_router(orders_router)
+api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)

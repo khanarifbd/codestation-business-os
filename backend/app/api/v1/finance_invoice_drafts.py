@@ -10,6 +10,7 @@ from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.finance import Invoice, InvoiceItem
 from app.services.activity_log import record_activity
 from app.services.sales import calculate_line, calculate_totals
+from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
@@ -17,6 +18,10 @@ FinanceManager = Annotated[TenantContext, Depends(require_tenant_permission("fin
 
 
 class DraftInvoiceItemInput(BaseModel):
+    product_id: str | None = None
+    item_name: str | None = Field(default=None, max_length=220)
+    item_type: Literal["service", "non_stock_item"] = "service"
+    unit: str = Field(default="unit", min_length=1, max_length=40)
     description: str = Field(min_length=1, max_length=5000)
     quantity: Decimal = Field(gt=0, le=Decimal("100000000"))
     unit_price: Decimal = Field(ge=0, le=Decimal("1000000000000"))
@@ -62,24 +67,57 @@ def update_draft_invoice(
         raise HTTPException(status_code=409, detail="Only draft invoices can be edited")
     if payload.due_date and payload.due_date < payload.issue_date:
         raise HTTPException(status_code=400, detail="Invoice due date cannot be before issue date")
+    next_currency = payload.currency.upper()
+    if invoice.order_id and next_currency != invoice.currency:
+        raise HTTPException(status_code=409, detail="Order-linked invoice currency cannot be changed")
 
-    calculated = [
-        calculate_line(
-            quantity=item.quantity,
-            unit_price=item.unit_price,
-            discount_percent=item.discount_percent,
-            tax_rate=item.tax_rate,
-            tax_calculation_mode=payload.tax_calculation_mode,
-        )
-        for item in payload.items
-    ]
-    totals = calculate_totals(calculated)
     previous_items = db.scalars(
         select(InvoiceItem)
         .where(InvoiceItem.organization_id == tenant.organization_id, InvoiceItem.invoice_id == invoice.id)
         .order_by(InvoiceItem.sort_order.asc(), InvoiceItem.created_at.asc())
     ).all()
-    source_item_ids = [item.source_order_item_id for item in previous_items]
+    if next_currency != invoice.currency and any(item.product_id for item in previous_items):
+        if any(source.product_id is None for source in payload.items):
+            raise HTTPException(status_code=400, detail="Changing currency on a catalog invoice requires reselecting all catalog items")
+
+    prepared = []
+    calculated = []
+    for index, source in enumerate(payload.items):
+        previous = previous_items[index] if index < len(previous_items) else None
+        if source.product_id or source.item_name is not None or previous is None:
+            snapshot = resolve_sales_line(
+                db,
+                organization_id=tenant.organization_id,
+                currency=next_currency,
+                product_id=source.product_id,
+                item_name=source.item_name,
+                item_type=source.item_type,
+                unit=source.unit,
+                description=source.description,
+            )
+            product_id = snapshot.product_id
+            item_name = snapshot.item_name
+            sku = snapshot.sku
+            item_type = snapshot.item_type
+            unit = snapshot.unit
+            description = snapshot.description
+        else:
+            product_id = previous.product_id
+            item_name = previous.item_name_snapshot
+            sku = previous.sku_snapshot
+            item_type = previous.item_type_snapshot
+            unit = previous.unit_snapshot
+            description = source.description.strip()
+        line = calculate_line(
+            quantity=source.quantity,
+            unit_price=source.unit_price,
+            discount_percent=source.discount_percent,
+            tax_rate=source.tax_rate,
+            tax_calculation_mode=payload.tax_calculation_mode,
+        )
+        prepared.append((source, previous, product_id, item_name, sku, item_type, unit, description, line))
+        calculated.append(line)
+    totals = calculate_totals(calculated)
     before = {
         "subject": invoice.subject,
         "issue_date": invoice.issue_date.isoformat(),
@@ -92,7 +130,7 @@ def update_draft_invoice(
     invoice.subject = _clean(payload.subject)
     invoice.issue_date = payload.issue_date
     invoice.due_date = payload.due_date
-    invoice.currency = payload.currency.upper()
+    invoice.currency = next_currency
     invoice.tax_calculation_mode = payload.tax_calculation_mode
     invoice.subtotal = totals.subtotal
     invoice.discount_total = totals.discount_total
@@ -109,14 +147,19 @@ def update_draft_invoice(
             InvoiceItem.invoice_id == invoice.id,
         )
     )
-    for index, (source, line) in enumerate(zip(payload.items, calculated, strict=True)):
+    for index, (source, previous, product_id, item_name, sku, item_type, unit, description, line) in enumerate(prepared):
         db.add(
             InvoiceItem(
                 organization_id=tenant.organization_id,
                 invoice_id=invoice.id,
-                source_order_item_id=source_item_ids[index] if index < len(source_item_ids) else None,
+                source_order_item_id=previous.source_order_item_id if previous else None,
+                product_id=product_id,
                 sort_order=index,
-                description=source.description.strip(),
+                item_name_snapshot=item_name,
+                sku_snapshot=sku,
+                item_type_snapshot=item_type,
+                unit_snapshot=unit,
+                description=description,
                 quantity=source.quantity,
                 unit_price=source.unit_price,
                 discount_percent=source.discount_percent,

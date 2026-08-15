@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 OrderStatus = Literal["confirmed", "in_progress", "completed", "cancelled"]
 TaxCalculationMode = Literal["exclusive", "inclusive"]
+CustomSalesItemType = Literal["service", "non_stock_item"]
 
 
 class OrderStatusChange(BaseModel):
@@ -14,6 +15,10 @@ class OrderStatusChange(BaseModel):
 
 
 class OrderItemInput(BaseModel):
+    product_id: str | None = None
+    item_name: str | None = Field(default=None, max_length=220)
+    item_type: CustomSalesItemType = "service"
+    unit: str = Field(default="unit", min_length=1, max_length=40)
     description: str = Field(min_length=1, max_length=4000)
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
     unit_price: Decimal = Field(ge=0, max_digits=16, decimal_places=4)
@@ -37,9 +42,16 @@ class ManualOrderCreate(BaseModel):
 class OrderItemRead(BaseModel):
     id: str
     quotation_item_id: str | None
+    product_id: str | None
     sort_order: int
+    item_name_snapshot: str
+    sku_snapshot: str | None
+    item_type_snapshot: str
+    unit_snapshot: str
     description: str
     quantity: Decimal
+    fulfilled_quantity: Decimal = Decimal("0")
+    remaining_quantity: Decimal = Decimal("0")
     unit_price: Decimal
     discount_percent: Decimal
     tax_rate: Decimal
@@ -118,3 +130,56 @@ class OrderSummary(BaseModel):
     in_progress: int
     completed: int
     cancelled: int
+
+
+class FulfillmentLineInput(BaseModel):
+    order_item_id: str
+    quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
+
+
+class FulfillmentCreate(BaseModel):
+    warehouse_id: str
+    fulfillment_date: date
+    reference: str | None = Field(default=None, max_length=180)
+    items: list[FulfillmentLineInput] = Field(min_length=1, max_length=200)
+
+
+class FulfillmentReverse(BaseModel):
+    reversal_date: date
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class FulfillmentItemRead(BaseModel):
+    id: str
+    order_item_id: str
+    product_id: str
+    item_name: str
+    sku: str | None
+    quantity: Decimal
+    currency: str
+    base_currency: str
+    unit_cost: Decimal
+    total_cost: Decimal
+    unit_cost_base: Decimal
+    total_cost_base: Decimal
+    effective_rate_to_base: Decimal
+
+
+class FulfillmentRead(BaseModel):
+    id: str
+    fulfillment_number: str
+    order_id: str
+    warehouse_id: str
+    warehouse_name: str
+    fulfillment_date: date
+    status: str
+    reference: str | None
+    currency: str
+    base_currency: str
+    total_cogs: Decimal
+    total_cogs_base: Decimal
+    reversal_date: date | None
+    reversal_reason: str | None
+    reversed_at: datetime | None
+    items: list[FulfillmentItemRead]
+    created_at: datetime

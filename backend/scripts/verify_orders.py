@@ -143,12 +143,14 @@ def main() -> None:
         item_sql = text(
             """
             INSERT INTO quotation_items
-                (id, organization_id, quotation_id, sort_order, description,
+                (id, organization_id, quotation_id, sort_order,
+                 item_name_snapshot, item_type_snapshot, unit_snapshot, description,
                  quantity, unit_price, discount_percent, tax_rate,
                  line_subtotal, discount_amount, taxable_amount, tax_amount, line_total,
                  created_at, updated_at)
             VALUES
-                (:id, :organization_id, :quotation_id, 0, 'CI Service',
+                (:id, :organization_id, :quotation_id, 0,
+                 'CI Service', 'service', 'unit', 'CI Service',
                  2.0000, 100.0000, 10.0000, 15.0000,
                  200.00, 20.00, 180.00, 27.00, 207.00,
                  :now, :now)
@@ -185,6 +187,8 @@ def main() -> None:
             raise AssertionError("Accepted quotation did not create a confirmed numbered order")
         if created.total != 207 or len(created.items) != 1:
             raise AssertionError("Order did not preserve quotation totals and line items")
+        if created.items[0].item_name_snapshot != "CI Service" or created.items[0].item_type_snapshot != "service":
+            raise AssertionError("Order did not preserve sales line snapshots")
 
         order = db.scalar(select(Order).where(Order.id == created.id))
         if order is None or order.quotation_id != accepted_quotation_id:

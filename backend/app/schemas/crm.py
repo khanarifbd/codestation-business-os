@@ -68,6 +68,35 @@ class CrmMetaRead(BaseModel):
     default_currency: str | None
 
 
+class LeadInterestInput(BaseModel):
+    product_id: str | None = None
+    item_name: str | None = Field(default=None, max_length=220)
+    description: str | None = None
+    item_type: Literal["service", "non_stock_item"] = "service"
+    unit: str = Field(default="unit", min_length=1, max_length=40)
+    quantity: Decimal = Field(default=Decimal("1"), gt=0, le=Decimal("100000000"))
+    estimated_unit_price: Decimal | None = Field(default=None, ge=0, le=Decimal("1000000000000"))
+    notes: str | None = None
+
+
+class LeadInterestRead(BaseModel):
+    id: str
+    product_id: str | None
+    sort_order: int
+    item_name_snapshot: str
+    description: str | None
+    item_type_snapshot: str
+    unit_snapshot: str
+    currency: str
+    quantity: Decimal
+    estimated_unit_price: Decimal | None
+    notes: str | None
+
+
+class LeadInterestReplace(BaseModel):
+    interests: list[LeadInterestInput] = Field(default_factory=list, max_length=100)
+
+
 class LeadCreate(BaseModel):
     lead_type: Literal["company", "individual"] = "company"
     company_name: str | None = Field(default=None, max_length=220)
@@ -171,6 +200,7 @@ class LeadDetail(BaseModel):
     city: str | None
     address_line1: str | None
     notes: str | None
+    interests: list[LeadInterestRead] = Field(default_factory=list)
     interactions: list[LeadInteractionRead]
 
 

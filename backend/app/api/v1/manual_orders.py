@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -21,6 +20,7 @@ from app.schemas.orders import ManualOrderCreate, OrderDetail
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.sales import calculate_line, calculate_totals
+from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/sales", tags=["Orders"])
@@ -55,7 +55,6 @@ def create_manual_order(
     db: DbSession,
     tenant: OrderManager,
 ) -> OrderDetail:
-    # Local import avoids a circular dependency while keeping one canonical order serializer.
     from app.api.v1.orders import _detail
 
     client = db.scalar(
@@ -84,9 +83,7 @@ def create_manual_order(
             OrganizationFinancialSettings.organization_id == tenant.organization_id
         )
     )
-    profile = db.scalar(
-        select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id)
-    )
+    profile = db.scalar(select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id))
     address = db.scalar(
         select(OrganizationAddress)
         .where(OrganizationAddress.organization_id == tenant.organization_id)
@@ -103,17 +100,28 @@ def create_manual_order(
     currency = (payload.currency or client.currency or (financial.accounting_currency if financial else tenant.organization.currency)).upper()
     tax_mode = payload.tax_calculation_mode or (financial.tax_calculation_mode if financial else "exclusive")
 
+    prepared = []
     calculated_lines = []
     for item in payload.items:
-        calculated_lines.append(
-            calculate_line(
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                discount_percent=item.discount_percent,
-                tax_rate=item.tax_rate,
-                tax_calculation_mode=tax_mode,
-            )
+        snapshot = resolve_sales_line(
+            db,
+            organization_id=tenant.organization_id,
+            currency=currency,
+            product_id=item.product_id,
+            item_name=item.item_name,
+            item_type=item.item_type,
+            unit=item.unit,
+            description=item.description,
         )
+        calculated = calculate_line(
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            discount_percent=item.discount_percent,
+            tax_rate=item.tax_rate,
+            tax_calculation_mode=tax_mode,
+        )
+        prepared.append((item, snapshot, calculated))
+        calculated_lines.append(calculated)
     totals = calculate_totals(calculated_lines)
     now = datetime.now(timezone.utc)
 
@@ -151,14 +159,19 @@ def create_manual_order(
     db.add(order)
     db.flush()
 
-    for index, (item, calculated) in enumerate(zip(payload.items, calculated_lines, strict=True)):
+    for index, (item, snapshot, calculated) in enumerate(prepared):
         db.add(
             OrderItem(
                 organization_id=tenant.organization_id,
                 order_id=order.id,
                 quotation_item_id=None,
+                product_id=snapshot.product_id,
                 sort_order=index,
-                description=item.description.strip(),
+                item_name_snapshot=snapshot.item_name,
+                sku_snapshot=snapshot.sku,
+                item_type_snapshot=snapshot.item_type,
+                unit_snapshot=snapshot.unit,
+                description=snapshot.description,
                 quantity=item.quantity,
                 unit_price=item.unit_price,
                 discount_percent=item.discount_percent,

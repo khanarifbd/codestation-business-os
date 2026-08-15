@@ -150,19 +150,10 @@ def transfer_stock(
         raise HTTPException(status_code=404, detail="Active destination warehouse not found")
 
     transfer_quantity = qty(payload.quantity)
-    source_balance = _balance(
-        db,
-        tenant.organization_id,
-        product.id,
-        source.id,
-        lock=True,
-    )
+    source_balance = _balance(db, tenant.organization_id, product.id, source.id, lock=True)
     available = Decimal(source_balance.on_hand_quantity)
     if transfer_quantity > available:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Insufficient stock in {source.name}. Available {qty(available)}",
-        )
+        raise HTTPException(status_code=409, detail=f"Insufficient stock in {source.name}. Available {qty(available)}")
 
     transfer_id = str(uuid4())
     reference = payload.reference.strip() if payload.reference else None
@@ -182,6 +173,7 @@ def transfer_stock(
     )
     source_movement.movement_type = "transfer_out"
     incoming_cost = cost(abs(Decimal(source_movement.total_cost)))
+    incoming_cost_base = cost(abs(Decimal(source_movement.total_cost_base or 0)))
     destination_movement = _stock_in(
         db,
         organization_id=tenant.organization_id,
@@ -191,6 +183,8 @@ def transfer_stock(
         movement_date=payload.transfer_date,
         quantity=transfer_quantity,
         incoming_total_cost=incoming_cost,
+        incoming_total_cost_base=incoming_cost_base,
+        base_currency=tenant.organization.currency.upper(),
         source_type="warehouse_transfer",
         source_id=transfer_id,
         reference=reference,
@@ -214,6 +208,8 @@ def transfer_stock(
             "unit_cost": str(source_movement.unit_cost),
             "total_cost": str(incoming_cost),
             "currency": product.currency,
+            "total_cost_base": str(incoming_cost_base),
+            "base_currency": tenant.organization.currency.upper(),
             "reason": reason,
             "reference": reference,
         },
@@ -226,6 +222,7 @@ def transfer_stock(
         "status": "posted",
         "product_id": product.id,
         "currency": product.currency,
+        "base_currency": tenant.organization.currency.upper(),
         "quantity": transfer_quantity,
         "from_warehouse_id": source.id,
         "to_warehouse_id": destination.id,

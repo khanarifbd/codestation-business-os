@@ -7,11 +7,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 AccountType = Literal["bank", "cash", "mobile_wallet", "credit_card", "payment_gateway", "petty_cash", "other"]
 InvoiceLifecycleAction = Literal["send", "cancel"]
 PaymentMethod = Literal["bank_transfer", "cash", "card", "payoneer", "wise", "stripe", "paypal", "other"]
+CustomSalesItemType = Literal["service", "non_stock_item"]
 
-LEGACY_ACCOUNT_TYPE_ALIASES = {
-    "wallet": "mobile_wallet",
-    "gateway": "payment_gateway",
-}
+LEGACY_ACCOUNT_TYPE_ALIASES = {"wallet": "mobile_wallet", "gateway": "payment_gateway"}
 
 
 def _canonical_account_type(value):
@@ -113,6 +111,10 @@ class AccountTransferRead(BaseModel):
 
 
 class InvoiceItemInput(BaseModel):
+    product_id: str | None = None
+    item_name: str | None = Field(default=None, max_length=220)
+    item_type: CustomSalesItemType = "service"
+    unit: str = Field(default="unit", min_length=1, max_length=40)
     description: str = Field(min_length=1, max_length=5000)
     quantity: Decimal = Field(gt=0, le=Decimal("100000000"))
     unit_price: Decimal = Field(ge=0, le=Decimal("1000000000000"))
@@ -141,7 +143,12 @@ class InvoiceStatusAction(BaseModel):
 class InvoiceItemRead(BaseModel):
     id: str
     source_order_item_id: str | None
+    product_id: str | None
     sort_order: int
+    item_name_snapshot: str
+    sku_snapshot: str | None
+    item_type_snapshot: str
+    unit_snapshot: str
     description: str
     quantity: Decimal
     unit_price: Decimal

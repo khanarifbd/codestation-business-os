@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, FileText, Plus, Search, Send, Share2, X } from "lucide-react";
+import { ExternalLink, FileText, Plus, Search, Send, Share2, Trash2, X } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
 import { SearchableSelect } from "@/components/searchable-select";
@@ -15,23 +15,28 @@ type Order = { id: string; number: string; client_id: string; client_name: strin
 type Project = { id: string; number: string; order_id: string | null; client_id: string; name: string; currency: string; contract_value: string | number; status: string };
 type Meta = { clients: Client[]; orders: Order[]; projects: Project[] };
 type Invoice = { id: string; invoice_number: string; client_name: string; order_id: string | null; project_id: string | null; status: string; display_status: string; subject: string | null; issue_date: string; due_date: string | null; currency: string; total: string | number; amount_paid: string | number; balance_due: string | number };
-type Line = { description: string; quantity: string; unit_price: string; discount_percent: string; tax_rate: string };
+type CatalogItem = { id: string; sku: string; name: string; description: string | null; item_type: string; unit: string; currency: string; selling_price: string | number; tax_code_id: string | null; is_active: boolean };
+type TaxCode = { id: string; tax_kind: string; rate: string | number; is_active?: boolean };
+type Line = { product_id: string | null; item_name: string; item_type: "service" | "non_stock_item"; unit: string; description: string; quantity: string; unit_price: string; discount_percent: string; tax_rate: string };
 
-const blank = (): Line => ({ description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
+const blank = (): Line => ({ product_id: null, item_name: "", item_type: "service", unit: "unit", description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
 const today = () => new Date().toISOString().slice(0, 10);
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function lineTotal(line: Line, taxMode: string) { const subtotal = Number(line.quantity || 0) * Number(line.unit_price || 0); const discounted = subtotal * (1 - Number(line.discount_percent || 0) / 100); if (taxMode === "inclusive") return discounted; return discounted * (1 + Number(line.tax_rate || 0) / 100); }
 
 export function InvoicesWorkspaceV2() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [meta, setMeta] = useState<Meta>({ clients: [], orders: [], projects: [] });
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
+  const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [source, setSource] = useState<Source>("project");
-  const [form, setForm] = useState({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", notes: "", lines: [blank()] });
+  const [form, setForm] = useState({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] });
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [currencyFilter, setCurrencyFilter] = useState("all");
@@ -40,15 +45,21 @@ export function InvoicesWorkspaceV2() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [metaResponse, invoiceResponse] = await Promise.all([
+      const [metaResponse, invoiceResponse, catalogResponse, taxResponse] = await Promise.all([
         fetch("/api/finance/meta", { cache: "no-store" }),
         fetch("/api/finance/invoice-page?limit=100", { cache: "no-store" }),
+        fetch("/api/inventory/products", { cache: "no-store" }),
+        fetch("/api/accounting/tax/codes", { cache: "no-store" }),
       ]);
       const metaPayload = await metaResponse.json();
       const invoicePayload = await invoiceResponse.json();
+      const catalogPayload = await catalogResponse.json();
+      const taxPayload = await taxResponse.json();
       if (!metaResponse.ok) throw new Error(getApiErrorMessage(metaPayload, "Could not load invoice setup"));
       if (!invoiceResponse.ok) throw new Error(getApiErrorMessage(invoicePayload, "Could not load invoices"));
-      setMeta(metaPayload); setInvoices(invoicePayload.items ?? []);
+      if (!catalogResponse.ok) throw new Error(getApiErrorMessage(catalogPayload, "Could not load products and services"));
+      if (!taxResponse.ok) throw new Error(getApiErrorMessage(taxPayload, "Could not load sales tax setup"));
+      setMeta(metaPayload); setInvoices(invoicePayload.items ?? []); setCatalog(catalogPayload ?? []); setTaxCodes(taxPayload ?? []);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not load invoices"); }
     finally { setLoading(false); }
   }, []);
@@ -57,6 +68,8 @@ export function InvoicesWorkspaceV2() {
   const projectOptions = useMemo(() => meta.projects.filter((p) => p.status !== "cancelled").map((p) => ({ value: p.id, label: `${p.number} · ${p.name} · ${money(p.contract_value, p.currency)}`, keywords: `${p.number} ${p.name} ${p.currency} ${p.contract_value}` })), [meta.projects]);
   const orderOptions = useMemo(() => meta.orders.filter((o) => o.status !== "cancelled").map((o) => ({ value: o.id, label: `${o.number} · ${o.client_name} · ${money(o.total, o.currency)}`, keywords: `${o.number} ${o.client_name} ${o.currency} ${o.total}` })), [meta.orders]);
   const clientOptions = useMemo(() => meta.clients.map((c) => ({ value: c.id, label: `${c.code} · ${c.name}`, keywords: `${c.code} ${c.name}` })), [meta.clients]);
+  const availableCatalog = useMemo(() => catalog.filter((item) => item.is_active && (!form.currency || item.currency === form.currency)), [catalog, form.currency]);
+  const lineSourceOptions = useMemo(() => [{ value: "custom:service", label: "+ Custom service" }, { value: "custom:non_stock_item", label: "+ Custom non-stock item" }, ...availableCatalog.map((item) => ({ value: `catalog:${item.id}`, label: `${item.sku} · ${item.name}`, keywords: `${item.item_type} ${item.unit}` }))], [availableCatalog]);
   const statusOptions = useMemo(() => ["all", ...Array.from(new Set(invoices.map((invoice) => invoice.status)))], [invoices]);
   const currencyOptions = useMemo(() => ["all", ...Array.from(new Set(invoices.map((invoice) => invoice.currency)))], [invoices]);
   const filteredInvoices = useMemo(() => {
@@ -76,25 +89,28 @@ export function InvoicesWorkspaceV2() {
   }, [currencyFilter, dueFilter, invoices, query, statusFilter]);
   const overdueCount = useMemo(() => invoices.filter((invoice) => invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
   const outstandingCount = useMemo(() => invoices.filter((invoice) => Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
+  const draftTotal = useMemo(() => form.lines.reduce((sum, line) => sum + lineTotal(line, form.tax_calculation_mode), 0), [form.lines, form.tax_calculation_mode]);
 
-  function resetSource(next: Source) { setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", notes: "", lines: [blank()] }); setError(null); }
+  function resetSource(next: Source) { setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] }); setError(null); }
   function clearFilters() { setQuery(""); setStatusFilter("all"); setCurrencyFilter("all"); setDueFilter("all"); }
+  function updateLine(index: number, patch: Partial<Line>) { setForm((current) => ({ ...current, lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line) })); }
+  function changeManualCurrency(value: string) { setForm((current) => ({ ...current, currency: value, lines: current.lines.some((line) => line.product_id) ? [blank()] : current.lines })); if (form.lines.some((line) => line.product_id)) setError("Currency changed. Catalog lines were cleared so different currencies cannot be mixed."); }
+  function selectLineSource(index: number, value: string) {
+    if (value === "custom:service" || value === "custom:non_stock_item") { updateLine(index, { product_id: null, item_name: "", item_type: value.endsWith("non_stock_item") ? "non_stock_item" : "service", unit: "unit", description: "", unit_price: "0", tax_rate: "0" }); return; }
+    const product = availableCatalog.find((item) => item.id === value.replace("catalog:", ""));
+    if (!product) return;
+    const tax = taxCodes.find((item) => item.id === product.tax_code_id && item.tax_kind === "sales" && item.is_active !== false);
+    updateLine(index, { product_id: product.id, item_name: product.name, item_type: product.item_type === "non_stock_item" ? "non_stock_item" : "service", unit: product.unit, description: product.description || product.name, unit_price: String(product.selling_price), tax_rate: String(tax?.rate ?? 0) });
+  }
 
   async function shareInvoice(invoice: Invoice) {
     setError(null); setMessage(null);
     const relativeUrl = `/dashboard/finance/invoices/${invoice.id}/print`;
     const shareUrl = `${window.location.origin}${relativeUrl}`;
     try {
-      if (navigator.share) {
-        await navigator.share({ title: `Invoice ${invoice.invoice_number}`, text: `${invoice.invoice_number} · ${invoice.client_name}`, url: shareUrl });
-        return;
-      }
-      await navigator.clipboard.writeText(shareUrl);
-      setMessage(`Invoice ${invoice.invoice_number} link copied to clipboard.`);
-    } catch (reason) {
-      if (reason instanceof DOMException && reason.name === "AbortError") return;
-      setError("Could not share this invoice. Open PDF View and use your browser share or copy the URL.");
-    }
+      if (navigator.share) { await navigator.share({ title: `Invoice ${invoice.invoice_number}`, text: `${invoice.invoice_number} · ${invoice.client_name}`, url: shareUrl }); return; }
+      await navigator.clipboard.writeText(shareUrl); setMessage(`Invoice ${invoice.invoice_number} link copied to clipboard.`);
+    } catch (reason) { if (reason instanceof DOMException && reason.name === "AbortError") return; setError("Could not share this invoice. Open PDF View and use your browser share or copy the URL."); }
   }
 
   async function submit(event: FormEvent) {
@@ -103,11 +119,13 @@ export function InvoicesWorkspaceV2() {
       let response: Response;
       if (source === "project") response = await fetch(`/api/finance/invoices/from-project/${form.source_id}`, { method: "POST" });
       else if (source === "order") response = await fetch(`/api/finance/invoices/from-order/${form.source_id}`, { method: "POST" });
-      else response = await fetch("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: "exclusive", notes: form.notes || null, items: form.lines.map((line) => ({ description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
+      else {
+        if (form.lines.some((line) => !(line.item_name || line.description).trim() || !line.description.trim() || Number(line.quantity) <= 0 || Number(line.unit_price) < 0)) throw new Error("Complete all invoice lines.");
+        response = await fetch("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: form.tax_calculation_mode, notes: form.notes || null, items: form.lines.map((line) => ({ product_id: line.product_id, item_name: line.item_name || line.description, item_type: line.item_type, unit: line.unit || "unit", description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
+      }
       const payload = await response.json();
       if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not create invoice"));
-      setMessage(`Invoice ${payload.invoice_number} created as draft. Open it to review or edit before sending.`);
-      setShowForm(false); await load();
+      setMessage(`Invoice ${payload.invoice_number} created as draft. Open it to review or edit before sending.`); setShowForm(false); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create invoice"); }
     finally { setSaving(false); }
   }
@@ -124,29 +142,30 @@ export function InvoicesWorkspaceV2() {
   }
 
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Invoices</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Create, review and edit drafts here. Once sent, invoice details are locked and collection continues from Money In.</p></div><button onClick={() => setShowForm(true)} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Plus className="size-4" />New invoice</button></div>
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Invoices</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Create from a project/order or bill reusable catalog items and one-time custom work directly.</p></div><button onClick={() => setShowForm(true)} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Plus className="size-4" />New invoice</button></div>
     <AccountingNav />
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
     {showForm ? <section className="rounded-2xl border bg-white p-5">
-      <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">Create invoice</h2><p className="mt-1 text-sm text-neutral-500">Choose the source. Project and order details are copied automatically.</p></div><button onClick={() => setShowForm(false)} className="rounded-lg p-2 hover:bg-neutral-100"><X className="size-5" /></button></div>
-      <div className="mt-4 flex flex-wrap gap-2">{(["project", "order", "client"] as Source[]).map((item) => <button type="button" key={item} onClick={() => resetSource(item)} className={`rounded-xl px-4 py-2 text-sm font-medium ${source === item ? "bg-neutral-950 text-white" : "border"}`}>{item === "client" ? "Manual client invoice" : item === "project" ? "From project" : "From order"}</button>)}</div>
+      <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">Create invoice</h2><p className="mt-1 text-sm text-neutral-500">Project and order invoices copy their locked sales snapshot. Manual client invoices can use catalog or custom lines.</p></div><button onClick={() => setShowForm(false)} className="rounded-lg p-2 hover:bg-neutral-100"><X className="size-5" /></button></div>
+      <div className="mt-4 flex flex-wrap gap-2">{(["project", "order", "client"] as Source[]).map((item) => <button type="button" key={item} onClick={() => resetSource(item)} className={`rounded-xl px-4 py-2 text-sm font-medium ${source === item ? "bg-neutral-950 text-white" : "border"}`}>{item === "client" ? "Direct client invoice" : item === "project" ? "From project" : "From order"}</button>)}</div>
       <form onSubmit={submit} className="mt-5 space-y-4">
-        {source === "project" ? <SearchableSelect label="Project" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={projectOptions} placeholder="Select project" searchPlaceholder="Search project..." /> : null}
-        {source === "order" ? <SearchableSelect label="Order" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={orderOptions} placeholder="Select order" searchPlaceholder="Search order..." /> : null}
+        {source === "project" ? <><SearchableSelect label="Project" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={projectOptions} placeholder="Select project" searchPlaceholder="Search project..." />{!projectOptions.length ? <p className="text-xs text-neutral-500">No uninvoiced projects are available. A full active invoice can only be created once per project/order.</p> : null}</> : null}
+        {source === "order" ? <><SearchableSelect label="Order" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={orderOptions} placeholder="Select order" searchPlaceholder="Search order..." />{!orderOptions.length ? <p className="text-xs text-neutral-500">No uninvoiced orders are available.</p> : null}</> : null}
         {source === "client" ? <><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <SearchableSelect label="Client" required clearable={false} value={form.client_id} onValueChange={(value) => { const client = meta.clients.find((item) => item.id === value); setForm((v) => ({ ...v, client_id: value, currency: client?.currency ?? v.currency })); }} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
-          <Field label="Subject"><input value={form.subject} onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" placeholder="Website development" /></Field>
-          <SearchableSelect label="Currency" required clearable={false} value={form.currency} onValueChange={(value) => setForm((v) => ({ ...v, currency: value }))} options={CURRENCY_OPTIONS} placeholder="Select currency" searchPlaceholder="Search currency..." />
-          <Field label="Issue date"><input required type="date" value={form.issue_date} onChange={(e) => setForm((v) => ({ ...v, issue_date: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
-          <Field label="Due date"><input type="date" value={form.due_date} onChange={(e) => setForm((v) => ({ ...v, due_date: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
+          <SearchableSelect label="Client" required clearable={false} value={form.client_id} onValueChange={(value) => { const client = meta.clients.find((item) => item.id === value); setForm((v) => ({ ...v, client_id: value })); if (client?.currency) changeManualCurrency(client.currency); }} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
+          <Field label="Subject"><input value={form.subject} onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))} className="h-11 w-full rounded-xl border px-3 text-sm" placeholder="Website development" /></Field>
+          <SearchableSelect label="Currency" required clearable={false} value={form.currency} onValueChange={changeManualCurrency} options={CURRENCY_OPTIONS} placeholder="Select currency" searchPlaceholder="Search currency..." />
+          <Field label="Issue date"><input required type="date" value={form.issue_date} onChange={(e) => setForm((v) => ({ ...v, issue_date: e.target.value }))} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field>
+          <Field label="Due date"><input type="date" value={form.due_date} onChange={(e) => setForm((v) => ({ ...v, due_date: e.target.value }))} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field>
+          <Field label="Tax calculation"><select value={form.tax_calculation_mode} onChange={(e) => setForm((v) => ({ ...v, tax_calculation_mode: e.target.value }))} className="h-11 w-full rounded-xl border bg-white px-3 text-sm"><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></Field>
         </div>
-        <div><div className="mb-2 flex items-center justify-between"><div><h3 className="font-medium">Invoice items</h3><p className="mt-1 text-xs text-neutral-400">Add what you are billing the client for.</p></div><button type="button" onClick={() => setForm((v) => ({ ...v, lines: [...v.lines, blank()] }))} className="text-sm font-medium">+ Add item</button></div>
-          <div className="hidden grid-cols-6 gap-3 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 lg:grid"><span className="col-span-2">Description</span><span>Quantity</span><span>Unit price</span><span>Discount %</span><span>Tax %</span></div>
-          <div className="space-y-3">{form.lines.map((line, index) => <div key={index} className="grid gap-3 rounded-xl border p-3 lg:grid-cols-6"><input required value={line.description} onChange={(e) => setForm((v) => ({ ...v, lines: v.lines.map((x, i) => i === index ? { ...x, description: e.target.value } : x) }))} className="rounded-lg border px-3 py-2 lg:col-span-2" placeholder="Description" /><input type="number" min="0.01" step="0.01" value={line.quantity} onChange={(e) => setForm((v) => ({ ...v, lines: v.lines.map((x, i) => i === index ? { ...x, quantity: e.target.value } : x) }))} className="rounded-lg border px-3 py-2" /><input type="number" min="0" step="0.01" value={line.unit_price} onChange={(e) => setForm((v) => ({ ...v, lines: v.lines.map((x, i) => i === index ? { ...x, unit_price: e.target.value } : x) }))} className="rounded-lg border px-3 py-2" /><input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(e) => setForm((v) => ({ ...v, lines: v.lines.map((x, i) => i === index ? { ...x, discount_percent: e.target.value } : x) }))} className="rounded-lg border px-3 py-2" /><input type="number" min="0" step="0.01" value={line.tax_rate} onChange={(e) => setForm((v) => ({ ...v, lines: v.lines.map((x, i) => i === index ? { ...x, tax_rate: e.target.value } : x) }))} className="rounded-lg border px-3 py-2" /></div>)}</div>
-        </div></> : null}
-        <div className="flex justify-end"><button disabled={saving} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50">{saving ? "Creating…" : "Create draft invoice"}</button></div>
+        <div><div className="mb-3 flex items-center justify-between"><div><h3 className="font-medium">Invoice lines</h3><p className="mt-1 text-xs text-neutral-400">Catalog is optional. One-time project/service billing does not create inventory items.</p></div><button type="button" onClick={() => setForm((v) => ({ ...v, lines: [...v.lines, blank()] }))} className="rounded-lg border px-3 py-2 text-sm font-medium">+ Add line</button></div>
+          <div className="space-y-3">{form.lines.map((line, index) => { const sourceValue = line.product_id ? `catalog:${line.product_id}` : line.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="rounded-2xl border p-4"><div className="grid gap-3 lg:grid-cols-[1.4fr_1.4fr_.7fr_.7fr]"><SearchableSelect label="Source" value={sourceValue} onValueChange={(value) => selectLineSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input required disabled={Boolean(line.product_id)} value={line.item_name} onChange={(e) => updateLine(index, { item_name: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input type="number" min="0.0001" step="any" value={line.quantity} onChange={(e) => updateLine(index, { quantity: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={Boolean(line.product_id)} value={line.unit} onChange={(e) => updateLine(index, { unit: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="mt-3 grid gap-3 lg:grid-cols-[2fr_.8fr_.7fr_.7fr_auto]"><Field label="Description"><input required value={line.description} onChange={(e) => updateLine(index, { description: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><input type="number" min="0" step="any" value={line.unit_price} onChange={(e) => updateLine(index, { unit_price: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Discount %"><input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(e) => updateLine(index, { discount_percent: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input type="number" min="0" max="100" step="0.01" value={line.tax_rate} onChange={(e) => updateLine(index, { tax_rate: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="flex items-end gap-3"><div className="pb-2 text-right"><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{money(lineTotal(line, form.tax_calculation_mode), form.currency || "")}</p></div><button type="button" disabled={form.lines.length === 1} onClick={() => setForm((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== index) }))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" /></button></div></div></div>; })}</div>
+          <div className="mt-4 flex justify-end rounded-xl bg-neutral-50 p-4"><div className="text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Estimated total</p><p className="mt-1 text-lg font-semibold">{money(draftTotal, form.currency || "")}</p></div></div>
+        </div><Field label="Client notes"><textarea value={form.notes} onChange={(e) => setForm((v) => ({ ...v, notes: e.target.value }))} className="min-h-24 w-full rounded-xl border p-3 text-sm" /></Field></> : null}
+        <div className="flex justify-end"><button disabled={saving || ((source === "project" || source === "order") && !form.source_id)} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50">{saving ? "Creating…" : "Create draft invoice"}</button></div>
       </form>
     </section> : null}
 

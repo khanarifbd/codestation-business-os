@@ -116,12 +116,20 @@ class Invoice(TenantOwnedMixin, Base):
 
 class InvoiceItem(TenantOwnedMixin, Base):
     __tablename__ = "invoice_items"
-    __table_args__ = (Index("ix_invoice_items_org_invoice_sort", "organization_id", "invoice_id", "sort_order"),)
+    __table_args__ = (
+        Index("ix_invoice_items_org_invoice_sort", "organization_id", "invoice_id", "sort_order"),
+        Index("ix_invoice_items_org_product", "organization_id", "product_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     invoice_id: Mapped[str] = mapped_column(String(36), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
     source_order_item_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("order_items.id", ondelete="SET NULL"), nullable=True)
+    product_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(default=0, nullable=False)
+    item_name_snapshot: Mapped[str] = mapped_column(String(220), nullable=False)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    item_type_snapshot: Mapped[str] = mapped_column(String(24), default="service", nullable=False)
+    unit_snapshot: Mapped[str] = mapped_column(String(40), default="unit", nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(16, 4), nullable=False)

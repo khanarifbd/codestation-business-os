@@ -86,12 +86,14 @@ def seed_accepted_quotation(connection, *, organization_id: str, user_id: str, c
         text(
             """
             INSERT INTO quotation_items
-                (id, organization_id, quotation_id, sort_order, description,
+                (id, organization_id, quotation_id, sort_order,
+                 item_name_snapshot, item_type_snapshot, unit_snapshot, description,
                  quantity, unit_price, discount_percent, tax_rate,
                  line_subtotal, discount_amount, taxable_amount, tax_amount, line_total,
                  created_at, updated_at)
             VALUES
-                (:id, :organization_id, :quotation_id, 0, 'CI Project Service',
+                (:id, :organization_id, :quotation_id, 0,
+                 'CI Project Service', 'service', 'project', 'CI Project Service',
                  1.0000, 500.0000, 0.0000, 0.0000,
                  500.00, 0.00, 500.00, 0.00, 500.00,
                  :now, :now)

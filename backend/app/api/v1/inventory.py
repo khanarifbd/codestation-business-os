@@ -13,7 +13,7 @@ from app.models.expenses import Vendor
 from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, PurchaseReceiptItem, StockMovement, Warehouse
 from app.models.tax import TaxCode
 from app.schemas.inventory import AdjustmentCreate, CategoryCreate, ProductCreate, PurchaseReceiptCreate, WarehouseCreate
-from app.services.accounting_posting import PostingLine, post_journal, system_account
+from app.services.accounting_posting import PostingLine, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
@@ -54,20 +54,89 @@ def _balance(db: DbSession, organization_id: str, product_id: str, warehouse_id:
     if lock: query=query.with_for_update()
     row=db.scalar(query)
     if row is None:
-        row=InventoryBalance(organization_id=organization_id, product_id=product_id, warehouse_id=warehouse_id, on_hand_quantity=Decimal("0"), average_unit_cost=Decimal("0"), inventory_value=Decimal("0"))
+        row=InventoryBalance(
+            organization_id=organization_id,
+            product_id=product_id,
+            warehouse_id=warehouse_id,
+            on_hand_quantity=Decimal("0"),
+            average_unit_cost=Decimal("0"),
+            inventory_value=Decimal("0"),
+            average_unit_cost_base=Decimal("0"),
+            inventory_value_base=Decimal("0"),
+        )
         db.add(row); db.flush()
     return row
 
 
-def _stock_in(db: DbSession, *, organization_id: str, user_id: str, product: Product, warehouse: Warehouse, movement_date, quantity: Decimal, incoming_total_cost: Decimal, source_type: str, source_id: str, reference: str | None, reason: str | None=None) -> StockMovement:
+def _require_known_base_cost(balance: InventoryBalance, product: Product) -> tuple[Decimal, Decimal]:
+    if balance.average_unit_cost_base is None or balance.inventory_value_base is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Historical base-currency inventory cost is missing for {product.sku}. "
+                "This stock existed before base-cost tracking and cannot be revalued silently. "
+                "Reconcile the opening inventory carrying value before moving or fulfilling it."
+            ),
+        )
+    return Decimal(balance.average_unit_cost_base), Decimal(balance.inventory_value_base)
+
+
+def _stock_in(
+    db: DbSession,
+    *,
+    organization_id: str,
+    user_id: str,
+    product: Product,
+    warehouse: Warehouse,
+    movement_date,
+    quantity: Decimal,
+    incoming_total_cost: Decimal,
+    incoming_total_cost_base: Decimal,
+    base_currency: str,
+    source_type: str,
+    source_id: str,
+    reference: str | None,
+    reason: str | None=None,
+) -> StockMovement:
     bal=_balance(db, organization_id, product.id, warehouse.id)
     old_qty=Decimal(bal.on_hand_quantity); old_value=Decimal(bal.inventory_value)
+    if old_qty != 0:
+        _, old_base_value=_require_known_base_cost(bal, product)
+    else:
+        old_base_value=Decimal(bal.inventory_value_base or 0)
     new_qty=qty(old_qty + quantity)
     new_value=cost(old_value + incoming_total_cost)
+    new_base_value=money(old_base_value + incoming_total_cost_base)
     new_avg=cost(new_value / new_qty) if new_qty > 0 else Decimal("0")
-    bal.on_hand_quantity=new_qty; bal.inventory_value=new_value; bal.average_unit_cost=new_avg
+    new_avg_base=cost(new_base_value / new_qty) if new_qty > 0 else Decimal("0")
+    bal.on_hand_quantity=new_qty
+    bal.inventory_value=new_value
+    bal.average_unit_cost=new_avg
+    bal.inventory_value_base=cost(new_base_value)
+    bal.average_unit_cost_base=new_avg_base
     unit_cost=cost(incoming_total_cost / quantity) if quantity else Decimal("0")
-    movement=StockMovement(organization_id=organization_id, product_id=product.id, warehouse_id=warehouse.id, movement_date=movement_date, movement_type="purchase" if source_type=="purchase_receipt" else "adjustment_in", quantity=qty(quantity), unit_cost=unit_cost, total_cost=cost(incoming_total_cost), quantity_after=new_qty, average_cost_after=new_avg, source_type=source_type, source_id=source_id, reference=reference, reason=reason, created_by_user_id=user_id)
+    unit_cost_base=cost(incoming_total_cost_base / quantity) if quantity else Decimal("0")
+    movement=StockMovement(
+        organization_id=organization_id,
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        movement_date=movement_date,
+        movement_type="purchase" if source_type=="purchase_receipt" else "adjustment_in",
+        quantity=qty(quantity),
+        unit_cost=unit_cost,
+        total_cost=cost(incoming_total_cost),
+        quantity_after=new_qty,
+        average_cost_after=new_avg,
+        base_currency=base_currency.upper(),
+        unit_cost_base=unit_cost_base,
+        total_cost_base=cost(incoming_total_cost_base),
+        average_cost_base_after=new_avg_base,
+        source_type=source_type,
+        source_id=source_id,
+        reference=reference,
+        reason=reason,
+        created_by_user_id=user_id,
+    )
     db.add(movement)
     product.last_purchase_cost=unit_cost if source_type=="purchase_receipt" else product.last_purchase_cost
     if Decimal(product.standard_cost)==0 and source_type=="purchase_receipt": product.standard_cost=unit_cost
@@ -80,25 +149,60 @@ def _stock_out(db: DbSession, *, organization_id: str, user_id: str, product: Pr
     if quantity > old_qty and not product.allow_negative_stock:
         raise HTTPException(409, f"Insufficient stock for {product.sku}. Available {old_qty}")
     avg=Decimal(bal.average_unit_cost)
+    avg_base, old_base_value=_require_known_base_cost(bal, product)
     total=cost(avg * quantity)
+    total_base=money(avg_base * quantity)
     new_qty=qty(old_qty - quantity)
     new_value=cost(Decimal(bal.inventory_value) - total)
-    if new_qty == 0: new_value=Decimal("0")
-    bal.on_hand_quantity=new_qty; bal.inventory_value=new_value
-    movement=StockMovement(organization_id=organization_id, product_id=product.id, warehouse_id=warehouse.id, movement_date=movement_date, movement_type="adjustment_out", quantity=-qty(quantity), unit_cost=cost(avg), total_cost=-total, quantity_after=new_qty, average_cost_after=cost(avg), source_type=source_type, source_id=source_id, reference=reference, reason=reason, created_by_user_id=user_id)
+    new_base_value=money(old_base_value - total_base)
+    if new_qty == 0:
+        new_value=Decimal("0")
+        new_base_value=Decimal("0")
+    bal.on_hand_quantity=new_qty
+    bal.inventory_value=new_value
+    bal.inventory_value_base=cost(new_base_value)
+    movement=StockMovement(
+        organization_id=organization_id,
+        product_id=product.id,
+        warehouse_id=warehouse.id,
+        movement_date=movement_date,
+        movement_type="adjustment_out",
+        quantity=-qty(quantity),
+        unit_cost=cost(avg),
+        total_cost=-total,
+        quantity_after=new_qty,
+        average_cost_after=cost(avg),
+        base_currency=movement_base_currency(db, organization_id),
+        unit_cost_base=cost(avg_base),
+        total_cost_base=-cost(total_base),
+        average_cost_base_after=cost(avg_base),
+        source_type=source_type,
+        source_id=source_id,
+        reference=reference,
+        reason=reason,
+        created_by_user_id=user_id,
+    )
     db.add(movement); return movement
+
+
+def movement_base_currency(db: DbSession, organization_id: str) -> str:
+    from app.models.organization import Organization
+    value=db.scalar(select(Organization.currency).where(Organization.id==organization_id))
+    if not value: raise HTTPException(404, "Organization not found")
+    return str(value).upper()
 
 
 @router.get("/overview")
 def overview(db: DbSession, tenant: Viewer):
     stock_products=db.scalar(select(func.count()).select_from(Product).where(Product.organization_id==tenant.organization_id, Product.item_type=="stock_item", Product.is_active.is_(True))) or 0
     service_items=db.scalar(select(func.count()).select_from(Product).where(Product.organization_id==tenant.organization_id, Product.item_type=="service", Product.is_active.is_(True))) or 0
-    value=db.scalar(select(func.coalesce(func.sum(InventoryBalance.inventory_value),0)).where(InventoryBalance.organization_id==tenant.organization_id)) or 0
+    value=db.scalar(select(func.coalesce(func.sum(InventoryBalance.inventory_value_base),0)).where(InventoryBalance.organization_id==tenant.organization_id,InventoryBalance.inventory_value_base.is_not(None))) or 0
+    unknown=db.scalar(select(func.count()).select_from(InventoryBalance).where(InventoryBalance.organization_id==tenant.organization_id,InventoryBalance.on_hand_quantity!=0,InventoryBalance.inventory_value_base.is_(None))) or 0
     low=[]
     rows=db.execute(select(Product, func.coalesce(func.sum(InventoryBalance.on_hand_quantity),0)).outerjoin(InventoryBalance, InventoryBalance.product_id==Product.id).where(Product.organization_id==tenant.organization_id, Product.item_type=="stock_item", Product.is_active.is_(True)).group_by(Product.id)).all()
     for p,on_hand in rows:
         if Decimal(on_hand) <= Decimal(p.reorder_level): low.append({"id":p.id,"sku":p.sku,"name":p.name,"on_hand":qty(on_hand),"reorder_level":p.reorder_level})
-    return {"stock_products":stock_products,"service_items":service_items,"inventory_value":cost(value),"low_stock_count":len(low),"low_stock":low[:20]}
+    return {"stock_products":stock_products,"service_items":service_items,"inventory_value":money(value),"base_currency":tenant.organization.currency.upper(),"unknown_base_cost_balances":unknown,"low_stock_count":len(low),"low_stock":low[:20]}
 
 
 @router.get("/categories")
@@ -154,13 +258,13 @@ def create_product(payload: ProductCreate, request: Request, db: DbSession, tena
 @router.get("/stock")
 def stock(db: DbSession, tenant: Viewer):
     rows=db.execute(select(InventoryBalance,Product,Warehouse).join(Product,Product.id==InventoryBalance.product_id).join(Warehouse,Warehouse.id==InventoryBalance.warehouse_id).where(InventoryBalance.organization_id==tenant.organization_id).order_by(Product.name,Warehouse.name)).all()
-    return [{"product_id":p.id,"sku":p.sku,"product_name":p.name,"warehouse_id":w.id,"warehouse_name":w.name,"on_hand":b.on_hand_quantity,"average_unit_cost":b.average_unit_cost,"inventory_value":b.inventory_value,"currency":p.currency,"reorder_level":p.reorder_level} for b,p,w in rows]
+    return [{"product_id":p.id,"sku":p.sku,"product_name":p.name,"warehouse_id":w.id,"warehouse_name":w.name,"on_hand":b.on_hand_quantity,"average_unit_cost":b.average_unit_cost,"inventory_value":b.inventory_value,"currency":p.currency,"average_unit_cost_base":b.average_unit_cost_base,"inventory_value_base":b.inventory_value_base,"base_currency":tenant.organization.currency.upper(),"reorder_level":p.reorder_level} for b,p,w in rows]
 
 
 @router.get("/movements")
 def movements(db: DbSession, tenant: Viewer, limit: int=200):
     rows=db.execute(select(StockMovement,Product,Warehouse).join(Product,Product.id==StockMovement.product_id).join(Warehouse,Warehouse.id==StockMovement.warehouse_id).where(StockMovement.organization_id==tenant.organization_id).order_by(StockMovement.movement_date.desc(),StockMovement.created_at.desc()).limit(min(max(limit,1),500))).all()
-    return [{"id":m.id,"movement_date":m.movement_date,"movement_type":m.movement_type,"product_id":p.id,"sku":p.sku,"product_name":p.name,"warehouse_id":w.id,"warehouse_name":w.name,"quantity":m.quantity,"unit_cost":m.unit_cost,"total_cost":m.total_cost,"quantity_after":m.quantity_after,"average_cost_after":m.average_cost_after,"source_type":m.source_type,"source_id":m.source_id,"reference":m.reference,"reason":m.reason} for m,p,w in rows]
+    return [{"id":m.id,"movement_date":m.movement_date,"movement_type":m.movement_type,"product_id":p.id,"sku":p.sku,"product_name":p.name,"warehouse_id":w.id,"warehouse_name":w.name,"quantity":m.quantity,"unit_cost":m.unit_cost,"total_cost":m.total_cost,"quantity_after":m.quantity_after,"average_cost_after":m.average_cost_after,"base_currency":m.base_currency,"unit_cost_base":m.unit_cost_base,"total_cost_base":m.total_cost_base,"average_cost_base_after":m.average_cost_base_after,"source_type":m.source_type,"source_id":m.source_id,"reference":m.reference,"reason":m.reason} for m,p,w in rows]
 
 
 @router.post("/adjustments", status_code=201)
@@ -169,21 +273,34 @@ def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenan
     warehouse=db.scalar(select(Warehouse).where(Warehouse.id==payload.warehouse_id,Warehouse.organization_id==tenant.organization_id,Warehouse.is_active.is_(True)))
     if product is None: raise HTTPException(404,"Active stock product not found")
     if warehouse is None: raise HTTPException(404,"Active warehouse not found")
-    source_id=str(uuid4())
-    delta=qty(payload.quantity_delta)
+    source_id=str(uuid4()); delta=qty(payload.quantity_delta); base_currency=tenant.organization.currency.upper(); reference=clean(payload.reference)
+    movement: StockMovement
+    source_total=Decimal("0"); base_total=Decimal("0"); applied_rate=Decimal("1")
     if delta>0:
         bal=_balance(db,tenant.organization_id,product.id,warehouse.id)
         unit=cost(payload.unit_cost if payload.unit_cost is not None else bal.average_unit_cost or product.standard_cost)
-        _stock_in(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=delta,incoming_total_cost=cost(unit*delta),source_type="stock_adjustment",source_id=source_id,reference=clean(payload.reference),reason=payload.reason.strip())
+        source_total=cost(unit*delta)
+        base_total,applied_rate=to_base_amount(db,tenant.organization_id,base_currency,source_total,product.currency)
+        movement=_stock_in(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=delta,incoming_total_cost=source_total,incoming_total_cost_base=base_total,base_currency=base_currency,source_type="stock_adjustment",source_id=source_id,reference=reference,reason=payload.reason.strip())
     else:
-        _stock_out(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=abs(delta),source_type="stock_adjustment",source_id=source_id,reference=clean(payload.reference),reason=payload.reason.strip())
-    record_activity(db,action="inventory.stock.adjusted",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="stock_adjustment",entity_id=source_id,after={"product_id":product.id,"warehouse_id":warehouse.id,"quantity_delta":str(delta),"reason":payload.reason},request=request);db.commit();return {"id":source_id,"status":"posted"}
+        movement=_stock_out(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=abs(delta),source_type="stock_adjustment",source_id=source_id,reference=reference,reason=payload.reason.strip())
+        source_total=abs(Decimal(movement.total_cost)); base_total=abs(Decimal(movement.total_cost_base or 0)); applied_rate=(base_total/source_total) if source_total else Decimal("1")
+    if money(base_total)>0:
+        inventory_ledger=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_asset",code="1450",name="Inventory Asset",category="asset",normal_balance="debit")
+        if delta>0:
+            counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_gain",code="4910",name="Inventory Adjustment Gain",category="income",normal_balance="credit")
+            journal_lines=[PostingLine(ledger_account_id=inventory_ledger.id,debit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment {product.sku}"),PostingLine(ledger_account_id=counterpart.id,credit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment gain {product.sku}")]
+        else:
+            counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_expense",code="5050",name="Inventory Adjustment Expense",category="expense",normal_balance="debit")
+            journal_lines=[PostingLine(ledger_account_id=counterpart.id,debit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment loss {product.sku}"),PostingLine(ledger_account_id=inventory_ledger.id,credit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Inventory reduced {product.sku}")]
+        post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=payload.adjustment_date,source_type="inventory_stock_adjustment",source_id=source_id,lines=journal_lines,reference=reference,memo=payload.reason.strip())
+    record_activity(db,action="inventory.stock.adjusted",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="stock_adjustment",entity_id=source_id,after={"product_id":product.id,"warehouse_id":warehouse.id,"quantity_delta":str(delta),"source_cost":str(source_total),"base_cost":str(base_total),"base_currency":base_currency,"reason":payload.reason},request=request);db.commit();return {"id":source_id,"status":"posted"}
 
 
 @router.get("/purchases")
 def purchases(db: DbSession, tenant: Viewer, limit:int=200):
     rows=db.execute(select(PurchaseReceipt,Warehouse.name).join(Warehouse,Warehouse.id==PurchaseReceipt.warehouse_id).where(PurchaseReceipt.organization_id==tenant.organization_id).order_by(PurchaseReceipt.receipt_date.desc(),PurchaseReceipt.created_at.desc()).limit(min(max(limit,1),500))).all()
-    return [{"id":r.id,"receipt_number":r.receipt_number,"supplier_name":r.supplier_name,"warehouse_id":r.warehouse_id,"warehouse_name":warehouse,"receipt_date":r.receipt_date,"currency":r.currency,"subtotal":r.subtotal,"tax_total":r.tax_total,"recoverable_tax_total":r.recoverable_tax_total,"total":r.total,"balance_due":r.balance_due,"status":r.status,"reference":r.reference} for r,warehouse in rows]
+    return [{"id":r.id,"receipt_number":r.receipt_number,"supplier_name":r.supplier_name,"warehouse_id":r.warehouse_id,"warehouse_name":warehouse,"receipt_date":r.receipt_date,"currency":r.currency,"base_currency":r.base_currency,"exchange_rate_to_base":r.exchange_rate_to_base,"subtotal":r.subtotal,"tax_total":r.tax_total,"recoverable_tax_total":r.recoverable_tax_total,"total":r.total,"balance_due":r.balance_due,"status":r.status,"reference":r.reference} for r,warehouse in rows]
 
 
 @router.post("/purchases", status_code=status.HTTP_201_CREATED)
@@ -191,7 +308,7 @@ def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSes
     warehouse=db.scalar(select(Warehouse).where(Warehouse.id==payload.warehouse_id,Warehouse.organization_id==tenant.organization_id,Warehouse.is_active.is_(True)))
     if warehouse is None: raise HTTPException(404,"Active warehouse not found")
     if payload.vendor_id and not db.scalar(select(Vendor.id).where(Vendor.id==payload.vendor_id,Vendor.organization_id==tenant.organization_id)): raise HTTPException(404,"Vendor not found")
-    currency=payload.currency.upper(); prepared=[]; subtotal=Decimal("0");tax_total=Decimal("0");recoverable_total=Decimal("0");inventory_debit=Decimal("0")
+    currency=payload.currency.upper(); base_currency=tenant.organization.currency.upper(); prepared=[]; subtotal=Decimal("0");tax_total=Decimal("0");recoverable_total=Decimal("0");inventory_debit=Decimal("0")
     seen=set()
     for line in payload.items:
         if line.product_id in seen: raise HTTPException(400,"Use one purchase line per product")
@@ -199,25 +316,36 @@ def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSes
         product=db.scalar(select(Product).where(Product.id==line.product_id,Product.organization_id==tenant.organization_id,Product.item_type=="stock_item",Product.track_inventory.is_(True),Product.is_active.is_(True)))
         if product is None: raise HTTPException(404,"Active tracked stock product not found")
         if product.currency != currency: raise HTTPException(400,f"Product {product.sku} uses {product.currency}; purchase receipt uses {currency}")
-        base=money(Decimal(line.quantity)*Decimal(line.unit_cost)); tax_code=_tax(db,tenant.organization_id,line.tax_code_id,payload.receipt_date)
-        tax_amount=money(base*Decimal(tax_code.rate)/Decimal("100")) if tax_code else Decimal("0.00")
+        line_base=money(Decimal(line.quantity)*Decimal(line.unit_cost)); tax_code=_tax(db,tenant.organization_id,line.tax_code_id,payload.receipt_date)
+        tax_amount=money(line_base*Decimal(tax_code.rate)/Decimal("100")) if tax_code else Decimal("0.00")
         recoverable=money(tax_amount*Decimal(tax_code.recoverable_percent)/Decimal("100")) if tax_code else Decimal("0.00")
-        nonrecoverable=money(tax_amount-recoverable); inv_cost=cost(base+nonrecoverable); total=money(base+tax_amount)
-        subtotal+=base;tax_total+=tax_amount;recoverable_total+=recoverable;inventory_debit+=inv_cost
-        prepared.append((product,line,tax_code,base,tax_amount,recoverable,inv_cost,total))
-    subtotal=money(subtotal);tax_total=money(tax_total);recoverable_total=money(recoverable_total);total=money(subtotal+tax_total)
-    receipt=PurchaseReceipt(organization_id=tenant.organization_id,receipt_number=f"PR-{payload.receipt_date.strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}",supplier_name=payload.supplier_name.strip(),vendor_id=payload.vendor_id,warehouse_id=warehouse.id,receipt_date=payload.receipt_date,currency=currency,subtotal=subtotal,tax_total=tax_total,recoverable_tax_total=recoverable_total,total=total,amount_paid=Decimal("0"),balance_due=total,status="received",reference=clean(payload.reference),notes=clean(payload.notes),created_by_user_id=tenant.user_id)
+        nonrecoverable=money(tax_amount-recoverable); inv_cost=cost(line_base+nonrecoverable); line_total=money(line_base+tax_amount)
+        subtotal+=line_base;tax_total+=tax_amount;recoverable_total+=recoverable;inventory_debit+=inv_cost
+        prepared.append({"product":product,"line":line,"tax_code":tax_code,"base":line_base,"tax_amount":tax_amount,"recoverable":recoverable,"inv_cost":inv_cost,"line_total":line_total})
+    subtotal=money(subtotal);tax_total=money(tax_total);recoverable_total=money(recoverable_total);total=money(subtotal+tax_total);inventory_debit=cost(inventory_debit)
+    total_base,rate=to_base_amount(db,tenant.organization_id,base_currency,total,currency)
+    recoverable_base=money(recoverable_total*rate)
+    inventory_debit_base=money(total_base-recoverable_base)
+    remaining_base=cost(inventory_debit_base)
+    for index,row in enumerate(prepared):
+        if index==len(prepared)-1:
+            row["inv_cost_base"]=remaining_base
+        else:
+            allocated=money(Decimal(row["inv_cost"])*rate)
+            row["inv_cost_base"]=cost(allocated); remaining_base=cost(remaining_base-allocated)
+    receipt=PurchaseReceipt(organization_id=tenant.organization_id,receipt_number=f"PR-{payload.receipt_date.strftime('%Y%m%d')}-{uuid4().hex[:6].upper()}",supplier_name=payload.supplier_name.strip(),vendor_id=payload.vendor_id,warehouse_id=warehouse.id,receipt_date=payload.receipt_date,currency=currency,base_currency=base_currency,exchange_rate_to_base=rate,subtotal=subtotal,tax_total=tax_total,recoverable_tax_total=recoverable_total,total=total,amount_paid=Decimal("0"),balance_due=total,status="received",reference=clean(payload.reference),notes=clean(payload.notes),created_by_user_id=tenant.user_id)
     db.add(receipt);db.flush()
-    for product,line,tax_code,base,tax_amount,recoverable,inv_cost,line_total in prepared:
-        item=PurchaseReceiptItem(organization_id=tenant.organization_id,receipt_id=receipt.id,product_id=product.id,quantity=qty(line.quantity),unit_cost=cost(line.unit_cost),tax_code_id=tax_code.id if tax_code else None,tax_rate_snapshot=tax_code.rate if tax_code else Decimal("0"),tax_amount=tax_amount,recoverable_tax_amount=recoverable,inventory_cost=inv_cost,line_total=line_total)
-        db.add(item);db.flush();_stock_in(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=receipt.receipt_date,quantity=qty(line.quantity),incoming_total_cost=inv_cost,source_type="purchase_receipt",source_id=receipt.id,reference=receipt.reference)
+    for row in prepared:
+        product=row["product"]; line=row["line"]; tax_code=row["tax_code"]; inv_cost=row["inv_cost"]; inv_cost_base=row["inv_cost_base"]
+        item=PurchaseReceiptItem(organization_id=tenant.organization_id,receipt_id=receipt.id,product_id=product.id,quantity=qty(line.quantity),unit_cost=cost(line.unit_cost),tax_code_id=tax_code.id if tax_code else None,tax_rate_snapshot=tax_code.rate if tax_code else Decimal("0"),tax_amount=row["tax_amount"],recoverable_tax_amount=row["recoverable"],inventory_cost=inv_cost,inventory_cost_base=inv_cost_base,line_total=row["line_total"])
+        db.add(item);db.flush();_stock_in(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=receipt.receipt_date,quantity=qty(line.quantity),incoming_total_cost=inv_cost,incoming_total_cost_base=inv_cost_base,base_currency=base_currency,source_type="purchase_receipt",source_id=receipt.id,reference=receipt.reference)
     inventory_ledger=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_asset",code="1450",name="Inventory Asset",category="asset",normal_balance="debit")
     payable=system_account(db,tenant.organization_id,"accounts_payable")
-    lines=[PostingLine(ledger_account_id=inventory_ledger.id,debit=money(inventory_debit),currency=currency,description=f"Inventory received {receipt.receipt_number}")]
+    lines=[PostingLine(ledger_account_id=inventory_ledger.id,debit=inventory_debit_base,currency=currency,exchange_rate_to_base=rate,original_amount=inventory_debit,description=f"Inventory received {receipt.receipt_number}")]
     if recoverable_total>0:
         input_tax=_ledger(db,tenant.organization_id,tenant.user_id,system_key="input_tax_receivable",code="1210",name="Input Tax Receivable",category="asset",normal_balance="debit")
-        lines.append(PostingLine(ledger_account_id=input_tax.id,debit=recoverable_total,currency=currency,description=f"Recoverable input tax {receipt.receipt_number}"))
-    lines.append(PostingLine(ledger_account_id=payable.id,credit=total,currency=currency,description=f"Inventory payable to {receipt.supplier_name}"))
+        lines.append(PostingLine(ledger_account_id=input_tax.id,debit=recoverable_base,currency=currency,exchange_rate_to_base=rate,original_amount=recoverable_total,description=f"Recoverable input tax {receipt.receipt_number}"))
+    lines.append(PostingLine(ledger_account_id=payable.id,credit=total_base,currency=currency,exchange_rate_to_base=rate,original_amount=total,description=f"Inventory payable to {receipt.supplier_name}"))
     post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=receipt.receipt_date,source_type="inventory_purchase_receipt",source_id=receipt.id,lines=lines,reference=receipt.reference,memo=f"Inventory received from {receipt.supplier_name}")
-    record_activity(db,action="inventory.purchase.received",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="purchase_receipt",entity_id=receipt.id,after={"receipt_number":receipt.receipt_number,"supplier":receipt.supplier_name,"warehouse_id":warehouse.id,"subtotal":str(subtotal),"tax":str(tax_total),"total":str(total),"currency":currency},request=request)
-    db.commit();return {"id":receipt.id,"receipt_number":receipt.receipt_number,"total":receipt.total,"currency":receipt.currency,"status":receipt.status}
+    record_activity(db,action="inventory.purchase.received",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="purchase_receipt",entity_id=receipt.id,after={"receipt_number":receipt.receipt_number,"supplier":receipt.supplier_name,"warehouse_id":warehouse.id,"subtotal":str(subtotal),"tax":str(tax_total),"total":str(total),"currency":currency,"base_total":str(total_base),"base_currency":base_currency,"exchange_rate_to_base":str(rate)},request=request)
+    db.commit();return {"id":receipt.id,"receipt_number":receipt.receipt_number,"total":receipt.total,"currency":receipt.currency,"base_currency":receipt.base_currency,"exchange_rate_to_base":receipt.exchange_rate_to_base,"status":receipt.status}
