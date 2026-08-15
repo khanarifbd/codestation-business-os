@@ -110,7 +110,13 @@ def create_organization(
         current_period_start=utc_now(),
     )
     db.add(subscription)
+
+    # The session intentionally uses autoflush=False. Company defaults create the
+    # document sequences (including `lead`), while CRM defaults verify those rows
+    # before adding CRM-specific defaults. Flush here so CRM setup can see the
+    # pending company defaults and does not enqueue a duplicate lead sequence.
     ensure_company_settings_defaults(db, organization)
+    db.flush()
     ensure_crm_defaults(db, organization)
     db.flush()
 
