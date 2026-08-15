@@ -525,7 +525,7 @@ def get_client_options(
     tenant: QuotationViewer,
     search: str | None = None,
     client_id: str | None = None,
-    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[SalesClientOption]:
     query = select(Client).where(
         Client.organization_id == tenant.organization_id,
