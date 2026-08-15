@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from app.db.session import engine
+from app.main import app
 from app.services.sales import calculate_line, calculate_totals
 
 
@@ -28,6 +29,11 @@ def main() -> None:
             ).scalar_one()
             if not exists:
                 raise AssertionError(f"missing table: {table_name}")
+
+    client_option_parameters = app.openapi()["paths"]["/api/v1/sales/client-options"]["get"]["parameters"]
+    client_option_limit = next(item for item in client_option_parameters if item["name"] == "limit")
+    if client_option_limit["schema"].get("maximum") != 100:
+        raise AssertionError(f"client-options limit contract mismatch: {client_option_limit}")
 
     exclusive = calculate_line(
         quantity=Decimal("2"),
@@ -59,7 +65,7 @@ def main() -> None:
     if totals.total != Decimal("322.00"):
         raise AssertionError(totals)
 
-    print("quotation migration and calculation invariants verified")
+    print("quotation migration, API contract and calculation invariants verified")
 
 
 if __name__ == "__main__":
