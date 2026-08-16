@@ -74,6 +74,12 @@ def main() -> None:
         ):
             raise AssertionError("delegated inviter must be able to assign the basic employee role")
         if delegated_role_is_grantable(
+            role_slug="user",
+            role_permissions={"*"},
+            actor_permissions=delegated_permissions,
+        ):
+            raise AssertionError("wildcard permission could bypass the delegated role guard through the user slug")
+        if delegated_role_is_grantable(
             role_slug="admin",
             role_permissions={"*"},
             actor_permissions=delegated_permissions,

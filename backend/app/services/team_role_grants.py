@@ -44,17 +44,17 @@ def delegated_role_is_grantable(
 ) -> bool:
     """Return whether a delegated inviter may grant a target role.
 
-    The built-in employee/user role is safe once the actor already has
-    employees.invite. Admin/wildcard roles are never delegable. A custom role is
+    Admin/wildcard roles are never delegable. The built-in employee/user role is
+    otherwise safe once the actor already has employees.invite. A custom role is
     grantable only when it cannot add a permission the inviter does not hold.
     """
 
     target = set(role_permissions)
     actor = set(actor_permissions)
-    if role_slug == "user":
-        return True
     if role_slug == "admin" or "*" in target:
         return False
+    if role_slug == "user":
+        return True
     return target.issubset(actor)
 
 
