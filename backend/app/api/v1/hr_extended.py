@@ -14,6 +14,7 @@ from app.models.user import User
 from app.models.membership import Membership
 from app.schemas.team import InvitationCreate
 from app.services.activity_log import record_activity
+from app.services.team_role_grants import ensure_grantable_employee_role
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/hr", tags=["HR Extended"])
@@ -143,6 +144,7 @@ def convert_candidate(candidate_id: str, payload: CandidateConvert, request: Req
     role_id = payload.role_id or db.scalar(select(OrganizationRole.id).where(OrganizationRole.organization_id == tenant.organization_id, OrganizationRole.slug == "user", OrganizationRole.is_active.is_(True)))
     if not role_id:
         raise HTTPException(status_code=409, detail="No active employee role is available")
+    ensure_grantable_employee_role(db, tenant, role_id)
     department_id = payload.department_id if payload.department_id is not None else job.department_id
     # Reuse the canonical employee invitation/onboarding flow. It commits the audited invitation transaction.
     invitation = create_invitation(
