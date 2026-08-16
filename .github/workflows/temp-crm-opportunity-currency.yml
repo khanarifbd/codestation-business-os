@@ -1,0 +1,138 @@
+name: Temp CRM Opportunity Currency
+
+on:
+  push:
+    branches: [fix/crm-opportunity-currency]
+
+permissions:
+  contents: write
+
+jobs:
+  update-crm-currency:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/crm-opportunity-currency
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply opportunity currency changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path_str: str, old: str, new: str) -> None:
+              path = Path(path_str)
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}: {old[:120]!r}")
+              path.write_text(text.replace(old, new))
+
+          # Backend schema: opportunity/deal currency is saved atomically with requirements.
+          replace_once(
+              'backend/app/schemas/crm.py',
+              '''class LeadInterestReplace(BaseModel):\n    interests: list[LeadInterestInput] = Field(default_factory=list, max_length=100)\n''',
+              '''class LeadInterestReplace(BaseModel):\n    currency: str | None = Field(default=None, min_length=3, max_length=3)\n    interests: list[LeadInterestInput] = Field(default_factory=list, max_length=100)\n''',
+          )
+
+          # Backend: update Lead.currency and requirement snapshots in one locked transaction.
+          replace_once(
+              'backend/app/api/v1/crm_interests.py',
+              '''    lead = _lead(db, tenant.organization_id, lead_id, lock=True)\n    currency = (lead.currency or tenant.organization.currency).upper()\n    previous = db.scalars(\n''',
+              '''    lead = _lead(db, tenant.organization_id, lead_id, lock=True)\n    previous_currency = (lead.currency or tenant.organization.currency).upper()\n    currency = (payload.currency or previous_currency).upper()\n    if payload.currency is not None:\n        lead.currency = currency\n    previous = db.scalars(\n''',
+          )
+          replace_once(
+              'backend/app/api/v1/crm_interests.py',
+              '''        before={"interests": before},\n        after={"interests": after, "currency": currency},\n''',
+              '''        before={"interests": before, "currency": previous_currency},\n        after={"interests": after, "currency": currency},\n''',
+          )
+
+          # Frontend card: searchable opportunity currency + no silent numeric reinterpretation.
+          path = Path('frontend/src/components/lead-requirements-card.tsx')
+          text = path.read_text()
+          text = text.replace(
+              '''import { getApiErrorMessage } from "@/lib/api-error";\n''',
+              '''import { getApiErrorMessage } from "@/lib/api-error";\nimport { CURRENCY_OPTIONS } from "@/lib/company-options";\n''',
+              1,
+          )
+          text = text.replace(
+              '''  convertedClientId,\n}: {\n  leadId: string;\n  currency: string;\n  convertedClientId: string | null;\n}) {\n''',
+              '''  convertedClientId,\n  onSaved,\n}: {\n  leadId: string;\n  currency: string;\n  convertedClientId: string | null;\n  onSaved?: () => void | Promise<void>;\n}) {\n''',
+              1,
+          )
+          text = text.replace(
+              '''  const [message, setMessage] = useState<string | null>(null);\n\n  const load = useCallback(async () => {\n''',
+              '''  const [message, setMessage] = useState<string | null>(null);\n  const [opportunityCurrency, setOpportunityCurrency] = useState(currency.toUpperCase());\n\n  useEffect(() => { setOpportunityCurrency(currency.toUpperCase()); }, [currency, leadId]);\n\n  const load = useCallback(async () => {\n''',
+              1,
+          )
+          text = text.replace(
+              '''        fetch(`/api/crm/catalog-options?currency=${encodeURIComponent(currency)}&limit=200`, { cache: "no-store" }),\n''',
+              '''        fetch(`/api/crm/catalog-options?currency=${encodeURIComponent(opportunityCurrency)}&limit=200`, { cache: "no-store" }),\n''',
+              1,
+          )
+          text = text.replace(
+              '''  }, [currency, leadId]);\n''',
+              '''  }, [leadId, opportunityCurrency]);\n''',
+              1,
+          )
+          marker = '''  function patch(index: number, values: Partial<DraftInterest>) {\n    setDrafts((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...values } : row));\n  }\n\n'''
+          insertion = marker + '''  function changeOpportunityCurrency(value: string) {\n    const next = value.toUpperCase();\n    if (!next || next === opportunityCurrency) return;\n    const hasValues = drafts.some((row) => Boolean(row.product_id) || row.estimated_unit_price !== "" || row.item_name.trim() !== "" || row.description.trim() !== "");\n    if (editing && hasValues && !window.confirm("Changing the opportunity currency will clear catalog selections and estimated values so amounts are not silently reinterpreted. Continue?")) return;\n    setOpportunityCurrency(next);\n    if (editing) {\n      setDrafts((current) => current.map((row) => row.product_id ? emptyRequirement() : { ...row, estimated_unit_price: "" }));\n      setMessage(`Opportunity currency changed to ${next}. Review custom values and reselect any catalog items before saving.`);\n    }\n    setError(null);\n  }\n\n'''
+          if marker not in text:
+              raise SystemExit('lead-requirements-card: patch marker not found')
+          text = text.replace(marker, insertion, 1)
+          text = text.replace(
+              '''        body: JSON.stringify({\n          interests: drafts.map((row) => ({\n''',
+              '''        body: JSON.stringify({\n          currency: opportunityCurrency,\n          interests: drafts.map((row) => ({\n''',
+              1,
+          )
+          text = text.replace(
+              '''      setRows(payload as Interest[]);\n      setEditing(false);\n      setMessage("Lead requirements saved.");\n''',
+              '''      setRows(payload as Interest[]);\n      setEditing(false);\n      setMessage(`Lead requirements saved in ${opportunityCurrency}.`);\n      await onSaved?.();\n''',
+              1,
+          )
+          text = text.replace(
+              '''    {!convertedClientId ? <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-700">Convert this lead to a client before creating a quotation. Requirements will remain linked to the lead.</div> : null}\n    {error ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{error}</div> : null}\n''',
+              '''    {!convertedClientId ? <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-700">Convert this lead to a client before creating a quotation. Requirements will remain linked to the lead.</div> : null}\n    <div className="mt-3 grid gap-2 rounded-xl border bg-neutral-50 p-3 sm:grid-cols-[220px_1fr] sm:items-end">\n      <SearchableSelect label="Opportunity currency" value={opportunityCurrency} onValueChange={changeOpportunityCurrency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." required clearable={false} />\n      <p className="pb-1 text-xs leading-5 text-neutral-500">Used for estimated requirement values and the future quotation. Your company base/reporting currency remains separate.</p>\n    </div>\n    {error ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{error}</div> : null}\n''',
+              1,
+          )
+          text = text.replace('''<Field label={`Estimated unit value (${currency})`}>''', '''<Field label={`Estimated unit value (${opportunityCurrency})`}>''', 1)
+          path.write_text(text)
+
+          # Refresh Lead detail after requirements save so Potential/currency display stays current.
+          replace_once(
+              'frontend/src/app/dashboard/crm/page.tsx',
+              '''    <LeadRequirementsCard leadId={detail.lead.id} currency={detail.lead.currency ?? meta?.default_currency ?? "BDT"} convertedClientId={detail.lead.converted_client_id} />''',
+              '''    <LeadRequirementsCard leadId={detail.lead.id} currency={detail.lead.currency ?? meta?.default_currency ?? "BDT"} convertedClientId={detail.lead.converted_client_id} onSaved={() => reloadDetail(detail.lead.id)} />''',
+          )
+
+          # Regression: BDT-style tenant can keep a USD/EUR opportunity without silent mixing.
+          path = Path('backend/scripts/verify_sales_catalog_flow.py')
+          text = path.read_text()
+          text = text.replace(
+              '''from app.models.inventory import StockMovement\n''',
+              '''from app.models.inventory import StockMovement\nfrom app.models.crm import Lead\n''',
+              1,
+          )
+          seed_marker = '''        connection.execute(text("""\n            INSERT INTO products\n                (id,organization_id,sku,name,description,item_type,unit,currency,selling_price,\n                 standard_cost,last_purchase_cost,reorder_level,track_inventory,allow_negative_stock,\n                 is_active,created_by_user_id,created_at,updated_at)\n            VALUES\n                (:id,:organization_id,:sku,:name,'Reusable non-stock catalog item','non_stock_item','unit',:currency,100,\n                 0,0,0,false,false,true,:user_id,:now,:now)\n        """), {"id":product_id,"organization_id":fixture["organization_id"],"sku":f"SC-{marker}","name":f"Reusable Package {marker}","currency":currency,"user_id":fixture["user_id"],"now":now})\n'''
+          seed_add = seed_marker + '''        alternate_currency = "USD" if currency != "USD" else "EUR"\n        alt_lead_id = str(uuid4())\n        alt_product_id = str(uuid4())\n        connection.execute(text("""\n            INSERT INTO leads\n                (id,organization_id,lead_code,lead_type,company_name,contact_name,status_id,currency,probability_percent,created_at,updated_at)\n            VALUES\n                (:id,:organization_id,:code,'company',:company,:contact,:status_id,:currency,50,:now,:now)\n        """), {"id":alt_lead_id,"organization_id":fixture["organization_id"],"code":f"LD-FX-{marker}","company":f"Foreign Opportunity {marker}","contact":"FX Sales Contact","status_id":status_id,"currency":currency,"now":now})\n        connection.execute(text("""\n            INSERT INTO products\n                (id,organization_id,sku,name,description,item_type,unit,currency,selling_price,\n                 standard_cost,last_purchase_cost,reorder_level,track_inventory,allow_negative_stock,\n                 is_active,created_by_user_id,created_at,updated_at)\n            VALUES\n                (:id,:organization_id,:sku,:name,'Foreign currency service','service','project',:currency,750,\n                 0,0,0,false,false,true,:user_id,:now,:now)\n        """), {"id":alt_product_id,"organization_id":fixture["organization_id"],"sku":f"FX-{marker}","name":f"Foreign Service {marker}","currency":alternate_currency,"user_id":fixture["user_id"],"now":now})\n'''
+          if seed_marker not in text:
+              raise SystemExit('verify_sales_catalog_flow seed marker not found')
+          text = text.replace(seed_marker, seed_add, 1)
+          test_marker = '''    db = SessionLocal()\n    try:\n        interests = replace_lead_interests(\n'''
+          test_add = '''    db = SessionLocal()\n    try:\n        fx_interests = replace_lead_interests(\n            alt_lead_id,\n            LeadInterestReplace(currency=alternate_currency, interests=[\n                LeadInterestInput(product_id=alt_product_id, quantity=Decimal("1")),\n                LeadInterestInput(item_name="Custom foreign-currency project", description="One-time custom scope", item_type="service", unit="project", quantity=Decimal("1"), estimated_unit_price=Decimal("900")),\n            ]),\n            req("PUT", f"/crm/leads/{alt_lead_id}/interests"),\n            db,\n            tenant,  # type: ignore[arg-type]\n        )\n        if any(item.currency != alternate_currency for item in fx_interests):\n            raise AssertionError(f"lead requirements did not use opportunity currency {alternate_currency}: {fx_interests}")\n        updated_lead = db.scalar(select(Lead).where(Lead.id == alt_lead_id, Lead.organization_id == tenant.organization_id))\n        if updated_lead is None or updated_lead.currency != alternate_currency:\n            raise AssertionError("lead opportunity currency was not updated atomically with requirements")\n        expect(400, lambda: replace_lead_interests(\n            alt_lead_id,\n            LeadInterestReplace(currency=alternate_currency, interests=[LeadInterestInput(product_id=product_id, quantity=Decimal("1"))]),\n            req("PUT", f"/crm/leads/{alt_lead_id}/interests"),\n            db,\n            tenant,  # type: ignore[arg-type]\n        ))\n        db.rollback()\n\n        interests = replace_lead_interests(\n'''
+          if test_marker not in text:
+              raise SystemExit('verify_sales_catalog_flow test marker not found')
+          text = text.replace(test_marker, test_add, 1)
+          path.write_text(text)
+          PY
+      - name: Commit CRM opportunity currency update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/schemas/crm.py backend/app/api/v1/crm_interests.py backend/scripts/verify_sales_catalog_flow.py frontend/src/components/lead-requirements-card.tsx frontend/src/app/dashboard/crm/page.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(crm): support opportunity currency for lead requirements"
+          git push origin HEAD:fix/crm-opportunity-currency
