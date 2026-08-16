@@ -227,8 +227,12 @@ def list_leave_requests(db: DbSession, tenant: HRViewer):
 
 @router.post("/leave-requests", status_code=201)
 def create_leave_request(payload: LeaveRequestCreate, request: Request, db: DbSession, tenant: HRSelf):
-    employee = _my_employee(db, tenant) if payload.employee_id is None else _employee(db, tenant.organization_id, payload.employee_id)
-    if payload.employee_id and payload.employee_id != employee.id and tenant.role != "admin":
+    self_employee = _my_employee(db, tenant)
+    if payload.employee_id is None or payload.employee_id == self_employee.id:
+        employee = self_employee
+    elif tenant.role == "admin":
+        employee = _employee(db, tenant.organization_id, payload.employee_id)
+    else:
         raise HTTPException(status_code=403, detail="Cannot request leave for another employee")
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="End date cannot be before start date")
