@@ -94,6 +94,7 @@ class LeadInterestRead(BaseModel):
 
 
 class LeadInterestReplace(BaseModel):
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
     interests: list[LeadInterestInput] = Field(default_factory=list, max_length=100)
 
 

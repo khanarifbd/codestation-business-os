@@ -16,6 +16,7 @@ from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import InvoiceItem
 from app.models.inventory import StockMovement
+from app.models.crm import Lead
 from app.models.orders import OrderItem
 from app.models.sales import QuotationItem
 from app.schemas.crm import LeadInterestInput, LeadInterestReplace
@@ -102,6 +103,24 @@ def main() -> None:
                 (:id,:organization_id,:sku,:name,'Reusable non-stock catalog item','non_stock_item','unit',:currency,100,
                  0,0,0,false,false,true,:user_id,:now,:now)
         """), {"id":product_id,"organization_id":fixture["organization_id"],"sku":f"SC-{marker}","name":f"Reusable Package {marker}","currency":currency,"user_id":fixture["user_id"],"now":now})
+        alternate_currency = "USD" if currency != "USD" else "EUR"
+        alt_lead_id = str(uuid4())
+        alt_product_id = str(uuid4())
+        connection.execute(text("""
+            INSERT INTO leads
+                (id,organization_id,lead_code,lead_type,company_name,contact_name,status_id,currency,probability_percent,created_at,updated_at)
+            VALUES
+                (:id,:organization_id,:code,'company',:company,:contact,:status_id,:currency,50,:now,:now)
+        """), {"id":alt_lead_id,"organization_id":fixture["organization_id"],"code":f"LD-FX-{marker}","company":f"Foreign Opportunity {marker}","contact":"FX Sales Contact","status_id":status_id,"currency":currency,"now":now})
+        connection.execute(text("""
+            INSERT INTO products
+                (id,organization_id,sku,name,description,item_type,unit,currency,selling_price,
+                 standard_cost,last_purchase_cost,reorder_level,track_inventory,allow_negative_stock,
+                 is_active,created_by_user_id,created_at,updated_at)
+            VALUES
+                (:id,:organization_id,:sku,:name,'Foreign currency service','service','project',:currency,750,
+                 0,0,0,false,false,true,:user_id,:now,:now)
+        """), {"id":alt_product_id,"organization_id":fixture["organization_id"],"sku":f"FX-{marker}","name":f"Foreign Service {marker}","currency":alternate_currency,"user_id":fixture["user_id"],"now":now})
 
     tenant = Tenant(
         organization_id=str(fixture["organization_id"]),
@@ -111,6 +130,30 @@ def main() -> None:
     )
     db = SessionLocal()
     try:
+        fx_interests = replace_lead_interests(
+            alt_lead_id,
+            LeadInterestReplace(currency=alternate_currency, interests=[
+                LeadInterestInput(product_id=alt_product_id, quantity=Decimal("1")),
+                LeadInterestInput(item_name="Custom foreign-currency project", description="One-time custom scope", item_type="service", unit="project", quantity=Decimal("1"), estimated_unit_price=Decimal("900")),
+            ]),
+            req("PUT", f"/crm/leads/{alt_lead_id}/interests"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if any(item.currency != alternate_currency for item in fx_interests):
+            raise AssertionError(f"lead requirements did not use opportunity currency {alternate_currency}: {fx_interests}")
+        updated_lead = db.scalar(select(Lead).where(Lead.id == alt_lead_id, Lead.organization_id == tenant.organization_id))
+        if updated_lead is None or updated_lead.currency != alternate_currency:
+            raise AssertionError("lead opportunity currency was not updated atomically with requirements")
+        expect(400, lambda: replace_lead_interests(
+            alt_lead_id,
+            LeadInterestReplace(currency=alternate_currency, interests=[LeadInterestInput(product_id=product_id, quantity=Decimal("1"))]),
+            req("PUT", f"/crm/leads/{alt_lead_id}/interests"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        ))
+        db.rollback()
+
         interests = replace_lead_interests(
             lead_id,
             LeadInterestReplace(interests=[

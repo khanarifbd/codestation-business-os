@@ -116,7 +116,10 @@ def replace_lead_interests(
     tenant: CrmManager,
 ) -> list[LeadInterestRead]:
     lead = _lead(db, tenant.organization_id, lead_id, lock=True)
-    currency = (lead.currency or tenant.organization.currency).upper()
+    previous_currency = (lead.currency or tenant.organization.currency).upper()
+    currency = (payload.currency or previous_currency).upper()
+    if payload.currency is not None:
+        lead.currency = currency
     previous = db.scalars(
         select(LeadInterest).where(
             LeadInterest.organization_id == tenant.organization_id,
@@ -181,7 +184,7 @@ def replace_lead_interests(
         organization_id=tenant.organization_id,
         entity_type="lead",
         entity_id=lead.id,
-        before={"interests": before},
+        before={"interests": before, "currency": previous_currency},
         after={"interests": after, "currency": currency},
         message=f"Lead requirements updated: {lead.lead_code}",
         request=request,
