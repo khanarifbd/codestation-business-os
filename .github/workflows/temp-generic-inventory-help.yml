@@ -1,0 +1,45 @@
+name: Temp Generic Inventory Help Copy
+
+on:
+  push:
+    branches: [fix/inventory-generic-help-copy]
+
+permissions:
+  contents: write
+
+jobs:
+  update-copy:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/inventory-generic-help-copy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Replace product-specific tooltip examples
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('frontend/src/app/dashboard/inventory/page.tsx')
+          text = path.read_text()
+          replacements = {
+              'A unique, stable internal code used in search, sales documents and reports. Example: GT06 or WEB-DEV. Avoid reusing the same code for different items.': 'A unique, stable internal code used in search, sales documents and reports. Example: PROD-001 or WEB-DEV. Avoid reusing the same code for different items.',
+              'How quantity is measured. Use pcs or unit for a device; hour, day, project or month for services. For a GT06 device, use pcs/unit rather than 1.': 'How quantity is measured. Use pcs or unit for physical products; hour, day, project or month for services. Enter a unit name, not a quantity.',
+              'Your expected/default acquisition cost for one unit. It helps prefill stock cost when no purchase history exists, but entering a value here does not add stock. Example: if one GT06 costs BDT 350, enter 350. Receive a purchase or post a stock adjustment to add quantity.': 'Your expected/default acquisition cost for one unit. It helps prefill stock cost when no purchase history exists, but entering a value here does not add stock. Example: if one item costs 350 in the selected currency, enter 350. Receive a purchase or post a stock adjustment to add quantity.',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f'Missing expected tooltip text: {old}')
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+      - name: Commit copy update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/app/dashboard/inventory/page.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(inventory): use generic field help examples"
+          git push origin HEAD:fix/inventory-generic-help-copy
