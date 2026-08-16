@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Banknote, BarChart3, Bell, BookOpenText, Boxes, BriefcaseBusiness, Building2, ClipboardList, FileClock, FileText,
-  FolderKanban, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, SlidersHorizontal, Users, UsersRound, X,
+  FolderKanban, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, Users, UsersRound, X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -15,7 +15,6 @@ type NavigationItem = { label: string; icon: LucideIcon; href: string };
 const staffNavigation: NavigationItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
   { label: "My Work", icon: BriefcaseBusiness, href: "/dashboard/my-work" },
-  { label: "My HR", icon: BriefcaseBusiness, href: "/dashboard/my-hr" },
   { label: "Notifications", icon: Bell, href: "/dashboard/notifications" },
   { label: "CRM", icon: ClipboardList, href: "/dashboard/crm" },
   { label: "Clients", icon: Users, href: "/dashboard/clients" },
@@ -25,11 +24,8 @@ const staffNavigation: NavigationItem[] = [
   { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
   { label: "Invoices", icon: FileText, href: "/dashboard/accounting/invoices" },
   { label: "Finance & Accounts", icon: BookOpenText, href: "/dashboard/accounting" },
+  { label: "People & HR", icon: UsersRound, href: "/dashboard/hr" },
   { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
-  { label: "HR Management", icon: UsersRound, href: "/dashboard/hr" },
-  { label: "HR Setup", icon: SlidersHorizontal, href: "/dashboard/hr/setup" },
-  { label: "HR Operations", icon: BriefcaseBusiness, href: "/dashboard/hr/operations" },
-  { label: "Employees", icon: Users, href: "/dashboard/employees" },
   { label: "Reports", icon: BarChart3, href: "/dashboard/reports" },
   { label: "Company", icon: Building2, href: "/dashboard/company" },
   { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs" },
@@ -44,7 +40,6 @@ function isActive(pathname: string, href: string) {
     if (pathname.startsWith("/dashboard/accounting/invoices")) return false;
     return pathname.startsWith("/dashboard/accounting") || pathname.startsWith("/dashboard/finance") || pathname.startsWith("/dashboard/expenses") || pathname.startsWith("/dashboard/capital");
   }
-  if (href === "/dashboard/hr") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
