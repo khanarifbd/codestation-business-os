@@ -20,6 +20,7 @@ export type HRAccess = {
   can_manage: boolean;
   can_self: boolean;
   can_manage_people: boolean;
+  can_invite_employees: boolean;
   is_employee: boolean;
   role_name: string | null;
   timezone: string;
