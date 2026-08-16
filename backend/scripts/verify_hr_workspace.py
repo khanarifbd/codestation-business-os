@@ -5,13 +5,15 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from starlette.requests import Request
 
-from app.api.v1.hr_workspace import JobStatusUpdate, hr_access, hr_workspace_summary, update_job_status
+from app.api.v1.hr_workspace import JobStatusUpdate, hr_access, hr_people, hr_workspace_summary, update_job_status
 from app.db.session import SessionLocal
 from app.models.hr import JobOpening
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.models.team import OrganizationRole
 from app.models.user import User
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes
+from app.services.team_role_grants import grantable_employee_roles
 from app.tenancy.context import TenantContext
 
 
@@ -52,8 +54,38 @@ def main() -> None:
         tenant = TenantContext(user=user, organization=organization, membership=membership)
 
         access = hr_access(db, tenant)
-        if not access["can_view"] or not access["can_manage_people"] or not access["can_invite_employees"]:
+        if (
+            not access["can_view"]
+            or not access["can_view_people"]
+            or not access["can_manage_people"]
+            or not access["can_invite_employees"]
+            or not access["can_manage_structure"]
+        ):
             raise AssertionError(f"unexpected HR admin capabilities: {access}")
+
+        people = hr_people(db, tenant)
+        if not people["people"] or not people["invite_roles"]:
+            raise AssertionError("People workspace did not return the company directory and allowed invite roles")
+
+        user_role = db.scalar(
+            select(OrganizationRole).where(
+                OrganizationRole.organization_id == organization.id,
+                OrganizationRole.slug == "user",
+                OrganizationRole.is_active.is_(True),
+            )
+        )
+        if user_role is None:
+            raise AssertionError("built-in employee role missing")
+        delegated_tenant = SimpleNamespace(
+            organization_id=organization.id,
+            membership=SimpleNamespace(role_id=user_role.id),
+            role="user",
+        )
+        delegated_roles = grantable_employee_roles(db, delegated_tenant)  # type: ignore[arg-type]
+        if not any(role.slug == "user" for role in delegated_roles):
+            raise AssertionError("delegated inviter must be able to assign the basic employee role")
+        if any(role.slug == "admin" or "*" in set(role.permissions or []) for role in delegated_roles):
+            raise AssertionError("delegated inviter could escalate to an admin/high-privilege role")
 
         summary = hr_workspace_summary(db, tenant)
         try:
@@ -119,7 +151,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("HR workspace verification passed: access -> local day -> shift rules -> audited recruitment lifecycle")
+    print("HR workspace verification passed: People RBAC -> role safety -> local day -> shift rules -> recruitment lifecycle")
 
 
 if __name__ == "__main__":
