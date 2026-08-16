@@ -10,10 +10,9 @@ from app.db.session import SessionLocal
 from app.models.hr import JobOpening
 from app.models.membership import Membership
 from app.models.organization import Organization
-from app.models.team import OrganizationRole
 from app.models.user import User
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes
-from app.services.team_role_grants import grantable_employee_roles
+from app.services.team_role_grants import delegated_role_is_grantable
 from app.tenancy.context import TenantContext
 
 
@@ -67,25 +66,31 @@ def main() -> None:
         if not people["people"] or not people["invite_roles"]:
             raise AssertionError("People workspace did not return the company directory and allowed invite roles")
 
-        user_role = db.scalar(
-            select(OrganizationRole).where(
-                OrganizationRole.organization_id == organization.id,
-                OrganizationRole.slug == "user",
-                OrganizationRole.is_active.is_(True),
-            )
-        )
-        if user_role is None:
-            raise AssertionError("built-in employee role missing")
-        delegated_tenant = SimpleNamespace(
-            organization_id=organization.id,
-            membership=SimpleNamespace(role_id=user_role.id),
-            role="user",
-        )
-        delegated_roles = grantable_employee_roles(db, delegated_tenant)  # type: ignore[arg-type]
-        if not any(role.slug == "user" for role in delegated_roles):
+        delegated_permissions = {"employees.invite", "employees.view", "hr.view"}
+        if not delegated_role_is_grantable(
+            role_slug="user",
+            role_permissions={"hr.self", "workspace.view"},
+            actor_permissions=delegated_permissions,
+        ):
             raise AssertionError("delegated inviter must be able to assign the basic employee role")
-        if any(role.slug == "admin" or "*" in set(role.permissions or []) for role in delegated_roles):
-            raise AssertionError("delegated inviter could escalate to an admin/high-privilege role")
+        if delegated_role_is_grantable(
+            role_slug="admin",
+            role_permissions={"*"},
+            actor_permissions=delegated_permissions,
+        ):
+            raise AssertionError("delegated inviter could escalate to admin")
+        if delegated_role_is_grantable(
+            role_slug="power-role",
+            role_permissions={"employees.invite", "roles.manage"},
+            actor_permissions=delegated_permissions,
+        ):
+            raise AssertionError("delegated inviter could grant a permission they do not hold")
+        if not delegated_role_is_grantable(
+            role_slug="hr-reader",
+            role_permissions={"employees.view", "hr.view"},
+            actor_permissions=delegated_permissions,
+        ):
+            raise AssertionError("delegated inviter could not grant a safe subset custom role")
 
         summary = hr_workspace_summary(db, tenant)
         try:
