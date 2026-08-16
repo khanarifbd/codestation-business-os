@@ -716,10 +716,13 @@ def update_quotation(
     )
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    if quotation.status != "draft":
-        raise HTTPException(status_code=409, detail="Only draft quotations can be edited")
+    editable_statuses = {"draft", "sent", "rejected"}
+    if quotation.status not in editable_statuses:
+        raise HTTPException(status_code=409, detail="Accepted or cancelled quotations are locked and cannot be edited")
+    previous_status = quotation.status
 
     before = {
+        "status": quotation.status,
         "subject": quotation.subject,
         "issue_date": quotation.issue_date.isoformat(),
         "valid_until": quotation.valid_until.isoformat() if quotation.valid_until else None,
@@ -747,8 +750,16 @@ def update_quotation(
         _replace_items(db, quotation, payload.items)
     elif "tax_calculation_mode" in changes:
         _recalculate_items(db, quotation)
+
+    revised_to_draft = previous_status in {"sent", "rejected"}
+    if revised_to_draft:
+        quotation.status = "draft"
+        quotation.sent_at = None
+        quotation.rejected_at = None
+
     db.flush()
     after = {
+        "status": quotation.status,
         "subject": quotation.subject,
         "issue_date": quotation.issue_date.isoformat(),
         "valid_until": quotation.valid_until.isoformat() if quotation.valid_until else None,
@@ -769,7 +780,11 @@ def update_quotation(
         entity_id=quotation.id,
         before=before,
         after=after,
-        message=f"Quotation updated: {quotation.quotation_number}",
+        message=(
+            f"Quotation revised and returned to draft: {quotation.quotation_number}"
+            if revised_to_draft
+            else f"Quotation updated: {quotation.quotation_number}"
+        ),
         request=request,
     )
     db.commit()
