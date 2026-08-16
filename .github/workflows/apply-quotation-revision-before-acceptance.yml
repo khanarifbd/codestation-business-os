@@ -1,0 +1,193 @@
+name: Apply quotation revision policy patch
+
+on:
+  push:
+    branches:
+      - fix/quotation-revision-before-acceptance
+    paths:
+      - .github/workflows/apply-quotation-revision-before-acceptance.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/quotation-revision-before-acceptance
+      - name: Apply scoped quotation revision patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected snippet not found in {path}:\n{old[:300]}")
+              path.write_text(text.replace(old, new, 1))
+
+          backend = Path('backend/app/api/v1/sales.py')
+          replace_once(
+              backend,
+              '''    if quotation.status != "draft":
+                  raise HTTPException(status_code=409, detail="Only draft quotations can be edited")
+
+              before = {
+                  "subject": quotation.subject,''',
+              '''    editable_statuses = {"draft", "sent", "rejected"}
+              if quotation.status not in editable_statuses:
+                  raise HTTPException(status_code=409, detail="Accepted or cancelled quotations are locked and cannot be edited")
+              previous_status = quotation.status
+
+              before = {
+                  "status": quotation.status,
+                  "subject": quotation.subject,''',
+          )
+          replace_once(
+              backend,
+              '''    if payload.items is not None:
+                  _replace_items(db, quotation, payload.items)
+              elif "tax_calculation_mode" in changes:
+                  _recalculate_items(db, quotation)
+              db.flush()
+              after = {
+                  "subject": quotation.subject,''',
+              '''    if payload.items is not None:
+                  _replace_items(db, quotation, payload.items)
+              elif "tax_calculation_mode" in changes:
+                  _recalculate_items(db, quotation)
+
+              revised_to_draft = previous_status in {"sent", "rejected"}
+              if revised_to_draft:
+                  quotation.status = "draft"
+                  quotation.sent_at = None
+                  quotation.rejected_at = None
+
+              db.flush()
+              after = {
+                  "status": quotation.status,
+                  "subject": quotation.subject,''',
+          )
+          replace_once(
+              backend,
+              '''        message=f"Quotation updated: {quotation.quotation_number}",''',
+              '''        message=(
+                  f"Quotation revised and returned to draft: {quotation.quotation_number}"
+                  if revised_to_draft
+                  else f"Quotation updated: {quotation.quotation_number}"
+              ),''',
+          )
+
+          frontend = Path('frontend/src/app/dashboard/quotations/quotation-workspace.tsx')
+          replace_once(
+              frontend,
+              '''  function openEdit(current: Detail) {
+              if (!meta || current.status !== "draft") return;''',
+              '''  function openEdit(current: Detail) {
+              if (!meta || !["draft", "sent", "rejected"].includes(current.status)) return;''',
+          )
+          replace_once(
+              frontend,
+              '''      if (editingQuotationId) {
+                  const updated = await api(`/quotations/${editingQuotationId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(quotationPayload) }) as Detail;
+                  setCreateOpen(false); setEditingQuotationId(null); setDetail(updated); setMessage(`Quotation ${updated.quotation_number} updated`); await refreshAffected();''',
+              '''      if (editingQuotationId) {
+                  const wasRevision = detail?.status === "sent" || detail?.status === "rejected";
+                  const updated = await api(`/quotations/${editingQuotationId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(quotationPayload) }) as Detail;
+                  setCreateOpen(false); setEditingQuotationId(null); setDetail(updated); setMessage(wasRevision ? `Quotation ${updated.quotation_number} revised and returned to Draft. Mark it Sent again after review.` : `Quotation ${updated.quotation_number} updated`); await refreshAffected();''',
+          )
+          replace_once(
+              frontend,
+              '''    {sourceLeadId && !editingQuotationId ? <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">Lead requirements are prefilled below. You can adjust descriptions, quantity and final pricing before saving the quotation.</div> : null}
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">''',
+              '''    {sourceLeadId && !editingQuotationId ? <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">Lead requirements are prefilled below. You can adjust descriptions, quantity and final pricing before saving the quotation.</div> : null}
+              {editingQuotationId && detail && (detail.status === "sent" || detail.status === "rejected") ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">This quotation was already {detail.status}. Saving a revision will return it to Draft so you can review and send the updated version again.</div> : null}
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">''',
+          )
+          replace_once(
+              frontend,
+              '''{detail.status === "draft" ? <><Action label="Edit" disabled={saving} onClick={() => onEdit(detail)} /><Action label="Mark Sent" primary disabled={saving} onClick={() => void onStatus("sent")} /><Action label="Cancel" disabled={saving} onClick={() => void onStatus("cancelled")} /></> : null}{detail.status === "sent" ? <><Action label="Accept" primary disabled={saving} onClick={() => void onStatus("accepted")} /><Action label="Reject" disabled={saving} onClick={() => void onStatus("rejected")} /></> : null}{detail.status === "accepted" ? <Action label="Create / View Order" primary onClick={() => onOrder(detail.id)} /> : null}''',
+              '''{detail.status === "draft" ? <><Action label="Edit" disabled={saving} onClick={() => onEdit(detail)} /><Action label="Mark Sent" primary disabled={saving} onClick={() => void onStatus("sent")} /><Action label="Cancel" disabled={saving} onClick={() => void onStatus("cancelled")} /></> : null}{detail.status === "sent" ? <><Action label="Edit" disabled={saving} onClick={() => onEdit(detail)} /><Action label="Accept" primary disabled={saving} onClick={() => void onStatus("accepted")} /><Action label="Reject" disabled={saving} onClick={() => void onStatus("rejected")} /></> : null}{detail.status === "rejected" ? <Action label="Revise" disabled={saving} onClick={() => onEdit(detail)} /> : null}{detail.status === "accepted" ? <Action label="Create / View Order" primary onClick={() => onOrder(detail.id)} /> : null}''',
+          )
+
+          verify = Path('backend/scripts/verify_sales_catalog_flow.py')
+          replace_once(
+              verify,
+              'from app.api.v1.sales import change_quotation_status, create_quotation',
+              'from app.api.v1.sales import change_quotation_status, create_quotation, update_quotation',
+          )
+          replace_once(
+              verify,
+              'from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange',
+              'from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange, QuotationUpdate',
+          )
+          replace_once(
+              verify,
+              '''        if quotation.items[1].product_id is not None or quotation.items[1].item_type_snapshot != "service":
+                  raise AssertionError("quotation custom service snapshot missing")
+
+              sent = change_quotation_status(quotation.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{quotation.id}/status"), db, tenant)  # type: ignore[arg-type]''',
+              '''        if quotation.items[1].product_id is not None or quotation.items[1].item_type_snapshot != "service":
+                  raise AssertionError("quotation custom service snapshot missing")
+
+              revision_quote = create_quotation(
+                  QuotationCreate(
+                      client_id=client_id,
+                      subject="Negotiation revision",
+                      issue_date=date.today(),
+                      currency=currency,
+                      items=[QuotationItemInput(item_name="Negotiation service", item_type="service", unit="project", description="Negotiation service", quantity=Decimal("1"), unit_price=Decimal("100"))],
+                  ),
+                  req("POST", "/sales/quotations"),
+                  db,
+                  tenant,  # type: ignore[arg-type]
+              )
+              revision_sent = change_quotation_status(revision_quote.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{revision_quote.id}/status"), db, tenant)  # type: ignore[arg-type]
+              revised = update_quotation(
+                  revision_sent.id,
+                  QuotationUpdate(
+                      subject="Negotiated price",
+                      items=[QuotationItemInput(item_name="Negotiation service", item_type="service", unit="project", description="Negotiation service", quantity=Decimal("1"), unit_price=Decimal("80"))],
+                  ),
+                  req("PATCH", f"/sales/quotations/{revision_sent.id}"),
+                  db,
+                  tenant,  # type: ignore[arg-type]
+              )
+              if revised.status != "draft" or revised.total != Decimal("80.00") or revised.sent_at is not None:
+                  raise AssertionError(f"sent quotation revision did not return to draft safely: {revised}")
+              revision_resent = change_quotation_status(revised.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{revised.id}/status"), db, tenant)  # type: ignore[arg-type]
+              revision_rejected = change_quotation_status(revision_resent.id, QuotationStatusChange(status="rejected"), req("PATCH", f"/sales/quotations/{revision_resent.id}/status"), db, tenant)  # type: ignore[arg-type]
+              reopened = update_quotation(
+                  revision_rejected.id,
+                  QuotationUpdate(subject="Second revision"),
+                  req("PATCH", f"/sales/quotations/{revision_rejected.id}"),
+                  db,
+                  tenant,  # type: ignore[arg-type]
+              )
+              if reopened.status != "draft" or reopened.sent_at is not None or reopened.rejected_at is not None:
+                  raise AssertionError(f"rejected quotation revision did not return to draft safely: {reopened}")
+              revision_final_sent = change_quotation_status(reopened.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{reopened.id}/status"), db, tenant)  # type: ignore[arg-type]
+              revision_accepted = change_quotation_status(revision_final_sent.id, QuotationStatusChange(status="accepted"), req("PATCH", f"/sales/quotations/{revision_final_sent.id}/status"), db, tenant)  # type: ignore[arg-type]
+              expect(409, lambda: update_quotation(
+                  revision_accepted.id,
+                  QuotationUpdate(subject="Accepted quotation must stay locked"),
+                  req("PATCH", f"/sales/quotations/{revision_accepted.id}"),
+                  db,
+                  tenant,  # type: ignore[arg-type]
+              ))
+              db.rollback()
+
+              sent = change_quotation_status(quotation.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{quotation.id}/status"), db, tenant)  # type: ignore[arg-type]''',
+          )
+
+          Path('.github/workflows/apply-quotation-revision-before-acceptance.yml').unlink()
+          PY
+      - name: Commit scoped change
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/api/v1/sales.py backend/scripts/verify_sales_catalog_flow.py frontend/src/app/dashboard/quotations/quotation-workspace.tsx .github/workflows/apply-quotation-revision-before-acceptance.yml
+          git commit -m "fix(sales): allow quotation revisions before acceptance"
+          git push origin HEAD:fix/quotation-revision-before-acceptance
