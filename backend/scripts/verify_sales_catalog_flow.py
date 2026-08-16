@@ -11,7 +11,7 @@ from app.api.v1.accounting_sync import sync_accounting
 from app.api.v1.crm_interests import replace_lead_interests
 from app.api.v1.finance import change_invoice_status, create_invoice_from_order
 from app.api.v1.orders import change_order_status, create_order_from_quotation
-from app.api.v1.sales import change_quotation_status, create_quotation
+from app.api.v1.sales import change_quotation_status, create_quotation, update_quotation
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import InvoiceItem
@@ -22,7 +22,7 @@ from app.models.sales import QuotationItem
 from app.schemas.crm import LeadInterestInput, LeadInterestReplace
 from app.schemas.finance import InvoiceStatusAction
 from app.schemas.orders import OrderStatusChange
-from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange
+from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange, QuotationUpdate
 from app.services.accounting_posting import ensure_default_chart
 from app.services.activity_log import record_activity
 
@@ -191,6 +191,53 @@ def main() -> None:
             raise AssertionError("quotation catalog snapshot missing")
         if quotation.items[1].product_id is not None or quotation.items[1].item_type_snapshot != "service":
             raise AssertionError("quotation custom service snapshot missing")
+
+        revision_quote = create_quotation(
+            QuotationCreate(
+                client_id=client_id,
+                subject="Negotiation revision",
+                issue_date=date.today(),
+                currency=currency,
+                items=[QuotationItemInput(item_name="Negotiation service", item_type="service", unit="project", description="Negotiation service", quantity=Decimal("1"), unit_price=Decimal("100"))],
+            ),
+            req("POST", "/sales/quotations"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        revision_sent = change_quotation_status(revision_quote.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{revision_quote.id}/status"), db, tenant)  # type: ignore[arg-type]
+        revised = update_quotation(
+            revision_sent.id,
+            QuotationUpdate(
+                subject="Negotiated price",
+                items=[QuotationItemInput(item_name="Negotiation service", item_type="service", unit="project", description="Negotiation service", quantity=Decimal("1"), unit_price=Decimal("80"))],
+            ),
+            req("PATCH", f"/sales/quotations/{revision_sent.id}"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if revised.status != "draft" or revised.total != Decimal("80.00") or revised.sent_at is not None:
+            raise AssertionError(f"sent quotation revision did not return to draft safely: {revised}")
+        revision_resent = change_quotation_status(revised.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{revised.id}/status"), db, tenant)  # type: ignore[arg-type]
+        revision_rejected = change_quotation_status(revision_resent.id, QuotationStatusChange(status="rejected"), req("PATCH", f"/sales/quotations/{revision_resent.id}/status"), db, tenant)  # type: ignore[arg-type]
+        reopened = update_quotation(
+            revision_rejected.id,
+            QuotationUpdate(subject="Second revision"),
+            req("PATCH", f"/sales/quotations/{revision_rejected.id}"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if reopened.status != "draft" or reopened.sent_at is not None or reopened.rejected_at is not None:
+            raise AssertionError(f"rejected quotation revision did not return to draft safely: {reopened}")
+        revision_final_sent = change_quotation_status(reopened.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{reopened.id}/status"), db, tenant)  # type: ignore[arg-type]
+        revision_accepted = change_quotation_status(revision_final_sent.id, QuotationStatusChange(status="accepted"), req("PATCH", f"/sales/quotations/{revision_final_sent.id}/status"), db, tenant)  # type: ignore[arg-type]
+        expect(409, lambda: update_quotation(
+            revision_accepted.id,
+            QuotationUpdate(subject="Accepted quotation must stay locked"),
+            req("PATCH", f"/sales/quotations/{revision_accepted.id}"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        ))
+        db.rollback()
 
         sent = change_quotation_status(quotation.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{quotation.id}/status"), db, tenant)  # type: ignore[arg-type]
         accepted = change_quotation_status(sent.id, QuotationStatusChange(status="accepted"), req("PATCH", f"/sales/quotations/{sent.id}/status"), db, tenant)  # type: ignore[arg-type]
