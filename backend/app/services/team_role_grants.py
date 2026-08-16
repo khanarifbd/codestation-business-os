@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,14 +36,30 @@ def _actor_role(db: Session, tenant: TenantContext) -> OrganizationRole | None:
     )
 
 
-def grantable_employee_roles(db: Session, tenant: TenantContext) -> list[OrganizationRole]:
-    """Roles this actor may assign through delegated employee-invite flows.
+def delegated_role_is_grantable(
+    *,
+    role_slug: str,
+    role_permissions: Iterable[str],
+    actor_permissions: Iterable[str],
+) -> bool:
+    """Return whether a delegated inviter may grant a target role.
 
-    Company admins retain full control. Delegated inviters may always invite the built-in
-    employee/user role, and may assign a custom role only when every permission in that
-    role is already held by the inviter. This prevents employees.invite from becoming a
-    privilege-escalation path to admin or other higher-privilege roles.
+    The built-in employee/user role is safe once the actor already has
+    employees.invite. Admin/wildcard roles are never delegable. A custom role is
+    grantable only when it cannot add a permission the inviter does not hold.
     """
+
+    target = set(role_permissions)
+    actor = set(actor_permissions)
+    if role_slug == "user":
+        return True
+    if role_slug == "admin" or "*" in target:
+        return False
+    return target.issubset(actor)
+
+
+def grantable_employee_roles(db: Session, tenant: TenantContext) -> list[OrganizationRole]:
+    """Roles this actor may assign through delegated employee-invite flows."""
 
     roles = db.scalars(
         select(OrganizationRole)
@@ -59,17 +77,15 @@ def grantable_employee_roles(db: Session, tenant: TenantContext) -> list[Organiz
     if "*" in actor_permissions:
         return list(roles)
 
-    allowed: list[OrganizationRole] = []
-    for role in roles:
-        target_permissions = set(role.permissions or [])
-        if role.slug == "user":
-            allowed.append(role)
-            continue
-        if role.slug == "admin" or "*" in target_permissions:
-            continue
-        if target_permissions.issubset(actor_permissions):
-            allowed.append(role)
-    return allowed
+    return [
+        role
+        for role in roles
+        if delegated_role_is_grantable(
+            role_slug=role.slug,
+            role_permissions=role.permissions or [],
+            actor_permissions=actor_permissions,
+        )
+    ]
 
 
 def ensure_grantable_employee_role(db: Session, tenant: TenantContext, role_id: str) -> OrganizationRole:
