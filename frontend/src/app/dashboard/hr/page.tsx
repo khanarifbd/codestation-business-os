@@ -50,7 +50,8 @@ export default function HROverviewPage() {
         if (cancelled) return;
         setAccess(nextAccess);
         if (!nextAccess.can_view) {
-          if (nextAccess.can_self) router.replace("/dashboard/hr/me");
+          if (nextAccess.can_view_people) router.replace("/dashboard/hr/people");
+          else if (nextAccess.can_self) router.replace("/dashboard/hr/me");
           else setError("Your company role does not have access to People & HR.");
           return;
         }
