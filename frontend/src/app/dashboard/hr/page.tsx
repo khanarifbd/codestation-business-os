@@ -82,7 +82,7 @@ export default function HROverviewPage() {
     { label: "Leave requests", value: summary.attention.pending_leave, detail: "Waiting for a decision", href: "/dashboard/hr/time", icon: CalendarClock },
     { label: "Documents expiring", value: summary.attention.documents_expiring_30d, detail: "Within the next 30 days", href: "/dashboard/hr/records", icon: FileWarning },
     { label: "Candidates in progress", value: summary.attention.active_candidates, detail: `${summary.recruitment.open_jobs} open job${summary.recruitment.open_jobs === 1 ? "" : "s"}`, href: "/dashboard/hr/talent", icon: Sparkles },
-    ...(access?.can_manage_people ? [{ label: "Pending invitations", value: summary.attention.pending_invitations, detail: "Employee invites not accepted yet", href: "/dashboard/hr/people", icon: MailPlus }] : []),
+    ...(access?.can_invite_employees ? [{ label: "Pending invitations", value: summary.attention.pending_invitations, detail: "Employee invites not accepted yet", href: "/dashboard/hr/people", icon: MailPlus }] : []),
   ];
 
   return <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1500px]">
@@ -113,7 +113,7 @@ export default function HROverviewPage() {
     </div>
 
     <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm sm:p-6"><div><h2 className="font-semibold">Common actions</h2><p className="mt-1 text-sm text-neutral-500">Go straight to the job you want to do.</p></div><div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-      {access?.can_manage_people ? <Quick href="/dashboard/hr/people" title="Invite a person" text="Add a new employee" /> : null}
+      {access?.can_invite_employees ? <Quick href="/dashboard/hr/people" title="Invite a person" text="Add a new employee" /> : null}
       <Quick href="/dashboard/hr/time" title="Review leave" text="Approve or reject requests" />
       <Quick href="/dashboard/hr/records" title="Upload a document" text="Contracts and employee records" />
       <Quick href="/dashboard/hr/talent" title="Hire or review" text="Recruitment and performance" />
