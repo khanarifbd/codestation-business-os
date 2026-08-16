@@ -77,6 +77,7 @@ jobs:
       - run: uv run python scripts/verify_recurring_auto_post.py
       - run: uv run python scripts/verify_payroll.py
       - run: uv run python scripts/verify_hr.py
+      - run: uv run python scripts/verify_hr_security.py
       - run: uv run python scripts/verify_hr_extended.py
       - run: uv run python scripts/verify_hr_workspace.py
       - run: uv run python scripts/verify_capital.py
