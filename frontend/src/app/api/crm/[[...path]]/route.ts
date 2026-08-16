@@ -49,6 +49,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   return proxy(request, context, "POST");
 }
 
+export async function PUT(request: NextRequest, context: RouteContext) {
+  return proxy(request, context, "PUT");
+}
+
 export async function PATCH(request: NextRequest, context: RouteContext) {
   return proxy(request, context, "PATCH");
 }
