@@ -3,14 +3,30 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
+from starlette.requests import Request
 
-from app.api.v1.hr_workspace import hr_access, hr_workspace_summary
+from app.api.v1.hr_workspace import JobStatusUpdate, hr_access, hr_workspace_summary, update_job_status
 from app.db.session import SessionLocal
+from app.models.hr import JobOpening
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.user import User
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes
 from app.tenancy.context import TenantContext
+
+
+def request(method: str, path: str) -> Request:
+    return Request({
+        "type": "http",
+        "method": method,
+        "path": path,
+        "raw_path": path.encode(),
+        "headers": [],
+        "query_string": b"",
+        "scheme": "https",
+        "server": ("testserver", 443),
+        "client": ("127.0.0.1", 50000),
+    })
 
 
 def main() -> None:
@@ -36,7 +52,7 @@ def main() -> None:
         tenant = TenantContext(user=user, organization=organization, membership=membership)
 
         access = hr_access(db, tenant)
-        if not access["can_view"] or not access["can_manage_people"]:
+        if not access["can_view"] or not access["can_manage_people"] or not access["can_invite_employees"]:
             raise AssertionError(f"unexpected HR admin capabilities: {access}")
 
         summary = hr_workspace_summary(db, tenant)
@@ -74,10 +90,36 @@ def main() -> None:
         if scheduled_presence_minutes(weekly_off, expected_today) != 0:
             raise AssertionError("weekly off must have zero scheduled attendance minutes")
 
+        job = db.scalar(
+            select(JobOpening)
+            .where(JobOpening.organization_id == organization.id)
+            .order_by(JobOpening.created_at.desc())
+        )
+        if job is None:
+            raise AssertionError("HR job fixture missing")
+        held = update_job_status(
+            job.id,
+            JobStatusUpdate(status="on_hold"),
+            request("PATCH", f"/hr/jobs/{job.id}/status"),
+            db,
+            tenant,
+        )
+        if held["status"] != "on_hold":
+            raise AssertionError("job hold status failed")
+        reopened = update_job_status(
+            job.id,
+            JobStatusUpdate(status="open"),
+            request("PATCH", f"/hr/jobs/{job.id}/status"),
+            db,
+            tenant,
+        )
+        if reopened["status"] != "open":
+            raise AssertionError("job reopen status failed")
+
     finally:
         db.close()
 
-    print("HR workspace verification passed: access -> local day summary -> overnight shift -> grace -> weekly off")
+    print("HR workspace verification passed: access -> local day -> shift rules -> audited recruitment lifecycle")
 
 
 if __name__ == "__main__":
