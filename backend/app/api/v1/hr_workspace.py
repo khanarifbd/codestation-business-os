@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentTenant, DbSession
@@ -19,9 +20,14 @@ from app.models.hr import (
 )
 from app.models.hr_extended import HRHoliday
 from app.models.team import Department, Employee, EmployeeInvitation, OrganizationRole
+from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/hr", tags=["HR Workspace"])
+
+
+class JobStatusUpdate(BaseModel):
+    status: str
 
 
 def _role(db: DbSession, tenant: TenantContext) -> OrganizationRole | None:
@@ -39,6 +45,14 @@ def _permission(role: OrganizationRole | None, permission: str) -> bool:
         return False
     permissions = set(role.permissions or [])
     return "*" in permissions or permission in permissions
+
+
+def _require(db: DbSession, tenant: TenantContext, permission: str) -> OrganizationRole:
+    role = _role(db, tenant)
+    if not _permission(role, permission):
+        raise HTTPException(status_code=403, detail=f"Permission required: {permission}")
+    assert role is not None
+    return role
 
 
 def _local_today(tenant: TenantContext) -> date:
@@ -63,11 +77,13 @@ def hr_access(db: DbSession, tenant: CurrentTenant):
     can_manage = _permission(role, "hr.manage")
     can_self = _permission(role, "hr.self") and bool(is_employee)
     can_manage_people = tenant.role == MEMBERSHIP_ROLE_ADMIN
+    can_invite_employees = can_manage_people or _permission(role, "employees.invite")
     return {
         "can_view": can_view,
         "can_manage": can_manage,
         "can_self": can_self,
         "can_manage_people": can_manage_people,
+        "can_invite_employees": can_invite_employees,
         "is_employee": bool(is_employee),
         "role_name": role.name if role else None,
         "timezone": tenant.organization.timezone,
@@ -78,9 +94,7 @@ def hr_access(db: DbSession, tenant: CurrentTenant):
 
 @router.get("/workspace-summary")
 def hr_workspace_summary(db: DbSession, tenant: CurrentTenant):
-    role = _role(db, tenant)
-    if not _permission(role, "hr.view"):
-        raise HTTPException(status_code=403, detail="Permission required: hr.view")
+    _require(db, tenant, "hr.view")
 
     org = tenant.organization_id
     today = _local_today(tenant)
@@ -192,9 +206,7 @@ def hr_workspace_summary(db: DbSession, tenant: CurrentTenant):
         )
         or 0
     )
-    holidays = int(
-        db.scalar(select(func.count(HRHoliday.id)).where(HRHoliday.organization_id == org)) or 0
-    )
+    holidays = int(db.scalar(select(func.count(HRHoliday.id)).where(HRHoliday.organization_id == org)) or 0)
     pending_invitations = 0
     if tenant.role == MEMBERSHIP_ROLE_ADMIN:
         pending_invitations = int(
@@ -231,3 +243,35 @@ def hr_workspace_summary(db: DbSession, tenant: CurrentTenant):
         },
         "recruitment": {"open_jobs": open_jobs},
     }
+
+
+@router.patch("/jobs/{job_id}/status")
+def update_job_status(job_id: str, payload: JobStatusUpdate, request: Request, db: DbSession, tenant: CurrentTenant):
+    _require(db, tenant, "hr.manage")
+    next_status = payload.status.strip().lower()
+    if next_status not in {"open", "on_hold", "closed"}:
+        raise HTTPException(status_code=400, detail="Job status must be open, on_hold or closed")
+    item = db.scalar(
+        select(JobOpening)
+        .where(JobOpening.id == job_id, JobOpening.organization_id == tenant.organization_id)
+        .with_for_update()
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Job opening not found")
+    previous = item.status
+    item.status = next_status
+    record_activity(
+        db,
+        action="hr.job.status_changed",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="job_opening",
+        entity_id=item.id,
+        before={"status": previous},
+        after={"status": item.status},
+        message=f"Job opening {item.title} changed from {previous} to {item.status}",
+        request=request,
+    )
+    db.commit()
+    return {"id": item.id, "status": item.status}
