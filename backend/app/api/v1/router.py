@@ -40,6 +40,7 @@ from app.api.v1.hr import router as hr_router
 from app.api.v1.hr_extended import router as hr_extended_router
 from app.api.v1.hr_self import router as hr_self_router
 from app.api.v1.hr_uploads import router as hr_uploads_router
+from app.api.v1.hr_workspace import router as hr_workspace_router
 from app.api.v1.inventory import router as inventory_router
 from app.api.v1.inventory_fulfillment import router as inventory_fulfillment_router
 from app.api.v1.inventory_management import router as inventory_management_router
@@ -69,6 +70,7 @@ api_router.include_router(organizations_router)
 api_router.include_router(tenant_router)
 api_router.include_router(client_portal_router)
 api_router.include_router(team_router)
+api_router.include_router(hr_workspace_router)
 api_router.include_router(hr_router)
 api_router.include_router(hr_extended_router)
 api_router.include_router(hr_self_router)
