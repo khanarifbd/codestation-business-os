@@ -1,0 +1,57 @@
+name: Temp Inventory Purchase UX
+
+on:
+  push:
+    branches: [fix/inventory-purchase-search-help]
+
+permissions:
+  contents: write
+
+jobs:
+  update-purchase-ux:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/inventory-purchase-search-help
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Update receive purchase selectors and help
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('frontend/src/app/dashboard/inventory/page.tsx')
+          text = path.read_text()
+
+          replacements = {
+            '''<Select label="Supplier" value={purchaseForm.supplier_id} onChange={(value) => { const supplier = suppliers.find((item) => item.id === value); const currency = supplier?.currency || baseCurrency; setPurchaseForm({ ...purchaseForm, supplier_id: value, currency }); setPurchaseLines([{ product_id: "", quantity: "1", unit_cost: "0", tax_code_id: "" }]); }} options={[["", "Select supplier"], ...activeSuppliers.map((supplier) => [supplier.id, `${supplier.name} · ${supplier.vendor_code}`])]} />''': '''<SearchableField label="Supplier" helpText="Choose the supplier you purchased from. This links the purchase to the supplier record and payable history." value={purchaseForm.supplier_id} onChange={(value) => { const supplier = suppliers.find((item) => item.id === value); const currency = supplier?.currency || baseCurrency; setPurchaseForm({ ...purchaseForm, supplier_id: value, currency }); setPurchaseLines([{ product_id: "", quantity: "1", unit_cost: "0", tax_code_id: "" }]); }} options={activeSuppliers.map((supplier) => ({ value: supplier.id, label: `${supplier.name} · ${supplier.vendor_code}`, keywords: `${supplier.name} ${supplier.vendor_code} ${supplier.contact_name ?? ""} ${supplier.email ?? ""}` }))} placeholder="Select supplier" searchPlaceholder="Search supplier name or code..." />''',
+            '''<Select label="Receive into warehouse" value={purchaseForm.warehouse_id} onChange={(value) => setPurchaseForm({ ...purchaseForm, warehouse_id: value })} options={[["", "Select warehouse"], ...activeWarehouses.map((warehouse) => [warehouse.id, warehouse.name])]} />''': '''<SearchableField label="Receive into warehouse" helpText="Choose the warehouse that will receive the stock. The received quantity and inventory value will increase in this location." value={purchaseForm.warehouse_id} onChange={(value) => setPurchaseForm({ ...purchaseForm, warehouse_id: value })} options={activeWarehouses.map((warehouse) => ({ value: warehouse.id, label: `${warehouse.name} · ${warehouse.code}`, keywords: `${warehouse.name} ${warehouse.code} ${warehouse.address ?? ""}` }))} placeholder="Select warehouse" searchPlaceholder="Search warehouse name or code..." />''',
+            '''<Input label="Purchase date" type="date" value={purchaseForm.receipt_date} onChange={(value) => setPurchaseForm({ ...purchaseForm, receipt_date: value })} />''': '''<Input label="Purchase date" helpText="The date the goods were received or the purchase was recorded. This date is used for inventory movement and related accounting timing." type="date" value={purchaseForm.receipt_date} onChange={(value) => setPurchaseForm({ ...purchaseForm, receipt_date: value })} />''',
+            '''<CurrencyInput label="Purchase currency" value={purchaseForm.currency} onChange={(value) => { setPurchaseForm({ ...purchaseForm, currency: value }); setPurchaseLines([{ product_id: "", quantity: "1", unit_cost: "0", tax_code_id: "" }]); }} />''': '''<CurrencyInput label="Purchase currency" helpText="The currency shown on the supplier purchase. Product choices are filtered to stock items using this currency, and Business OS keeps different currencies separate." value={purchaseForm.currency} onChange={(value) => { setPurchaseForm({ ...purchaseForm, currency: value }); setPurchaseLines([{ product_id: "", quantity: "1", unit_cost: "0", tax_code_id: "" }]); }} />''',
+            '''<Input label="Supplier invoice / reference" optional value={purchaseForm.reference} onChange={(value) => setPurchaseForm({ ...purchaseForm, reference: value })} />''': '''<Input label="Supplier invoice / reference" helpText="Optional supplier invoice number, bill number, purchase reference or memo used for tracking and reconciliation." optional value={purchaseForm.reference} onChange={(value) => setPurchaseForm({ ...purchaseForm, reference: value })} />''',
+            '''<Input label="Notes" optional value={purchaseForm.notes} onChange={(value) => setPurchaseForm({ ...purchaseForm, notes: value })} />''': '''<Input label="Notes" helpText="Optional internal note about this purchase. Use it for delivery details, special terms or other context your team may need later." optional value={purchaseForm.notes} onChange={(value) => setPurchaseForm({ ...purchaseForm, notes: value })} />''',
+            '''<Select label="Product" value={line.product_id} onChange={(value) => { const product = purchaseProducts.find((item) => item.id === value); const next = [...purchaseLines]; next[index] = { ...line, product_id: value, unit_cost: product ? String(product.last_purchase_cost || product.standard_cost || 0) : line.unit_cost }; setPurchaseLines(next); }} options={[["", "Select product"], ...purchaseProducts.map((product) => [product.id, `${product.sku} · ${product.name}`])]} />''': '''<SearchableField label="Product" helpText="Choose the stock product being received. Only active stock-tracked products matching the purchase currency are available." value={line.product_id} onChange={(value) => { const product = purchaseProducts.find((item) => item.id === value); const next = [...purchaseLines]; next[index] = { ...line, product_id: value, unit_cost: product ? String(product.last_purchase_cost || product.standard_cost || 0) : line.unit_cost }; setPurchaseLines(next); }} options={purchaseProducts.map((product) => ({ value: product.id, label: `${product.sku} · ${product.name}`, keywords: `${product.sku} ${product.name} ${product.category_name ?? ""}` }))} placeholder="Select product" searchPlaceholder="Search product, SKU or category..." />''',
+            '''<Input label="Qty" type="number" value={line.quantity} onChange={(value) => { const next = [...purchaseLines]; next[index] = { ...line, quantity: value }; setPurchaseLines(next); }} />''': '''<Input label="Qty" helpText="Enter the quantity actually received into stock for this product line." type="number" value={line.quantity} onChange={(value) => { const next = [...purchaseLines]; next[index] = { ...line, quantity: value }; setPurchaseLines(next); }} />''',
+            '''<Input label="Unit cost" type="number" value={line.unit_cost} onChange={(value) => { const next = [...purchaseLines]; next[index] = { ...line, unit_cost: value }; setPurchaseLines(next); }} />''': '''<Input label="Unit cost" helpText="Enter the supplier cost for one unit in the selected purchase currency. This contributes to inventory valuation and cost history." type="number" value={line.unit_cost} onChange={(value) => { const next = [...purchaseLines]; next[index] = { ...line, unit_cost: value }; setPurchaseLines(next); }} />''',
+            '''<Select label="Tax" required={false} value={line.tax_code_id}''': '''<Select label="Tax" helpText="Choose the purchase tax applied to this line. Select No tax when none applies; tax affects the purchase total and related accounting." required={false} value={line.tax_code_id}''',
+          }
+
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'Expected one match, found {count}: {old[:100]}')
+              text = text.replace(old, new)
+
+          path.write_text(text)
+          PY
+      - name: Commit purchase UX update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/src/app/dashboard/inventory/page.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(inventory): improve receive purchase form UX"
+          git push origin HEAD:fix/inventory-purchase-search-help
