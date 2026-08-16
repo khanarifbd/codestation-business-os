@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   CalendarClock,
-  ChevronDown,
   FileUser,
   Gauge,
   Loader2,
@@ -72,13 +71,13 @@ export function HRModuleNav() {
   if (!primary.length && !more.length) return null;
 
   const active = (href: string) => href === "/dashboard/hr" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
-  const moreActive = more.some(item => active(item.href));
+  const activeMore = more.find(item => active(item.href));
 
   return <div className="sticky top-16 z-30 border-b border-neutral-200 bg-white/95 px-4 py-2 backdrop-blur lg:top-0 sm:px-8 lg:px-10">
     <div className="mx-auto flex max-w-[1500px] items-center gap-1 overflow-x-auto">
       <div className="mr-3 hidden shrink-0 border-r pr-4 lg:block"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">People & HR</p></div>
       {primary.map(({ label, href, icon: Icon }) => <Link key={href} href={href} className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-medium transition ${active(href) ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}><Icon className="size-4" />{label}</Link>)}
-      {more.length ? <details className="group relative shrink-0"><summary className={`flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg px-3 text-sm font-medium transition ${moreActive ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}>More <ChevronDown className="size-3.5 transition group-open:rotate-180" /></summary><div className="fixed left-auto z-50 mt-2 w-56 rounded-xl border bg-white p-1.5 shadow-xl lg:absolute">{more.map(({ label, href, icon: Icon }) => <Link key={href} href={href} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm ${active(href) ? "bg-neutral-100 font-medium text-neutral-950" : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950"}`}><Icon className="size-4" />{label}</Link>)}</div></details> : null}
+      {more.length ? <select aria-label="More People and HR pages" value={activeMore?.href ?? ""} onChange={event => { if (event.target.value) router.push(event.target.value); }} className={`h-9 shrink-0 cursor-pointer rounded-lg border-0 px-3 text-sm font-medium outline-none ${activeMore ? "bg-neutral-950 text-white" : "bg-neutral-100 text-neutral-600"}`}><option value="">More…</option>{more.map(item => <option key={item.href} value={item.href}>{item.label}</option>)}</select> : null}
     </div>
   </div>;
 }
