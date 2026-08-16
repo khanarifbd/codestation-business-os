@@ -19,8 +19,10 @@ export type HRAccess = {
   can_view: boolean;
   can_manage: boolean;
   can_self: boolean;
+  can_view_people: boolean;
   can_manage_people: boolean;
   can_invite_employees: boolean;
+  can_manage_structure: boolean;
   is_employee: boolean;
   role_name: string | null;
   timezone: string;
@@ -57,7 +59,7 @@ export function HRModuleNav() {
 
   const items = useMemo<Item[]>(() => [
     { label: "Overview", href: "/dashboard/hr", icon: Gauge, show: Boolean(access?.can_view) },
-    { label: "People", href: "/dashboard/hr/people", icon: UsersRound, show: Boolean(access?.can_manage_people) },
+    { label: "People", href: "/dashboard/hr/people", icon: UsersRound, show: Boolean(access?.can_view_people) },
     { label: "Time & Leave", href: "/dashboard/hr/time", icon: CalendarClock, show: Boolean(access?.can_view) },
     { label: "Records", href: "/dashboard/hr/records", icon: FileUser, show: Boolean(access?.can_view) },
     { label: "Talent", href: "/dashboard/hr/talent", icon: Sparkles, show: Boolean(access?.can_view) },
