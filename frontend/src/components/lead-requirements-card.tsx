@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type CatalogItem = {
   id: string;
@@ -59,10 +60,12 @@ export function LeadRequirementsCard({
   leadId,
   currency,
   convertedClientId,
+  onSaved,
 }: {
   leadId: string;
   currency: string;
   convertedClientId: string | null;
+  onSaved?: () => void | Promise<void>;
 }) {
   const router = useRouter();
   const [rows, setRows] = useState<Interest[]>([]);
@@ -73,6 +76,9 @@ export function LeadRequirementsCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [opportunityCurrency, setOpportunityCurrency] = useState(currency.toUpperCase());
+
+  useEffect(() => { setOpportunityCurrency(currency.toUpperCase()); }, [currency, leadId]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,7 +86,7 @@ export function LeadRequirementsCard({
     try {
       const [interestResponse, catalogResponse] = await Promise.all([
         fetch(`/api/crm/leads/${encodeURIComponent(leadId)}/interests`, { cache: "no-store" }),
-        fetch(`/api/crm/catalog-options?currency=${encodeURIComponent(currency)}&limit=200`, { cache: "no-store" }),
+        fetch(`/api/crm/catalog-options?currency=${encodeURIComponent(opportunityCurrency)}&limit=200`, { cache: "no-store" }),
       ]);
       const interestPayload = await interestResponse.json().catch(() => null);
       const catalogPayload = await catalogResponse.json().catch(() => null);
@@ -93,7 +99,7 @@ export function LeadRequirementsCard({
     } finally {
       setLoading(false);
     }
-  }, [currency, leadId]);
+  }, [leadId, opportunityCurrency]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -125,6 +131,19 @@ export function LeadRequirementsCard({
 
   function patch(index: number, values: Partial<DraftInterest>) {
     setDrafts((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...values } : row));
+  }
+
+  function changeOpportunityCurrency(value: string) {
+    const next = value.toUpperCase();
+    if (!next || next === opportunityCurrency) return;
+    const hasValues = drafts.some((row) => Boolean(row.product_id) || row.estimated_unit_price !== "" || row.item_name.trim() !== "" || row.description.trim() !== "");
+    if (editing && hasValues && !window.confirm("Changing the opportunity currency will clear catalog selections and estimated values so amounts are not silently reinterpreted. Continue?")) return;
+    setOpportunityCurrency(next);
+    if (editing) {
+      setDrafts((current) => current.map((row) => row.product_id ? emptyRequirement() : { ...row, estimated_unit_price: "" }));
+      setMessage(`Opportunity currency changed to ${next}. Review custom values and reselect any catalog items before saving.`);
+    }
+    setError(null);
   }
 
   function chooseSource(index: number, value: string) {
@@ -164,6 +183,7 @@ export function LeadRequirementsCard({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          currency: opportunityCurrency,
           interests: drafts.map((row) => ({
             product_id: row.product_id,
             item_name: row.item_name || null,
@@ -180,7 +200,8 @@ export function LeadRequirementsCard({
       if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not save lead requirements"));
       setRows(payload as Interest[]);
       setEditing(false);
-      setMessage("Lead requirements saved.");
+      setMessage(`Lead requirements saved in ${opportunityCurrency}.`);
+      await onSaved?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save lead requirements");
     } finally {
@@ -201,6 +222,10 @@ export function LeadRequirementsCard({
     </div>
 
     {!convertedClientId ? <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-700">Convert this lead to a client before creating a quotation. Requirements will remain linked to the lead.</div> : null}
+    <div className="mt-3 grid gap-2 rounded-xl border bg-neutral-50 p-3 sm:grid-cols-[220px_1fr] sm:items-end">
+      <SearchableSelect label="Opportunity currency" value={opportunityCurrency} onValueChange={changeOpportunityCurrency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." required clearable={false} />
+      <p className="pb-1 text-xs leading-5 text-neutral-500">Used for estimated requirement values and the future quotation. Your company base/reporting currency remains separate.</p>
+    </div>
     {error ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{error}</div> : null}
     {message ? <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700">{message}</div> : null}
 
@@ -216,7 +241,7 @@ export function LeadRequirementsCard({
           </div>
           <div className="mt-3 grid gap-3 lg:grid-cols-[1.7fr_.8fr_1fr_auto]">
             <Field label="Requirement / scope"><input value={row.description} onChange={(event) => patch(index, { description: event.target.value })} className="h-10 w-full rounded-lg border px-3 text-sm" /></Field>
-            <Field label={`Estimated unit value (${currency})`}><input type="number" min="0" step="any" value={row.estimated_unit_price} onChange={(event) => patch(index, { estimated_unit_price: event.target.value })} className="h-10 w-full rounded-lg border px-3 text-sm" /></Field>
+            <Field label={`Estimated unit value (${opportunityCurrency})`}><input type="number" min="0" step="any" value={row.estimated_unit_price} onChange={(event) => patch(index, { estimated_unit_price: event.target.value })} className="h-10 w-full rounded-lg border px-3 text-sm" /></Field>
             <Field label="Notes"><input value={row.notes} onChange={(event) => patch(index, { notes: event.target.value })} className="h-10 w-full rounded-lg border px-3 text-sm" /></Field>
             <button type="button" disabled={drafts.length === 1} onClick={() => setDrafts((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="mt-6 flex size-10 items-center justify-center rounded-lg border bg-white disabled:opacity-30" title="Remove requirement"><Trash2 className="size-4" /></button>
           </div>
