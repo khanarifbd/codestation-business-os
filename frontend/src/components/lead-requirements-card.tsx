@@ -223,7 +223,7 @@ export function LeadRequirementsCard({
 
     {!convertedClientId ? <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2.5 text-xs text-amber-700">Convert this lead to a client before creating a quotation. Requirements will remain linked to the lead.</div> : null}
     <div className="mt-3 grid gap-2 rounded-xl border bg-neutral-50 p-3 sm:grid-cols-[220px_1fr] sm:items-end">
-      <SearchableSelect label="Opportunity currency" value={opportunityCurrency} onValueChange={changeOpportunityCurrency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." required clearable={false} />
+      {editing ? <SearchableSelect label="Opportunity currency" value={opportunityCurrency} onValueChange={changeOpportunityCurrency} options={CURRENCY_OPTIONS} searchPlaceholder="Search currency..." required clearable={false} /> : <div><p className="text-xs font-medium text-neutral-600">Opportunity currency</p><p className="mt-2 flex h-11 items-center rounded-xl border bg-white px-3 text-sm font-semibold">{opportunityCurrency}</p></div>}
       <p className="pb-1 text-xs leading-5 text-neutral-500">Used for estimated requirement values and the future quotation. Your company base/reporting currency remains separate.</p>
     </div>
     {error ? <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700">{error}</div> : null}
