@@ -20,6 +20,7 @@ from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
 from app.services.crm import ensure_crm_defaults
 from app.services.expense_defaults import ensure_expense_defaults
+from app.services.functional_currency import ensure_initial_functional_currency_period
 from app.services.membership_relationships import (
     membership_relationships,
     membership_role,
@@ -90,6 +91,11 @@ def create_organization(
     )
     db.add(organization)
     db.flush()
+
+    # The initial period intentionally starts before any normal imported/backdated
+    # business history. Future functional-currency changes create new effective-
+    # dated periods instead of relabeling this one.
+    ensure_initial_functional_currency_period(db, organization, current_user.id)
 
     roles = ensure_system_roles(db, organization)
     membership = Membership(
@@ -164,6 +170,7 @@ def create_organization(
             "crm_defaults": "initialized",
             "expense_defaults": "initialized",
             "expense_categories_created": expense_defaults_created,
+            "functional_currency_history": "initialized",
         },
         request=request,
     )

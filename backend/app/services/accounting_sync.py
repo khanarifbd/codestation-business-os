@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from fastapi import HTTPException
@@ -48,7 +49,14 @@ def _invoice_revenue_split(db, invoice: Invoice) -> tuple[Decimal, Decimal]:
     return product_revenue, service_revenue
 
 
-def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_currency: str) -> dict:
+def sync_operational_accounting(
+    db,
+    *,
+    organization_id: str,
+    user_id: str,
+    base_currency: str,
+    through_date: date | None = None,
+) -> dict:
     counts = {
         "opening_balances": 0,
         "invoices": 0,
@@ -64,8 +72,13 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
     errors: list[str] = []
     base_currency = base_currency.upper()
 
+    def after_cutoff(value: date) -> bool:
+        return through_date is not None and value > through_date
+
     accounts = db.scalars(select(FinancialAccount).where(FinancialAccount.organization_id == organization_id)).all()
     for account in accounts:
+        if after_cutoff(account.created_at.date()):
+            continue
         opening = money(account.opening_balance)
         if opening == 0:
             continue
@@ -103,6 +116,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
 
     invoices = db.scalars(select(Invoice).where(Invoice.organization_id == organization_id, Invoice.status.not_in(["draft", "cancelled"]))).all()
     for invoice in invoices:
+        if after_cutoff(invoice.issue_date):
+            continue
         if _already_posted(db, organization_id, "invoice_issue", invoice.id):
             continue
         try:
@@ -160,6 +175,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
 
     payments = db.scalars(select(Payment).where(Payment.organization_id == organization_id, Payment.status == "confirmed")).all()
     for payment in payments:
+        if after_cutoff(payment.payment_date):
+            continue
         if _already_posted(db, organization_id, "invoice_payment", payment.id):
             continue
         try:
@@ -178,6 +195,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
 
     expense_rows = db.execute(select(Expense, ExpenseCategory.cost_type).join(ExpenseCategory, ExpenseCategory.id == Expense.category_id).where(Expense.organization_id == organization_id, Expense.status == "posted")).all()
     for expense, cost_type in expense_rows:
+        if after_cutoff(expense.expense_date):
+            continue
         if _already_posted(db, organization_id, "expense_post", expense.id):
             continue
         try:
@@ -197,6 +216,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
 
     transfers = db.scalars(select(AccountTransfer).where(AccountTransfer.organization_id == organization_id, AccountTransfer.status == "confirmed")).all()
     for transfer in transfers:
+        if after_cutoff(transfer.transfer_date):
+            continue
         if _already_posted(db, organization_id, "account_transfer", transfer.id):
             continue
         try:
@@ -224,6 +245,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
         .where(PayrollRun.organization_id == organization_id, PayrollRun.status == "paid", PayrollRun.paid_account_id.is_not(None))
     ).all()
     for run, period in paid_payroll:
+        if after_cutoff(period.pay_date):
+            continue
         if _already_posted(db, organization_id, "payroll_payment", run.id):
             continue
         try:
@@ -247,6 +270,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
 
     investments = db.scalars(select(CompanyInvestment).where(CompanyInvestment.organization_id == organization_id, CompanyInvestment.account_id.is_not(None))).all()
     for investment in investments:
+        if after_cutoff(investment.investment_date):
+            continue
         if _already_posted(db, organization_id, "company_investment", investment.id):
             continue
         try:
@@ -277,6 +302,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
         .where(InvestmentReturn.organization_id == organization_id)
     ).all()
     for item, investment in investment_returns:
+        if after_cutoff(item.return_date):
+            continue
         if _already_posted(db, organization_id, "investment_return", item.id):
             continue
         try:
@@ -298,6 +325,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
 
     investor_funding = db.scalars(select(ProjectInvestor).where(ProjectInvestor.organization_id == organization_id, ProjectInvestor.account_id.is_not(None))).all()
     for investor in investor_funding:
+        if after_cutoff(investor.investment_date):
+            continue
         if _already_posted(db, organization_id, "project_investor_funding", investor.id):
             continue
         try:
@@ -328,6 +357,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
         .where(InvestorPayout.organization_id == organization_id)
     ).all()
     for payout, investor in payouts:
+        if after_cutoff(payout.payout_date):
+            continue
         if _already_posted(db, organization_id, "investor_payout", payout.id):
             continue
         try:

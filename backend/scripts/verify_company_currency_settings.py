@@ -82,6 +82,8 @@ def main() -> None:
             raise AssertionError("new organization client currency is not initialized")
         if initial.accounting_currency_locked:
             raise AssertionError("fresh organization accounting currency should not be locked")
+        if len(initial.functional_currency_periods) != 1 or initial.functional_currency_periods[0].currency != "BDT":
+            raise AssertionError("new organization functional-currency history is not initialized")
 
         changed = update_company_currency_settings(
             CompanyCurrencySettingsUpdate(
@@ -99,6 +101,8 @@ def main() -> None:
             raise AssertionError("reporting currency did not remain independently configurable")
         if changed.default_client_currency != "GBP":
             raise AssertionError("default client currency did not remain independently configurable")
+        if changed.functional_currency_periods[-1].currency != "USD":
+            raise AssertionError("initial functional currency period was not corrected before posting")
 
         financial = db.scalar(
             select(OrganizationFinancialSettings).where(
@@ -119,11 +123,12 @@ def main() -> None:
             connection.execute(
                 text("""
                     INSERT INTO journal_entries
-                        (id, organization_id, entry_number, entry_date, status, source_type,
-                         created_by_user_id, posted_by_user_id, posted_at, created_at)
+                        (id, organization_id, entry_number, entry_date, functional_currency,
+                         status, source_type, created_by_user_id, posted_by_user_id,
+                         posted_at, created_at)
                     VALUES
-                        (:id, :organization_id, :entry_number, :entry_date, 'posted', 'currency_roles_fixture',
-                         :user_id, :user_id, :now, :now)
+                        (:id, :organization_id, :entry_number, :entry_date, 'USD',
+                         'posted', 'currency_roles_fixture', :user_id, :user_id, :now, :now)
                 """),
                 {
                     "id": str(uuid4()),
@@ -154,11 +159,13 @@ def main() -> None:
 
         locked = get_company_currency_settings(db, tenant)  # type: ignore[arg-type]
         if not locked.accounting_currency_locked:
-            raise AssertionError("posted journal did not lock accounting currency")
+            raise AssertionError("posted journal did not lock direct accounting currency relabel")
         if locked.accounting_currency != "USD":
             raise AssertionError("canonical accounting currency changed unexpectedly")
         if locked.reporting_currency != "AUD":
             raise AssertionError("reporting currency changed unexpectedly")
+        if locked.accounting_currency_change_earliest_date != date.today().fromordinal(date.today().toordinal() + 1):
+            raise AssertionError("controlled accounting currency change date is not after latest posted journal")
 
         try:
             update_company_currency_settings(
@@ -173,10 +180,10 @@ def main() -> None:
             )
         except HTTPException as exc:
             if exc.status_code != 409:
-                raise AssertionError(f"wrong status for locked accounting currency change: {exc.status_code}") from exc
+                raise AssertionError(f"wrong status for locked accounting currency relabel: {exc.status_code}") from exc
             db.rollback()
         else:
-            raise AssertionError("accounting currency changed after posted journal entries")
+            raise AssertionError("accounting currency was directly relabeled after posted journal entries")
 
         switched = update_company_currency_settings(
             CompanyCurrencySettingsUpdate(
@@ -195,7 +202,7 @@ def main() -> None:
         if switched.default_client_currency != "CAD":
             raise AssertionError("client currency could not be switched after journal posting")
         if not switched.accounting_currency_locked:
-            raise AssertionError("accounting lock disappeared after safe role update")
+            raise AssertionError("direct accounting relabel protection disappeared after safe role update")
 
         financial = db.scalar(
             select(OrganizationFinancialSettings).where(

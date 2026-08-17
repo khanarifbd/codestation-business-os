@@ -1,11 +1,12 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, event, or_, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 from app.models.common import new_uuid, utc_now
+from app.models.organization import Organization
 from app.tenancy.models import TenantOwnedMixin
 
 
@@ -41,11 +42,13 @@ class JournalEntry(TenantOwnedMixin, Base):
         UniqueConstraint("organization_id", "entry_number", name="uq_journal_entries_org_number"),
         Index("ix_journal_entries_org_date_status", "organization_id", "entry_date", "status"),
         Index("ix_journal_entries_org_source", "organization_id", "source_type", "source_id"),
+        Index("ix_journal_entries_org_functional_date", "organization_id", "functional_currency", "entry_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     entry_number: Mapped[str] = mapped_column(String(40), nullable=False)
     entry_date: Mapped[date] = mapped_column(Date, nullable=False)
+    functional_currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="posted", nullable=False)
     source_type: Mapped[str] = mapped_column(String(48), default="manual", nullable=False)
     source_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -80,3 +83,72 @@ class JournalLine(TenantOwnedMixin, Base):
     credit: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     original_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class OrganizationFunctionalCurrencyPeriod(TenantOwnedMixin, Base):
+    __tablename__ = "organization_functional_currency_periods"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "effective_from",
+            name="uq_org_functional_currency_period_start",
+        ),
+        Index(
+            "ix_org_functional_currency_period_range",
+            "organization_id",
+            "effective_from",
+            "effective_to",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    effective_from: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    previous_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    transition_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    transition_journal_entry_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("journal_entries.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    changed_by_user_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+@event.listens_for(JournalEntry, "before_insert")
+def _populate_journal_functional_currency(_mapper, connection, target: JournalEntry) -> None:
+    """Backstop every journal constructor with an immutable functional currency.
+
+    Normal posting paths set this field explicitly. The listener protects legacy
+    constructors and test/import code so a future organization setting cannot
+    silently relabel an existing journal.
+    """
+    if target.functional_currency:
+        target.functional_currency = target.functional_currency.upper()
+        return
+
+    periods = OrganizationFunctionalCurrencyPeriod.__table__
+    currency = connection.execute(
+        select(periods.c.currency)
+        .where(
+            periods.c.organization_id == target.organization_id,
+            periods.c.effective_from <= target.entry_date,
+            or_(periods.c.effective_to.is_(None), periods.c.effective_to >= target.entry_date),
+        )
+        .order_by(periods.c.effective_from.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+    if currency is None:
+        organizations = Organization.__table__
+        currency = connection.execute(
+            select(organizations.c.currency).where(organizations.c.id == target.organization_id)
+        ).scalar_one_or_none()
+
+    target.functional_currency = str(currency or "BDT").upper()
