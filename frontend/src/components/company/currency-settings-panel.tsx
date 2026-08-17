@@ -7,11 +7,11 @@ import { SearchableSelect, type SearchOption } from "@/components/searchable-sel
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type CurrencySettings = {
-  base_currency: string;
   accounting_currency: string;
+  reporting_currency: string;
   default_client_currency: string | null;
-  base_currency_locked: boolean;
-  base_currency_lock_reason: string | null;
+  accounting_currency_locked: boolean;
+  accounting_currency_lock_reason: string | null;
 };
 
 type RatePolicy = {
@@ -81,11 +81,11 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
       const nextSettings = currencyPayload as CurrencySettings;
       setSettings(nextSettings);
       setRates(ratePayload as RateBundle);
-      const suggestedFrom = nextSettings.default_client_currency && nextSettings.default_client_currency !== nextSettings.base_currency
+      const suggestedFrom = nextSettings.default_client_currency && nextSettings.default_client_currency !== nextSettings.accounting_currency
         ? nextSettings.default_client_currency
-        : nextSettings.base_currency === "USD" ? "EUR" : "USD";
+        : nextSettings.accounting_currency === "USD" ? "EUR" : "USD";
       setBase(suggestedFrom);
-      setQuote(nextSettings.base_currency);
+      setQuote(nextSettings.accounting_currency);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load currency settings.");
     } finally {
@@ -105,15 +105,17 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          base_currency: settings.base_currency,
+          accounting_currency: settings.accounting_currency,
+          reporting_currency: settings.reporting_currency,
           default_client_currency: settings.default_client_currency || null,
         }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.detail ?? "Unable to save currency settings.");
-      setSettings(payload as CurrencySettings);
-      setQuote((payload as CurrencySettings).base_currency);
-      setMessage("Currency roles saved. Accounting currency is aligned with the base/reporting currency.");
+      const next = payload as CurrencySettings;
+      setSettings(next);
+      setQuote(next.accounting_currency);
+      setMessage("Currency roles saved. Reporting and client currencies remain independent from the accounting ledger.");
       await onChanged?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to save currency settings.");
@@ -197,35 +199,39 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
   if (loading) return <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div>;
   if (!settings || !rates) return <div className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error ?? "Currency settings unavailable."}</div>;
 
-  const mismatch = settings.accounting_currency !== settings.base_currency;
-
   return <div className="space-y-6">
     <section className="rounded-2xl border bg-neutral-50 p-5">
       <div>
         <h3 className="font-semibold">Currency roles</h3>
-        <p className="mt-1 text-sm text-neutral-500">One place for reporting currency, client defaults and multi-currency conversion policy.</p>
+        <p className="mt-1 text-sm text-neutral-500">Accounting truth, report presentation and client defaults are configured independently.</p>
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-3">
         <div>
           <SearchableSelect
-            label="Base / reporting currency"
-            name="base_currency"
-            value={settings.base_currency}
-            onValueChange={(value) => setSettings({ ...settings, base_currency: value })}
+            label="Reporting currency"
+            name="reporting_currency"
+            value={settings.reporting_currency}
+            onValueChange={(value) => setSettings({ ...settings, reporting_currency: value })}
             options={currencyOptions}
-            placeholder="Select currency"
-            disabled={settings.base_currency_locked}
+            placeholder="Select reporting currency"
           />
-          <p className="mt-2 text-xs leading-5 text-neutral-500">Journal, Trial Balance, P&L and Balance Sheet are reported in this currency.</p>
-          {settings.base_currency_locked ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">{settings.base_currency_lock_reason}</p> : null}
+          <p className="mt-2 text-xs leading-5 text-neutral-500">Used to present financial reports. You can change it at any time without rewriting journal entries.</p>
+          {settings.reporting_currency !== settings.accounting_currency ? <p className="mt-2 rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">Reports will use {settings.reporting_currency} when an {settings.accounting_currency} → {settings.reporting_currency} FX pair is available. Ledger amounts stay in {settings.accounting_currency}.</p> : null}
         </div>
 
         <div>
-          <label className="block text-sm font-semibold">Accounting currency</label>
-          <div className="mt-2 flex h-11 items-center rounded-xl border bg-white px-3 text-sm font-medium">{settings.base_currency}</div>
-          <p className="mt-2 text-xs leading-5 text-neutral-500">Business OS V1 uses the same functional currency for the double-entry ledger and financial reports.</p>
-          {mismatch ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Legacy value is {settings.accounting_currency}. Saving this section will align it to {settings.base_currency}.</p> : null}
+          <SearchableSelect
+            label="Accounting / functional currency"
+            name="accounting_currency"
+            value={settings.accounting_currency}
+            onValueChange={(value) => setSettings({ ...settings, accounting_currency: value })}
+            options={currencyOptions}
+            placeholder="Select accounting currency"
+            disabled={settings.accounting_currency_locked}
+          />
+          <p className="mt-2 text-xs leading-5 text-neutral-500">The double-entry journal, Trial Balance and ledger base amounts are stored in this currency.</p>
+          {settings.accounting_currency_locked ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">{settings.accounting_currency_lock_reason}</p> : null}
         </div>
 
         <div>
@@ -237,7 +243,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
             options={currencyOptions}
             placeholder="No default"
           />
-          <p className="mt-2 text-xs leading-5 text-neutral-500">Used as the starting currency for new clients/documents. It may differ from the reporting currency.</p>
+          <p className="mt-2 text-xs leading-5 text-neutral-500">Used as the starting currency for new clients and commercial documents. It may differ from both accounting and reporting currencies.</p>
         </div>
       </div>
 
@@ -267,7 +273,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
 
       <div className="mt-6 border-t pt-6">
         <h4 className="font-semibold">Currency pairs</h4>
-        <p className="mt-1 text-sm text-neutral-500">Add only the conversion pairs your company actually uses.</p>
+        <p className="mt-1 text-sm text-neutral-500">Add conversion pairs used for transactions and reporting. Accounting postings always preserve their historical rate.</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_1fr_1fr_auto]">
           <SearchableSelect label="From" name="fx_base" value={base} onValueChange={setBase} options={currencyOptions} placeholder="From" />
           <div className="hidden pt-9 text-neutral-300 sm:block">→</div>
