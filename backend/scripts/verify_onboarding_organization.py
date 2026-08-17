@@ -8,6 +8,7 @@ from app.api.v1.organizations import create_organization, list_organizations
 from app.db.session import SessionLocal
 from app.models.company_settings import OrganizationDocumentSequence
 from app.models.crm import LeadSource, LeadStatus
+from app.models.expenses import ExpenseCategory
 from app.models.membership import Membership
 from app.models.subscription import Subscription
 from app.models.team import Employee, OrganizationRole
@@ -86,6 +87,11 @@ def main() -> None:
             raise AssertionError("CRM lead status defaults were not created")
         if (db.scalar(select(func.count(LeadSource.id)).where(LeadSource.organization_id == organization_id)) or 0) < 1:
             raise AssertionError("CRM lead source defaults were not created")
+        expense_category_count = db.scalar(
+            select(func.count(ExpenseCategory.id)).where(ExpenseCategory.organization_id == organization_id)
+        ) or 0
+        if expense_category_count < 12:
+            raise AssertionError(f"expected fresh organization expense defaults, got {expense_category_count} categories")
         if (db.scalar(select(func.count(OrganizationRole.id)).where(OrganizationRole.organization_id == organization_id)) or 0) < 1:
             raise AssertionError("organization roles were not created")
         if (db.scalar(select(func.count(Employee.id)).where(Employee.organization_id == organization_id)) or 0) != 1:
