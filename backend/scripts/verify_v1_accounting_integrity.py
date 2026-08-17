@@ -28,6 +28,7 @@ from app.schemas.organization import OrganizationCreate
 from app.schemas.payables import PayableBillCreate, PayablePaymentCreate
 from app.services.accounting_posting import financial_ledger_account, money, system_account, to_base_amount
 from app.services.accounting_sync import sync_operational_accounting
+from app.services.activity_log import record_activity
 from app.services.exchange_rates import record_rate_snapshot
 
 
@@ -128,7 +129,7 @@ def main() -> None:
         )
         db.add(current_pair)
         db.flush()
-        record_rate_snapshot(
+        invoice_snapshot = record_rate_snapshot(
             db,
             organization_id=organization.id,
             base_currency="USD",
@@ -139,7 +140,7 @@ def main() -> None:
             source="verification_historical",
             user_id=user.id,
         )
-        record_rate_snapshot(
+        settlement_snapshot = record_rate_snapshot(
             db,
             organization_id=organization.id,
             base_currency="USD",
@@ -149,6 +150,23 @@ def main() -> None:
             effective_rate=Decimal("125"),
             source="verification_historical",
             user_id=user.id,
+        )
+        record_activity(
+            db,
+            action="verification.v1_accounting.fx_seeded",
+            scope="tenant",
+            actor_user_id=user.id,
+            organization_id=organization.id,
+            entity_type="organization_exchange_rate",
+            entity_id=current_pair.id,
+            after={
+                "current_rate": "130",
+                "invoice_snapshot_id": invoice_snapshot.id,
+                "invoice_rate": "120",
+                "settlement_snapshot_id": settlement_snapshot.id,
+                "settlement_rate": "125",
+            },
+            message="Seeded audited FX fixtures for V1 accounting integrity verification",
         )
         db.commit()
 
@@ -178,6 +196,18 @@ def main() -> None:
             status="active",
         )
         db.add(client)
+        db.flush()
+        record_activity(
+            db,
+            action="verification.v1_accounting.client_seeded",
+            scope="tenant",
+            actor_user_id=user.id,
+            organization_id=organization.id,
+            entity_type="client",
+            entity_id=client.id,
+            after={"currency": client.currency, "display_name": client.display_name},
+            message="Seeded client for V1 accounting integrity verification",
+        )
         db.commit()
         db.refresh(client)
 
@@ -239,6 +269,17 @@ def main() -> None:
         )
         if sync_result["errors"]:
             raise AssertionError(f"Operational accounting sync failed: {sync_result['errors']}")
+        record_activity(
+            db,
+            action="verification.v1_accounting.sync_completed",
+            scope="tenant",
+            actor_user_id=user.id,
+            organization_id=organization.id,
+            entity_type="organization",
+            entity_id=organization.id,
+            after=sync_result,
+            message="Synchronized operational records for V1 accounting integrity verification",
+        )
         db.commit()
 
         issue_entry, issue_lines = entry_lines(db, organization.id, "invoice_issue", sent.id)
