@@ -8,25 +8,23 @@ from fastapi import HTTPException
 from sqlalchemy import select, text
 from starlette.requests import Request
 
-from app.api.v1.company_currencies import get_company_currency_settings, update_company_currency_settings
+from app.api.v1.company_currencies import (
+    CompanyCurrencySettingsUpdate,
+    get_company_currency_settings,
+    update_company_currency_settings,
+)
 from app.api.v1.organizations import create_organization
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.organization import OrganizationCreate
-from app.api.v1.company_currencies import CompanyCurrencySettingsUpdate
-
-
-@dataclass(frozen=True)
-class FixtureOrganization:
-    id: str
-    currency: str
 
 
 @dataclass(frozen=True)
 class FixtureTenant:
     organization_id: str
     user_id: str
-    organization: object
+    organization: Organization
 
 
 def req(method: str, path: str) -> Request:
@@ -65,7 +63,9 @@ def main() -> None:
             db,
             user,
         )
-        organization = created.organization
+        organization = db.get(Organization, created.organization.id)
+        if organization is None:
+            raise AssertionError("new organization ORM row was not persisted")
         tenant = FixtureTenant(
             organization_id=organization.id,
             user_id=user.id,
@@ -128,11 +128,10 @@ def main() -> None:
         user = db.get(User, user_id)
         if user is None:
             raise AssertionError("fixture user disappeared")
-        from app.models.organization import Organization
-        organization_row = db.get(Organization, organization_id)
-        if organization_row is None:
+        organization = db.get(Organization, organization_id)
+        if organization is None:
             raise AssertionError("fixture organization disappeared")
-        tenant = FixtureTenant(organization_id=organization_id, user_id=user_id, organization=organization_row)
+        tenant = FixtureTenant(organization_id=organization_id, user_id=user_id, organization=organization)
 
         locked = get_company_currency_settings(db, tenant)  # type: ignore[arg-type]
         if not locked.base_currency_locked:
