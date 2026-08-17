@@ -54,6 +54,7 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run python scripts/verify_onboarding_organization.py
       - run: uv run python scripts/verify_google_auth.py
+      - run: uv run python scripts/verify_user_profile.py
       - run: uv run python scripts/verify_company_currency_settings.py
       - run: uv run python scripts/verify_reporting_currency.py
       - run: uv run python scripts/verify_functional_currency_change.py
