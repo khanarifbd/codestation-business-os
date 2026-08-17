@@ -15,7 +15,7 @@ from app.models.capital import (
     ProjectInvestorFunding,
 )
 from app.models.client_access import ClientMembership
-from app.models.company_defaults import OrganizationExchangeRate, OrganizationSystemDefaults
+from app.models.company_defaults import OrganizationExchangeRate, OrganizationExchangeRateHistory, OrganizationSystemDefaults
 from app.models.company_settings import (
     OrganizationAddress,
     OrganizationBranding,
@@ -82,7 +82,7 @@ __all__ = [
     "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadInterest", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
     "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderFulfillment", "OrderFulfillmentItem", "OrderItem", "PayableBill",
     "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
-    "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationDocumentSequence",
+    "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
