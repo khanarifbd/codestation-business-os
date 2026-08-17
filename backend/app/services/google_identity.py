@@ -44,6 +44,7 @@ class GoogleIdentity:
     full_name: str
     hosted_domain: str | None
     picture_url: str | None
+    issued_at: int | None = None
 
     @property
     def email_is_google_authoritative(self) -> bool:
@@ -240,9 +241,11 @@ def verify_google_id_token(
     if expires_at < current_time - _CLOCK_SKEW_SECONDS:
         raise GoogleIdentityError("Google credential has expired")
 
-    issued_at = payload.get("iat")
-    if issued_at is not None and _positive_int_claim(payload, "iat") > current_time + _CLOCK_SKEW_SECONDS:
-        raise GoogleIdentityError("Google credential issue time is invalid")
+    issued_at: int | None = None
+    if payload.get("iat") is not None:
+        issued_at = _positive_int_claim(payload, "iat")
+        if issued_at > current_time + _CLOCK_SKEW_SECONDS:
+            raise GoogleIdentityError("Google credential issue time is invalid")
     not_before = payload.get("nbf")
     if not_before is not None and _positive_int_claim(payload, "nbf") > current_time + _CLOCK_SKEW_SECONDS:
         raise GoogleIdentityError("Google credential is not valid yet")
@@ -275,4 +278,5 @@ def verify_google_id_token(
         full_name=full_name.strip()[:160],
         hosted_domain=hosted_domain.lower().strip() if hosted_domain else None,
         picture_url=picture,
+        issued_at=issued_at,
     )
