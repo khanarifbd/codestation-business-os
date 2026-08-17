@@ -22,6 +22,7 @@ export function SearchableSelect({
   required = false,
   allowCustom = false,
   clearable = true,
+  disabled = false,
 }: {
   label?: string;
   name?: string;
@@ -35,6 +36,7 @@ export function SearchableSelect({
   required?: boolean;
   allowCustom?: boolean;
   clearable?: boolean;
+  disabled?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -65,6 +67,13 @@ export function SearchableSelect({
     };
   }, []);
 
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+      setQuery("");
+    }
+  }, [disabled]);
+
   const selected = options.find((option) => option.value === value);
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -75,6 +84,7 @@ export function SearchableSelect({
   }, [options, query]);
 
   function choose(nextValue: string) {
+    if (disabled) return;
     if (!isControlled) setInternalValue(nextValue);
     onValueChange?.(nextValue);
     onChange?.(nextValue);
@@ -87,7 +97,7 @@ export function SearchableSelect({
     (option) => option.value.toLowerCase() === customValue.toLowerCase() || option.label.toLowerCase() === customValue.toLowerCase(),
   );
   const displayValue = selected?.label ?? (value || placeholder);
-  const canClear = clearable && !required && Boolean(value);
+  const canClear = !disabled && clearable && !required && Boolean(value);
   const accessibleLabel = label || placeholder;
 
   return (
@@ -97,8 +107,9 @@ export function SearchableSelect({
       <div className={label ? "relative mt-2" : "relative"}>
         <button
           type="button"
+          disabled={disabled}
           onClick={() => setOpen((current) => !current)}
-          className="flex h-11 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 pr-16 text-left text-sm outline-none transition hover:border-neutral-300 focus:border-neutral-500"
+          className="flex h-11 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 pr-16 text-left text-sm outline-none transition hover:border-neutral-300 focus:border-neutral-500 disabled:cursor-not-allowed disabled:bg-neutral-50 disabled:text-neutral-500 disabled:hover:border-neutral-200"
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label={accessibleLabel}

@@ -15,6 +15,7 @@ from app.api.v1.capital import router as capital_router
 from app.api.v1.capital_insights import router as capital_insights_router
 from app.api.v1.client_access import router as client_access_router
 from app.api.v1.client_portal import router as client_portal_router
+from app.api.v1.company_currencies import router as company_currencies_router
 from app.api.v1.company_defaults import router as company_defaults_router
 from app.api.v1.company_settings import router as company_settings_router
 from app.api.v1.company_uploads import router as company_uploads_router
@@ -123,6 +124,7 @@ api_router.include_router(reports_router)
 api_router.include_router(workspace_router)
 api_router.include_router(company_uploads_router)
 api_router.include_router(company_settings_router)
+api_router.include_router(company_currencies_router)
 api_router.include_router(company_defaults_router)
 api_router.include_router(exchange_rates_router)
 api_router.include_router(tenant_activity_router)
