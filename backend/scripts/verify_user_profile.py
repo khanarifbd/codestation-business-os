@@ -30,6 +30,22 @@ def req(method: str, path: str) -> Request:
     })
 
 
+def expect_profile_error(
+    db,
+    user: User,
+    payload: UserProfileUpdateRequest,
+    *,
+    label: str,
+) -> None:
+    try:
+        update_profile(payload, req("PATCH", "/profile"), db, user)
+    except HTTPException as exc:
+        if exc.status_code != 400:
+            raise AssertionError(f"{label} returned wrong status") from exc
+    else:
+        raise AssertionError(f"{label} was accepted")
+
+
 def main() -> None:
     db = SessionLocal()
     marker = uuid4().hex[:10]
@@ -98,18 +114,24 @@ def main() -> None:
         else:
             raise AssertionError("profile update schema accepted direct email mutation")
 
-        try:
-            update_profile(
-                UserProfileUpdateRequest(timezone="Invalid/Timezone"),
-                req("PATCH", "/profile"),
-                db,
-                user,
-            )
-        except HTTPException as exc:
-            if exc.status_code != 400:
-                raise AssertionError("invalid timezone returned wrong status") from exc
-        else:
-            raise AssertionError("invalid timezone was accepted")
+        expect_profile_error(
+            db,
+            user,
+            UserProfileUpdateRequest(timezone="Invalid/Timezone"),
+            label="unknown timezone",
+        )
+        expect_profile_error(
+            db,
+            user,
+            UserProfileUpdateRequest(timezone="../UTC"),
+            label="malformed timezone",
+        )
+        expect_profile_error(
+            db,
+            user,
+            UserProfileUpdateRequest(phone="++++"),
+            label="punctuation-only phone number",
+        )
 
         try:
             change_password(
@@ -123,6 +145,19 @@ def main() -> None:
                 raise AssertionError("wrong current password returned wrong status") from exc
         else:
             raise AssertionError("wrong current password was accepted")
+
+        try:
+            change_password(
+                PasswordChangeRequest(current_password=old_password, new_password=old_password),
+                req("POST", "/profile/password"),
+                db,
+                user,
+            )
+        except HTTPException as exc:
+            if exc.status_code != 400:
+                raise AssertionError("password reuse returned wrong status") from exc
+        else:
+            raise AssertionError("password reuse was accepted")
 
         change_password(
             PasswordChangeRequest(current_password=old_password, new_password=new_password),
@@ -152,12 +187,32 @@ def main() -> None:
         else:
             raise AssertionError("Google-only account was allowed to create a password without re-authentication")
 
-        actions = set(db.scalars(
-            select(ActivityLog.action).where(ActivityLog.actor_user_id == user.id)
+        user_logs = list(db.scalars(
+            select(ActivityLog).where(ActivityLog.actor_user_id == user.id)
         ).all())
+        actions = {log.action for log in user_logs}
         required_actions = {"user.profile.updated", "user.password.change_failed", "user.password.changed"}
         if not required_actions.issubset(actions):
             raise AssertionError(f"profile audit actions are incomplete: {actions}")
+
+        password_failure_reasons = {
+            (log.metadata_json or {}).get("reason")
+            for log in user_logs
+            if log.action == "user.password.change_failed"
+        }
+        if not {"incorrect_current_password", "password_reuse"}.issubset(password_failure_reasons):
+            raise AssertionError(
+                f"password failure audit reasons are incomplete: {password_failure_reasons}"
+            )
+
+        google_failures = list(db.scalars(
+            select(ActivityLog).where(
+                ActivityLog.actor_user_id == google_only.id,
+                ActivityLog.action == "user.password.change_failed",
+            )
+        ).all())
+        if not google_failures or (google_failures[-1].metadata_json or {}).get("reason") != "password_not_configured":
+            raise AssertionError("Google-only password rejection was not audited")
 
     finally:
         db.close()
