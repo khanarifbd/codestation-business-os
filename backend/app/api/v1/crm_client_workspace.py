@@ -359,6 +359,7 @@ def get_client_workspace(
             .join(Invoice, Invoice.id == Payment.invoice_id)
             .where(
                 Payment.organization_id == organization_id,
+                Payment.status == "confirmed",
                 Invoice.organization_id == organization_id,
                 Invoice.client_id == client_id,
             )

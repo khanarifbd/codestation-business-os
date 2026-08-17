@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Banknote, Building2, ChevronDown, FileText, Loader2, X } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
@@ -35,8 +35,7 @@ function badge(status:string) {
 
 export default function FinancePage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const requestedClientId = searchParams.get("client_id");
+  const [requestedClientId,setRequestedClientId] = useState<string|null>(null);
   const [tab,setTab] = useState<Tab>("invoices");
   const [summary,setSummary] = useState<Summary|null>(null);
   const [meta,setMeta] = useState<Meta>({clients:[],orders:[],projects:[],accounts:[]});
@@ -89,6 +88,9 @@ export default function FinancePage() {
   },[api]);
 
   useEffect(() => { void loadCore(true); },[loadCore]);
+  useEffect(() => {
+    setRequestedClientId(new URLSearchParams(window.location.search).get("client_id"));
+  }, []);
   useEffect(() => {
     if (!requestedClientId || loading) return;
     if (meta.clients.some((item) => item.id === requestedClientId)) setModal("invoice");
