@@ -102,18 +102,9 @@ def _period_read(item) -> CompanyFunctionalCurrencyPeriodRead:
 
 def _read(db: DbSession, tenant: CurrentTenantAdmin) -> CompanyCurrencySettingsRead:
     financial, defaults = _settings_rows(db, tenant.organization_id)
-    ensure_initial_functional_currency_period(db, tenant.organization, tenant.user_id)
     current_period = current_functional_currency_period(db, tenant.organization_id)
     locked = _accounting_currency_locked(db, tenant.organization_id)
     accounting_currency = current_period.currency.upper()
-
-    # Keep compatibility pointers aligned with the effective-dated current period.
-    if tenant.organization.currency.upper() != accounting_currency:
-        tenant.organization.currency = accounting_currency
-    if financial.accounting_currency.upper() != accounting_currency:
-        financial.accounting_currency = accounting_currency
-    db.flush()
-
     periods = list_functional_currency_periods(db, tenant.organization_id)
     return CompanyCurrencySettingsRead(
         accounting_currency=accounting_currency,
@@ -222,6 +213,7 @@ def change_accounting_currency(
     financial, _ = _settings_rows(db, tenant.organization_id)
     ensure_initial_functional_currency_period(db, organization, tenant.user_id)
     before_currency = current_functional_currency_period(db, tenant.organization_id).currency.upper()
+    before_financial_currency = financial.accounting_currency.upper()
 
     result = change_functional_currency(
         db,
@@ -243,7 +235,7 @@ def change_accounting_currency(
         entity_id=result.period_id,
         before={
             "accounting_currency": before_currency,
-            "financial_accounting_currency": financial.accounting_currency,
+            "financial_accounting_currency": before_financial_currency,
         },
         after={
             "accounting_currency": result.new_currency,
