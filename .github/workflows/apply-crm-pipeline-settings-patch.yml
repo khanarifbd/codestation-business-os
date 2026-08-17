@@ -1,0 +1,31 @@
+name: Apply CRM pipeline settings patch
+
+on:
+  push:
+    branches:
+      - fix/crm-pipeline-settings-management
+    paths:
+      - scripts/_apply_crm_pipeline_settings_patch.py
+      - .github/workflows/apply-crm-pipeline-settings-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/crm-pipeline-settings-management
+      - name: Apply patch
+        run: python scripts/_apply_crm_pipeline_settings_patch.py
+      - name: Commit patch
+        run: |
+          rm scripts/_apply_crm_pipeline_settings_patch.py
+          rm .github/workflows/apply-crm-pipeline-settings-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(crm): manage pipeline statuses and sources"
+          git push origin HEAD:fix/crm-pipeline-settings-management
