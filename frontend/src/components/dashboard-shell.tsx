@@ -13,7 +13,7 @@ import {
 import { WorkspaceSwitcher, type WorkspaceContext } from "@/components/workspace-switcher";
 
 type NavigationItem = { label: string; icon: LucideIcon; href: string };
-type ProfileSummary = { full_name: string; email: string };
+type ProfileSummary = { full_name: string; email: string; has_avatar: boolean; avatar_version: number };
 
 const staffNavigation: NavigationItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
@@ -101,7 +101,7 @@ function Navigation({ pathname, items, onNavigate }: { pathname: string; items: 
 
 function ProfileLink({ profile, active, onNavigate }: { profile: ProfileSummary | null; active: boolean; onNavigate?: () => void }) {
   return <Link href="/dashboard/profile" onClick={onNavigate} className={`flex items-center gap-3 rounded-xl border p-2.5 transition ${active ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50"}`}>
-    <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold ${active ? "bg-white/10 text-white" : "bg-neutral-950 text-white"}`}>{profile ? profileInitials(profile.full_name) : "ME"}</div>
+    <div className={`flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xl text-xs font-semibold ${active ? "bg-white/10 text-white" : "bg-neutral-950 text-white"}`}>{profile?.has_avatar ? <img src={`/api/profile/avatar?v=${profile.avatar_version}`} alt="" className="h-full w-full object-cover" /> : profile ? profileInitials(profile.full_name) : "ME"}</div>
     <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{profile?.full_name ?? "My profile"}</p><p className={`truncate text-[11px] ${active ? "text-white/55" : "text-neutral-400"}`}>{profile?.email ?? "Account & security"}</p></div>
     <ChevronDown className="size-3.5 -rotate-90 opacity-45" />
   </Link>;
@@ -111,7 +111,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname(); const router = useRouter(); const [mobileOpen,setMobileOpen]=useState(false); const [workspaceContext,setWorkspaceContext]=useState<WorkspaceContext|null>(null); const [profile,setProfile]=useState<ProfileSummary|null>(null);
   useEffect(()=>{setMobileOpen(false);},[pathname]);
   useEffect(()=>{if(!mobileOpen)return;const previous=document.body.style.overflow;document.body.style.overflow="hidden";return()=>{document.body.style.overflow=previous;};},[mobileOpen]);
-  useEffect(()=>{let active=true;async function loadProfile(){const response=await fetch("/api/profile",{cache:"no-store"}).catch(()=>null);if(!response?.ok)return;const payload=await response.json().catch(()=>null);if(active&&payload?.full_name&&payload?.email)setProfile({full_name:payload.full_name,email:payload.email});}const refresh=()=>{void loadProfile();};void loadProfile();window.addEventListener("business-os-profile-updated",refresh);return()=>{active=false;window.removeEventListener("business-os-profile-updated",refresh);};},[]);
+  useEffect(()=>{let active=true;async function loadProfile(){const response=await fetch("/api/profile",{cache:"no-store"}).catch(()=>null);if(!response?.ok)return;const payload=await response.json().catch(()=>null);if(active&&payload?.full_name&&payload?.email)setProfile({full_name:payload.full_name,email:payload.email,has_avatar:Boolean(payload.has_avatar),avatar_version:Number(payload.avatar_version??0)});}const refresh=()=>{void loadProfile();};void loadProfile();window.addEventListener("business-os-profile-updated",refresh);return()=>{active=false;window.removeEventListener("business-os-profile-updated",refresh);};},[]);
   const relationships=workspaceContext?.relationships??[]; const clientOnly=workspaceContext?.primary_relationship==="client"; const hasClientRelationship=relationships.includes("client");
   useEffect(()=>{if(clientOnly&&pathname!=="/dashboard/client-portal"&&!pathname.startsWith("/dashboard/profile"))router.replace("/dashboard/client-portal");},[clientOnly,pathname,router]);
   const navigation=useMemo(()=>{if(clientOnly)return[clientPortalItem];const items=[...staffNavigation];if(hasClientRelationship)items.splice(1,0,clientPortalItem);return items;},[clientOnly,hasClientRelationship]);
