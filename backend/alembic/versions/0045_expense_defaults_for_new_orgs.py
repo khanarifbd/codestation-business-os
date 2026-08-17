@@ -1,6 +1,6 @@
 """backfill expense defaults for organizations created after expense foundation
 
-Revision ID: 0045_expense_defaults_for_new_orgs
+Revision ID: 0045_expense_defaults
 Revises: 0044_sales_reversal_integrity
 Create Date: 2026-08-17
 """
@@ -12,7 +12,7 @@ from uuid import uuid4
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0045_expense_defaults_for_new_orgs"
+revision: str = "0045_expense_defaults"
 down_revision: str | None = "0044_sales_reversal_integrity"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
