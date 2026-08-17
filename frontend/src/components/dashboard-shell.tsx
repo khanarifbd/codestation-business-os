@@ -13,6 +13,8 @@ import {
 import { WorkspaceSwitcher, type WorkspaceContext } from "@/components/workspace-switcher";
 
 type NavigationItem = { label: string; icon: LucideIcon; href: string };
+type ProfileSummary = { full_name: string; email: string };
+
 const staffNavigation: NavigationItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
   { label: "My Work", icon: BriefcaseBusiness, href: "/dashboard/my-work" },
@@ -70,6 +72,11 @@ function isFinanceItemActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+function profileInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") : "U";
+}
+
 function Navigation({ pathname, items, onNavigate }: { pathname: string; items: NavigationItem[]; onNavigate?: () => void }) {
   const financeActive = isFinanceArea(pathname);
   const [financeOpen, setFinanceOpen] = useState(financeActive);
@@ -92,19 +99,29 @@ function Navigation({ pathname, items, onNavigate }: { pathname: string; items: 
   })}</nav>;
 }
 
+function ProfileLink({ profile, active, onNavigate }: { profile: ProfileSummary | null; active: boolean; onNavigate?: () => void }) {
+  return <Link href="/dashboard/profile" onClick={onNavigate} className={`flex items-center gap-3 rounded-xl border p-2.5 transition ${active ? "border-neutral-950 bg-neutral-950 text-white" : "border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50"}`}>
+    <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl text-xs font-semibold ${active ? "bg-white/10 text-white" : "bg-neutral-950 text-white"}`}>{profile ? profileInitials(profile.full_name) : "ME"}</div>
+    <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{profile?.full_name ?? "My profile"}</p><p className={`truncate text-[11px] ${active ? "text-white/55" : "text-neutral-400"}`}>{profile?.email ?? "Account & security"}</p></div>
+    <ChevronDown className="size-3.5 -rotate-90 opacity-45" />
+  </Link>;
+}
+
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname(); const router = useRouter(); const [mobileOpen,setMobileOpen]=useState(false); const [workspaceContext,setWorkspaceContext]=useState<WorkspaceContext|null>(null);
+  const pathname = usePathname(); const router = useRouter(); const [mobileOpen,setMobileOpen]=useState(false); const [workspaceContext,setWorkspaceContext]=useState<WorkspaceContext|null>(null); const [profile,setProfile]=useState<ProfileSummary|null>(null);
   useEffect(()=>{setMobileOpen(false);},[pathname]);
   useEffect(()=>{if(!mobileOpen)return;const previous=document.body.style.overflow;document.body.style.overflow="hidden";return()=>{document.body.style.overflow=previous;};},[mobileOpen]);
+  useEffect(()=>{let active=true;async function loadProfile(){const response=await fetch("/api/profile",{cache:"no-store"}).catch(()=>null);if(!response?.ok)return;const payload=await response.json().catch(()=>null);if(active&&payload?.full_name&&payload?.email)setProfile({full_name:payload.full_name,email:payload.email});}const refresh=()=>{void loadProfile();};void loadProfile();window.addEventListener("business-os-profile-updated",refresh);return()=>{active=false;window.removeEventListener("business-os-profile-updated",refresh);};},[]);
   const relationships=workspaceContext?.relationships??[]; const clientOnly=workspaceContext?.primary_relationship==="client"; const hasClientRelationship=relationships.includes("client");
-  useEffect(()=>{if(clientOnly&&pathname!=="/dashboard/client-portal")router.replace("/dashboard/client-portal");},[clientOnly,pathname,router]);
+  useEffect(()=>{if(clientOnly&&pathname!=="/dashboard/client-portal"&&!pathname.startsWith("/dashboard/profile"))router.replace("/dashboard/client-portal");},[clientOnly,pathname,router]);
   const navigation=useMemo(()=>{if(clientOnly)return[clientPortalItem];const items=[...staffNavigation];if(hasClientRelationship)items.splice(1,0,clientPortalItem);return items;},[clientOnly,hasClientRelationship]);
   async function logout(){await fetch("/api/auth/logout",{method:"POST"});router.replace("/login");router.refresh();}
   if(pathname.endsWith("/print"))return <>{children}</>;
+  const profileActive=pathname.startsWith("/dashboard/profile");
   return <div className="min-h-screen bg-neutral-100 text-neutral-950 lg:flex">
-    <aside className="hidden h-screen w-64 shrink-0 border-r border-neutral-200 bg-white p-4 lg:sticky lg:top-0 lg:flex lg:flex-col"><div className="px-3 py-4"><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h1 className="mt-1 text-lg font-semibold">Business OS</h1></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-1 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation}/></div><button type="button" onClick={logout} className="mt-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"><LogOut className="size-4"/>Sign out</button></aside>
+    <aside className="hidden h-screen w-64 shrink-0 border-r border-neutral-200 bg-white p-4 lg:sticky lg:top-0 lg:flex lg:flex-col"><div className="px-3 py-4"><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h1 className="mt-1 text-lg font-semibold">Business OS</h1></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-1 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation}/></div><div className="space-y-2 border-t pt-3"><ProfileLink profile={profile} active={profileActive}/><button type="button" onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"><LogOut className="size-4"/>Sign out</button></div></aside>
     <div className="sticky top-0 z-40 flex h-16 items-center justify-between border-b bg-white/95 px-4 backdrop-blur lg:hidden"><div><p className="text-[10px] font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><p className="max-w-[220px] truncate text-sm font-semibold">{workspaceContext?.organization.name??"Business OS"}</p></div><button type="button" aria-label="Open navigation" aria-expanded={mobileOpen} onClick={()=>setMobileOpen(true)} className="flex size-10 items-center justify-center rounded-xl border"><Menu className="size-5"/></button></div>
-    {mobileOpen?<div className="fixed inset-0 z-50 lg:hidden"><button type="button" aria-label="Close navigation" onClick={()=>setMobileOpen(false)} className="absolute inset-0 bg-black/35"/><aside className="absolute inset-y-0 left-0 flex w-[88vw] max-w-96 flex-col bg-white p-4 shadow-2xl"><div className="flex items-center justify-between px-3 py-3"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h2 className="mt-1 text-lg font-semibold">Business OS</h2></div><button type="button" onClick={()=>setMobileOpen(false)} className="flex size-9 items-center justify-center rounded-lg border"><X className="size-4"/></button></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-2 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation} onNavigate={()=>setMobileOpen(false)}/></div><button type="button" onClick={()=>void logout()} className="mt-3 flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm text-neutral-600"><LogOut className="size-4"/>Sign out</button></aside></div>:null}
+    {mobileOpen?<div className="fixed inset-0 z-50 lg:hidden"><button type="button" aria-label="Close navigation" onClick={()=>setMobileOpen(false)} className="absolute inset-0 bg-black/35"/><aside className="absolute inset-y-0 left-0 flex w-[88vw] max-w-96 flex-col bg-white p-4 shadow-2xl"><div className="flex items-center justify-between px-3 py-3"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h2 className="mt-1 text-lg font-semibold">Business OS</h2></div><button type="button" onClick={()=>setMobileOpen(false)} className="flex size-9 items-center justify-center rounded-lg border"><X className="size-4"/></button></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-2 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation} onNavigate={()=>setMobileOpen(false)}/></div><div className="space-y-2 border-t pt-3"><ProfileLink profile={profile} active={profileActive} onNavigate={()=>setMobileOpen(false)}/><button type="button" onClick={()=>void logout()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-600 hover:bg-neutral-100"><LogOut className="size-4"/>Sign out</button></div></aside></div>:null}
     <div className={`min-w-0 flex-1 ${pathname==="/dashboard"?"[&>main>div>aside]:!hidden [&>main>div]:!max-w-none":""}`}>{children}</div>
   </div>;
 }
