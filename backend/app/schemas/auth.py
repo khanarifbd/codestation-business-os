@@ -25,6 +25,8 @@ class UserProfileRead(BaseModel):
     is_verified: bool
     has_password: bool
     google_connected: bool
+    has_avatar: bool
+    avatar_version: int
     created_at: datetime
     updated_at: datetime
 
@@ -41,6 +43,13 @@ class PasswordChangeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class GooglePasswordSetupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credential: str = Field(min_length=100, max_length=16_384)
     new_password: str = Field(min_length=8, max_length=128)
 
 
