@@ -130,6 +130,7 @@ class FinancialRead(BaseModel):
     id: str
     organization_id: str
     accounting_currency: str
+    reporting_currency: str
     default_payment_terms_days: int
     tax_calculation_mode: str
     default_tax_rate: Decimal
