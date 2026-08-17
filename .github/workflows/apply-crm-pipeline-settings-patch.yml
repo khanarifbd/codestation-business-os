@@ -22,6 +22,7 @@ jobs:
         run: python scripts/_apply_crm_pipeline_settings_patch.py
       - name: Commit patch
         run: |
+          git checkout -- .github/workflows/ci.yml
           rm scripts/_apply_crm_pipeline_settings_patch.py
           rm .github/workflows/apply-crm-pipeline-settings-patch.yml
           git config user.name "github-actions[bot]"
