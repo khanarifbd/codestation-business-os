@@ -19,6 +19,7 @@ from app.schemas.organization import (
 from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
 from app.services.crm import ensure_crm_defaults
+from app.services.expense_defaults import ensure_expense_defaults
 from app.services.membership_relationships import (
     membership_relationships,
     membership_role,
@@ -119,6 +120,8 @@ def create_organization(
     db.flush()
     ensure_crm_defaults(db, organization)
     db.flush()
+    expense_defaults_created = ensure_expense_defaults(db, organization)
+    db.flush()
 
     employee = Employee(
         organization_id=organization.id,
@@ -139,7 +142,7 @@ def create_organization(
         organization_id=organization.id,
         entity_type="organization",
         entity_id=organization.id,
-        message="Company workspace, roles, settings, CRM defaults and owner employee profile created",
+        message="Company workspace, roles, settings, CRM defaults, expense defaults and owner employee profile created",
         after={
             "id": organization.id,
             "name": organization.name,
@@ -159,6 +162,8 @@ def create_organization(
             "subscription_status": subscription.status,
             "company_master_settings": "initialized",
             "crm_defaults": "initialized",
+            "expense_defaults": "initialized",
+            "expense_categories_created": expense_defaults_created,
         },
         request=request,
     )

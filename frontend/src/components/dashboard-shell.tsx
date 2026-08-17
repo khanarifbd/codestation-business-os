@@ -38,6 +38,7 @@ const financeNavigation: NavigationItem[] = [
   { label: "Accounts", icon: WalletCards, href: "/dashboard/accounting/accounts" },
   { label: "Money In", icon: ArrowDownLeft, href: "/dashboard/accounting/money-in" },
   { label: "Money Out", icon: ArrowUpRight, href: "/dashboard/accounting/money-out" },
+  { label: "Expenses", icon: ReceiptText, href: "/dashboard/expenses" },
   { label: "Transfers", icon: ArrowLeftRight, href: "/dashboard/accounting/transfers" },
   { label: "Reconcile", icon: Scale, href: "/dashboard/accounting/reconciliation" },
   { label: "Loans", icon: HandCoins, href: "/dashboard/accounting/loans" },
