@@ -57,17 +57,21 @@ def main() -> None:
             exchange_rate.effective_rate = RATE
             exchange_rate.source = "ci_multicurrency_verification"
         db.flush()
-        record_rate_snapshot(
-            db,
-            organization_id=organization_id,
-            base_currency=foreign_currency,
-            quote_currency=base_currency,
-            effective_date=date(2098, 1, 1),
-            reference_rate=RATE,
-            effective_rate=RATE,
-            source="ci_multicurrency_verification",
-            user_id=user_id,
-        )
+
+        # Shared verification fixtures can contain other future-dated snapshots.
+        # Seed every accounting date used here so as-of resolution is deterministic.
+        for effective_date in (date(2098, 1, 10), date(2098, 1, 11), date(2098, 1, 12), date(2098, 1, 13)):
+            record_rate_snapshot(
+                db,
+                organization_id=organization_id,
+                base_currency=foreign_currency,
+                quote_currency=base_currency,
+                effective_date=effective_date,
+                reference_rate=RATE,
+                effective_rate=RATE,
+                source="ci_multicurrency_verification",
+                user_id=user_id,
+            )
 
         cash = system_account(db, organization_id, "cash_equivalents")
         revenue = system_account(db, organization_id, "service_revenue")
