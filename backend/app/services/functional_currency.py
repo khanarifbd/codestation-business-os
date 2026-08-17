@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy import func, or_, select
@@ -30,6 +31,18 @@ def money(value: Decimal | int | str) -> Decimal:
 
 def rate(value: Decimal | int | str) -> Decimal:
     return Decimal(value).quantize(RATE, rounding=ROUND_HALF_UP)
+
+
+def organization_local_date(
+    organization: Organization,
+    now: datetime | None = None,
+) -> date:
+    """Resolve the business date in the organization's configured timezone."""
+
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(ZoneInfo(organization.timezone)).date()
 
 
 @dataclass(frozen=True)
@@ -322,12 +335,16 @@ def change_functional_currency(
         raise HTTPException(status_code=400, detail="Accounting currency must be a 3-letter currency code")
     if len(reason) < 3:
         raise HTTPException(status_code=400, detail="A reason is required for an accounting-currency change")
-    if effective_date > date.today():
+
+    organization_today = organization_local_date(organization)
+    if effective_date > organization_today:
         raise HTTPException(
             status_code=409,
             detail=(
-                "Future functional-currency scheduling is not applied early because the organization must keep "
-                "posting in its current currency until the effective date. Apply the change on or after that date."
+                f"The effective date cannot be after the organization's current business date "
+                f"({organization_today.isoformat()} in {organization.timezone}). "
+                "Future functional-currency changes are not applied early because posting must continue in the "
+                "current currency until the effective date."
             ),
         )
 
