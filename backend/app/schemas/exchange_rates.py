@@ -69,4 +69,4 @@ class ExchangeRateHistoryRead(BaseModel):
 class ExchangeRateBundle(BaseModel):
     policy: ExchangeRatePolicyRead
     rates: list[ExchangeRateRead]
-    history: list[ExchangeRateHistoryRead] = []
+    history: list[ExchangeRateHistoryRead] = Field(default_factory=list)
