@@ -18,6 +18,7 @@ from app.services.functional_currency import (
     earliest_functional_currency_change_date,
     ensure_initial_functional_currency_period,
     list_functional_currency_periods,
+    organization_local_date,
 )
 
 router = APIRouter(prefix="/company-settings/currencies", tags=["Company Settings"])
@@ -41,6 +42,8 @@ class CompanyCurrencySettingsRead(BaseModel):
     accounting_currency_locked: bool
     accounting_currency_lock_reason: str | None
     accounting_currency_change_earliest_date: date | None
+    organization_current_date: date
+    organization_timezone: str
     functional_currency_periods: list[CompanyFunctionalCurrencyPeriodRead]
 
 
@@ -121,6 +124,8 @@ def _read(db: DbSession, tenant: CurrentTenantAdmin) -> CompanyCurrencySettingsR
         accounting_currency_change_earliest_date=earliest_functional_currency_change_date(
             db, tenant.organization_id
         ) if locked else None,
+        organization_current_date=organization_local_date(tenant.organization),
+        organization_timezone=tenant.organization.timezone,
         functional_currency_periods=[_period_read(item) for item in periods],
     )
 
