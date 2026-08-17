@@ -124,7 +124,8 @@ export default function ProfilePage() {
     event.preventDefault();
     setPasswordError(null);
     setPasswordMessage(null);
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const currentPassword = String(form.get("current_password") ?? "");
     const newPassword = String(form.get("new_password") ?? "");
     const confirmPassword = String(form.get("confirm_password") ?? "");
@@ -148,7 +149,7 @@ export default function ProfilePage() {
         const payload = await response.json().catch(() => null);
         throw new Error(payload?.detail ?? "Unable to change your password.");
       }
-      event.currentTarget.reset();
+      formElement.reset();
       setPasswordMessage("Password changed successfully. Use the new password next time you sign in.");
     } catch (reason) {
       setPasswordError(reason instanceof Error ? reason.message : "Unable to change your password.");
