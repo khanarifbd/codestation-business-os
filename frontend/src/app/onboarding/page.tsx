@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Check, Loader2 } from "lucide-react";
+import { AlertTriangle, Building2, Check, Loader2 } from "lucide-react";
 
 const businessTypes = [
   "Software & IT Services",
@@ -125,7 +125,7 @@ export default function OnboardingPage() {
               <p className="text-sm font-medium text-neutral-500">Step 1 of 1</p>
               <h2 className="mt-2 text-2xl font-semibold">Company information</h2>
               <p className="mt-2 text-sm text-neutral-500">
-                You can change these settings later from company settings.
+                Most settings can be changed later from Company & Settings. Choose the accounting currency carefully before posting financial transactions.
               </p>
             </div>
 
@@ -170,6 +170,21 @@ export default function OnboardingPage() {
                 </label>
               </div>
 
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+                <div className="flex gap-3">
+                  <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-600" />
+                  <div>
+                    <p className="text-sm font-semibold">Important: choose your accounting currency carefully</p>
+                    <p className="mt-1 text-sm leading-6 text-amber-900/80">
+                      This becomes the base currency for your Journal, Ledger, Trial Balance and financial statements. After accounting entries are posted, changing it requires a controlled currency migration. Choose the currency you actually keep your books in — not simply the currency most clients pay you in.
+                    </p>
+                    <p className="mt-2 text-xs leading-5 text-amber-800">
+                      Reporting currency and default client currency can be configured separately later in Company & Settings → Currencies & FX.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid gap-5 sm:grid-cols-3">
                 <label className="block text-sm font-medium">
                   Country
@@ -188,11 +203,11 @@ export default function OnboardingPage() {
                 </label>
 
                 <label className="block text-sm font-medium">
-                  Currency
+                  Accounting / functional currency
                   <select
                     name="currency"
                     defaultValue="BDT"
-                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 outline-none focus:border-neutral-500"
+                    className="mt-2 h-12 w-full rounded-xl border border-amber-300 bg-amber-50/40 px-4 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
                   >
                     <option value="BDT">BDT</option>
                     <option value="USD">USD</option>
@@ -201,6 +216,7 @@ export default function OnboardingPage() {
                     <option value="EUR">EUR</option>
                     <option value="CAD">CAD</option>
                   </select>
+                  <span className="mt-2 block text-xs leading-5 text-amber-700">Used as the permanent base for accounting entries once posting starts.</span>
                 </label>
 
                 <label className="block text-sm font-medium">
