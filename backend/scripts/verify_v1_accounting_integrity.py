@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -19,15 +19,14 @@ from app.db.session import SessionLocal
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.company_defaults import OrganizationExchangeRate
 from app.models.crm import Client
-from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
+from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.accounting import JournalEntryCreate, JournalLineCreate, LedgerAccountUpdate
 from app.schemas.finance import FinancialAccountCreate, InvoiceCreate, InvoiceItemInput, InvoiceStatusAction, PaymentCreate
 from app.schemas.organization import OrganizationCreate
 from app.schemas.payables import PayableBillCreate, PayablePaymentCreate
-from app.services.accounting_posting import financial_ledger_account, money, sync_operational_accounting if False else None
-from app.services.accounting_posting import system_account, to_base_amount
+from app.services.accounting_posting import financial_ledger_account, money, system_account, to_base_amount
 from app.services.accounting_sync import sync_operational_accounting
 from app.services.exchange_rates import record_rate_snapshot
 
@@ -154,20 +153,10 @@ def main() -> None:
         db.commit()
 
         invoice_base, invoice_rate = to_base_amount(
-            db,
-            organization.id,
-            "BDT",
-            Decimal("100"),
-            "USD",
-            rate_date=invoice_date,
+            db, organization.id, "BDT", Decimal("100"), "USD", rate_date=invoice_date
         )
         settlement_base, settlement_rate = to_base_amount(
-            db,
-            organization.id,
-            "BDT",
-            Decimal("100"),
-            "USD",
-            rate_date=settlement_date,
+            db, organization.id, "BDT", Decimal("100"), "USD", rate_date=settlement_date
         )
         if invoice_base != Decimal("12000.00") or invoice_rate != Decimal("120.00000000"):
             raise AssertionError("Historical invoice-date FX did not resolve to 120")
@@ -197,7 +186,12 @@ def main() -> None:
             req("POST", "/finance/accounts"), db, tenant,  # type: ignore[arg-type]
         )
         usd_bank = create_account(
-            FinancialAccountCreate(name=f"USD Payables Bank {marker}", account_type="bank", currency="USD", opening_balance=Decimal("1000")),
+            FinancialAccountCreate(
+                name=f"USD Payables Bank {marker}",
+                account_type="bank",
+                currency="USD",
+                opening_balance=Decimal("1000"),
+            ),
             req("POST", "/finance/accounts"), db, tenant,  # type: ignore[arg-type]
         )
 
@@ -207,7 +201,14 @@ def main() -> None:
                 subject="Historical FX service",
                 issue_date=invoice_date,
                 currency="USD",
-                items=[InvoiceItemInput(item_name="Consulting", description="Consulting service", quantity=Decimal("1"), unit_price=Decimal("100"))],
+                items=[
+                    InvoiceItemInput(
+                        item_name="Consulting",
+                        description="Consulting service",
+                        quantity=Decimal("1"),
+                        unit_price=Decimal("100"),
+                    )
+                ],
             ),
             req("POST", "/finance/invoices"), db, tenant,  # type: ignore[arg-type]
         )
@@ -246,7 +247,7 @@ def main() -> None:
         if Decimal(issue_lines["accounts_receivable"].debit) != Decimal("12000.00"):
             raise AssertionError("Invoice receivable did not retain invoice-date carrying value")
 
-        payment_entry, payment_lines = entry_lines(db, organization.id, "invoice_payment", payment.id)
+        _, payment_lines = entry_lines(db, organization.id, "invoice_payment", payment.id)
         cash_key = f"financial_account:{bdt_bank.id}"
         if Decimal(payment_lines[cash_key].debit) != Decimal("12500.00"):
             raise AssertionError("Customer settlement cash did not use settlement-date value")
@@ -254,7 +255,9 @@ def main() -> None:
             raise AssertionError("Customer settlement cleared AR at its carrying amount")
         if Decimal(payment_lines["realized_fx_gain"].credit) != Decimal("500.00"):
             raise AssertionError("Customer settlement did not recognize BDT 500 realized FX gain")
-        if sum((Decimal(line.debit) for line in payment_lines.values()), Decimal("0")) != sum((Decimal(line.credit) for line in payment_lines.values()), Decimal("0")):
+        payment_debit = sum((Decimal(line.debit) for line in payment_lines.values()), Decimal("0"))
+        payment_credit = sum((Decimal(line.credit) for line in payment_lines.values()), Decimal("0"))
+        if payment_debit != payment_credit:
             raise AssertionError("Customer realized-FX journal is not balanced")
 
         bdt_account = db.get(FinancialAccount, bdt_bank.id)
@@ -263,23 +266,16 @@ def main() -> None:
         _, bdt_ledger = financial_ledger_account(db, organization.id, bdt_bank.id)
         if bdt_ledger.allow_manual_posting:
             raise AssertionError("Mapped financial account ledger still allows manual posting")
-        operational_balance = Decimal(bdt_account.opening_balance) + Decimal(
-            db.scalar(
-                select(
-                    func.coalesce(
-                        func.sum(
-                            func.case(
-                                (FinancialTransaction.direction == "credit", FinancialTransaction.amount),
-                                else_=-FinancialTransaction.amount,
-                            )
-                        ),
-                        0,
-                    )
-                ).where(
-                    FinancialTransaction.organization_id == organization.id,
-                    FinancialTransaction.account_id == bdt_account.id,
-                )
-            ) or 0
+
+        transaction_rows = db.execute(
+            select(FinancialTransaction.direction, FinancialTransaction.amount).where(
+                FinancialTransaction.organization_id == organization.id,
+                FinancialTransaction.account_id == bdt_account.id,
+            )
+        ).all()
+        operational_balance = Decimal(bdt_account.opening_balance) + sum(
+            (Decimal(amount) if direction == "credit" else -Decimal(amount) for direction, amount in transaction_rows),
+            Decimal("0"),
         )
         gl_balance = Decimal(
             db.scalar(
@@ -310,8 +306,18 @@ def main() -> None:
                 JournalEntryCreate(
                     entry_date=business_today,
                     lines=[
-                        JournalLineCreate(ledger_account_id=bdt_ledger.id, currency="BDT", debit=Decimal("1"), original_amount=Decimal("1")),
-                        JournalLineCreate(ledger_account_id=owner_equity.id, currency="BDT", credit=Decimal("1"), original_amount=Decimal("1")),
+                        JournalLineCreate(
+                            ledger_account_id=bdt_ledger.id,
+                            currency="BDT",
+                            debit=Decimal("1"),
+                            original_amount=Decimal("1"),
+                        ),
+                        JournalLineCreate(
+                            ledger_account_id=owner_equity.id,
+                            currency="BDT",
+                            credit=Decimal("1"),
+                            original_amount=Decimal("1"),
+                        ),
                     ],
                 ),
                 req("POST", "/accounting/journals"), db, tenant,  # type: ignore[arg-type]
@@ -354,7 +360,9 @@ def main() -> None:
             raise AssertionError("Payable settlement cash did not use settlement-date value")
         if Decimal(payable_lines["realized_fx_loss"].debit) != Decimal("500.00"):
             raise AssertionError("Payable settlement did not recognize BDT 500 realized FX loss")
-        if sum((Decimal(line.debit) for line in payable_lines.values()), Decimal("0")) != sum((Decimal(line.credit) for line in payable_lines.values()), Decimal("0")):
+        payable_debit = sum((Decimal(line.debit) for line in payable_lines.values()), Decimal("0"))
+        payable_credit = sum((Decimal(line.credit) for line in payable_lines.values()), Decimal("0"))
+        if payable_debit != payable_credit:
             raise AssertionError("Payable realized-FX journal is not balanced")
 
         original_accounting_local_date = accounting_api.organization_local_date
@@ -365,7 +373,9 @@ def main() -> None:
             tb = accounting_api.trial_balance(db, tenant, as_of=None)  # type: ignore[arg-type]
             if tb.as_of != settlement_date:
                 raise AssertionError("Trial Balance default date did not use organization business date")
-            statements = accounting_reports_api.financial_statements(db, tenant, date_from=invoice_date, date_to=None)  # type: ignore[arg-type]
+            statements = accounting_reports_api.financial_statements(
+                db, tenant, date_from=invoice_date, date_to=None  # type: ignore[arg-type]
+            )
             if statements.date_to != settlement_date:
                 raise AssertionError("Financial Statements default date did not use organization business date")
         finally:
