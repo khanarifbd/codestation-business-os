@@ -14,7 +14,10 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    google_subject: Mapped[str | None] = mapped_column(
+        String(255), unique=True, index=True, nullable=True
+    )
     system_role: Mapped[str] = mapped_column(
         String(32), default=SYSTEM_ROLE_USER, nullable=False, index=True
     )
