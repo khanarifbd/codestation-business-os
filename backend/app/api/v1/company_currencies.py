@@ -14,15 +14,16 @@ router = APIRouter(prefix="/company-settings/currencies", tags=["Company Setting
 
 
 class CompanyCurrencySettingsRead(BaseModel):
-    base_currency: str
     accounting_currency: str
+    reporting_currency: str
     default_client_currency: str | None
-    base_currency_locked: bool
-    base_currency_lock_reason: str | None
+    accounting_currency_locked: bool
+    accounting_currency_lock_reason: str | None
 
 
 class CompanyCurrencySettingsUpdate(BaseModel):
-    base_currency: str = Field(min_length=3, max_length=3)
+    accounting_currency: str = Field(min_length=3, max_length=3)
+    reporting_currency: str = Field(min_length=3, max_length=3)
     default_client_currency: str | None = Field(default=None, min_length=3, max_length=3)
 
 
@@ -45,7 +46,7 @@ def _settings_rows(db: DbSession, organization_id: str):
     return financial, defaults
 
 
-def _base_currency_locked(db: DbSession, organization_id: str) -> bool:
+def _accounting_currency_locked(db: DbSession, organization_id: str) -> bool:
     return db.scalar(
         select(JournalEntry.id)
         .where(
@@ -58,15 +59,17 @@ def _base_currency_locked(db: DbSession, organization_id: str) -> bool:
 
 def _read(db: DbSession, tenant: CurrentTenantAdmin) -> CompanyCurrencySettingsRead:
     financial, defaults = _settings_rows(db, tenant.organization_id)
-    locked = _base_currency_locked(db, tenant.organization_id)
+    locked = _accounting_currency_locked(db, tenant.organization_id)
+    accounting_currency = tenant.organization.currency.upper()
     return CompanyCurrencySettingsRead(
-        base_currency=tenant.organization.currency.upper(),
-        accounting_currency=financial.accounting_currency.upper(),
+        accounting_currency=accounting_currency,
+        reporting_currency=financial.reporting_currency.upper(),
         default_client_currency=(defaults.default_client_currency.upper() if defaults.default_client_currency else None),
-        base_currency_locked=locked,
-        base_currency_lock_reason=(
-            "Base/reporting currency is locked because posted accounting journal entries already exist. "
-            "Changing it would relabel historical ledger amounts without a proper currency migration."
+        accounting_currency_locked=locked,
+        accounting_currency_lock_reason=(
+            "Accounting/functional currency is locked because posted journal entries already exist. "
+            "Changing the ledger currency requires a controlled accounting-currency migration; "
+            "reporting and client currencies can still be changed at any time."
             if locked
             else None
         ),
@@ -91,35 +94,40 @@ def update_company_currency_settings(
     organization = tenant.organization
     financial, defaults = _settings_rows(db, tenant.organization_id)
 
-    requested_base = payload.base_currency.upper()
+    requested_accounting = payload.accounting_currency.upper()
+    requested_reporting = payload.reporting_currency.upper()
     requested_client = payload.default_client_currency.upper() if payload.default_client_currency else None
-    current_base = organization.currency.upper()
+    current_accounting = organization.currency.upper()
 
-    if requested_base != current_base and _base_currency_locked(db, tenant.organization_id):
+    if requested_accounting != current_accounting and _accounting_currency_locked(db, tenant.organization_id):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Base/reporting currency cannot be changed from {current_base} to {requested_base} after posted "
-                "accounting entries exist. Historical journals are stored in the current base currency."
+                f"Accounting/functional currency cannot be changed from {current_accounting} to "
+                f"{requested_accounting} after posted journal entries exist. Change Reporting currency "
+                "for presentation, or run a controlled accounting-currency migration."
             ),
         )
 
     before = {
-        "base_currency": current_base,
-        "accounting_currency": financial.accounting_currency.upper(),
+        "accounting_currency": current_accounting,
+        "stored_accounting_currency": financial.accounting_currency.upper(),
+        "reporting_currency": financial.reporting_currency.upper(),
         "default_client_currency": defaults.default_client_currency,
     }
 
-    organization.currency = requested_base
-    # V1 uses one functional/reporting currency for the double-entry ledger.
-    # Original source currencies remain preserved on financial transactions and journal lines.
-    financial.accounting_currency = requested_base
+    # Organization.currency remains the canonical functional/accounting base used
+    # by journal posting. Keep the duplicate financial setting aligned for existing
+    # contracts, but reporting currency is intentionally independent.
+    organization.currency = requested_accounting
+    financial.accounting_currency = requested_accounting
+    financial.reporting_currency = requested_reporting
     defaults.default_client_currency = requested_client
     db.flush()
 
     after = {
-        "base_currency": organization.currency,
-        "accounting_currency": financial.accounting_currency,
+        "accounting_currency": organization.currency,
+        "reporting_currency": financial.reporting_currency,
         "default_client_currency": defaults.default_client_currency,
     }
     record_activity(
@@ -132,7 +140,7 @@ def update_company_currency_settings(
         entity_id=tenant.organization_id,
         before=before,
         after=after,
-        message="Company currency roles updated",
+        message="Company accounting, reporting and client currency roles updated",
         request=request,
     )
     db.commit()

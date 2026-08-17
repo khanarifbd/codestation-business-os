@@ -109,6 +109,7 @@ class OrganizationFinancialSettings(TenantOwnedMixin, Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     accounting_currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
+    reporting_currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
     default_payment_terms_days: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
     tax_calculation_mode: Mapped[str] = mapped_column(String(16), default="exclusive", nullable=False)
     default_tax_rate: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("0"), nullable=False)
