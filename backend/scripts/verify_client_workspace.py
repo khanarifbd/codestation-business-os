@@ -1,11 +1,12 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.api.v1.crm_client_workspace import get_client_workspace
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, engine
 from app.models.crm import Client
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -33,25 +34,19 @@ def expect_not_found(fn) -> None:
 
 
 def main() -> None:
+    client_id = str(uuid4())
+    client_code = f"CLI-WORK-{client_id[:8]}"
+    now = datetime.now(timezone.utc)
     db = SessionLocal()
     try:
         organization = db.scalar(
             select(Organization)
-            .where(Organization.name == "Existing Tenant Fixture")
+            .where(Organization.name.like("Onboarding Company %"))
             .order_by(Organization.created_at.desc())
             .limit(1)
         )
         if organization is None:
-            raise AssertionError("Existing tenant fixture was not found")
-
-        client = db.scalar(
-            select(Client)
-            .where(Client.organization_id == organization.id)
-            .order_by(Client.created_at.desc())
-            .limit(1)
-        )
-        if client is None:
-            raise AssertionError("CRM won-flow fixture did not create a client")
+            raise AssertionError("Onboarding verification tenant was not found")
 
         membership = db.scalar(
             select(Membership)
@@ -63,7 +58,7 @@ def main() -> None:
             .limit(1)
         )
         if membership is None:
-            raise AssertionError("Existing tenant fixture has no active membership")
+            raise AssertionError("Onboarding verification tenant has no active membership")
 
         role = db.scalar(
             select(OrganizationRole).where(
@@ -73,7 +68,34 @@ def main() -> None:
             )
         )
         if role is None:
-            raise AssertionError("Existing tenant fixture membership has no active organization role")
+            raise AssertionError("Onboarding tenant membership has no active organization role")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO clients
+                        (id, organization_id, client_code, client_type, display_name, status, created_at, updated_at)
+                    VALUES
+                        (:id, :organization_id, :client_code, 'company', 'Client Workspace CI', 'active', :now, :now)
+                    """
+                ),
+                {
+                    "id": client_id,
+                    "organization_id": organization.id,
+                    "client_code": client_code,
+                    "now": now,
+                },
+            )
+
+        client = db.scalar(
+            select(Client).where(
+                Client.id == client_id,
+                Client.organization_id == organization.id,
+            )
+        )
+        if client is None:
+            raise AssertionError("Client workspace fixture was not created")
 
         workspace = get_client_workspace(
             client.id,
@@ -117,6 +139,8 @@ def main() -> None:
         )
     finally:
         db.close()
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM clients WHERE id=:id"), {"id": client_id})
 
     print("Client 360 workspace tenant/RBAC verification passed")
 
