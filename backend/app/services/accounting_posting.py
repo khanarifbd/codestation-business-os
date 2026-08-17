@@ -12,7 +12,7 @@ from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.company_defaults import OrganizationExchangeRate
 from app.models.finance import FinancialAccount
 from app.models.finance_controls import AccountingPeriod
-from app.models.organization import Organization
+from app.services.functional_currency import assert_current_functional_posting_period
 
 MONEY = Decimal("0.01")
 RATE = Decimal("0.00000001")
@@ -120,18 +120,19 @@ class PostingLine:
     original_amount: Decimal | None = None
 
 
-def _normalize_implicit_foreign_lines(db, organization_id: str, lines: list[PostingLine]) -> list[PostingLine]:
-    """Convert legacy/direct source-currency lines into organization base currency.
+def _normalize_implicit_foreign_lines(
+    db,
+    organization_id: str,
+    base_currency: str,
+    lines: list[PostingLine],
+) -> list[PostingLine]:
+    """Convert legacy/direct source-currency lines into the entry's functional currency.
 
-    PostingLine debit/credit values are ledger/reporting amounts and therefore must be
-    in the organization's base currency. Existing accounting sync flows already pass
-    explicit base values, exchange rates and original amounts. Some direct accounting
-    actions historically passed only source-currency values. We normalize only those
-    implicit foreign lines, leaving explicitly converted postings untouched.
+    PostingLine debit/credit values are functional-ledger amounts. Existing sync
+    flows already pass explicit base values, exchange rates and original amounts.
+    Some direct accounting actions historically pass only source-currency values;
+    normalize only those implicit foreign lines.
     """
-    base_currency = db.scalar(select(Organization.currency).where(Organization.id == organization_id))
-    if base_currency is None:
-        raise HTTPException(status_code=404, detail="Organization not found for accounting journal")
     base_currency = base_currency.upper()
 
     implicit_indexes: list[int] = []
@@ -161,7 +162,7 @@ def _normalize_implicit_foreign_lines(db, organization_id: str, lines: list[Post
         )
 
     source_currency = next(iter(implicit_currencies))
-    _, rate = to_base_amount(db, organization_id, base_currency, Decimal("1"), source_currency)
+    _, resolved_rate = to_base_amount(db, organization_id, base_currency, Decimal("1"), source_currency)
     normalized = list(lines)
 
     for index in implicit_indexes:
@@ -171,20 +172,20 @@ def _normalize_implicit_foreign_lines(db, organization_id: str, lines: list[Post
         if (source_debit > 0) == (source_credit > 0):
             raise HTTPException(status_code=400, detail="Each journal line must contain either a debit or a credit")
         original_amount = max(source_debit, source_credit)
-        base_amount = money(original_amount * rate)
+        base_amount = money(original_amount * resolved_rate)
         normalized[index] = replace(
             source,
             debit=base_amount if source_debit > 0 else Decimal("0"),
             credit=base_amount if source_credit > 0 else Decimal("0"),
             currency=source_currency,
-            exchange_rate_to_base=rate,
+            exchange_rate_to_base=resolved_rate,
             original_amount=original_amount,
         )
 
     # When a balanced foreign-currency entry has multiple lines on one side (for
     # example loan principal = net cash + fee), independent cent rounding can leave
-    # a one/few-cent base-currency difference. Adjust one implicit line only by the
-    # rounding residual; material differences are still rejected by post_journal.
+    # a one/few-cent functional-currency difference. Adjust one implicit line only
+    # by the rounding residual; material differences are still rejected below.
     if money(original_debit) == money(original_credit):
         debit_total = money(sum((money(line.debit) for line in normalized), Decimal("0")))
         credit_total = money(sum((money(line.credit) for line in normalized), Decimal("0")))
@@ -267,21 +268,25 @@ def post_journal(db, *, organization_id: str, user_id: str, entry_date: date, so
     if len(lines) < 2:
         raise HTTPException(status_code=400, detail="Accounting journal requires at least two lines")
 
+    functional_period = assert_current_functional_posting_period(db, organization_id, entry_date)
+    base_currency = functional_period.currency.upper()
+
     source_debit = money(sum((money(line.debit) for line in lines), Decimal("0")))
     source_credit = money(sum((money(line.credit) for line in lines), Decimal("0")))
     if source_debit <= 0 or source_debit != source_credit:
         raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals")
 
-    lines = _normalize_implicit_foreign_lines(db, organization_id, lines)
+    lines = _normalize_implicit_foreign_lines(db, organization_id, base_currency, lines)
     debit = money(sum((money(line.debit) for line in lines), Decimal("0")))
     credit = money(sum((money(line.credit) for line in lines), Decimal("0")))
     if debit <= 0 or debit != credit:
-        raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals in base currency")
+        raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals in functional currency")
 
     entry = JournalEntry(
         organization_id=organization_id,
         entry_number=f"JE-{entry_date.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}",
         entry_date=entry_date,
+        functional_currency=base_currency,
         status="posted",
         source_type=source_type,
         source_id=source_id,
