@@ -8,6 +8,10 @@ from sqlalchemy import select
 
 from app.models.accounting import JournalEntry, JournalLine
 from app.services.accounting_posting import ensure_open_period
+from app.services.functional_currency import (
+    assert_current_functional_posting_period,
+    current_functional_currency_period,
+)
 
 
 def reverse_source_journal(
@@ -29,6 +33,21 @@ def reverse_source_journal(
     )
     if original is None:
         return None
+    if original.source_type == "functional_currency_transition":
+        raise HTTPException(status_code=409, detail="Functional-currency transition journals cannot be reversed as ordinary transactions")
+
+    current_period = current_functional_currency_period(db, organization_id)
+    if original.functional_currency != current_period.currency or original.entry_date < current_period.effective_from:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This accounting entry belongs to a sealed functional-currency period. "
+                "Create a current-period correction instead of reversing historical currency-period ledger values."
+            ),
+        )
+    posting_period = assert_current_functional_posting_period(db, organization_id, reversal_date)
+    if posting_period.currency != original.functional_currency:
+        raise HTTPException(status_code=409, detail="Reversal date must use the same current functional currency as the original journal")
 
     existing = db.scalar(
         select(JournalEntry).where(
@@ -53,6 +72,7 @@ def reverse_source_journal(
         organization_id=organization_id,
         entry_number=f"RV-{reversal_date.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}",
         entry_date=reversal_date,
+        functional_currency=original.functional_currency,
         status="posted",
         source_type="reversal",
         source_id=original.id,
