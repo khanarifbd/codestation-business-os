@@ -16,6 +16,7 @@ from app.models.accounting import (
 )
 from app.models.company_defaults import OrganizationExchangeRate
 from app.models.company_settings import OrganizationFinancialSettings
+from app.models.finance_controls import AccountingPeriod
 from app.models.organization import Organization
 
 MONEY = Decimal("0.01")
@@ -321,6 +322,14 @@ def change_functional_currency(
         raise HTTPException(status_code=400, detail="Accounting currency must be a 3-letter currency code")
     if len(reason) < 3:
         raise HTTPException(status_code=400, detail="A reason is required for an accounting-currency change")
+    if effective_date > date.today():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Future functional-currency scheduling is not applied early because the organization must keep "
+                "posting in its current currency until the effective date. Apply the change on or after that date."
+            ),
+        )
 
     current = current_functional_currency_period(db, organization.id)
     previous_currency = current.currency.upper()
@@ -330,6 +339,20 @@ def change_functional_currency(
         raise HTTPException(
             status_code=409,
             detail=f"Effective date must be after the current functional-currency period start ({current.effective_from.isoformat()}).",
+        )
+
+    closed_period = db.scalar(
+        select(AccountingPeriod.id).where(
+            AccountingPeriod.organization_id == organization.id,
+            AccountingPeriod.status == "closed",
+            AccountingPeriod.start_date <= effective_date,
+            AccountingPeriod.end_date >= effective_date,
+        )
+    )
+    if closed_period is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"The accounting period containing {effective_date.isoformat()} is closed.",
         )
 
     # No later periods are allowed while an open period exists. This keeps the
@@ -344,8 +367,8 @@ def change_functional_currency(
         raise HTTPException(status_code=409, detail="Functional currency history is inconsistent; a later period already exists")
 
     # Before sealing the old functional-currency period, synchronize operational
-    # accounting only through the day before the change. Future-dated business
-    # documents are intentionally left for the new functional currency.
+    # accounting only through the day before the change. Business documents on or
+    # after the effective date are intentionally left for the new currency period.
     closing_date = effective_date - timedelta(days=1)
     from app.services.accounting_sync import sync_operational_accounting
 
@@ -419,6 +442,9 @@ def change_functional_currency(
             old_signed,
         )
 
+    # Per-account rounding can create a small residual after conversion. Keep the
+    # transition journal exactly balanced by applying only that conversion-rounding
+    # residual to Opening Balance Equity; original historical balances stay intact.
     rounding_difference = money(sum((item[1] for item in signed_new.values()), Decimal("0")))
     if rounding_difference != 0:
         existing = signed_new.get(opening_equity.id)
@@ -512,7 +538,7 @@ def change_functional_currency(
         db.flush()
         new_period.transition_journal_entry_id = transition_entry.id
 
-    # Organization.currency remains the compatibility pointer to the CURRENT
+    # Organization.currency remains a compatibility pointer to the CURRENT
     # functional currency. Historical truth lives on JournalEntry and the
     # effective-dated period table.
     organization.currency = new_currency
