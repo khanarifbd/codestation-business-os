@@ -11,15 +11,22 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
+from app.models.company_defaults import OrganizationExchangeRate
+from app.models.company_settings import OrganizationFinancialSettings
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/reports", tags=["Accounting Reports"])
 AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 MONEY = Decimal("0.01")
+RATE = Decimal("0.00000001")
 
 
 def _money(value) -> Decimal:
     return Decimal(value or 0).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _rate(value) -> Decimal:
+    return Decimal(value).quantize(RATE, rounding=ROUND_HALF_UP)
 
 
 class StatementRow(BaseModel):
@@ -36,7 +43,14 @@ class CashFlowRead(BaseModel):
 
 
 class FinancialStatementsRead(BaseModel):
+    # base_currency is kept for frontend/API compatibility and means the actual
+    # display currency used for the returned amounts.
     base_currency: str
+    accounting_currency: str
+    reporting_currency: str
+    reporting_rate: Decimal | None
+    reporting_rate_applied: bool
+    reporting_note: str | None
     date_from: date
     date_to: date
     income: list[StatementRow]
@@ -101,6 +115,76 @@ def _cash_flow_bucket(source_type: str) -> str:
     return "operating"
 
 
+def _reporting_context(
+    db: DbSession,
+    organization_id: str,
+    accounting_currency: str,
+) -> tuple[str, str, Decimal | None, bool, str | None]:
+    financial = db.scalar(
+        select(OrganizationFinancialSettings).where(
+            OrganizationFinancialSettings.organization_id == organization_id
+        )
+    )
+    reporting_currency = (
+        financial.reporting_currency.upper()
+        if financial is not None and financial.reporting_currency
+        else accounting_currency
+    )
+    if reporting_currency == accounting_currency:
+        return accounting_currency, reporting_currency, Decimal("1.00000000"), True, None
+
+    direct = db.scalar(
+        select(OrganizationExchangeRate).where(
+            OrganizationExchangeRate.organization_id == organization_id,
+            OrganizationExchangeRate.base_currency == accounting_currency,
+            OrganizationExchangeRate.quote_currency == reporting_currency,
+        )
+    )
+    if direct is not None:
+        rate = _rate(direct.effective_rate)
+        return (
+            reporting_currency,
+            reporting_currency,
+            rate,
+            True,
+            f"Display conversion uses the current configured {accounting_currency}/{reporting_currency} FX rate. Historical journal amounts remain unchanged.",
+        )
+
+    inverse = db.scalar(
+        select(OrganizationExchangeRate).where(
+            OrganizationExchangeRate.organization_id == organization_id,
+            OrganizationExchangeRate.base_currency == reporting_currency,
+            OrganizationExchangeRate.quote_currency == accounting_currency,
+        )
+    )
+    if inverse is not None:
+        inverse_rate = Decimal(inverse.effective_rate)
+        rate = _rate(Decimal("1") / inverse_rate)
+        return (
+            reporting_currency,
+            reporting_currency,
+            rate,
+            True,
+            f"Display conversion uses the inverse current configured {reporting_currency}/{accounting_currency} FX rate. Historical journal amounts remain unchanged.",
+        )
+
+    return (
+        accounting_currency,
+        reporting_currency,
+        None,
+        False,
+        f"Reporting currency {reporting_currency} is selected, but no {accounting_currency}/{reporting_currency} FX pair is configured. Amounts are shown in accounting currency {accounting_currency} to avoid mislabeling financial data.",
+    )
+
+
+def _convert(value: Decimal, rate: Decimal) -> Decimal:
+    return _money(Decimal(value) * rate)
+
+
+def _convert_rows(rows: list[StatementRow], rate: Decimal) -> list[StatementRow]:
+    return [StatementRow(code=row.code, name=row.name, amount=_convert(row.amount, rate)) for row in rows]
+
+
 @router.get("/financial-statements", response_model=FinancialStatementsRead)
 def financial_statements(
     db: DbSession,
@@ -159,16 +243,54 @@ def financial_statements(
     current_earnings = _money(cumulative_income - cumulative_expenses)
     total_equity = _money(recorded_equity + current_earnings)
 
-    operating = Decimal("0"); investing = Decimal("0"); financing = Decimal("0")
+    operating = Decimal("0")
+    investing = Decimal("0")
+    financing = Decimal("0")
     for entry_id, cash_delta in cash_by_entry.items():
         bucket = _cash_flow_bucket(entry_source.get(entry_id, ""))
-        if bucket == "financing": financing += cash_delta
-        elif bucket == "investing": investing += cash_delta
-        else: operating += cash_delta
-    operating = _money(operating); investing = _money(investing); financing = _money(financing)
+        if bucket == "financing":
+            financing += cash_delta
+        elif bucket == "investing":
+            investing += cash_delta
+        else:
+            operating += cash_delta
+    operating = _money(operating)
+    investing = _money(investing)
+    financing = _money(financing)
+
+    accounting_currency = tenant.organization.currency.upper()
+    display_currency, reporting_currency, reporting_rate, reporting_rate_applied, reporting_note = _reporting_context(
+        db,
+        tenant.organization_id,
+        accounting_currency,
+    )
+
+    if reporting_rate_applied and reporting_rate is not None and reporting_rate != Decimal("1.00000000"):
+        income = _convert_rows(income, reporting_rate)
+        expenses = _convert_rows(expenses, reporting_rate)
+        assets = _convert_rows(assets, reporting_rate)
+        liabilities = _convert_rows(liabilities, reporting_rate)
+        equity = _convert_rows(equity, reporting_rate)
+
+        total_income = _money(sum((row.amount for row in income), Decimal("0")))
+        total_expenses = _money(sum((row.amount for row in expenses), Decimal("0")))
+        net_profit = _money(total_income - total_expenses)
+        total_assets = _money(sum((row.amount for row in assets), Decimal("0")))
+        total_liabilities = _money(sum((row.amount for row in liabilities), Decimal("0")))
+        recorded_equity = _money(sum((row.amount for row in equity), Decimal("0")))
+        current_earnings = _convert(current_earnings, reporting_rate)
+        total_equity = _money(recorded_equity + current_earnings)
+        operating = _convert(operating, reporting_rate)
+        investing = _convert(investing, reporting_rate)
+        financing = _convert(financing, reporting_rate)
 
     return FinancialStatementsRead(
-        base_currency=tenant.organization.currency,
+        base_currency=display_currency,
+        accounting_currency=accounting_currency,
+        reporting_currency=reporting_currency,
+        reporting_rate=reporting_rate,
+        reporting_rate_applied=reporting_rate_applied,
+        reporting_note=reporting_note,
         date_from=start,
         date_to=end,
         income=income,
@@ -185,5 +307,10 @@ def financial_statements(
         current_earnings=current_earnings,
         total_equity=total_equity,
         total_liabilities_and_equity=_money(total_liabilities + total_equity),
-        cash_flow=CashFlowRead(operating=operating, investing=investing, financing=financing, net_change=_money(operating + investing + financing)),
+        cash_flow=CashFlowRead(
+            operating=operating,
+            investing=investing,
+            financing=financing,
+            net_change=_money(operating + investing + financing),
+        ),
     )
