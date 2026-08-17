@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Banknote, Building2, ChevronDown, FileText, Loader2, X } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
@@ -35,6 +35,8 @@ function badge(status:string) {
 
 export default function FinancePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedClientId = searchParams.get("client_id");
   const [tab,setTab] = useState<Tab>("invoices");
   const [summary,setSummary] = useState<Summary|null>(null);
   const [meta,setMeta] = useState<Meta>({clients:[],orders:[],projects:[],accounts:[]});
@@ -87,6 +89,10 @@ export default function FinancePage() {
   },[api]);
 
   useEffect(() => { void loadCore(true); },[loadCore]);
+  useEffect(() => {
+    if (!requestedClientId || loading) return;
+    if (meta.clients.some((item) => item.id === requestedClientId)) setModal("invoice");
+  }, [loading, meta.clients, requestedClientId]);
 
   async function refreshSummary() { setSummary(await api("/summary") as Summary); }
   async function refreshMetaAccounts() { const data=await api("/meta") as Meta; setMeta(data); setAccounts(data.accounts); }
@@ -171,7 +177,7 @@ export default function FinancePage() {
     </section>
   </div>
 
-  {modal === "invoice" ? <InvoiceCreateModal saving={saving} meta={meta} api={api} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Invoice draft created.");await refreshInvoiceListAndSummary();}} onError={setError}/> : null}
+  {modal === "invoice" ? <InvoiceCreateModal saving={saving} meta={meta} initialClientId={requestedClientId} api={api} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Invoice draft created.");await refreshInvoiceListAndSummary();}} onError={setError}/> : null}
   {modal === "account" ? <AccountModal saving={saving} api={api} onSaving={setSaving} onClose={()=>setModal(null)} onSaved={async()=>{setModal(null);setMessage("Financial account created.");await Promise.all([refreshMetaAccounts(),refreshSummary()]);}} onError={setError}/> : null}
   {modal === "detail" && selectedInvoice ? <InvoiceModal invoice={selectedInvoice} saving={saving} onClose={()=>{setModal(null);setSelectedInvoice(null);}} onSend={()=>void invoiceAction("send")} onCancel={()=>void invoiceAction("cancel")} onPayment={()=>setModal("payment")} onPrint={()=>window.open(`/dashboard/finance/invoices/${selectedInvoice.id}/print`,`_blank`)}/> : null}
   {modal === "payment" && selectedInvoice ? <PaymentModal invoice={selectedInvoice} accounts={accounts.filter((a)=>a.is_active)} saving={saving} api={api} onSaving={setSaving} onClose={()=>setModal("detail")} onSaved={async()=>{const detail=await api(`/invoices/${selectedInvoice.id}`) as InvoiceDetail;setSelectedInvoice(detail);setModal("detail");setMessage("Payment recorded and account ledger updated.");await Promise.all([refreshInvoiceListAndSummary(),refreshMetaAccounts(),ensurePayments(true)]);}} onError={setError}/> : null}
@@ -187,8 +193,8 @@ function Field({label,children}:{label:string;children:React.ReactNode}) { retur
 const control="mt-2 h-11 w-full rounded-xl border px-3 text-sm";
 const textarea="mt-2 min-h-24 w-full rounded-xl border p-3 text-sm";
 
-function InvoiceCreateModal({saving,meta,api,onClose,onSaved,onError}:{saving:boolean;meta:Meta;api:(p:string,i?:RequestInit)=>Promise<unknown>;onClose:()=>void;onSaved:()=>Promise<void>;onError:(v:string|null)=>void}) {
-  const [source,setSource]=useState<InvoiceSource>("order"); const [sourceId,setSourceId]=useState(""); const [clientId,setClientId]=useState(""); const [subject,setSubject]=useState(""); const [currency,setCurrency]=useState("USD"); const [issueDate,setIssueDate]=useState(""); const [dueDate,setDueDate]=useState(""); const [taxMode,setTaxMode]=useState("exclusive"); const [notes,setNotes]=useState(""); const [terms,setTerms]=useState(""); const [lines,setLines]=useState<ManualLine[]>([blankLine()]); const [busy,setBusy]=useState(false);
+function InvoiceCreateModal({saving,meta,initialClientId,api,onClose,onSaved,onError}:{saving:boolean;meta:Meta;initialClientId?:string|null;api:(p:string,i?:RequestInit)=>Promise<unknown>;onClose:()=>void;onSaved:()=>Promise<void>;onError:(v:string|null)=>void}) {
+  const [source,setSource]=useState<InvoiceSource>(initialClientId ? "client" : "order"); const [sourceId,setSourceId]=useState(""); const [clientId,setClientId]=useState(initialClientId ?? ""); const [subject,setSubject]=useState(""); const [currency,setCurrency]=useState("USD"); const [issueDate,setIssueDate]=useState(""); const [dueDate,setDueDate]=useState(""); const [taxMode,setTaxMode]=useState("exclusive"); const [notes,setNotes]=useState(""); const [terms,setTerms]=useState(""); const [lines,setLines]=useState<ManualLine[]>([blankLine()]); const [busy,setBusy]=useState(false);
   const selectedClient=meta.clients.find((c)=>c.id===clientId);
   useEffect(()=>{if(selectedClient?.currency)setCurrency(selectedClient.currency);},[selectedClient]);
   async function save(){setBusy(true);onError(null);try{if(source==="order"){if(!sourceId)throw new Error("Select an order.");await api(`/invoices/from-order/${sourceId}`,{method:"POST"});}else if(source==="project"){if(!sourceId)throw new Error("Select a project.");await api(`/invoices/from-project/${sourceId}`,{method:"POST"});}else{if(!clientId)throw new Error("Select a client.");if(lines.some((l)=>!l.description.trim()))throw new Error("Every invoice line needs a description.");await api("/invoices",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({client_id:clientId,subject:subject||null,issue_date:issueDate||null,due_date:dueDate||null,currency,tax_calculation_mode:taxMode,notes:notes||null,terms_conditions:terms||null,items:lines.map((l)=>({description:l.description,quantity:Number(l.quantity),unit_price:Number(l.unit_price),discount_percent:Number(l.discount_percent||0),tax_rate:Number(l.tax_rate||0)}))})});}await onSaved();}catch(reason){onError(reason instanceof Error?reason.message:"Unable to create invoice.");}finally{setBusy(false);}}

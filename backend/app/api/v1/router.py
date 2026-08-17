@@ -20,6 +20,7 @@ from app.api.v1.company_settings import router as company_settings_router
 from app.api.v1.company_uploads import router as company_uploads_router
 from app.api.v1.crm import router as crm_router
 from app.api.v1.crm_clients import router as crm_clients_router
+from app.api.v1.crm_client_workspace import router as crm_client_workspace_router
 from app.api.v1.crm_interests import router as crm_interests_router
 from app.api.v1.crm_status import router as crm_status_router
 from app.api.v1.crm_summary import router as crm_summary_router
@@ -78,6 +79,7 @@ api_router.include_router(hr_uploads_router)
 api_router.include_router(crm_summary_router)
 api_router.include_router(crm_status_router)
 api_router.include_router(crm_clients_router)
+api_router.include_router(crm_client_workspace_router)
 api_router.include_router(crm_interests_router)
 api_router.include_router(client_access_router)
 api_router.include_router(crm_router)

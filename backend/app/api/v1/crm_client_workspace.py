@@ -134,10 +134,13 @@ def get_client_workspace(
     )
     permissions = set(role.permissions or []) if role else set()
     access = ClientWorkspaceAccess(
+        clients_manage=_can(permissions, "clients.manage"),
         quotations=_can(permissions, "quotations.view"),
+        quotations_manage=_can(permissions, "quotations.manage"),
         orders=_can(permissions, "orders.view"),
         projects=_can(permissions, "projects.view"),
         finance=_can(permissions, "finance.view"),
+        finance_manage=_can(permissions, "finance.manage"),
     )
     counts = ClientWorkspaceCounts()
     business_value: list[ClientCurrencyAmount] = []
@@ -236,7 +239,7 @@ def get_client_workspace(
                 title=f"Order {item.order_number}",
                 subtitle=f"{item.status.title()} · {item.currency} {item.total:,.2f}",
                 occurred_at=item.created_at,
-                href="/dashboard/orders",
+                href=f"/dashboard/orders?order_id={item.id}",
             )
             for item in order_rows[:10]
         )

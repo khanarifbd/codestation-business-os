@@ -31,7 +31,7 @@ type ClientDetail = {
   assigned_employee_name: string | null; status: string; notes: string | null; source_lead_id: string | null;
   source_lead_code: string | null; source_lead_status: string | null; created_at: string; updated_at: string;
 };
-type Access = { quotations: boolean; orders: boolean; projects: boolean; finance: boolean };
+type Access = { clients_manage: boolean; quotations: boolean; quotations_manage: boolean; orders: boolean; projects: boolean; finance: boolean; finance_manage: boolean };
 type Counts = { quotations: number | null; orders: number | null; projects: number | null; active_projects: number | null; invoices: number | null; overdue_invoices: number | null };
 type CurrencyAmount = { currency: string; amount: string | number };
 type InvoiceCurrencySummary = { currency: string; invoiced: string | number; paid: string | number; outstanding: string | number };
@@ -108,9 +108,9 @@ export default function ClientWorkspacePage() {
         <p className="mt-2 text-sm text-neutral-400">{client.source_lead_code ? `Originated from CRM · ${client.source_lead_code} · ${client.source_lead_status ?? "Converted"}` : "Direct client record"}</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Link href={`/dashboard/clients?edit=${encodeURIComponent(client.id)}`} className="inline-flex h-11 items-center rounded-xl border bg-white px-4 text-sm font-semibold">Edit client</Link>
-        {access.quotations && client.status === "active" ? <Link href={`/dashboard/quotations?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><FileText className="size-4" />Create quotation</Link> : null}
-        {access.finance && client.status === "active" ? <Link href={`/dashboard/finance?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><ReceiptText className="size-4" />Create invoice</Link> : null}
+        {access.clients_manage ? <Link href={`/dashboard/clients?edit=${encodeURIComponent(client.id)}`} className="inline-flex h-11 items-center rounded-xl border bg-white px-4 text-sm font-semibold">Edit client</Link> : null}
+        {access.quotations_manage && client.status === "active" ? <Link href={`/dashboard/quotations?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><FileText className="size-4" />Create quotation</Link> : null}
+        {access.finance_manage && client.status === "active" ? <Link href={`/dashboard/finance?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><ReceiptText className="size-4" />Create invoice</Link> : null}
       </div>
     </div>
 
