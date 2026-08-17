@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Banknote, BarChart3, Bell, BookOpenText, Boxes, BriefcaseBusiness, Building2, ClipboardList, FileClock, FileText,
-  FolderKanban, LayoutDashboard, LogOut, Menu, ReceiptText, Settings, Users, UsersRound, X,
+  ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Banknote, BarChart3, Bell, BookOpenText, Boxes, BriefcaseBusiness,
+  Building2, ChevronDown, ClipboardList, FileClock, FileText, FolderKanban, HandCoins, Landmark, LayoutDashboard,
+  LogOut, Menu, Receipt, ReceiptText, Scale, Settings, TrendingUp, Users, UsersRound, WalletCards, X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -31,20 +32,82 @@ const staffNavigation: NavigationItem[] = [
   { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs" },
   { label: "Settings", icon: Settings, href: "/dashboard/settings" },
 ];
+
+const financeNavigation: NavigationItem[] = [
+  { label: "Overview", icon: LayoutDashboard, href: "/dashboard/accounting" },
+  { label: "Accounts", icon: WalletCards, href: "/dashboard/accounting/accounts" },
+  { label: "Money In", icon: ArrowDownLeft, href: "/dashboard/accounting/money-in" },
+  { label: "Money Out", icon: ArrowUpRight, href: "/dashboard/accounting/money-out" },
+  { label: "Transfers", icon: ArrowLeftRight, href: "/dashboard/accounting/transfers" },
+  { label: "Reconcile", icon: Scale, href: "/dashboard/accounting/reconciliation" },
+  { label: "Loans", icon: HandCoins, href: "/dashboard/accounting/loans" },
+  { label: "Investments", icon: TrendingUp, href: "/dashboard/capital" },
+  { label: "Assets", icon: Boxes, href: "/dashboard/accounting/assets" },
+  { label: "Receivables", icon: Receipt, href: "/dashboard/accounting/receivables" },
+  { label: "Payables", icon: Building2, href: "/dashboard/accounting/payables" },
+  { label: "Tax", icon: Landmark, href: "/dashboard/accounting/tax" },
+  { label: "Financial statements", icon: BarChart3, href: "/dashboard/accounting/reports" },
+  { label: "Advanced", icon: BookOpenText, href: "/dashboard/accounting/advanced" },
+];
+
 const clientPortalItem: NavigationItem = { label: "Client Portal", icon: Building2, href: "/dashboard/client-portal" };
+
+function isFinanceArea(pathname: string) {
+  if (pathname.startsWith("/dashboard/accounting/invoices")) return false;
+  return pathname.startsWith("/dashboard/accounting") || pathname.startsWith("/dashboard/finance") || pathname.startsWith("/dashboard/expenses") || pathname.startsWith("/dashboard/capital");
+}
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
   if (href === "/dashboard/accounting/invoices") return pathname.startsWith("/dashboard/accounting/invoices");
-  if (href === "/dashboard/accounting") {
-    if (pathname.startsWith("/dashboard/accounting/invoices")) return false;
-    return pathname.startsWith("/dashboard/accounting") || pathname.startsWith("/dashboard/finance") || pathname.startsWith("/dashboard/expenses") || pathname.startsWith("/dashboard/capital");
-  }
+  if (href === "/dashboard/accounting") return isFinanceArea(pathname);
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function isFinanceItemActive(pathname: string, href: string) {
+  if (href === "/dashboard/accounting") return pathname === href;
+  if (href === "/dashboard/accounting/transfers") return pathname.startsWith(href) || pathname.startsWith("/dashboard/finance/transfers");
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 function Navigation({ pathname, items, onNavigate }: { pathname: string; items: NavigationItem[]; onNavigate?: () => void }) {
+  const financeActive = isFinanceArea(pathname);
+  const [financeOpen, setFinanceOpen] = useState(financeActive);
+
+  useEffect(() => {
+    if (financeActive) setFinanceOpen(true);
+  }, [financeActive]);
+
   return <nav className="space-y-1">{items.map(({ label, icon: Icon, href }) => {
+    if (label === "Finance & Accounts") {
+      return <div key={label}>
+        <button
+          type="button"
+          aria-expanded={financeOpen}
+          onClick={() => setFinanceOpen((value) => !value)}
+          className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${financeActive ? "bg-neutral-950 font-medium text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}
+        >
+          <Icon className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">{label}</span>
+          <ChevronDown className={`size-4 shrink-0 transition-transform ${financeOpen ? "rotate-180" : ""}`} />
+        </button>
+        {financeOpen ? <div className="ml-5 mt-1 space-y-0.5 border-l border-neutral-200 pl-2">
+          {financeNavigation.map(({ label: childLabel, icon: ChildIcon, href: childHref }) => {
+            const childActive = isFinanceItemActive(pathname, childHref);
+            return <Link
+              key={childLabel}
+              href={childHref}
+              onClick={onNavigate}
+              className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${childActive ? "bg-neutral-100 font-medium text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"}`}
+            >
+              <ChildIcon className="size-3.5 shrink-0" />
+              <span>{childLabel}</span>
+            </Link>;
+          })}
+        </div> : null}
+      </div>;
+    }
+
     const active = isActive(pathname, href);
     return <Link key={label} href={href} onClick={onNavigate} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${active ? "bg-neutral-950 font-medium text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}><Icon className="size-4 shrink-0" /><span>{label}</span></Link>;
   })}</nav>;
