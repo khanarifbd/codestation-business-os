@@ -91,7 +91,8 @@ def upgrade() -> None:
     # currency after a posted journal. Therefore one initial period safely
     # represents all existing history. 1900-01-01 intentionally supports
     # imported/backdated opening data without pretending it is the company
-    # incorporation date.
+    # incorporation date. The organization UUID is safe to reuse as the initial
+    # period UUID because it belongs to a different table/primary-key namespace.
     op.execute(
         sa.text(
             """
@@ -100,7 +101,7 @@ def upgrade() -> None:
                  previous_currency, transition_rate, reason,
                  transition_journal_entry_id, changed_by_user_id, created_at)
             SELECT
-                organizations.id || '-fx-initial',
+                organizations.id,
                 organizations.id,
                 organizations.currency,
                 '1900-01-01',
