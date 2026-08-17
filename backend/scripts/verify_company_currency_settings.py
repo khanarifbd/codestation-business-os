@@ -15,6 +15,7 @@ from app.api.v1.company_currencies import (
 )
 from app.api.v1.organizations import create_organization
 from app.db.session import SessionLocal, engine
+from app.models.company_settings import OrganizationFinancialSettings
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.organization import OrganizationCreate
@@ -51,7 +52,7 @@ def main() -> None:
 
         created = create_organization(
             OrganizationCreate(
-                name=f"Currency Policy {marker}",
+                name=f"Currency Roles {marker}",
                 country_code="BD",
                 timezone="Asia/Dhaka",
                 currency="BDT",
@@ -73,21 +74,41 @@ def main() -> None:
         )
 
         initial = get_company_currency_settings(db, tenant)  # type: ignore[arg-type]
-        if initial.base_currency != "BDT" or initial.accounting_currency != "BDT":
-            raise AssertionError("new organization base/accounting currencies are not aligned")
-        if initial.base_currency_locked:
-            raise AssertionError("fresh organization currency should not be locked before accounting posts")
+        if initial.accounting_currency != "BDT":
+            raise AssertionError("new organization accounting currency is not initialized")
+        if initial.reporting_currency != "BDT":
+            raise AssertionError("new organization reporting currency is not initialized")
+        if initial.default_client_currency != "BDT":
+            raise AssertionError("new organization client currency is not initialized")
+        if initial.accounting_currency_locked:
+            raise AssertionError("fresh organization accounting currency should not be locked")
 
         changed = update_company_currency_settings(
-            CompanyCurrencySettingsUpdate(base_currency="USD", default_client_currency="AUD"),
+            CompanyCurrencySettingsUpdate(
+                accounting_currency="USD",
+                reporting_currency="AUD",
+                default_client_currency="GBP",
+            ),
             req("PATCH", "/company-settings/currencies"),
             db,
             tenant,  # type: ignore[arg-type]
         )
-        if changed.base_currency != "USD" or changed.accounting_currency != "USD":
-            raise AssertionError("currency update did not align base and accounting currencies")
-        if changed.default_client_currency != "AUD":
-            raise AssertionError("default client currency should remain independently configurable")
+        if changed.accounting_currency != "USD":
+            raise AssertionError("accounting currency did not change before journal posting")
+        if changed.reporting_currency != "AUD":
+            raise AssertionError("reporting currency did not remain independently configurable")
+        if changed.default_client_currency != "GBP":
+            raise AssertionError("default client currency did not remain independently configurable")
+
+        financial = db.scalar(
+            select(OrganizationFinancialSettings).where(
+                OrganizationFinancialSettings.organization_id == organization.id
+            )
+        )
+        if financial is None:
+            raise AssertionError("organization financial settings disappeared")
+        if financial.accounting_currency != "USD" or financial.reporting_currency != "AUD":
+            raise AssertionError("stored financial currency roles are not aligned with the canonical endpoint")
 
         organization_id = organization.id
         user_id = user.id
@@ -101,24 +122,22 @@ def main() -> None:
                         (id, organization_id, entry_number, entry_date, status, source_type,
                          created_by_user_id, posted_by_user_id, posted_at, created_at)
                     VALUES
-                        (:id, :organization_id, :entry_number, :entry_date, 'posted', 'currency_policy_fixture',
+                        (:id, :organization_id, :entry_number, :entry_date, 'posted', 'currency_roles_fixture',
                          :user_id, :user_id, :now, :now)
                 """),
                 {
                     "id": str(uuid4()),
                     "organization_id": organization_id,
-                    "entry_number": f"FXLOCK-{marker}",
+                    "entry_number": f"FXROLE-{marker}",
                     "entry_date": date.today(),
                     "user_id": user_id,
                     "now": now,
                 },
             )
-            # Simulate a legacy mismatch to verify the canonical endpoint repairs it
-            # without changing the already-locked reporting currency.
             connection.execute(
                 text("""
                     UPDATE organization_financial_settings
-                    SET accounting_currency='AUD'
+                    SET accounting_currency='CAD'
                     WHERE organization_id=:organization_id
                 """),
                 {"organization_id": organization_id},
@@ -134,41 +153,63 @@ def main() -> None:
         tenant = FixtureTenant(organization_id=organization_id, user_id=user_id, organization=organization)
 
         locked = get_company_currency_settings(db, tenant)  # type: ignore[arg-type]
-        if not locked.base_currency_locked:
-            raise AssertionError("posted journal did not lock base/reporting currency")
-        if locked.accounting_currency != "AUD":
-            raise AssertionError("legacy mismatch fixture was not applied")
+        if not locked.accounting_currency_locked:
+            raise AssertionError("posted journal did not lock accounting currency")
+        if locked.accounting_currency != "USD":
+            raise AssertionError("canonical accounting currency changed unexpectedly")
+        if locked.reporting_currency != "AUD":
+            raise AssertionError("reporting currency changed unexpectedly")
 
         try:
             update_company_currency_settings(
-                CompanyCurrencySettingsUpdate(base_currency="EUR", default_client_currency="AUD"),
+                CompanyCurrencySettingsUpdate(
+                    accounting_currency="EUR",
+                    reporting_currency="BDT",
+                    default_client_currency="CAD",
+                ),
                 req("PATCH", "/company-settings/currencies"),
                 db,
                 tenant,  # type: ignore[arg-type]
             )
         except HTTPException as exc:
             if exc.status_code != 409:
-                raise AssertionError(f"wrong status for locked base currency change: {exc.status_code}") from exc
+                raise AssertionError(f"wrong status for locked accounting currency change: {exc.status_code}") from exc
             db.rollback()
         else:
-            raise AssertionError("base/reporting currency changed after posted accounting entries")
+            raise AssertionError("accounting currency changed after posted journal entries")
 
-        repaired = update_company_currency_settings(
-            CompanyCurrencySettingsUpdate(base_currency="USD", default_client_currency="GBP"),
+        switched = update_company_currency_settings(
+            CompanyCurrencySettingsUpdate(
+                accounting_currency="USD",
+                reporting_currency="BDT",
+                default_client_currency="CAD",
+            ),
             req("PATCH", "/company-settings/currencies"),
             db,
             tenant,  # type: ignore[arg-type]
         )
-        if repaired.base_currency != "USD" or repaired.accounting_currency != "USD":
-            raise AssertionError("same-base save did not repair legacy accounting currency mismatch")
-        if repaired.default_client_currency != "GBP":
-            raise AssertionError("locked base currency prevented safe client-default update")
-        if not repaired.base_currency_locked:
-            raise AssertionError("currency lock disappeared after safe update")
+        if switched.accounting_currency != "USD":
+            raise AssertionError("safe currency-role update changed accounting currency")
+        if switched.reporting_currency != "BDT":
+            raise AssertionError("reporting currency could not be switched after journal posting")
+        if switched.default_client_currency != "CAD":
+            raise AssertionError("client currency could not be switched after journal posting")
+        if not switched.accounting_currency_locked:
+            raise AssertionError("accounting lock disappeared after safe role update")
+
+        financial = db.scalar(
+            select(OrganizationFinancialSettings).where(
+                OrganizationFinancialSettings.organization_id == organization_id
+            )
+        )
+        if financial is None or financial.accounting_currency != "USD":
+            raise AssertionError("canonical save did not repair duplicate accounting currency metadata")
+        if financial.reporting_currency != "BDT":
+            raise AssertionError("reporting currency was not persisted independently")
     finally:
         db.close()
 
-    print("company currency roles, alignment and posted-ledger lock verification passed")
+    print("company accounting, reporting and client currency role verification passed")
 
 
 if __name__ == "__main__":
