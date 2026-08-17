@@ -89,6 +89,7 @@ class JournalEntryRead(BaseModel):
     id: str
     entry_number: str
     entry_date: date
+    functional_currency: str
     status: str
     source_type: str
     source_id: str | None
@@ -113,6 +114,8 @@ class TrialBalanceRow(BaseModel):
 
 class TrialBalanceRead(BaseModel):
     as_of: date | None
+    accounting_currency: str
+    functional_period_start: date
     total_debit: Decimal
     total_credit: Decimal
     rows: list[TrialBalanceRow]
