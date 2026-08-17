@@ -30,6 +30,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://business_os:business_os_ci@127.0.0.1:5432/codestation_business_os
       JWT_SECRET_KEY: ci-only-secret
+      GOOGLE_OAUTH_CLIENT_ID: business-os-ci.apps.googleusercontent.com
       PROJECT_CREDENTIAL_ENCRYPTION_KEY: ci-only-project-credential-key-0123456789abcdef
       SUPER_ADMIN_EMAIL: admin@codestationai.com
       SUPER_ADMIN_PASSWORD: ci-super-admin-password
@@ -52,6 +53,7 @@ jobs:
       - run: uv run python scripts/seed_existing_tenant_fixture.py
       - run: uv run alembic upgrade head
       - run: uv run python scripts/verify_onboarding_organization.py
+      - run: uv run python scripts/verify_google_auth.py
       - run: uv run python scripts/verify_company_currency_settings.py
       - run: uv run python scripts/verify_performance_indexes.py
       - run: uv run python scripts/verify_crm_migration_fixture.py
@@ -112,3 +114,4 @@ jobs:
       - run: pnpm build
         env:
           NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
