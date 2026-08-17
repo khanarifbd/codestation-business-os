@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest, urlopen
 
@@ -44,17 +44,27 @@ def _effective(reference: Decimal, adjustment: Decimal) -> Decimal:
 
 
 def _fetch_frankfurter(base: str, quote: str) -> Decimal:
-    url = f"https://api.frankfurter.dev/v1/latest?base={base}&symbols={quote}"
+    base = base.upper()
+    quote = quote.upper()
+    url = f"https://api.frankfurter.dev/v2/rate/{base}/{quote}"
     try:
-        req = UrlRequest(url, headers={"User-Agent": "CodeStation-Business-OS/1.0"})
+        req = UrlRequest(url, headers={"User-Agent": "CodeStation-Business-OS/1.0", "Accept": "application/json"})
         with urlopen(req, timeout=10) as response:  # nosec B310 - fixed HTTPS provider host
             payload = json.loads(response.read().decode("utf-8"))
-        value = payload.get("rates", {}).get(quote)
+        if payload.get("base") != base or payload.get("quote") != quote:
+            raise ValueError("currency pair mismatch")
+        value = payload.get("rate")
         if value is None:
             raise ValueError("rate missing")
-        return Decimal(str(value))
-    except (URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Live exchange-rate provider is temporarily unavailable.") from exc
+        rate = Decimal(str(value))
+        if rate <= 0:
+            raise ValueError("rate must be positive")
+        return rate
+    except (URLError, TimeoutError, ValueError, InvalidOperation, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Live exchange-rate provider is temporarily unavailable for {base}/{quote}. Please try again shortly or switch to Manual mode.",
+        ) from exc
 
 
 @router.get("", response_model=ExchangeRateBundle)
@@ -121,13 +131,15 @@ def sync_rates(request: Request, db: DbSession, tenant: CurrentTenantAdmin) -> E
     defaults = _defaults(db, tenant.organization_id)
     if defaults.exchange_rate_mode == "manual":
         raise HTTPException(status_code=409, detail="Live sync is disabled while Manual mode is active.")
-    rows = db.scalars(select(OrganizationExchangeRate).where(OrganizationExchangeRate.organization_id == tenant.organization_id)).all()
+    rows = db.scalars(select(OrganizationExchangeRate).where(OrganizationExchangeRate.organization_id == tenant.organization_id).order_by(OrganizationExchangeRate.base_currency, OrganizationExchangeRate.quote_currency)).all()
+    if not rows:
+        raise HTTPException(status_code=409, detail="Add at least one currency pair before syncing live exchange rates.")
     now = datetime.now(timezone.utc)
     adjustment = defaults.exchange_rate_adjustment_percent if defaults.exchange_rate_mode == "automatic_adjusted" else Decimal("0")
     for row in rows:
         reference = _fetch_frankfurter(row.base_currency, row.quote_currency)
         row.reference_rate = reference; row.effective_rate = _effective(reference, adjustment); row.source = defaults.exchange_rate_provider; row.synced_at = now
     defaults.exchange_rate_last_synced_at = now
-    record_activity(db, action="company.exchange_rates.synced", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="organization_system_defaults", entity_id=defaults.id, after={"pairs": len(rows), "provider": defaults.exchange_rate_provider, "synced_at": now.isoformat()}, message="Exchange rates synced", request=request)
+    record_activity(db, action="company.exchange_rates.synced", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="organization_system_defaults", entity_id=defaults.id, after={"pairs": len(rows), "provider": defaults.exchange_rate_provider, "synced_at": now.isoformat(), "rates": [{"pair": f"{row.base_currency}/{row.quote_currency}", "reference_rate": str(row.reference_rate), "effective_rate": str(row.effective_rate)} for row in rows]}, message="Exchange rates synced", request=request)
     db.commit()
     return ExchangeRateBundle(policy=_policy(defaults), rates=[ExchangeRateRead.model_validate(row) for row in rows])
