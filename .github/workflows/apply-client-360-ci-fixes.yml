@@ -1,0 +1,31 @@
+name: Apply Client 360 CI fixes
+
+on:
+  push:
+    branches:
+      - feat/client-360-workspace
+    paths:
+      - scripts/_fix_client_360_ci.py
+      - .github/workflows/apply-client-360-ci-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/client-360-workspace
+      - name: Apply fixes
+        run: python scripts/_fix_client_360_ci.py
+      - name: Commit fixes
+        run: |
+          rm scripts/_fix_client_360_ci.py
+          rm .github/workflows/apply-client-360-ci-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(clients): harden client 360 CI and payment history"
+          git push origin HEAD:feat/client-360-workspace
