@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -10,6 +12,36 @@ class UserRead(BaseModel):
     system_role: str
     is_active: bool
     is_verified: bool
+
+
+class UserProfileRead(BaseModel):
+    id: str
+    email: EmailStr
+    full_name: str
+    phone: str | None
+    timezone: str | None
+    system_role: str
+    is_active: bool
+    is_verified: bool
+    has_password: bool
+    google_connected: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str | None = Field(default=None, min_length=2, max_length=160)
+    phone: str | None = Field(default=None, max_length=40)
+    timezone: str | None = Field(default=None, max_length=64)
+
+
+class PasswordChangeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class SignUpRequest(BaseModel):
