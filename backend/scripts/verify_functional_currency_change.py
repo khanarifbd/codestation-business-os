@@ -28,6 +28,7 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.organization import OrganizationCreate
 from app.services.accounting_posting import PostingLine, ensure_default_chart, post_journal, system_account
+from app.services.activity_log import record_activity
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,22 @@ def main() -> None:
                 memo="BDT expense before functional currency change",
             ),
         ]
+        record_activity(
+            db,
+            action="verification.functional_currency.old_period_fixture",
+            scope="tenant",
+            actor_user_id=user.id,
+            organization_id=organization.id,
+            entity_type="journal_entry",
+            entity_id=old_entries[0].id,
+            after={
+                "functional_currency": "BDT",
+                "entry_date": old_date.isoformat(),
+                "journal_ids": [entry.id for entry in old_entries],
+            },
+            message="Created audited BDT journals for functional currency transition verification",
+            request=req("POST", "/verification/functional-currency/old-period"),
+        )
         db.commit()
 
         for entry in old_entries:
@@ -267,6 +284,22 @@ def main() -> None:
                 PostingLine(ledger_account_id=owner_equity.id, credit=Decimal("100"), currency="AUD", original_amount=Decimal("100")),
             ],
             memo="AUD capital after functional currency change",
+        )
+        record_activity(
+            db,
+            action="verification.functional_currency.new_period_fixture",
+            scope="tenant",
+            actor_user_id=user.id,
+            organization_id=organization.id,
+            entity_type="journal_entry",
+            entity_id=new_entry.id,
+            after={
+                "functional_currency": "AUD",
+                "entry_date": new_date.isoformat(),
+                "journal_id": new_entry.id,
+            },
+            message="Created audited AUD journal for functional currency transition verification",
+            request=req("POST", "/verification/functional-currency/new-period"),
         )
         db.commit()
         db.refresh(new_entry)
