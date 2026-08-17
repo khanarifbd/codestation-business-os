@@ -19,7 +19,7 @@ class LeadStatusRead(BaseModel):
 
 class LeadStatusCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    color: str | None = Field(default=None, max_length=16)
+    color: str | None = Field(default=None, max_length=16, pattern=r"^#[0-9A-Fa-f]{6}$")
     category: Literal["open", "qualified", "won", "lost"] = "open"
     sort_order: int = Field(default=100, ge=0, le=10000)
     is_default: bool = False
@@ -27,7 +27,7 @@ class LeadStatusCreate(BaseModel):
 
 class LeadStatusUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
-    color: str | None = Field(default=None, max_length=16)
+    color: str | None = Field(default=None, max_length=16, pattern=r"^#[0-9A-Fa-f]{6}$")
     category: Literal["open", "qualified", "won", "lost"] | None = None
     sort_order: int | None = Field(default=None, ge=0, le=10000)
     is_default: bool | None = None
