@@ -1,3 +1,5 @@
+"""Verify Client 360 against a real onboarding tenant with an active owner membership."""
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
