@@ -60,7 +60,7 @@ def upgrade() -> None:
             reference_rate, effective_rate, source, created_by_user_id, created_at, updated_at
         )
         SELECT
-            md5(oer.id || ':history')::text,
+            md5(oer.id || '-history')::text,
             oer.organization_id,
             oer.base_currency,
             oer.quote_currency,
