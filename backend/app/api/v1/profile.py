@@ -32,6 +32,29 @@ def _profile_read(user: CurrentUser) -> UserProfileRead:
     )
 
 
+def _record_password_failure(
+    db: DbSession,
+    request: Request,
+    current_user: CurrentUser,
+    *,
+    message: str,
+    reason: str,
+) -> None:
+    record_activity(
+        db,
+        action="user.password.change_failed",
+        scope="account",
+        actor_user_id=current_user.id,
+        entity_type="user",
+        entity_id=current_user.id,
+        outcome="failure",
+        message=message,
+        metadata={"reason": reason, "google_connected": current_user.google_subject is not None},
+        request=request,
+    )
+    db.commit()
+
+
 @router.get("", response_model=UserProfileRead)
 def get_profile(current_user: CurrentUser) -> UserProfileRead:
     return _profile_read(current_user)
@@ -62,10 +85,12 @@ def update_profile(
 
     if "phone" in fields:
         phone = (payload.phone or "").strip() or None
-        if phone is not None and not PHONE_PATTERN.fullmatch(phone):
+        if phone is not None and (
+            not PHONE_PATTERN.fullmatch(phone) or not any(character.isdigit() for character in phone)
+        ):
             raise HTTPException(
                 status_code=400,
-                detail="Phone number may contain digits, spaces, +, -, parentheses and periods",
+                detail="Enter a valid phone number containing at least one digit",
             )
         current_user.phone = phone
 
@@ -74,7 +99,7 @@ def update_profile(
         if timezone_name is not None:
             try:
                 ZoneInfo(timezone_name)
-            except ZoneInfoNotFoundError as exc:
+            except (ZoneInfoNotFoundError, ValueError) as exc:
                 raise HTTPException(status_code=400, detail="Select a valid IANA timezone") from exc
         current_user.timezone = timezone_name
 
@@ -110,6 +135,13 @@ def change_password(
     current_user: CurrentUser,
 ) -> Response:
     if current_user.password_hash is None:
+        _record_password_failure(
+            db,
+            request,
+            current_user,
+            message="Password change rejected because the account has no password credential",
+            reason="password_not_configured",
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -119,21 +151,23 @@ def change_password(
         )
 
     if not verify_password(payload.current_password, current_user.password_hash):
-        record_activity(
+        _record_password_failure(
             db,
-            action="user.password.change_failed",
-            scope="account",
-            actor_user_id=current_user.id,
-            entity_type="user",
-            entity_id=current_user.id,
-            outcome="failure",
+            request,
+            current_user,
             message="Password change rejected because the current password was incorrect",
-            request=request,
+            reason="incorrect_current_password",
         )
-        db.commit()
         raise HTTPException(status_code=400, detail="Current password is incorrect")
 
     if verify_password(payload.new_password, current_user.password_hash):
+        _record_password_failure(
+            db,
+            request,
+            current_user,
+            message="Password change rejected because the new password matched the current password",
+            reason="password_reuse",
+        )
         raise HTTPException(status_code=400, detail="New password must be different from the current password")
 
     current_user.password_hash = hash_password(payload.new_password)
