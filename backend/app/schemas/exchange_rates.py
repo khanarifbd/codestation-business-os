@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -30,6 +30,13 @@ class ExchangeRateUpdate(BaseModel):
     manual_rate: Decimal = Field(gt=0)
 
 
+class ExchangeRateHistoryCreate(BaseModel):
+    base_currency: str = Field(min_length=3, max_length=3)
+    quote_currency: str = Field(min_length=3, max_length=3)
+    effective_date: date
+    effective_rate: Decimal = Field(gt=0)
+
+
 class ExchangeRateRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -45,6 +52,21 @@ class ExchangeRateRead(BaseModel):
     updated_at: datetime
 
 
+class ExchangeRateHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    organization_id: str
+    base_currency: str
+    quote_currency: str
+    effective_date: date
+    reference_rate: Decimal | None
+    effective_rate: Decimal
+    source: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class ExchangeRateBundle(BaseModel):
     policy: ExchangeRatePolicyRead
     rates: list[ExchangeRateRead]
+    history: list[ExchangeRateHistoryRead] = []
