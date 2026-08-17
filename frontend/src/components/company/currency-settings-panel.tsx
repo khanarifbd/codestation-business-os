@@ -35,6 +35,8 @@ type CurrencySettings = {
   accounting_currency_locked: boolean;
   accounting_currency_lock_reason: string | null;
   accounting_currency_change_earliest_date: string | null;
+  organization_current_date: string;
+  organization_timezone: string;
   functional_currency_periods: FunctionalCurrencyPeriod[];
 };
 
@@ -82,12 +84,6 @@ function localDate(value: string) {
   });
 }
 
-function todayIso() {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
-}
-
 export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | Promise<void> }) {
   const [settings, setSettings] = useState<CurrencySettings | null>(null);
   const [rates, setRates] = useState<RateBundle | null>(null);
@@ -107,22 +103,25 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
   const [accountingTransitionRate, setAccountingTransitionRate] = useState("");
   const [accountingChangeReason, setAccountingChangeReason] = useState("");
   const [accountingChangeConfirmed, setAccountingChangeConfirmed] = useState(false);
+  const [accountingChangeError, setAccountingChangeError] = useState<string | null>(null);
 
   const currencyOptions = useMemo(() => CURRENCY_OPTIONS, []);
-  const today = todayIso();
+  const today = settings?.organization_current_date ?? "";
 
   function resetAccountingChange(next: CurrencySettings) {
     const alternate = currencyOptions.find((item) => item.value !== next.accounting_currency)?.value ?? "USD";
     setNextAccountingCurrency(alternate);
-    setAccountingEffectiveDate(next.accounting_currency_change_earliest_date ?? todayIso());
+    setAccountingEffectiveDate(next.accounting_currency_change_earliest_date ?? next.organization_current_date);
     setAccountingTransitionRate("");
     setAccountingChangeReason("");
     setAccountingChangeConfirmed(false);
+    setAccountingChangeError(null);
   }
 
   async function load() {
     setLoading(true);
     setError(null);
+    setAccountingChangeError(null);
     try {
       const [currencyResponse, rateResponse] = await Promise.all([
         fetch("/api/company-settings/currencies", { cache: "no-store" }),
@@ -183,24 +182,31 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
   async function changeAccountingCurrency() {
     if (!settings) return;
     if (nextAccountingCurrency === settings.accounting_currency) {
-      setError("Choose a different accounting / functional currency.");
+      setAccountingChangeError("Choose a different accounting / functional currency.");
       return;
     }
     if (!accountingEffectiveDate) {
-      setError("Choose an effective date for the accounting currency change.");
+      setAccountingChangeError("Choose an effective date for the accounting currency change.");
+      return;
+    }
+    if (accountingEffectiveDate > settings.organization_current_date) {
+      setAccountingChangeError(
+        `Effective date cannot be after ${localDate(settings.organization_current_date)} (${settings.organization_timezone}).`,
+      );
       return;
     }
     if (accountingChangeReason.trim().length < 3) {
-      setError("Enter a reason for the accounting currency change.");
+      setAccountingChangeError("Enter a reason for the accounting currency change.");
       return;
     }
     if (!accountingChangeConfirmed) {
-      setError("Confirm that you understand the prior functional-currency period will be sealed.");
+      setAccountingChangeError("Confirm that you understand the prior functional-currency period will be sealed.");
       return;
     }
 
     setSaving(true);
     setError(null);
+    setAccountingChangeError(null);
     setMessage(null);
     try {
       const response = await fetch("/api/company-settings/currencies/change-accounting", {
@@ -226,7 +232,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
       );
       await onChanged?.();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to change accounting currency.");
+      setAccountingChangeError(reason instanceof Error ? reason.message : "Unable to change accounting currency.");
     } finally {
       setSaving(false);
     }
@@ -342,7 +348,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
             disabled={settings.accounting_currency_locked}
           />
           <p className="mt-2 text-xs leading-5 text-neutral-500">The double-entry journal, Trial Balance and ledger base amounts are stored in this currency for the active functional-currency period.</p>
-          {settings.accounting_currency_locked ? <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><p>{settings.accounting_currency_lock_reason}</p><button type="button" disabled={!changeAvailableToday} onClick={() => setShowAccountingChange((value) => !value)} className="mt-3 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-900 px-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"><CalendarClock className="size-3.5" />{showAccountingChange ? "Close change form" : "Change accounting currency"}</button>{!changeAvailableToday && settings.accounting_currency_change_earliest_date ? <p className="mt-2 font-medium">The earliest safe change date is {localDate(settings.accounting_currency_change_earliest_date)} because journals already exist through the previous day.</p> : null}</div> : null}
+          {settings.accounting_currency_locked ? <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><p>{settings.accounting_currency_lock_reason}</p><button type="button" disabled={!changeAvailableToday} onClick={() => { setAccountingChangeError(null); setShowAccountingChange((value) => !value); }} className="mt-3 inline-flex h-9 items-center gap-2 rounded-lg bg-amber-900 px-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"><CalendarClock className="size-3.5" />{showAccountingChange ? "Close change form" : "Change accounting currency"}</button>{!changeAvailableToday && settings.accounting_currency_change_earliest_date ? <p className="mt-2 font-medium">The earliest safe change date is {localDate(settings.accounting_currency_change_earliest_date)} because journals already exist through the previous day.</p> : null}</div> : null}
         </div>
 
         <div>
@@ -365,13 +371,15 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
         </div>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <SearchableSelect label="New accounting / functional currency" name="new_accounting_currency" value={nextAccountingCurrency} onValueChange={setNextAccountingCurrency} options={currencyOptions.filter((item) => item.value !== settings.accounting_currency)} placeholder="Select new accounting currency" />
-          <label className="block"><span className="text-sm font-semibold">Effective date</span><input type="date" min={settings.accounting_currency_change_earliest_date ?? undefined} max={today} value={accountingEffectiveDate} onChange={(event) => setAccountingEffectiveDate(event.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" /><span className="mt-1 block text-xs leading-5 text-neutral-400">Must be after the latest posted journal and cannot be a future date.</span></label>
-          <label className="block"><span className="text-sm font-semibold">Transition rate <span className="font-normal text-neutral-400">(optional)</span></span><input type="number" min="0" step="0.00000001" value={accountingTransitionRate} onChange={(event) => setAccountingTransitionRate(event.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" placeholder="Use configured FX pair when blank" /><span className="mt-1 block text-xs leading-5 text-neutral-400">Rate means 1 {settings.accounting_currency} = X {nextAccountingCurrency || "new currency"}. Leave blank to use the configured organization FX pair.</span></label>
-          <label className="block"><span className="text-sm font-semibold">Reason</span><input value={accountingChangeReason} onChange={(event) => setAccountingChangeReason(event.target.value)} maxLength={500} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" placeholder="Example: Primary operations moved to Australia" /></label>
+          <SearchableSelect label="New accounting / functional currency" name="new_accounting_currency" value={nextAccountingCurrency} onValueChange={(value) => { setNextAccountingCurrency(value); setAccountingChangeError(null); }} options={currencyOptions.filter((item) => item.value !== settings.accounting_currency)} placeholder="Select new accounting currency" />
+          <label className="block"><span className="text-sm font-semibold">Effective date</span><input type="date" min={settings.accounting_currency_change_earliest_date ?? undefined} max={today} value={accountingEffectiveDate} onChange={(event) => { setAccountingEffectiveDate(event.target.value); setAccountingChangeError(null); }} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" /><span className="mt-1 block text-xs leading-5 text-neutral-400">Must be after the latest posted journal and cannot be after {localDate(today)} ({settings.organization_timezone}).</span></label>
+          <label className="block"><span className="text-sm font-semibold">Transition rate <span className="font-normal text-neutral-400">(optional)</span></span><input type="number" min="0" step="0.00000001" value={accountingTransitionRate} onChange={(event) => { setAccountingTransitionRate(event.target.value); setAccountingChangeError(null); }} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" placeholder="Use configured FX pair when blank" /><span className="mt-1 block text-xs leading-5 text-neutral-400">Rate means 1 {settings.accounting_currency} = X {nextAccountingCurrency || "new currency"}. Leave blank to use the configured organization FX pair.</span></label>
+          <label className="block"><span className="text-sm font-semibold">Reason</span><input value={accountingChangeReason} onChange={(event) => { setAccountingChangeReason(event.target.value); setAccountingChangeError(null); }} maxLength={500} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" placeholder="Example: Primary operations moved to Australia" /></label>
         </div>
 
-        <label className="mt-5 flex items-start gap-3 rounded-xl border bg-neutral-50 p-4 text-sm leading-6 text-neutral-700"><input type="checkbox" checked={accountingChangeConfirmed} onChange={(event) => setAccountingChangeConfirmed(event.target.checked)} className="mt-1" /><span>I understand that the previous functional-currency period becomes sealed, historical ledger values stay unchanged, and corrections to that history must be posted in the current period instead of rewriting old journals.</span></label>
+        <label className="mt-5 flex items-start gap-3 rounded-xl border bg-neutral-50 p-4 text-sm leading-6 text-neutral-700"><input type="checkbox" checked={accountingChangeConfirmed} onChange={(event) => { setAccountingChangeConfirmed(event.target.checked); setAccountingChangeError(null); }} className="mt-1" /><span>I understand that the previous functional-currency period becomes sealed, historical ledger values stay unchanged, and corrections to that history must be posted in the current period instead of rewriting old journals.</span></label>
+
+        {accountingChangeError ? <div role="alert" aria-live="polite" className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{accountingChangeError}</span></div> : null}
 
         <div className="mt-5 flex justify-end"><button type="button" disabled={saving || !accountingChangeConfirmed || nextAccountingCurrency === settings.accounting_currency || !accountingEffectiveDate} onClick={() => void changeAccountingCurrency()} className="inline-flex h-11 items-center gap-2 rounded-xl bg-amber-900 px-5 text-sm font-semibold text-white disabled:opacity-45">{saving ? <Loader2 className="size-4 animate-spin" /> : <ArrowRightLeft className="size-4" />} Apply accounting transition</button></div>
       </div> : null}
