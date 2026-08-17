@@ -39,6 +39,28 @@ ensure_project_credential_key() {
   fi
 }
 
+validate_google_oauth_config() {
+  local public_client_id backend_client_id
+  public_client_id="$(env_value NEXT_PUBLIC_GOOGLE_CLIENT_ID)"
+  backend_client_id="$(env_value GOOGLE_OAUTH_CLIENT_ID)"
+
+  if [[ -z "${public_client_id}" || "${public_client_id}" == "replace_with_google_web_client_id.apps.googleusercontent.com" ]]; then
+    echo "ERROR: Configure NEXT_PUBLIC_GOOGLE_CLIENT_ID in .env.staging before deployment."
+    echo "The frontend Google sign-in button is compiled at build time and is hidden when this value is missing."
+    exit 1
+  fi
+
+  if [[ -z "${backend_client_id}" || "${backend_client_id}" == "replace_with_google_web_client_id.apps.googleusercontent.com" ]]; then
+    echo "ERROR: Configure GOOGLE_OAUTH_CLIENT_ID in .env.staging before deployment."
+    exit 1
+  fi
+
+  if [[ "${public_client_id}" != "${backend_client_id}" ]]; then
+    echo "ERROR: NEXT_PUBLIC_GOOGLE_CLIENT_ID and GOOGLE_OAUTH_CLIENT_ID must use the same Google Web OAuth client ID."
+    exit 1
+  fi
+}
+
 ensure_nginx_upload_limit() {
   if [[ ! -f "${NGINX_SITE}" ]] || ! command -v nginx >/dev/null 2>&1; then
     return
@@ -120,6 +142,7 @@ git pull --ff-only origin "${BRANCH}"
 # the vault key on the same deployment instead of requiring another release.
 ensure_project_credential_key
 ensure_nginx_upload_limit
+validate_google_oauth_config
 
 echo "==> Building application images"
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" build
