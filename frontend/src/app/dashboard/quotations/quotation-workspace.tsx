@@ -79,8 +79,10 @@ export function QuotationWorkspace() {
   useEffect(() => {
     if (!meta) return;
     const p = new URLSearchParams(window.location.search);
+    const quotationId = p.get("quotation_id");
     const leadId = p.get("lead_id");
     const preClient = p.get("client_id");
+    if (quotationId) { void openDetail(quotationId); return; }
     if (leadId) {
       void (async () => {
         try {
