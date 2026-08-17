@@ -81,6 +81,12 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
+        "ix_organization_functional_currency_periods_organization_id",
+        "organization_functional_currency_periods",
+        ["organization_id"],
+        unique=False,
+    )
+    op.create_index(
         "ix_org_functional_currency_period_range",
         "organization_functional_currency_periods",
         ["organization_id", "effective_from", "effective_to"],
@@ -126,6 +132,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index(
         "ix_org_functional_currency_period_range",
+        table_name="organization_functional_currency_periods",
+    )
+    op.drop_index(
+        "ix_organization_functional_currency_periods_organization_id",
         table_name="organization_functional_currency_periods",
     )
     op.drop_table("organization_functional_currency_periods")
