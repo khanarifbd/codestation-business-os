@@ -67,17 +67,17 @@ def share_capital_account(db: DbSession, tenant: TenantContext) -> LedgerAccount
     return row
 
 
-def posting_line(db: DbSession, tenant: TenantContext, ledger_id: str, *, debit: Decimal = Decimal("0"), credit: Decimal = Decimal("0"), currency: str, description: str) -> PostingLine:
+def posting_line(db: DbSession, tenant: TenantContext, ledger_id: str, *, tx_date: date, debit: Decimal = Decimal("0"), credit: Decimal = Decimal("0"), currency: str, description: str) -> PostingLine:
     original = debit if debit > 0 else credit
-    base, rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, original, currency)
+    base, rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, original, currency, rate_date=tx_date)
     return PostingLine(ledger_account_id=ledger_id, debit=base if debit > 0 else Decimal("0"), credit=base if credit > 0 else Decimal("0"), description=description, currency=currency, exchange_rate_to_base=rate, original_amount=original)
 
 
 def post_incoming(db: DbSession, tenant: TenantContext, *, account_id: str, amount: Decimal, currency: str, tx_date: date, source_type: str, source_id: str, reference: str | None, description: str, credit_account: LedgerAccount) -> None:
     _, cash = financial_ledger_account(db, tenant.organization_id, account_id)
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=tx_date, source_type=source_type, source_id=source_id, reference=reference, memo=description, lines=[
-        posting_line(db, tenant, cash.id, debit=amount, currency=currency, description=description),
-        posting_line(db, tenant, credit_account.id, credit=amount, currency=currency, description=description),
+        posting_line(db, tenant, cash.id, tx_date=tx_date, debit=amount, currency=currency, description=description),
+        posting_line(db, tenant, credit_account.id, tx_date=tx_date, credit=amount, currency=currency, description=description),
     ])
 
 
@@ -85,8 +85,8 @@ def post_outgoing_investment(db: DbSession, tenant: TenantContext, *, account_id
     _, cash = financial_ledger_account(db, tenant.organization_id, account_id)
     investment_asset = system_account(db, tenant.organization_id, "investments")
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=tx_date, source_type=source_type, source_id=source_id, reference=reference, memo=description, lines=[
-        posting_line(db, tenant, investment_asset.id, debit=amount, currency=currency, description=description),
-        posting_line(db, tenant, cash.id, credit=amount, currency=currency, description=description),
+        posting_line(db, tenant, investment_asset.id, tx_date=tx_date, debit=amount, currency=currency, description=description),
+        posting_line(db, tenant, cash.id, tx_date=tx_date, credit=amount, currency=currency, description=description),
     ])
 
 
@@ -95,11 +95,11 @@ def post_investment_return(db: DbSession, tenant: TenantContext, *, account_id: 
     investment_asset = system_account(db, tenant.organization_id, "investments")
     income_account = system_account(db, tenant.organization_id, "other_income")
     total = money(principal + income)
-    lines = [posting_line(db, tenant, cash.id, debit=total, currency=currency, description=description)]
+    lines = [posting_line(db, tenant, cash.id, tx_date=tx_date, debit=total, currency=currency, description=description)]
     if principal > 0:
-        lines.append(posting_line(db, tenant, investment_asset.id, credit=principal, currency=currency, description="Principal returned"))
+        lines.append(posting_line(db, tenant, investment_asset.id, tx_date=tx_date, credit=principal, currency=currency, description="Principal returned"))
     if income > 0:
-        lines.append(posting_line(db, tenant, income_account.id, credit=income, currency=currency, description="Investment income"))
+        lines.append(posting_line(db, tenant, income_account.id, tx_date=tx_date, credit=income, currency=currency, description="Investment income"))
     # FX conversion rounding can differ by one cent when a receipt is split. Keep
     # the journal balanced by adjusting the final credit line in base currency.
     debit_total = money(sum((x.debit for x in lines), Decimal("0")))
@@ -114,11 +114,11 @@ def post_investor_payout(db: DbSession, tenant: TenantContext, *, account_id: st
     _, cash = financial_ledger_account(db, tenant.organization_id, account_id)
     profit_expense = system_account(db, tenant.organization_id, "investor_profit_share")
     total = money(principal + profit)
-    lines = [posting_line(db, tenant, cash.id, credit=total, currency=currency, description=description)]
+    lines = [posting_line(db, tenant, cash.id, tx_date=tx_date, credit=total, currency=currency, description=description)]
     if principal > 0:
-        lines.append(posting_line(db, tenant, principal_account.id, debit=principal, currency=currency, description="Investor principal returned"))
+        lines.append(posting_line(db, tenant, principal_account.id, tx_date=tx_date, debit=principal, currency=currency, description="Investor principal returned"))
     if profit > 0:
-        lines.append(posting_line(db, tenant, profit_expense.id, debit=profit, currency=currency, description="Investor profit distribution"))
+        lines.append(posting_line(db, tenant, profit_expense.id, tx_date=tx_date, debit=profit, currency=currency, description="Investor profit distribution"))
     credit_total = money(sum((x.credit for x in lines), Decimal("0")))
     debit_total = money(sum((x.debit for x in lines), Decimal("0")))
     if credit_total != debit_total and len(lines) > 1:
@@ -477,7 +477,6 @@ def fund_project_investor(investor_id: str, payload: FundingCreate, request: Req
     post_incoming(db, tenant, account_id=acc.id, amount=amount, currency=row.currency, tx_date=funding.funding_date, source_type="project_investor_funding", source_id=funding.id, reference=funding.reference, description=description, credit_account=system_account(db, tenant.organization_id, "investor_funds_payable"))
     record_activity(db, action="capital.project_investor.fund", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="project_investor_funding", entity_id=funding.id, after={"investor_id": row.id, "amount": amount, "funded_amount": row.funded_amount}, request=request)
     db.commit(); return {"id": funding.id, **project_investor_json(row, project.name if project else None)}
-
 
 @router.post("/project-investors/{investor_id}/payouts", status_code=201)
 def payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSession, tenant: CapitalManager):
