@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
@@ -872,3 +872,99 @@ def update_lead_source(
     )
     db.commit(); db.refresh(item)
     return LeadSourceRead.model_validate(item)
+
+
+@router.delete("/settings/statuses/{status_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_lead_status(
+    status_id: str,
+    request: Request,
+    db: DbSession,
+    tenant: CrmManager,
+) -> Response:
+    item = db.scalar(
+        select(LeadStatus).where(
+            LeadStatus.id == status_id,
+            LeadStatus.organization_id == tenant.organization_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Lead status not found")
+    if item.is_default:
+        raise HTTPException(status_code=409, detail="Default lead status cannot be deleted")
+
+    lead_count = db.scalar(
+        select(func.count()).select_from(Lead).where(
+            Lead.organization_id == tenant.organization_id,
+            Lead.status_id == item.id,
+        )
+    ) or 0
+    if lead_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This lead status is used by {lead_count} lead(s). Disable it instead to preserve lead history.",
+        )
+
+    before = LeadStatusRead.model_validate(item).model_dump(mode="json")
+    db.delete(item)
+    record_activity(
+        db,
+        action="crm.lead_status.deleted",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="lead_status",
+        entity_id=item.id,
+        before=before,
+        after=None,
+        message=f"Lead status deleted: {item.name}",
+        request=request,
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/settings/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_lead_source(
+    source_id: str,
+    request: Request,
+    db: DbSession,
+    tenant: CrmManager,
+) -> Response:
+    item = db.scalar(
+        select(LeadSource).where(
+            LeadSource.id == source_id,
+            LeadSource.organization_id == tenant.organization_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Lead source not found")
+
+    lead_count = db.scalar(
+        select(func.count()).select_from(Lead).where(
+            Lead.organization_id == tenant.organization_id,
+            Lead.source_id == item.id,
+        )
+    ) or 0
+    if lead_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This lead source is used by {lead_count} lead(s). Disable it instead to preserve lead history.",
+        )
+
+    before = LeadSourceRead.model_validate(item).model_dump(mode="json")
+    db.delete(item)
+    record_activity(
+        db,
+        action="crm.lead_source.deleted",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="lead_source",
+        entity_id=item.id,
+        before=before,
+        after=None,
+        message=f"Lead source deleted: {item.name}",
+        request=request,
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
