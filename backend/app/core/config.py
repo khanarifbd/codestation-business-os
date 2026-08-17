@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    google_oauth_client_id: str = ""
     super_admin_email: str = ""
     super_admin_password: str = ""
     super_admin_name: str = "CodeStation AI Super Admin"
