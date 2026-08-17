@@ -4,16 +4,29 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Building2, Check, Loader2 } from "lucide-react";
 
-const businessTypes = [
-  "Software & IT Services",
-  "Agency",
-  "Consulting",
-  "E-commerce",
-  "Professional Services",
-  "Other",
-];
+import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
+import {
+  BUSINESS_TYPE_OPTIONS,
+  COMPANY_SIZE_OPTIONS,
+  COUNTRY_OPTIONS,
+  CURRENCY_OPTIONS,
+  TIMEZONE_OPTIONS,
+} from "@/lib/company-options";
 
-const teamSizes = ["1", "2-5", "6-10", "11-25", "26-50", "51-100", "100+"];
+const FINANCIAL_YEAR_OPTIONS: SearchOption[] = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+].map((month, index) => ({ value: String(index + 1), label: month }));
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -134,40 +147,32 @@ export default function OnboardingPage() {
                 Company name
                 <input
                   name="name"
-                  defaultValue="CodeStation AI"
                   required
                   minLength={2}
+                  autoComplete="organization"
                   className="mt-2 h-12 w-full rounded-xl border border-neutral-200 px-4 outline-none transition focus:border-neutral-500"
                   placeholder="Your company name"
                 />
               </label>
 
               <div className="grid gap-5 sm:grid-cols-2">
-                <label className="block text-sm font-medium">
-                  Business type
-                  <select
-                    name="business_type"
-                    defaultValue="Software & IT Services"
-                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 outline-none focus:border-neutral-500"
-                  >
-                    {businessTypes.map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                </label>
+                <SearchableSelect
+                  label="Business type"
+                  name="business_type"
+                  defaultValue="Software & IT Services"
+                  options={BUSINESS_TYPE_OPTIONS}
+                  clearable={false}
+                  searchPlaceholder="Search business type..."
+                />
 
-                <label className="block text-sm font-medium">
-                  Team size
-                  <select
-                    name="team_size"
-                    defaultValue="2-5"
-                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 outline-none focus:border-neutral-500"
-                  >
-                    {teamSizes.map((item) => (
-                      <option key={item}>{item}</option>
-                    ))}
-                  </select>
-                </label>
+                <SearchableSelect
+                  label="Team size"
+                  name="team_size"
+                  defaultValue="2-5"
+                  options={COMPANY_SIZE_OPTIONS}
+                  clearable={false}
+                  searchPlaceholder="Search team size..."
+                />
               </div>
 
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
@@ -186,83 +191,51 @@ export default function OnboardingPage() {
               </div>
 
               <div className="grid gap-5 sm:grid-cols-3">
-                <label className="block text-sm font-medium">
-                  Country
-                  <select
-                    name="country_code"
-                    defaultValue="BD"
-                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 outline-none focus:border-neutral-500"
-                  >
-                    <option value="BD">Bangladesh</option>
-                    <option value="AU">Australia</option>
-                    <option value="US">United States</option>
-                    <option value="GB">United Kingdom</option>
-                    <option value="CA">Canada</option>
-                    <option value="DE">Germany</option>
-                  </select>
-                </label>
+                <SearchableSelect
+                  label="Country"
+                  name="country_code"
+                  defaultValue="BD"
+                  options={COUNTRY_OPTIONS}
+                  required
+                  clearable={false}
+                  searchPlaceholder="Search country or code..."
+                />
 
-                <label className="block text-sm font-medium">
-                  Accounting / functional currency
-                  <select
+                <div>
+                  <SearchableSelect
+                    label="Accounting / functional currency"
                     name="currency"
                     defaultValue="BDT"
-                    className="mt-2 h-12 w-full rounded-xl border border-amber-300 bg-amber-50/40 px-4 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
-                  >
-                    <option value="BDT">BDT</option>
-                    <option value="USD">USD</option>
-                    <option value="AUD">AUD</option>
-                    <option value="GBP">GBP</option>
-                    <option value="EUR">EUR</option>
-                    <option value="CAD">CAD</option>
-                  </select>
-                  <span className="mt-2 block text-xs leading-5 text-amber-700">Used as the permanent base for accounting entries once posting starts.</span>
-                </label>
+                    options={CURRENCY_OPTIONS}
+                    required
+                    clearable={false}
+                    searchPlaceholder="Search currency or code..."
+                  />
+                  <span className="mt-2 block text-xs leading-5 text-amber-700">
+                    Used as the permanent base for accounting entries once posting starts.
+                  </span>
+                </div>
 
-                <label className="block text-sm font-medium">
-                  Financial year starts
-                  <select
-                    name="financial_year_start_month"
-                    defaultValue="7"
-                    className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 outline-none focus:border-neutral-500"
-                  >
-                    {[
-                      "January",
-                      "February",
-                      "March",
-                      "April",
-                      "May",
-                      "June",
-                      "July",
-                      "August",
-                      "September",
-                      "October",
-                      "November",
-                      "December",
-                    ].map((month, index) => (
-                      <option key={month} value={index + 1}>
-                        {month}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <SearchableSelect
+                  label="Financial year starts"
+                  name="financial_year_start_month"
+                  defaultValue="7"
+                  options={FINANCIAL_YEAR_OPTIONS}
+                  required
+                  clearable={false}
+                  searchPlaceholder="Search month..."
+                />
               </div>
 
-              <label className="block text-sm font-medium">
-                Timezone
-                <select
-                  name="timezone"
-                  defaultValue="Asia/Dhaka"
-                  className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 outline-none focus:border-neutral-500"
-                >
-                  <option value="Asia/Dhaka">Asia/Dhaka (UTC+6)</option>
-                  <option value="Australia/Sydney">Australia/Sydney</option>
-                  <option value="America/New_York">America/New_York</option>
-                  <option value="Europe/London">Europe/London</option>
-                  <option value="Europe/Berlin">Europe/Berlin</option>
-                  <option value="UTC">UTC</option>
-                </select>
-              </label>
+              <SearchableSelect
+                label="Timezone"
+                name="timezone"
+                defaultValue="Asia/Dhaka"
+                options={TIMEZONE_OPTIONS}
+                required
+                clearable={false}
+                searchPlaceholder="Search timezone..."
+              />
 
               {error ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

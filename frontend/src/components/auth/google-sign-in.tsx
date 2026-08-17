@@ -61,6 +61,10 @@ export function GoogleAuthSection({
     callbackRef.current = onAuthenticated;
   }, [onAuthenticated]);
 
+  useEffect(() => {
+    if (window.google?.accounts.id) setScriptReady(true);
+  }, []);
+
   const handleCredential = useCallback(async (response: CredentialResponse) => {
     if (!response.credential) {
       setError("Google did not return a sign-in credential. Please try again.");
@@ -128,6 +132,7 @@ export function GoogleAuthSection({
         src="https://accounts.google.com/gsi/client"
         strategy="afterInteractive"
         onLoad={() => setScriptReady(true)}
+        onReady={() => setScriptReady(true)}
         onError={() => setError("Google sign-in could not be loaded. You can still continue with email.")}
       />
 
