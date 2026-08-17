@@ -13,6 +13,7 @@ from app.db.session import SessionLocal
 from app.models.activity_log import ActivityLog
 from app.models.user import User
 from app.schemas.auth import PasswordChangeRequest, UserProfileUpdateRequest
+from app.services.activity_log import record_activity
 
 
 def req(method: str, path: str) -> Request:
@@ -49,6 +50,24 @@ def main() -> None:
             is_verified=True,
         )
         db.add_all([user, google_only])
+        db.flush()
+        for fixture_user, provider in ((user, "password"), (google_only, "google")):
+            record_activity(
+                db,
+                action="auth.user.created",
+                scope="auth",
+                actor_user_id=fixture_user.id,
+                entity_type="user",
+                entity_id=fixture_user.id,
+                message="User profile verification fixture created",
+                after={
+                    "id": fixture_user.id,
+                    "email": fixture_user.email,
+                    "full_name": fixture_user.full_name,
+                    "provider": provider,
+                },
+                request=req("POST", "/profile-verification-fixture"),
+            )
         db.commit()
         db.refresh(user)
         db.refresh(google_only)
