@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -7,13 +8,16 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.requests import Request
 
-from app.api.v1.profile import change_password, get_profile, update_profile
+import app.api.v1.profile as profile_api
+from app.api.v1.profile import change_password, get_profile, setup_password_with_google, update_profile
 from app.core.security import hash_password, verify_password
 from app.db.session import SessionLocal
 from app.models.activity_log import ActivityLog
 from app.models.user import User
-from app.schemas.auth import PasswordChangeRequest, UserProfileUpdateRequest
+from app.schemas.auth import GooglePasswordSetupRequest, PasswordChangeRequest, UserProfileUpdateRequest
 from app.services.activity_log import record_activity
+from app.services.google_identity import GoogleIdentity
+from app.services.profile_avatar import detect_avatar_content_type
 
 
 def req(method: str, path: str) -> Request:
@@ -51,6 +55,8 @@ def main() -> None:
     marker = uuid4().hex[:10]
     old_password = "ProfileOldPass123!"
     new_password = "ProfileNewPass456!"
+    google_password = "GooglePassword789!"
+    original_google_verifier = profile_api.verify_google_id_token
     try:
         user = User(
             email=f"profile-{marker}@example.com",
@@ -59,7 +65,7 @@ def main() -> None:
             is_verified=True,
         )
         google_only = User(
-            email=f"google-profile-{marker}@example.com",
+            email=f"google-profile-{marker}@gmail.com",
             full_name="Google Profile Tester",
             password_hash=None,
             google_subject=f"profile-google-{marker}",
@@ -91,6 +97,17 @@ def main() -> None:
         initial = get_profile(user)
         if initial.email != user.email or not initial.has_password or initial.google_connected:
             raise AssertionError("password profile metadata is incorrect")
+        if initial.has_avatar or initial.avatar_version != 0:
+            raise AssertionError("new profile avatar metadata is incorrect")
+
+        if detect_avatar_content_type(b"\x89PNG\r\n\x1a\nprofile") != "image/png":
+            raise AssertionError("PNG avatar signature was not detected")
+        if detect_avatar_content_type(b"\xff\xd8\xffprofile") != "image/jpeg":
+            raise AssertionError("JPEG avatar signature was not detected")
+        if detect_avatar_content_type(b"RIFFxxxxWEBPprofile") != "image/webp":
+            raise AssertionError("WebP avatar signature was not detected")
+        if detect_avatar_content_type(b"<svg></svg>") is not None:
+            raise AssertionError("unsupported avatar data was accepted")
 
         updated = update_profile(
             UserProfileUpdateRequest(
@@ -187,6 +204,53 @@ def main() -> None:
         else:
             raise AssertionError("Google-only account was allowed to create a password without re-authentication")
 
+        def mismatched_google(_: str) -> GoogleIdentity:
+            return GoogleIdentity(
+                subject=f"different-{marker}",
+                email=google_only.email,
+                full_name=google_only.full_name,
+                hosted_domain=None,
+                picture_url=None,
+                issued_at=int(time.time()),
+            )
+
+        profile_api.verify_google_id_token = mismatched_google
+        try:
+            setup_password_with_google(
+                GooglePasswordSetupRequest(credential="g" * 120, new_password=google_password),
+                req("POST", "/profile/password/google-setup"),
+                db,
+                google_only,
+            )
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise AssertionError("mismatched Google re-auth returned wrong status") from exc
+        else:
+            raise AssertionError("different Google identity was allowed to create a password")
+
+        def linked_google(_: str) -> GoogleIdentity:
+            return GoogleIdentity(
+                subject=google_only.google_subject or "",
+                email=google_only.email,
+                full_name=google_only.full_name,
+                hosted_domain=None,
+                picture_url=None,
+                issued_at=int(time.time()),
+            )
+
+        profile_api.verify_google_id_token = linked_google
+        secured_profile = setup_password_with_google(
+            GooglePasswordSetupRequest(credential="g" * 120, new_password=google_password),
+            req("POST", "/profile/password/google-setup"),
+            db,
+            google_only,
+        )
+        db.refresh(google_only)
+        if not secured_profile.has_password or google_only.password_hash is None:
+            raise AssertionError("Google re-auth did not enable password sign-in")
+        if not verify_password(google_password, google_only.password_hash):
+            raise AssertionError("Google-created password was not persisted")
+
         user_logs = list(db.scalars(
             select(ActivityLog).where(ActivityLog.actor_user_id == user.id)
         ).all())
@@ -205,16 +269,14 @@ def main() -> None:
                 f"password failure audit reasons are incomplete: {password_failure_reasons}"
             )
 
-        google_failures = list(db.scalars(
-            select(ActivityLog).where(
-                ActivityLog.actor_user_id == google_only.id,
-                ActivityLog.action == "user.password.change_failed",
-            )
+        google_actions = set(db.scalars(
+            select(ActivityLog.action).where(ActivityLog.actor_user_id == google_only.id)
         ).all())
-        if not google_failures or (google_failures[-1].metadata_json or {}).get("reason") != "password_not_configured":
-            raise AssertionError("Google-only password rejection was not audited")
+        if not {"user.password.change_failed", "user.password.setup_failed", "user.password.setup"}.issubset(google_actions):
+            raise AssertionError(f"Google password setup audit actions are incomplete: {google_actions}")
 
     finally:
+        profile_api.verify_google_id_token = original_google_verifier
         db.close()
 
     print("user profile verification passed")

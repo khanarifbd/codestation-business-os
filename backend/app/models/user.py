@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.roles import SYSTEM_ROLE_USER
@@ -16,6 +16,9 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    avatar_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    avatar_content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    avatar_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     google_subject: Mapped[str | None] = mapped_column(
         String(255), unique=True, index=True, nullable=True
