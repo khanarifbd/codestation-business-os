@@ -7,10 +7,13 @@ from app.schemas.client_detail import ClientDetailRead
 
 
 class ClientWorkspaceAccess(BaseModel):
+    clients_manage: bool
     quotations: bool
+    quotations_manage: bool
     orders: bool
     projects: bool
     finance: bool
+    finance_manage: bool
 
 
 class ClientWorkspaceCounts(BaseModel):
