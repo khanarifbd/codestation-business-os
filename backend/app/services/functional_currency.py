@@ -15,10 +15,10 @@ from app.models.accounting import (
     LedgerAccount,
     OrganizationFunctionalCurrencyPeriod,
 )
-from app.models.company_defaults import OrganizationExchangeRate
 from app.models.company_settings import OrganizationFinancialSettings
 from app.models.finance_controls import AccountingPeriod
 from app.models.organization import Organization
+from app.services.exchange_rates import resolve_exchange_rate
 
 MONEY = Decimal("0.01")
 RATE = Decimal("0.00000001")
@@ -38,7 +38,6 @@ def organization_local_date(
     now: datetime | None = None,
 ) -> date:
     """Resolve the business date in the organization's configured timezone."""
-
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
@@ -186,6 +185,7 @@ def _transition_rate(
     organization_id: str,
     previous_currency: str,
     new_currency: str,
+    effective_date: date,
     submitted: Decimal | None,
 ) -> Decimal:
     if submitted is not None:
@@ -194,35 +194,12 @@ def _transition_rate(
             raise HTTPException(status_code=400, detail="Transition exchange rate must be greater than zero")
         return resolved
 
-    direct = db.scalar(
-        select(OrganizationExchangeRate).where(
-            OrganizationExchangeRate.organization_id == organization_id,
-            OrganizationExchangeRate.base_currency == previous_currency,
-            OrganizationExchangeRate.quote_currency == new_currency,
-        )
-    )
-    if direct is not None:
-        return rate(direct.effective_rate)
-
-    inverse = db.scalar(
-        select(OrganizationExchangeRate).where(
-            OrganizationExchangeRate.organization_id == organization_id,
-            OrganizationExchangeRate.base_currency == new_currency,
-            OrganizationExchangeRate.quote_currency == previous_currency,
-        )
-    )
-    if inverse is not None:
-        inverse_rate = Decimal(inverse.effective_rate)
-        if inverse_rate <= 0:
-            raise HTTPException(status_code=409, detail="Configured inverse transition rate is invalid")
-        return rate(Decimal("1") / inverse_rate)
-
-    raise HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=(
-            f"No {previous_currency}/{new_currency} transition rate is available. "
-            "Add that FX pair in Currencies & FX or enter a transition rate explicitly."
-        ),
+    return resolve_exchange_rate(
+        db,
+        organization_id=organization_id,
+        source_currency=previous_currency,
+        target_currency=new_currency,
+        as_of=effective_date,
     )
 
 
@@ -372,8 +349,6 @@ def change_functional_currency(
             detail=f"The accounting period containing {effective_date.isoformat()} is closed.",
         )
 
-    # No later periods are allowed while an open period exists. This keeps the
-    # timeline contiguous and prevents overlapping accounting bases.
     later_period = db.scalar(
         select(OrganizationFunctionalCurrencyPeriod.id).where(
             OrganizationFunctionalCurrencyPeriod.organization_id == organization.id,
@@ -383,9 +358,6 @@ def change_functional_currency(
     if later_period is not None:
         raise HTTPException(status_code=409, detail="Functional currency history is inconsistent; a later period already exists")
 
-    # Before sealing the old functional-currency period, synchronize operational
-    # accounting only through the day before the change. Business documents on or
-    # after the effective date are intentionally left for the new currency period.
     closing_date = effective_date - timedelta(days=1)
     from app.services.accounting_sync import sync_operational_accounting
 
@@ -410,9 +382,7 @@ def change_functional_currency(
     if latest is not None and latest >= effective_date:
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"A posted journal exists on {latest.isoformat()}. Choose an effective date after the latest posted journal."
-            ),
+            detail=f"A posted journal exists on {latest.isoformat()}. Choose an effective date after the latest posted journal.",
         )
 
     resolved_rate = _transition_rate(
@@ -420,6 +390,7 @@ def change_functional_currency(
         organization.id,
         previous_currency,
         new_currency,
+        effective_date,
         transition_rate,
     )
 
@@ -439,9 +410,6 @@ def change_functional_currency(
     )
     opening_equity = _opening_equity_account(db, organization.id, user_id)
 
-    # Signed amounts use debit-positive / credit-negative convention. Current
-    # earnings are closed into Opening Balance Equity at the transition so the
-    # new functional-currency period begins with balance-sheet accounts only.
     signed_old: dict[str, tuple[LedgerAccount, Decimal]] = dict(balance_sheet)
     existing_equity = signed_old.get(opening_equity.id, (opening_equity, Decimal("0")))[1]
     signed_old[opening_equity.id] = (opening_equity, money(existing_equity - net_profit))
@@ -459,9 +427,6 @@ def change_functional_currency(
             old_signed,
         )
 
-    # Per-account rounding can create a small residual after conversion. Keep the
-    # transition journal exactly balanced by applying only that conversion-rounding
-    # residual to Opening Balance Equity; original historical balances stay intact.
     rounding_difference = money(sum((item[1] for item in signed_new.values()), Decimal("0")))
     if rounding_difference != 0:
         existing = signed_new.get(opening_equity.id)
@@ -555,9 +520,6 @@ def change_functional_currency(
         db.flush()
         new_period.transition_journal_entry_id = transition_entry.id
 
-    # Organization.currency remains a compatibility pointer to the CURRENT
-    # functional currency. Historical truth lives on JournalEntry and the
-    # effective-dated period table.
     organization.currency = new_currency
     financial.accounting_currency = new_currency
     db.flush()
