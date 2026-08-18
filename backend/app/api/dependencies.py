@@ -10,7 +10,7 @@ from app.core.roles import (
     ORGANIZATION_STATUS_ACTIVE,
     SYSTEM_ROLE_SUPER_ADMIN,
 )
-from app.core.security import decode_token
+from app.core.security import decode_token_claims
 from app.db.session import get_db
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -35,7 +35,7 @@ def get_current_user(
         )
 
     try:
-        user_id = decode_token(credentials.credentials, "access")
+        claims = decode_token_claims(credentials.credentials, "access")
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -43,11 +43,17 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    user = db.get(User, user_id)
+    user = db.get(User, claims.user_id)
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User is inactive or no longer exists",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if claims.token_version != int(user.auth_token_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session has been revoked. Sign in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
