@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { setAuthCookies } from "@/lib/auth-session";
+import { clearAuthCookies, setAuthCookies } from "@/lib/auth-session";
 import { authenticatedBackendFetch } from "@/lib/authenticated-backend";
 
 type RouteContext = { params: Promise<{ path?: string[] }> };
@@ -22,7 +22,15 @@ async function proxy(request: NextRequest, context: RouteContext, method: string
 
   if (upstream.status === 204) {
     const response = new NextResponse(null, { status: 204 });
-    if (rotatedTokens) setAuthCookies(response, rotatedTokens);
+    if (suffix === "/password" && method === "POST") {
+      // The backend increments auth_token_version when an existing password is
+      // replaced. Clear the now-revoked browser cookies immediately instead of
+      // leaving the current tab holding credentials that will fail on the next API call.
+      clearAuthCookies(response);
+      response.headers.set("X-Auth-Session-Revoked", "1");
+    } else if (rotatedTokens) {
+      setAuthCookies(response, rotatedTokens);
+    }
     return response;
   }
 
