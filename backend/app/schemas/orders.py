@@ -33,6 +33,8 @@ class ManualOrderCreate(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     tax_calculation_mode: TaxCalculationMode | None = None
     assigned_employee_id: str | None = None
+    source: str | None = Field(default=None, max_length=100)
+    external_order_id: str | None = Field(default=None, max_length=180)
     notes: str | None = None
     terms_conditions: str | None = None
     internal_notes: str | None = None
@@ -69,6 +71,8 @@ class OrderListItem(BaseModel):
     quotation_number: str | None
     client_id: str
     client_name: str
+    source: str | None
+    external_order_id: str | None
     status: str
     subject: str | None
     order_date: date
@@ -94,6 +98,8 @@ class OrderDetail(BaseModel):
     source_lead_id: str | None
     assigned_employee_id: str | None
     assigned_employee_name: str | None
+    source: str | None
+    external_order_id: str | None
     status: str
     subject: str | None
     order_date: date
