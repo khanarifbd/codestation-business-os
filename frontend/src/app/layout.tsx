@@ -13,8 +13,15 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "CodeStation Business OS",
+  title: {
+    default: "CodeStation AI Business OS",
+    template: "%s | CodeStation AI Business OS",
+  },
   description: "One operating system to run your business.",
+  icons: {
+    icon: "/brand/codestationai-mark.svg",
+    shortcut: "/brand/codestationai-mark.svg",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
