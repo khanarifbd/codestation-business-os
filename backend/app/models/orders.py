@@ -16,6 +16,7 @@ class Order(TenantOwnedMixin, Base):
         UniqueConstraint("organization_id", "quotation_id", name="uq_orders_org_quotation"),
         Index("ix_orders_org_status_created", "organization_id", "status", "created_at"),
         Index("ix_orders_org_client_created", "organization_id", "client_id", "created_at"),
+        Index("ix_orders_org_source_external", "organization_id", "source", "external_order_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -26,6 +27,8 @@ class Order(TenantOwnedMixin, Base):
     assigned_employee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
 
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    external_order_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="confirmed", nullable=False)
     subject: Mapped[str | None] = mapped_column(String(220), nullable=True)
     order_date: Mapped[date] = mapped_column(Date, nullable=False)
