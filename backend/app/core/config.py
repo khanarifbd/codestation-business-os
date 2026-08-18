@@ -19,6 +19,18 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    email_verification_token_expire_hours: int = 24
+    password_reset_token_expire_minutes: int = 30
+    public_app_url: str = "http://localhost:3000"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "no-reply@codestationai.com"
+    smtp_from_name: str = "CodeStation AI Business OS"
+    smtp_use_starttls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: int = 10
     google_oauth_client_id: str = ""
     super_admin_email: str = ""
     super_admin_password: str = ""
@@ -36,6 +48,14 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host.strip() and self.smtp_from_email.strip())
+
+    @property
+    def require_account_email_delivery(self) -> bool:
+        return self.environment.lower().strip() in {"staging", "production"}
 
 
 @lru_cache
