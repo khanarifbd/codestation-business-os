@@ -138,6 +138,21 @@ def verify_crypto() -> None:
         raise AssertionError("tampered Google token was accepted")
 
 
+def password_signup_user(db, email: str, full_name: str) -> User:
+    # Password signup intentionally returns only an accepted action now: no session
+    # exists until mailbox ownership is verified. Google linking verification needs
+    # the persisted account id, so retrieve the user from the database explicitly.
+    auth_api.signup(
+        SignUpRequest(email=email, full_name=full_name, password="StrongPass123!"),
+        req("POST", "/auth/signup"),
+        db,
+    )
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None:
+        raise AssertionError("password signup did not persist the pending verified account")
+    return user
+
+
 def verify_account_flow() -> None:
     marker = uuid4().hex[:10]
     db = SessionLocal()
@@ -179,11 +194,7 @@ def verify_account_flow() -> None:
             raise AssertionError("Google-only account unexpectedly accepted a password")
 
         gmail_email = f"existing-{marker}@gmail.com"
-        password_result = auth_api.signup(
-            SignUpRequest(email=gmail_email, full_name="Existing Gmail User", password="StrongPass123!"),
-            req("POST", "/auth/signup"),
-            db,
-        )
+        password_user = password_signup_user(db, gmail_email, "Existing Gmail User")
         current_identity["value"] = identity(
             subject=f"gmail-{marker}",
             email=gmail_email,
@@ -194,18 +205,14 @@ def verify_account_flow() -> None:
             req("POST", "/auth/google"),
             db,
         )
-        if linked_result.user.id != password_result.user.id:
+        if linked_result.user.id != password_user.id:
             raise AssertionError("Gmail Google sign-in created a duplicate existing user")
-        linked_user = db.get(User, password_result.user.id)
+        linked_user = db.get(User, password_user.id)
         if linked_user is None or linked_user.google_subject != f"gmail-{marker}" or not linked_user.is_verified:
             raise AssertionError("existing Gmail user was not safely linked and verified")
 
         workspace_email = f"owner-{marker}@workspace.example"
-        workspace_result = auth_api.signup(
-            SignUpRequest(email=workspace_email, full_name="Workspace Owner", password="StrongPass123!"),
-            req("POST", "/auth/signup"),
-            db,
-        )
+        workspace_user = password_signup_user(db, workspace_email, "Workspace Owner")
         current_identity["value"] = identity(
             subject=f"workspace-{marker}",
             email=workspace_email,
@@ -217,15 +224,11 @@ def verify_account_flow() -> None:
             req("POST", "/auth/google"),
             db,
         )
-        if linked_workspace.user.id != workspace_result.user.id:
+        if linked_workspace.user.id != workspace_user.id:
             raise AssertionError("Google Workspace sign-in created a duplicate existing user")
 
         third_party_email = f"legacy-{marker}@example.com"
-        third_party_result = auth_api.signup(
-            SignUpRequest(email=third_party_email, full_name="Legacy User", password="StrongPass123!"),
-            req("POST", "/auth/signup"),
-            db,
-        )
+        third_party_user = password_signup_user(db, third_party_email, "Legacy User")
         current_identity["value"] = identity(
             subject=f"third-party-{marker}",
             email=third_party_email,
@@ -242,7 +245,7 @@ def verify_account_flow() -> None:
                 raise AssertionError(f"third-party email auto-link returned {exc.status_code}") from exc
         else:
             raise AssertionError("non-authoritative Google email auto-linked to an existing password account")
-        legacy_user = db.get(User, third_party_result.user.id)
+        legacy_user = db.get(User, third_party_user.id)
         if legacy_user is None or legacy_user.google_subject is not None:
             raise AssertionError("blocked third-party Google link mutated the existing user")
 
