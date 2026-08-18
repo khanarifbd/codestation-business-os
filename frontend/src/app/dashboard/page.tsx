@@ -39,14 +39,32 @@ export default function DashboardPage() {
   useEffect(() => { void (async () => {
     const range = presetRange("month");
     try {
-      const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
-      const [tenantResponse, reportResponse] = await Promise.all([
-        fetch("/api/tenant", { cache: "no-store" }),
-        fetch(`/api/reports/overview?${params}`, { cache: "no-store" }),
-      ]);
-      if (tenantResponse.status === 401 || reportResponse.status === 401) { router.replace("/login"); return; }
+      let tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
+      if (tenantResponse.status === 401) { router.replace("/login"); return; }
+
+      // A password reset or a different user signing in on the same browser can
+      // leave an old workspace cookie behind. Ask the memberships endpoint to
+      // validate/heal that cookie, then retry tenant context before any
+      // organization-scoped report request is made.
+      if (tenantResponse.status === 404 || tenantResponse.status === 409) {
+        const organizationsResponse = await fetch("/api/organizations", { cache: "no-store" });
+        if (organizationsResponse.status === 401) { router.replace("/login"); return; }
+        const organizationsPayload = await organizationsResponse.json().catch(() => []);
+        if (!organizationsResponse.ok) throw new Error("Unable to load company workspaces");
+        if (!Array.isArray(organizationsPayload) || organizationsPayload.length === 0) {
+          router.replace("/onboarding");
+          return;
+        }
+        tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
+        if (tenantResponse.status === 401) { router.replace("/login"); return; }
+      }
+
       if (!tenantResponse.ok) throw new Error("Unable to load company workspace");
       setTenant(await tenantResponse.json() as TenantContext);
+
+      const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
+      const reportResponse = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
+      if (reportResponse.status === 401) { router.replace("/login"); return; }
       if (reportResponse.ok) setData(await reportResponse.json() as Overview);
       else if (reportResponse.status !== 403) throw new Error("Unable to load dashboard metrics");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load dashboard"); }
