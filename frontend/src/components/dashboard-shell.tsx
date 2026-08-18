@@ -12,47 +12,53 @@ import {
 
 import { WorkspaceSwitcher, type WorkspaceContext } from "@/components/workspace-switcher";
 
-type NavigationItem = { label: string; icon: LucideIcon; href: string };
+type NavigationItem = { label: string; icon: LucideIcon; href: string; permissions?: string[] };
 type ProfileSummary = { full_name: string; email: string; has_avatar: boolean; avatar_version: number };
 
 const staffNavigation: NavigationItem[] = [
-  { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
-  { label: "My Work", icon: BriefcaseBusiness, href: "/dashboard/my-work" },
-  { label: "Notifications", icon: Bell, href: "/dashboard/notifications" },
-  { label: "CRM", icon: ClipboardList, href: "/dashboard/crm" },
-  { label: "Clients", icon: Users, href: "/dashboard/clients" },
-  { label: "Quotations", icon: FileText, href: "/dashboard/quotations" },
-  { label: "Orders", icon: ReceiptText, href: "/dashboard/orders" },
-  { label: "Inventory", icon: Boxes, href: "/dashboard/inventory" },
-  { label: "Projects", icon: FolderKanban, href: "/dashboard/projects" },
-  { label: "Invoices", icon: FileText, href: "/dashboard/accounting/invoices" },
-  { label: "Finance & Accounts", icon: BookOpenText, href: "/dashboard/accounting" },
-  { label: "People & HR", icon: UsersRound, href: "/dashboard/hr" },
-  { label: "Payroll", icon: Banknote, href: "/dashboard/payroll" },
-  { label: "Reports", icon: BarChart3, href: "/dashboard/reports" },
-  { label: "Company & Settings", icon: Building2, href: "/dashboard/company" },
-  { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs" },
+  { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard", permissions: ["dashboard.view"] },
+  { label: "My Work", icon: BriefcaseBusiness, href: "/dashboard/my-work", permissions: ["projects.work"] },
+  { label: "Notifications", icon: Bell, href: "/dashboard/notifications", permissions: ["projects.work"] },
+  { label: "CRM", icon: ClipboardList, href: "/dashboard/crm", permissions: ["crm.view"] },
+  { label: "Clients", icon: Users, href: "/dashboard/clients", permissions: ["clients.view"] },
+  { label: "Quotations", icon: FileText, href: "/dashboard/quotations", permissions: ["quotations.view"] },
+  { label: "Orders", icon: ReceiptText, href: "/dashboard/orders", permissions: ["orders.view"] },
+  { label: "Inventory", icon: Boxes, href: "/dashboard/inventory", permissions: ["finance.view"] },
+  { label: "Projects", icon: FolderKanban, href: "/dashboard/projects", permissions: ["projects.view"] },
+  { label: "Invoices", icon: FileText, href: "/dashboard/accounting/invoices", permissions: ["finance.view"] },
+  { label: "Finance & Accounts", icon: BookOpenText, href: "/dashboard/accounting", permissions: ["finance.view", "capital.view"] },
+  { label: "People & HR", icon: UsersRound, href: "/dashboard/hr", permissions: ["hr.self", "hr.view"] },
+  { label: "Payroll", icon: Banknote, href: "/dashboard/payroll", permissions: ["payroll.view"] },
+  { label: "Reports", icon: BarChart3, href: "/dashboard/reports", permissions: ["reports.view"] },
+  { label: "Company & Settings", icon: Building2, href: "/dashboard/company", permissions: ["company.view", "settings.manage"] },
+  { label: "Activity Logs", icon: FileClock, href: "/dashboard/activity-logs", permissions: ["activity_logs.view"] },
 ];
 
 const financeNavigation: NavigationItem[] = [
-  { label: "Overview", icon: LayoutDashboard, href: "/dashboard/accounting" },
-  { label: "Accounts", icon: WalletCards, href: "/dashboard/accounting/accounts" },
-  { label: "Money In", icon: ArrowDownLeft, href: "/dashboard/accounting/money-in" },
-  { label: "Money Out", icon: ArrowUpRight, href: "/dashboard/accounting/money-out" },
-  { label: "Expenses", icon: ReceiptText, href: "/dashboard/expenses" },
-  { label: "Transfers", icon: ArrowLeftRight, href: "/dashboard/accounting/transfers" },
-  { label: "Reconcile", icon: Scale, href: "/dashboard/accounting/reconciliation" },
-  { label: "Loans", icon: HandCoins, href: "/dashboard/accounting/loans" },
-  { label: "Investments", icon: TrendingUp, href: "/dashboard/capital" },
-  { label: "Assets", icon: Boxes, href: "/dashboard/accounting/assets" },
-  { label: "Receivables", icon: Receipt, href: "/dashboard/accounting/receivables" },
-  { label: "Payables", icon: Building2, href: "/dashboard/accounting/payables" },
-  { label: "Tax", icon: Landmark, href: "/dashboard/accounting/tax" },
-  { label: "Financial statements", icon: BarChart3, href: "/dashboard/accounting/reports" },
-  { label: "Advanced", icon: BookOpenText, href: "/dashboard/accounting/advanced" },
+  { label: "Overview", icon: LayoutDashboard, href: "/dashboard/accounting", permissions: ["finance.view"] },
+  { label: "Accounts", icon: WalletCards, href: "/dashboard/accounting/accounts", permissions: ["finance.view"] },
+  { label: "Money In", icon: ArrowDownLeft, href: "/dashboard/accounting/money-in", permissions: ["finance.view"] },
+  { label: "Money Out", icon: ArrowUpRight, href: "/dashboard/accounting/money-out", permissions: ["finance.view"] },
+  { label: "Expenses", icon: ReceiptText, href: "/dashboard/expenses", permissions: ["finance.view"] },
+  { label: "Transfers", icon: ArrowLeftRight, href: "/dashboard/accounting/transfers", permissions: ["finance.view"] },
+  { label: "Reconcile", icon: Scale, href: "/dashboard/accounting/reconciliation", permissions: ["finance.view"] },
+  { label: "Loans", icon: HandCoins, href: "/dashboard/accounting/loans", permissions: ["finance.view"] },
+  { label: "Investments", icon: TrendingUp, href: "/dashboard/capital", permissions: ["capital.view"] },
+  { label: "Assets", icon: Boxes, href: "/dashboard/accounting/assets", permissions: ["finance.view"] },
+  { label: "Receivables", icon: Receipt, href: "/dashboard/accounting/receivables", permissions: ["finance.view"] },
+  { label: "Payables", icon: Building2, href: "/dashboard/accounting/payables", permissions: ["finance.view"] },
+  { label: "Tax", icon: Landmark, href: "/dashboard/accounting/tax", permissions: ["finance.view"] },
+  { label: "Financial statements", icon: BarChart3, href: "/dashboard/accounting/reports", permissions: ["finance.view"] },
+  { label: "Advanced", icon: BookOpenText, href: "/dashboard/accounting/advanced", permissions: ["finance.view"] },
 ];
 
 const clientPortalItem: NavigationItem = { label: "Client Portal", icon: Building2, href: "/dashboard/client-portal" };
+
+function hasAnyPermission(granted: string[], required?: string[]) {
+  if (!required?.length) return true;
+  if (granted.includes("*")) return true;
+  return required.some((permission) => granted.includes(permission));
+}
 
 function isFinanceArea(pathname: string) {
   if (pathname.startsWith("/dashboard/accounting/invoices")) return false;
@@ -77,18 +83,21 @@ function profileInitials(name: string) {
   return parts.length ? parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") : "U";
 }
 
-function Navigation({ pathname, items, onNavigate }: { pathname: string; items: NavigationItem[]; onNavigate?: () => void }) {
+function Navigation({ pathname, items, permissions, onNavigate }: { pathname: string; items: NavigationItem[]; permissions: string[]; onNavigate?: () => void }) {
   const financeActive = isFinanceArea(pathname);
   const [financeOpen, setFinanceOpen] = useState(financeActive);
   useEffect(() => { if (financeActive) setFinanceOpen(true); }, [financeActive]);
+  const visibleItems = items.filter((item) => hasAnyPermission(permissions, item.permissions));
+  const visibleFinanceItems = financeNavigation.filter((item) => hasAnyPermission(permissions, item.permissions));
 
-  return <nav className="space-y-1">{items.map(({ label, icon: Icon, href }) => {
+  return <nav className="space-y-1">{visibleItems.map(({ label, icon: Icon, href }) => {
     if (label === "Finance & Accounts") {
+      if (!visibleFinanceItems.length) return null;
       return <div key={label}>
         <button type="button" aria-expanded={financeOpen} onClick={() => setFinanceOpen((value) => !value)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${financeActive ? "bg-neutral-950 font-medium text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}>
           <Icon className="size-4 shrink-0" /><span className="min-w-0 flex-1">{label}</span><ChevronDown className={`size-4 shrink-0 transition-transform ${financeOpen ? "rotate-180" : ""}`} />
         </button>
-        {financeOpen ? <div className="ml-5 mt-1 space-y-0.5 border-l border-neutral-200 pl-2">{financeNavigation.map(({ label: childLabel, icon: ChildIcon, href: childHref }) => {
+        {financeOpen ? <div className="ml-5 mt-1 space-y-0.5 border-l border-neutral-200 pl-2">{visibleFinanceItems.map(({ label: childLabel, icon: ChildIcon, href: childHref }) => {
           const childActive = isFinanceItemActive(pathname, childHref);
           return <Link key={childLabel} href={childHref} onClick={onNavigate} className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${childActive ? "bg-neutral-100 font-medium text-neutral-950" : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"}`}><ChildIcon className="size-3.5 shrink-0" /><span>{childLabel}</span></Link>;
         })}</div> : null}
@@ -112,16 +121,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   useEffect(()=>{setMobileOpen(false);},[pathname]);
   useEffect(()=>{if(!mobileOpen)return;const previous=document.body.style.overflow;document.body.style.overflow="hidden";return()=>{document.body.style.overflow=previous;};},[mobileOpen]);
   useEffect(()=>{let active=true;async function loadProfile(){const response=await fetch("/api/profile",{cache:"no-store"}).catch(()=>null);if(!response?.ok)return;const payload=await response.json().catch(()=>null);if(active&&payload?.full_name&&payload?.email)setProfile({full_name:payload.full_name,email:payload.email,has_avatar:Boolean(payload.has_avatar),avatar_version:Number(payload.avatar_version??0)});}const refresh=()=>{void loadProfile();};void loadProfile();window.addEventListener("business-os-profile-updated",refresh);return()=>{active=false;window.removeEventListener("business-os-profile-updated",refresh);};},[]);
-  const relationships=workspaceContext?.relationships??[]; const clientOnly=workspaceContext?.primary_relationship==="client"; const hasClientRelationship=relationships.includes("client");
+  const relationships=workspaceContext?.relationships??[]; const clientOnly=workspaceContext?.primary_relationship==="client"; const hasClientRelationship=relationships.includes("client"); const permissions=workspaceContext?.permissions??[];
   useEffect(()=>{if(clientOnly&&pathname!=="/dashboard/client-portal"&&!pathname.startsWith("/dashboard/profile"))router.replace("/dashboard/client-portal");},[clientOnly,pathname,router]);
   const navigation=useMemo(()=>{if(clientOnly)return[clientPortalItem];const items=[...staffNavigation];if(hasClientRelationship)items.splice(1,0,clientPortalItem);return items;},[clientOnly,hasClientRelationship]);
   async function logout(){await fetch("/api/auth/logout",{method:"POST"});router.replace("/login");router.refresh();}
   if(pathname.endsWith("/print"))return <>{children}</>;
   const profileActive=pathname.startsWith("/dashboard/profile");
   return <div className="min-h-screen bg-neutral-100 text-neutral-950 lg:flex">
-    <aside className="hidden h-screen w-64 shrink-0 border-r border-neutral-200 bg-white p-4 lg:sticky lg:top-0 lg:flex lg:flex-col"><div className="px-3 py-4"><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h1 className="mt-1 text-lg font-semibold">Business OS</h1></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-1 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation}/></div><div className="space-y-2 border-t pt-3"><ProfileLink profile={profile} active={profileActive}/><button type="button" onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"><LogOut className="size-4"/>Sign out</button></div></aside>
+    <aside className="hidden h-screen w-64 shrink-0 border-r border-neutral-200 bg-white p-4 lg:sticky lg:top-0 lg:flex lg:flex-col"><div className="px-3 py-4"><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h1 className="mt-1 text-lg font-semibold">Business OS</h1></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-1 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation} permissions={permissions}/></div><div className="space-y-2 border-t pt-3"><ProfileLink profile={profile} active={profileActive}/><button type="button" onClick={logout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-500 hover:bg-neutral-100 hover:text-neutral-950"><LogOut className="size-4"/>Sign out</button></div></aside>
     <div className="sticky top-0 z-40 flex h-16 items-center justify-between border-b bg-white/95 px-4 backdrop-blur lg:hidden"><div><p className="text-[10px] font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><p className="max-w-[220px] truncate text-sm font-semibold">{workspaceContext?.organization.name??"Business OS"}</p></div><button type="button" aria-label="Open navigation" aria-expanded={mobileOpen} onClick={()=>setMobileOpen(true)} className="flex size-10 items-center justify-center rounded-xl border"><Menu className="size-5"/></button></div>
-    {mobileOpen?<div className="fixed inset-0 z-50 lg:hidden"><button type="button" aria-label="Close navigation" onClick={()=>setMobileOpen(false)} className="absolute inset-0 bg-black/35"/><aside className="absolute inset-y-0 left-0 flex w-[88vw] max-w-96 flex-col bg-white p-4 shadow-2xl"><div className="flex items-center justify-between px-3 py-3"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h2 className="mt-1 text-lg font-semibold">Business OS</h2></div><button type="button" onClick={()=>setMobileOpen(false)} className="flex size-9 items-center justify-center rounded-lg border"><X className="size-4"/></button></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-2 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation} onNavigate={()=>setMobileOpen(false)}/></div><div className="space-y-2 border-t pt-3"><ProfileLink profile={profile} active={profileActive} onNavigate={()=>setMobileOpen(false)}/><button type="button" onClick={()=>void logout()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-600 hover:bg-neutral-100"><LogOut className="size-4"/>Sign out</button></div></aside></div>:null}
+    {mobileOpen?<div className="fixed inset-0 z-50 lg:hidden"><button type="button" aria-label="Close navigation" onClick={()=>setMobileOpen(false)} className="absolute inset-0 bg-black/35"/><aside className="absolute inset-y-0 left-0 flex w-[88vw] max-w-96 flex-col bg-white p-4 shadow-2xl"><div className="flex items-center justify-between px-3 py-3"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><h2 className="mt-1 text-lg font-semibold">Business OS</h2></div><button type="button" onClick={()=>setMobileOpen(false)} className="flex size-9 items-center justify-center rounded-lg border"><X className="size-4"/></button></div><div className="px-1 pb-4"><WorkspaceSwitcher onContextChange={setWorkspaceContext}/></div><div className="mt-2 flex-1 overflow-y-auto pb-4"><Navigation pathname={pathname} items={navigation} permissions={permissions} onNavigate={()=>setMobileOpen(false)}/></div><div className="space-y-2 border-t pt-3"><ProfileLink profile={profile} active={profileActive} onNavigate={()=>setMobileOpen(false)}/><button type="button" onClick={()=>void logout()} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-neutral-600 hover:bg-neutral-100"><LogOut className="size-4"/>Sign out</button></div></aside></div>:null}
     <div className={`min-w-0 flex-1 ${pathname==="/dashboard"?"[&>main>div>aside]:!hidden [&>main>div]:!max-w-none":""}`}>{children}</div>
   </div>;
 }
