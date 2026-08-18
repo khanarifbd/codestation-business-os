@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const email = process.env.E2E_EMAIL ?? "e2e-owner@business-os.local";
+const email = process.env.E2E_EMAIL ?? "e2e-owner@example.com";
 const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
 
 const journey = [
