@@ -1,5 +1,9 @@
+import os
+import subprocess
+import sys
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import func, select, text
 
@@ -11,7 +15,34 @@ from app.services.activity_log import record_activity
 from app.services.recurring_auto_post import process_due_auto_posts
 
 
+def verify_production_module_import() -> None:
+    """Match the production scheduler's module-based import path without CI PYTHONPATH help."""
+    project_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import app.db.session; import scripts.run_recurring_auto_post; print('scheduler module import passed')",
+        ],
+        cwd=project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(
+            "production scheduler module import failed without PYTHONPATH: "
+            f"{completed.stderr.strip() or completed.stdout.strip()}"
+        )
+
+
 def main() -> None:
+    verify_production_module_import()
+
     with engine.begin() as connection:
         fixture = connection.execute(text("""
             SELECT id AS organization_id, created_by_user_id AS user_id
