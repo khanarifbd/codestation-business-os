@@ -8,6 +8,8 @@ import {
   Users,
 } from "lucide-react";
 
+import { BrandMark } from "@/components/brand-mark";
+
 const foundations = [
   {
     title: "Clients & sales",
@@ -42,9 +44,14 @@ export default function Home() {
     <main className="min-h-screen bg-neutral-950 text-white">
       <section className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-6 py-8 lg:px-10 lg:py-10">
         <header className="flex items-center justify-between border-b border-white/10 pb-6">
-          <Link href="/" className="group">
-            <p className="text-sm font-medium tracking-wide text-white/55">CODESTATION AI</p>
-            <p className="text-lg font-semibold transition group-hover:text-white/85">Business OS</p>
+          <Link href="/" className="group flex items-center gap-3">
+            <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] p-2.5">
+              <BrandMark variant="light" className="h-full w-full object-contain" />
+            </div>
+            <div>
+              <p className="text-sm font-medium tracking-wide text-white/55">CODESTATION AI</p>
+              <p className="text-lg font-semibold transition group-hover:text-white/85">Business OS</p>
+            </div>
           </Link>
           <div className="flex items-center gap-2">
             <Link

@@ -1,5 +1,7 @@
 import Link from "next/link";
-import { ArrowUpRight, Building2, Check, Globe2, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Check, Globe2, ShieldCheck } from "lucide-react";
+
+import { BrandMark } from "@/components/brand-mark";
 
 export function AuthFrame({
   eyebrow,
@@ -27,8 +29,8 @@ export function AuthFrame({
           <div className="pointer-events-none absolute bottom-16 left-10 h-px w-44 bg-gradient-to-r from-white/30 to-transparent" />
 
           <div className="relative flex items-center gap-3">
-            <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white text-neutral-950 shadow-lg shadow-black/20">
-              <Building2 className="size-5" />
+            <div className="flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-white p-2.5 shadow-lg shadow-black/20">
+              <BrandMark className="h-full w-full object-contain" />
             </div>
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/45">CodeStation AI</p>
@@ -65,7 +67,7 @@ export function AuthFrame({
         <section className="flex min-w-0 flex-col bg-white">
           <div className="flex items-center justify-between border-b border-neutral-100 px-6 py-5 lg:hidden">
             <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-xl bg-neutral-950 text-white"><Building2 className="size-4" /></div>
+              <div className="flex size-10 items-center justify-center rounded-xl border border-neutral-200 bg-white p-2 shadow-sm"><BrandMark className="h-full w-full object-contain" /></div>
               <div><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p><p className="text-sm font-semibold">Business OS</p></div>
             </div>
             <Link href="/" className="flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-950">Home <ArrowUpRight className="size-3.5" /></Link>
