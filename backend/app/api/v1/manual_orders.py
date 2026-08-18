@@ -78,6 +78,23 @@ def create_manual_order(
         if employee is None:
             raise HTTPException(status_code=400, detail="Assigned employee is not active in this company")
 
+    source = _clean(payload.source)
+    source = source.casefold() if source else None
+    external_order_id = _clean(payload.external_order_id)
+    if source and external_order_id:
+        existing_order_number = db.scalar(
+            select(Order.order_number).where(
+                Order.organization_id == tenant.organization_id,
+                Order.source == source,
+                Order.external_order_id == external_order_id,
+            )
+        )
+        if existing_order_number:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"{source.title()} order/reference {external_order_id} is already linked to {existing_order_number}",
+            )
+
     financial = db.scalar(
         select(OrganizationFinancialSettings).where(
             OrganizationFinancialSettings.organization_id == tenant.organization_id
@@ -133,6 +150,8 @@ def create_manual_order(
         source_lead_id=None,
         assigned_employee_id=payload.assigned_employee_id,
         created_by_user_id=tenant.user_id,
+        source=source,
+        external_order_id=external_order_id,
         status="confirmed",
         subject=_clean(payload.subject),
         order_date=payload.order_date,
@@ -196,13 +215,19 @@ def create_manual_order(
         after={
             "order_number": order.order_number,
             "source": "manual",
+            "order_source": order.source,
+            "external_order_id": order.external_order_id,
             "client_id": order.client_id,
             "status": order.status,
             "currency": order.currency,
             "total": str(order.total),
             "item_count": len(payload.items),
         },
-        metadata={"source": "manual"},
+        metadata={
+            "source": "manual",
+            "order_source": order.source,
+            "external_order_id": order.external_order_id,
+        },
         message=f"Manual order {order.order_number} created for {client.display_name}",
         request=request,
     )
