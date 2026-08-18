@@ -16,6 +16,23 @@ type Meta = { default_currency: string; default_tax_calculation_mode: string; de
 type CatalogOption = { id: string; sku: string; name: string; description: string | null; item_type: string; unit: string; currency: string; selling_price: string | number; tax_rate: string | number | null };
 type DraftItem = { product_id: string | null; item_name: string; item_type: "service" | "non_stock_item"; unit: string; description: string; quantity: string; unit_price: string; discount_percent: string; tax_rate: string };
 
+const ORDER_SOURCE_OPTIONS = [
+  { value: "fiverr", label: "Fiverr" },
+  { value: "upwork", label: "Upwork" },
+  { value: "website", label: "Website" },
+  { value: "referral", label: "Referral" },
+  { value: "linkedin", label: "LinkedIn" },
+  { value: "facebook", label: "Facebook" },
+  { value: "email", label: "Email" },
+  { value: "phone", label: "Phone" },
+  { value: "direct", label: "Direct" },
+  { value: "freelancer", label: "Freelancer.com" },
+  { value: "peopleperhour", label: "PeoplePerHour" },
+  { value: "contra", label: "Contra" },
+  { value: "toptal", label: "Toptal" },
+  { value: "other", label: "Other" },
+];
+
 const today = () => new Date().toISOString().slice(0, 10);
 const blankItem = (taxRate = 0): DraftItem => ({ product_id: null, item_name: "", item_type: "service", unit: "unit", description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: String(taxRate) });
 
@@ -41,6 +58,8 @@ export default function NewManualOrderPage() {
   const [currency, setCurrency] = useState("");
   const [taxMode, setTaxMode] = useState("exclusive");
   const [assignedEmployeeId, setAssignedEmployeeId] = useState("");
+  const [orderSource, setOrderSource] = useState("");
+  const [externalOrderId, setExternalOrderId] = useState("");
   const [notes, setNotes] = useState("");
   const [terms, setTerms] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
@@ -91,7 +110,7 @@ export default function NewManualOrderPage() {
 
   const clientOptions = useMemo(() => clients.map(client => ({ value: client.id, label: `${client.client_code} · ${client.display_name}`, keywords: `${client.display_name} ${client.contact_name ?? ""} ${client.client_code}` })), [clients]);
   const employeeOptions = useMemo(() => (meta?.employees ?? []).map(employee => ({ value: employee.id, label: `${employee.full_name} · ${employee.employee_code}` })), [meta]);
-  const sourceOptions = useMemo(() => [{ value: "custom:service", label: "+ Custom service" }, { value: "custom:non_stock_item", label: "+ Custom non-stock item" }, ...catalog.map(item => ({ value: `catalog:${item.id}`, label: `${item.sku} · ${item.name}`, keywords: `${item.item_type} ${item.unit} ${item.currency}` }))], [catalog]);
+  const lineSourceOptions = useMemo(() => [{ value: "custom:service", label: "+ Custom service" }, { value: "custom:non_stock_item", label: "+ Custom non-stock item" }, ...catalog.map(item => ({ value: `catalog:${item.id}`, label: `${item.sku} · ${item.name}`, keywords: `${item.item_type} ${item.unit} ${item.currency}` }))], [catalog]);
   const total = useMemo(() => items.reduce((sum, item) => sum + lineTotal(item, taxMode), 0), [items, taxMode]);
 
   function updateItem(index: number, patch: Partial<DraftItem>) {
@@ -144,6 +163,8 @@ export default function NewManualOrderPage() {
           currency,
           tax_calculation_mode: taxMode,
           assigned_employee_id: assignedEmployeeId || null,
+          source: orderSource.trim() || null,
+          external_order_id: externalOrderId.trim() || null,
           notes: notes.trim() || null,
           terms_conditions: terms.trim() || null,
           internal_notes: internalNotes.trim() || null,
@@ -177,17 +198,19 @@ export default function NewManualOrderPage() {
     <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><Link href="/dashboard/orders" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Back to orders</Link><h1 className="mt-3 text-3xl font-semibold tracking-tight">Create manual order</h1><p className="mt-2 text-sm text-neutral-500">Use reusable catalog items or one-time custom work without creating a quotation first.</p></div><div className="rounded-xl border bg-white px-4 py-3 text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Order total</p><p className="mt-1 text-lg font-semibold">{currency || "—"} {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div></header>
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-    <section className="rounded-2xl border bg-white p-5 sm:p-6"><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <section className="rounded-2xl border bg-white p-5 sm:p-6"><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <SearchableSelect label="Client" required clearable={false} value={clientId} onValueChange={value => { setClientId(value); const client = clients.find(item => item.id === value); if (client?.currency && client.currency !== currency) changeCurrency(client.currency); }} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
       <Field label="Subject"><input value={subject} onChange={event => setSubject(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm" placeholder="Website development" /></Field>
       <Field label="Order date"><input type="date" value={orderDate} onChange={event => setOrderDate(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field>
+      <SearchableSelect label="Order source" value={orderSource} onValueChange={setOrderSource} options={ORDER_SOURCE_OPTIONS} placeholder="Select or type source" searchPlaceholder="Search or type source..." allowCustom />
+      <Field label="External order ID"><input maxLength={180} value={externalOrderId} onChange={event => setExternalOrderId(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm" placeholder="Fiverr / Upwork / platform reference" /><p className="mt-1 text-xs text-neutral-400">Optional reference used to match this Business OS order with the original platform order.</p></Field>
       <CurrencySelect label="Currency" required clearable={false} value={currency} onValueChange={changeCurrency} />
       <Field label="Tax calculation"><select value={taxMode} onChange={event => setTaxMode(event.target.value)} className="h-11 w-full rounded-xl border bg-white px-3 text-sm"><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></Field>
       <SearchableSelect label="Assigned employee" value={assignedEmployeeId} onValueChange={setAssignedEmployeeId} options={employeeOptions} placeholder="Unassigned" searchPlaceholder="Search employee..." />
     </div></section>
 
     <section className="rounded-2xl border bg-white"><div className="flex items-center justify-between border-b p-5"><div><h2 className="font-semibold">Order lines</h2><p className="mt-1 text-sm text-neutral-500">Catalog is optional. Custom projects and services can be entered directly.</p></div><button type="button" onClick={() => setItems(current => [...current, blankItem(Number(meta?.default_tax_rate || 0))])} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium"><Plus className="size-4" />Add line</button></div>
-      <div className="space-y-3 p-4 sm:p-5">{items.map((item, index) => { const sourceValue = item.product_id ? `catalog:${item.product_id}` : item.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="rounded-2xl border p-4"><div className="grid gap-4 lg:grid-cols-[1.4fr_1.4fr_.7fr_.7fr]"><SearchableSelect label="Source" value={sourceValue} onValueChange={value => selectSource(index, value)} options={sourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input disabled={Boolean(item.product_id)} value={item.item_name} onChange={event => updateItem(index, { item_name: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input type="number" min="0.0001" step="any" value={item.quantity} onChange={event => updateItem(index, { quantity: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={Boolean(item.product_id)} value={item.unit} onChange={event => updateItem(index, { unit: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="mt-4 grid gap-4 lg:grid-cols-[2fr_.9fr_.7fr_.7fr_auto]"><Field label="Description"><input value={item.description} onChange={event => updateItem(index, { description: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><MoneyInput value={item.unit_price} onChange={value => updateItem(index, { unit_price: value })} currency={currency} /></Field><Field label="Discount %"><input type="number" min="0" max="100" step="0.01" value={item.discount_percent} onChange={event => updateItem(index, { discount_percent: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input type="number" min="0" max="100" step="0.01" value={item.tax_rate} onChange={event => updateItem(index, { tax_rate: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="flex items-end gap-3"><div className="pb-2 text-right"><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{currency} {lineTotal(item, taxMode).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><button type="button" disabled={items.length === 1} onClick={() => setItems(current => current.filter((_, itemIndex) => itemIndex !== index))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" /></button></div></div></div>; })}</div>
+      <div className="space-y-3 p-4 sm:p-5">{items.map((item, index) => { const sourceValue = item.product_id ? `catalog:${item.product_id}` : item.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="rounded-2xl border p-4"><div className="grid gap-4 lg:grid-cols-[1.4fr_1.4fr_.7fr_.7fr]"><SearchableSelect label="Item source" value={sourceValue} onValueChange={value => selectSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input disabled={Boolean(item.product_id)} value={item.item_name} onChange={event => updateItem(index, { item_name: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input type="number" min="0.0001" step="any" value={item.quantity} onChange={event => updateItem(index, { quantity: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={Boolean(item.product_id)} value={item.unit} onChange={event => updateItem(index, { unit: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="mt-4 grid gap-4 lg:grid-cols-[2fr_.9fr_.7fr_.7fr_auto]"><Field label="Description"><input value={item.description} onChange={event => updateItem(index, { description: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><MoneyInput value={item.unit_price} onChange={value => updateItem(index, { unit_price: value })} currency={currency} /></Field><Field label="Discount %"><input type="number" min="0" max="100" step="0.01" value={item.discount_percent} onChange={event => updateItem(index, { discount_percent: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input type="number" min="0" max="100" step="0.01" value={item.tax_rate} onChange={event => updateItem(index, { tax_rate: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="flex items-end gap-3"><div className="pb-2 text-right"><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{currency} {lineTotal(item, taxMode).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><button type="button" disabled={items.length === 1} onClick={() => setItems(current => current.filter((_, itemIndex) => itemIndex !== index))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" /></button></div></div></div>; })}</div>
     </section>
 
     <section className="grid gap-4 lg:grid-cols-3"><Field label="Client notes"><textarea value={notes} onChange={event => setNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm" /></Field><Field label="Terms & conditions"><textarea value={terms} onChange={event => setTerms(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm" /></Field><Field label="Internal notes"><textarea value={internalNotes} onChange={event => setInternalNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm" /></Field></section>
