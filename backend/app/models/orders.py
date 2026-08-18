@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -17,6 +17,14 @@ class Order(TenantOwnedMixin, Base):
         Index("ix_orders_org_status_created", "organization_id", "status", "created_at"),
         Index("ix_orders_org_client_created", "organization_id", "client_id", "created_at"),
         Index("ix_orders_org_source_external", "organization_id", "source", "external_order_id"),
+        Index(
+            "uq_orders_org_source_external_order",
+            "organization_id",
+            "source",
+            "external_order_id",
+            unique=True,
+            postgresql_where=text("source IS NOT NULL AND external_order_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
