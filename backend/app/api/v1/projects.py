@@ -131,7 +131,7 @@ def _project_query(organization_id: str):
         )
         .join(Client, Client.id == Project.client_id)
         .join(Order, Order.id == Project.order_id)
-        .join(Quotation, Quotation.id == Project.quotation_id)
+        .outerjoin(Quotation, Quotation.id == Project.quotation_id)
         .outerjoin(manager_employee, manager_employee.id == Project.project_manager_employee_id)
         .outerjoin(manager_membership, manager_membership.id == manager_employee.membership_id)
         .outerjoin(manager_user, manager_user.id == manager_membership.user_id)
