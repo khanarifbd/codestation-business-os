@@ -4,7 +4,7 @@ on:
   push:
     branches: [develop, main]
   pull_request:
-    branches: [develop, main, fix/v1-p0-accounting-integrity]
+    branches: [develop, main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -112,6 +112,15 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+      - name: Validate production operations scripts
+        working-directory: .
+        run: >-
+          bash -n
+          deployment/deploy.sh
+          deployment/backup.sh
+          deployment/restore.sh
+          deployment/install-backup-timer.sh
+          deployment/verify-production.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
