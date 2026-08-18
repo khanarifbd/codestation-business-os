@@ -5,6 +5,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowRight, Building2, CreditCard, Landmark, Plus, Smartphone, WalletCards } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
+import { SearchableSelect } from "@/components/searchable-select";
+import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type Account = { id: string; name: string; account_type: string; provider_name: string | null; account_holder_name: string | null; account_reference: string | null; currency: string; opening_balance: string; current_balance: string; is_active: boolean; notes: string | null };
 type AccountType = "bank" | "cash" | "mobile_wallet" | "credit_card" | "payment_gateway" | "petty_cash" | "other";
@@ -45,7 +47,7 @@ export default function AccountsPage() {
     {showForm ? <section className="rounded-2xl border bg-white p-5"><div><h2 className="font-semibold">Add a financial account</h2><p className="mt-1 text-sm text-neutral-500">Choose what this account is in real life. Business OS creates the correct ledger mapping and opening-balance journal automatically.</p></div><form onSubmit={submit} className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       <Field label="Account type"><select value={form.account_type} onChange={(e) => setForm((v) => ({ ...v, account_type: e.target.value as AccountType }))} className="w-full rounded-xl border bg-white px-3 py-2.5">{accountTypes.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select><p className="mt-1 text-xs text-neutral-400">{accountTypes.find((item) => item.value === form.account_type)?.help}</p></Field>
       <Field label="Account name"><input required value={form.name} onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" placeholder="City Bank Business Account" /></Field>
-      <Field label="Currency"><input required maxLength={3} value={form.currency} onChange={(e) => setForm((v) => ({ ...v, currency: e.target.value.toUpperCase() }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
+      <SearchableSelect label="Currency" value={form.currency} onValueChange={(currency) => setForm((value) => ({ ...value, currency }))} options={CURRENCY_OPTIONS} placeholder="Select currency" searchPlaceholder="Search currency..." required clearable={false} />
       <Field label="Bank / provider name"><input value={form.provider_name} onChange={(e) => setForm((v) => ({ ...v, provider_name: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" placeholder="City Bank / bKash / Stripe" /></Field>
       <Field label="Account holder"><input value={form.account_holder_name} onChange={(e) => setForm((v) => ({ ...v, account_holder_name: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
       <Field label="Account / reference number"><input value={form.account_reference} onChange={(e) => setForm((v) => ({ ...v, account_reference: e.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
