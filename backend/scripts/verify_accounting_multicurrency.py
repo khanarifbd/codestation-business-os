@@ -9,6 +9,7 @@ from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalLine
 from app.models.company_defaults import OrganizationExchangeRate
 from app.services.accounting_posting import PostingLine, money, post_journal, system_account
+from app.services.exchange_rates import record_rate_snapshot
 
 
 RATE = Decimal("122.34567890")
@@ -57,14 +58,26 @@ def main() -> None:
             exchange_rate.source = "ci_multicurrency_verification"
         db.flush()
 
+        # Shared verification fixtures can contain other future-dated snapshots.
+        # Seed every accounting date used here so as-of resolution is deterministic.
+        for effective_date in (date(2098, 1, 10), date(2098, 1, 11), date(2098, 1, 12), date(2098, 1, 13)):
+            record_rate_snapshot(
+                db,
+                organization_id=organization_id,
+                base_currency=foreign_currency,
+                quote_currency=base_currency,
+                effective_date=effective_date,
+                reference_rate=RATE,
+                effective_rate=RATE,
+                source="ci_multicurrency_verification",
+                user_id=user_id,
+            )
+
         cash = system_account(db, organization_id, "cash_equivalents")
         revenue = system_account(db, organization_id, "service_revenue")
         fees = system_account(db, organization_id, "bank_fees")
         loans_payable = system_account(db, organization_id, "loans_payable")
 
-        # Direct Money In / opening-balance style journals historically supplied the
-        # foreign amount directly. They must now be stored in base currency while
-        # retaining the original foreign amount and exchange rate on each line.
         simple_amount = Decimal("1000.00")
         simple = post_journal(
             db,
@@ -79,34 +92,17 @@ def main() -> None:
             ],
             reference=f"MC-SIMPLE-{marker}",
         )
-        simple_lines = db.scalars(
-            select(JournalLine).where(
-                JournalLine.organization_id == organization_id,
-                JournalLine.journal_entry_id == simple.id,
-            )
-        ).all()
+        simple_lines = db.scalars(select(JournalLine).where(JournalLine.organization_id == organization_id, JournalLine.journal_entry_id == simple.id)).all()
         expected_simple_base = money(simple_amount * RATE)
-        if len(simple_lines) != 2:
-            raise AssertionError("Expected two journal lines for simple foreign-currency posting")
-        if sum((Decimal(line.debit) for line in simple_lines), Decimal("0")) != expected_simple_base:
-            raise AssertionError("Foreign-currency debit was not converted to organization base currency")
-        if sum((Decimal(line.credit) for line in simple_lines), Decimal("0")) != expected_simple_base:
-            raise AssertionError("Foreign-currency credit was not converted to organization base currency")
+        if len(simple_lines) != 2: raise AssertionError("Expected two journal lines for simple foreign-currency posting")
+        if sum((Decimal(line.debit) for line in simple_lines), Decimal("0")) != expected_simple_base: raise AssertionError("Foreign-currency debit was not converted to organization base currency")
+        if sum((Decimal(line.credit) for line in simple_lines), Decimal("0")) != expected_simple_base: raise AssertionError("Foreign-currency credit was not converted to organization base currency")
         for line in simple_lines:
-            if line.currency != foreign_currency:
-                raise AssertionError("Original transaction currency was not preserved")
-            if Decimal(line.original_amount) != simple_amount:
-                raise AssertionError("Original foreign amount was not preserved")
-            if Decimal(line.exchange_rate_to_base) != RATE.quantize(Decimal("0.00000001")):
-                raise AssertionError("Exchange rate was not preserved on journal line")
+            if line.currency != foreign_currency: raise AssertionError("Original transaction currency was not preserved")
+            if Decimal(line.original_amount) != simple_amount: raise AssertionError("Original foreign amount was not preserved")
+            if Decimal(line.exchange_rate_to_base) != RATE.quantize(Decimal("0.00000001")): raise AssertionError("Exchange rate was not preserved on journal line")
 
-        # Loan disbursement/repayment style journals can have multiple lines on one
-        # side. This amount/rate deliberately produces a one-cent rounding residual
-        # when each component is converted independently. The base journal must still
-        # balance without changing original foreign amounts.
-        principal = Decimal("1000.02")
-        fee = Decimal("0.01")
-        net = Decimal("1000.01")
+        principal = Decimal("1000.02"); fee = Decimal("0.01"); net = Decimal("1000.01")
         split = post_journal(
             db,
             organization_id=organization_id,
@@ -121,26 +117,13 @@ def main() -> None:
             ],
             reference=f"MC-SPLIT-{marker}",
         )
-        split_lines = db.scalars(
-            select(JournalLine).where(
-                JournalLine.organization_id == organization_id,
-                JournalLine.journal_entry_id == split.id,
-            )
-        ).all()
-        debit_total = money(sum((Decimal(line.debit) for line in split_lines), Decimal("0")))
-        credit_total = money(sum((Decimal(line.credit) for line in split_lines), Decimal("0")))
-        if debit_total != credit_total:
-            raise AssertionError("Converted multi-line foreign-currency journal is not balanced")
-        if credit_total != money(principal * RATE):
-            raise AssertionError("Loan principal base-currency value is incorrect")
-        originals = sorted(Decimal(line.original_amount) for line in split_lines)
-        if originals != sorted([net, fee, principal]):
-            raise AssertionError("Loan-style posting changed original foreign-currency amounts")
+        split_lines = db.scalars(select(JournalLine).where(JournalLine.organization_id == organization_id, JournalLine.journal_entry_id == split.id)).all()
+        debit_total = money(sum((Decimal(line.debit) for line in split_lines), Decimal("0"))); credit_total = money(sum((Decimal(line.credit) for line in split_lines), Decimal("0")))
+        if debit_total != credit_total: raise AssertionError("Converted multi-line foreign-currency journal is not balanced")
+        if credit_total != money(principal * RATE): raise AssertionError("Loan principal base-currency value is incorrect")
+        if sorted(Decimal(line.original_amount) for line in split_lines) != sorted([net, fee, principal]): raise AssertionError("Loan-style posting changed original foreign-currency amounts")
 
-        # Explicitly converted flows such as invoices, transfers and fixed assets must
-        # remain untouched by the compatibility normalization.
-        explicit_original = Decimal("25.00")
-        explicit_base = money(explicit_original * RATE)
+        explicit_original = Decimal("25.00"); explicit_base = money(explicit_original * RATE)
         explicit = post_journal(
             db,
             organization_id=organization_id,
@@ -149,33 +132,14 @@ def main() -> None:
             source_type="verify_multicurrency_explicit",
             source_id=f"explicit-{marker}",
             lines=[
-                PostingLine(
-                    ledger_account_id=cash.id,
-                    debit=explicit_base,
-                    currency=foreign_currency,
-                    exchange_rate_to_base=RATE,
-                    original_amount=explicit_original,
-                ),
-                PostingLine(
-                    ledger_account_id=revenue.id,
-                    credit=explicit_base,
-                    currency=foreign_currency,
-                    exchange_rate_to_base=RATE,
-                    original_amount=explicit_original,
-                ),
+                PostingLine(ledger_account_id=cash.id, debit=explicit_base, currency=foreign_currency, exchange_rate_to_base=RATE, original_amount=explicit_original),
+                PostingLine(ledger_account_id=revenue.id, credit=explicit_base, currency=foreign_currency, exchange_rate_to_base=RATE, original_amount=explicit_original),
             ],
             reference=f"MC-EXPLICIT-{marker}",
         )
-        explicit_total = db.scalar(
-            select(func.coalesce(func.sum(JournalLine.debit), 0)).where(
-                JournalLine.organization_id == organization_id,
-                JournalLine.journal_entry_id == explicit.id,
-            )
-        )
-        if money(Decimal(explicit_total or 0)) != explicit_base:
-            raise AssertionError("Explicit base-currency posting was unexpectedly modified")
+        explicit_total = db.scalar(select(func.coalesce(func.sum(JournalLine.debit), 0)).where(JournalLine.organization_id == organization_id, JournalLine.journal_entry_id == explicit.id))
+        if money(Decimal(explicit_total or 0)) != explicit_base: raise AssertionError("Explicit base-currency posting was unexpectedly modified")
 
-        # Never silently post a foreign currency when the organization has no rate.
         try:
             post_journal(
                 db,
@@ -184,24 +148,16 @@ def main() -> None:
                 entry_date=date(2098, 1, 13),
                 source_type="verify_multicurrency_missing_rate",
                 source_id=f"missing-{marker}",
-                lines=[
-                    PostingLine(ledger_account_id=cash.id, debit=Decimal("10"), currency="XZZ"),
-                    PostingLine(ledger_account_id=revenue.id, credit=Decimal("10"), currency="XZZ"),
-                ],
+                lines=[PostingLine(ledger_account_id=cash.id, debit=Decimal("10"), currency="XZZ"), PostingLine(ledger_account_id=revenue.id, credit=Decimal("10"), currency="XZZ")],
             )
         except HTTPException as exc:
-            if exc.status_code != 409 or "exchange rate is missing" not in str(exc.detail).lower():
-                raise AssertionError(f"Unexpected missing-rate failure: {exc.detail}") from exc
+            if exc.status_code != 409 or "exchange rate is missing" not in str(exc.detail).lower(): raise AssertionError(f"Unexpected missing-rate failure: {exc.detail}") from exc
         else:
             raise AssertionError("Missing foreign exchange rate must block accounting posting")
 
-        print(
-            "accounting multi-currency verification passed: "
-            "source amount preserved -> base journal conversion -> rounding balance -> missing-rate protection"
-        )
+        print("accounting multi-currency verification passed: dated FX -> source amount preserved -> base conversion -> rounding balance -> missing-rate protection")
     finally:
-        db.rollback()
-        db.close()
+        db.rollback(); db.close()
 
 
 if __name__ == "__main__":

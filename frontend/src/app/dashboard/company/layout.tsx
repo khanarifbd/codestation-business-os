@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { Suspense } from "react";
+
+import { HistoricalFxDrawer } from "@/components/company/historical-fx-drawer";
 
 export default function CompanyLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -26,6 +29,9 @@ export default function CompanyLayout({ children }: { children: React.ReactNode 
         </div>
       </div>
       {children}
+      <Suspense fallback={null}>
+        <HistoricalFxDrawer />
+      </Suspense>
     </div>
   );
 }

@@ -13,7 +13,7 @@ from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.company_defaults import OrganizationExchangeRate
 from app.models.company_settings import OrganizationFinancialSettings
-from app.services.functional_currency import functional_currency_period_for_date
+from app.services.functional_currency import functional_currency_period_for_date, organization_local_date
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/reports", tags=["Accounting Reports"])
@@ -202,7 +202,7 @@ def financial_statements(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
 ):
-    today = date.today()
+    today = organization_local_date(tenant.organization)
     end = date_to or today
     requested_start = date_from
     start = requested_start or _fiscal_start(end, tenant.organization.financial_year_start_month)

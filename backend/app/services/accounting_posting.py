@@ -9,9 +9,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
-from app.models.company_defaults import OrganizationExchangeRate
 from app.models.finance import FinancialAccount
 from app.models.finance_controls import AccountingPeriod
+from app.services.exchange_rates import resolve_exchange_rate
 from app.services.functional_currency import assert_current_functional_posting_period
 
 MONEY = Decimal("0.01")
@@ -36,10 +36,12 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("4000", "Sales Revenue", "income", "sales_revenue", "credit", "sales_revenue", True),
     ("4100", "Service Revenue", "income", "service_revenue", "credit", "service_revenue", True),
     ("4900", "Other Income", "income", "other_income", "credit", "other_income", True),
+    ("4910", "Realized Foreign Exchange Gain", "income", "realized_fx_gain", "credit", "realized_fx_gain", False),
     ("5000", "Cost of Sales", "expense", "cost_of_sales", "debit", "cost_of_sales", True),
     ("6000", "Operating Expenses", "expense", "operating_expenses", "debit", "operating_expenses", True),
     ("6050", "Payroll Expense", "expense", "payroll_expense", "debit", "payroll_expense", False),
     ("6100", "Interest Expense", "expense", "interest_expense", "debit", "interest_expense", True),
+    ("6150", "Realized Foreign Exchange Loss", "expense", "realized_fx_loss", "debit", "realized_fx_loss", False),
     ("6200", "Bank & Processing Fees", "expense", "bank_fees", "debit", "bank_fees", True),
     ("6300", "Investor Profit Share Expense", "expense", "investor_profit_share", "debit", "investor_profit_share", False),
     ("6400", "Depreciation Expense", "expense", "depreciation_expense", "debit", "depreciation_expense", False),
@@ -91,22 +93,26 @@ def ensure_default_chart(db, organization_id: str, user_id: str | None = None) -
         db.flush()
 
 
-def to_base_amount(db, organization_id: str, base_currency: str, amount: Decimal, currency: str) -> tuple[Decimal, Decimal]:
+def to_base_amount(
+    db,
+    organization_id: str,
+    base_currency: str,
+    amount: Decimal,
+    currency: str,
+    *,
+    rate_date: date | None = None,
+) -> tuple[Decimal, Decimal]:
     amount = Decimal(amount)
     base = base_currency.upper()
     source = currency.upper()
-    if source == base:
-        return money(amount), Decimal("1")
-    direct = db.scalar(select(OrganizationExchangeRate).where(OrganizationExchangeRate.organization_id == organization_id, OrganizationExchangeRate.base_currency == source, OrganizationExchangeRate.quote_currency == base))
-    if direct is not None:
-        rate = Decimal(direct.effective_rate)
-        return money(amount * rate), rate.quantize(RATE, rounding=ROUND_HALF_UP)
-    inverse = db.scalar(select(OrganizationExchangeRate).where(OrganizationExchangeRate.organization_id == organization_id, OrganizationExchangeRate.base_currency == base, OrganizationExchangeRate.quote_currency == source))
-    if inverse is not None:
-        inverse_rate = Decimal(inverse.effective_rate)
-        rate = Decimal("1") / inverse_rate
-        return money(amount * rate), rate.quantize(RATE, rounding=ROUND_HALF_UP)
-    raise HTTPException(status_code=409, detail=f"Accounting exchange rate is missing for {source}/{base}. Add the currency pair in Company Settings → Exchange Rates.")
+    resolved_rate = resolve_exchange_rate(
+        db,
+        organization_id=organization_id,
+        source_currency=source,
+        target_currency=base,
+        as_of=rate_date,
+    )
+    return money(amount * resolved_rate), resolved_rate.quantize(RATE, rounding=ROUND_HALF_UP)
 
 
 @dataclass(frozen=True)
@@ -124,15 +130,10 @@ def _normalize_implicit_foreign_lines(
     db,
     organization_id: str,
     base_currency: str,
+    entry_date: date,
     lines: list[PostingLine],
 ) -> list[PostingLine]:
-    """Convert legacy/direct source-currency lines into the entry's functional currency.
-
-    PostingLine debit/credit values are functional-ledger amounts. Existing sync
-    flows already pass explicit base values, exchange rates and original amounts.
-    Some direct accounting actions historically pass only source-currency values;
-    normalize only those implicit foreign lines.
-    """
+    """Convert implicit source-currency lines using the rate valid on entry_date."""
     base_currency = base_currency.upper()
 
     implicit_indexes: list[int] = []
@@ -156,13 +157,17 @@ def _normalize_implicit_foreign_lines(
     if not implicit_indexes:
         return lines
     if len(implicit_currencies) != 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Mixed-currency journal lines require explicit base amounts and exchange rates",
-        )
+        raise HTTPException(status_code=400, detail="Mixed-currency journal lines require explicit base amounts and exchange rates")
 
     source_currency = next(iter(implicit_currencies))
-    _, resolved_rate = to_base_amount(db, organization_id, base_currency, Decimal("1"), source_currency)
+    _, resolved_rate = to_base_amount(
+        db,
+        organization_id,
+        base_currency,
+        Decimal("1"),
+        source_currency,
+        rate_date=entry_date,
+    )
     normalized = list(lines)
 
     for index in implicit_indexes:
@@ -182,10 +187,6 @@ def _normalize_implicit_foreign_lines(
             original_amount=original_amount,
         )
 
-    # When a balanced foreign-currency entry has multiple lines on one side (for
-    # example loan principal = net cash + fee), independent cent rounding can leave
-    # a one/few-cent functional-currency difference. Adjust one implicit line only
-    # by the rounding residual; material differences are still rejected below.
     if money(original_debit) == money(original_credit):
         debit_total = money(sum((money(line.debit) for line in normalized), Decimal("0")))
         credit_total = money(sum((money(line.credit) for line in normalized), Decimal("0")))
@@ -193,11 +194,7 @@ def _normalize_implicit_foreign_lines(
         maximum_rounding_residual = MONEY * Decimal(max(1, len(implicit_indexes)))
         if difference != 0 and abs(difference) <= maximum_rounding_residual:
             target_side = "credit" if difference > 0 else "debit"
-            candidates = [
-                index
-                for index in implicit_indexes
-                if money(getattr(normalized[index], target_side)) > 0
-            ]
+            candidates = [index for index in implicit_indexes if money(getattr(normalized[index], target_side)) > 0]
             if candidates:
                 target_index = max(candidates, key=lambda index: money(getattr(normalized[index], target_side)))
                 target = normalized[target_index]
@@ -241,8 +238,8 @@ def _create_financial_ledger_mapping(db, financial: FinancialAccount) -> LedgerA
         system_key=f"financial_account:{financial.id}",
         is_system=False,
         is_active=True,
-        allow_manual_posting=True,
-        notes=f"Auto-mapped financial account: {financial.name}",
+        allow_manual_posting=False,
+        notes=f"Auto-mapped financial account: {financial.name}. Adjust through the financial account workflow so operational and GL balances remain identical.",
         created_by_user_id=financial.created_by_user_id,
     )
     db.add(item)
@@ -257,6 +254,9 @@ def financial_ledger_account(db, organization_id: str, financial_account_id: str
     ledger = db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id == organization_id, LedgerAccount.system_key == f"financial_account:{financial.id}", LedgerAccount.is_active.is_(True)))
     if ledger is None:
         ledger = _create_financial_ledger_mapping(db, financial)
+    elif ledger.allow_manual_posting:
+        ledger.allow_manual_posting = False
+        db.flush()
     return financial, ledger
 
 
@@ -276,7 +276,7 @@ def post_journal(db, *, organization_id: str, user_id: str, entry_date: date, so
     if source_debit <= 0 or source_debit != source_credit:
         raise HTTPException(status_code=400, detail="Accounting journal must have equal non-zero debit and credit totals")
 
-    lines = _normalize_implicit_foreign_lines(db, organization_id, base_currency, lines)
+    lines = _normalize_implicit_foreign_lines(db, organization_id, base_currency, entry_date, lines)
     debit = money(sum((money(line.debit) for line in lines), Decimal("0")))
     credit = money(sum((money(line.credit) for line in lines), Decimal("0")))
     if debit <= 0 or debit != credit:

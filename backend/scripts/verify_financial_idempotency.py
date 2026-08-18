@@ -96,19 +96,18 @@ def main() -> None:
             make_request("POST", "/api/v1/finance/accounts"), db, tenant,  # type: ignore[arg-type]
         )
 
-        # This fixture intentionally exercises a foreign-currency operational flow
-        # (the seeded order is USD while the Existing Tenant Fixture is BDT). A valid
-        # organization FX rate is part of the accounting precondition; idempotency
-        # should not depend on the former behavior of silently treating USD as BDT.
-        # Fixture setup uses raw SQL, like the migration fixture seed, so the runtime
-        # audit guard remains strict for all application ORM writes.
+        # This fixture intentionally exercises foreign-currency flows. Runtime
+        # accounting now requires effective-dated FX, so the fixture must seed both
+        # the current/reference pair and dated accounting snapshots. Raw SQL is
+        # intentional test setup, matching the migration-fixture pattern and avoiding
+        # application audit-guard noise for synthetic CI data.
         account_currency = account.currency.upper()
         base_currency = tenant.organization.currency.upper()
         if account_currency != base_currency:
             with engine.begin() as connection:
-                rate_exists = connection.execute(
+                pair = connection.execute(
                     text("""
-                        SELECT 1
+                        SELECT id, base_currency, quote_currency, effective_rate
                         FROM organization_exchange_rates
                         WHERE organization_id = :organization_id
                           AND (
@@ -116,6 +115,7 @@ def main() -> None:
                               OR
                               (base_currency = :base_currency AND quote_currency = :account_currency)
                           )
+                        ORDER BY updated_at DESC
                         LIMIT 1
                     """),
                     {
@@ -123,9 +123,10 @@ def main() -> None:
                         "account_currency": account_currency,
                         "base_currency": base_currency,
                     },
-                ).scalar()
-                if rate_exists is None:
+                ).mappings().first()
+                if pair is None:
                     fixture_rate = Decimal("120.00000000")
+                    pair_id = str(uuid4())
                     connection.execute(
                         text("""
                             INSERT INTO organization_exchange_rates
@@ -138,11 +139,55 @@ def main() -> None:
                                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """),
                         {
-                            "id": str(uuid4()),
+                            "id": pair_id,
                             "organization_id": tenant.organization_id,
                             "account_currency": account_currency,
                             "base_currency": base_currency,
                             "rate": fixture_rate,
+                        },
+                    )
+                    pair = {
+                        "id": pair_id,
+                        "base_currency": account_currency,
+                        "quote_currency": base_currency,
+                        "effective_rate": fixture_rate,
+                    }
+
+                # A baseline snapshot covers the seeded order/invoice date. Exact
+                # future snapshots make payable and loan dates deterministic even if
+                # another verifier has added later history to this shared fixture.
+                snapshot_dates = (
+                    date(1900, 1, 1),
+                    date(2098, 1, 5),
+                    date(2098, 1, 10),
+                    date(2098, 2, 2),
+                    date(2098, 2, 15),
+                )
+                for effective_date in snapshot_dates:
+                    connection.execute(
+                        text("""
+                            INSERT INTO organization_exchange_rate_history
+                                (id, organization_id, base_currency, quote_currency, effective_date,
+                                 reference_rate, effective_rate, source, created_by_user_id,
+                                 created_at, updated_at)
+                            VALUES
+                                (:id, :organization_id, :pair_base, :pair_quote, :effective_date,
+                                 :rate, :rate, 'ci_financial_idempotency', NULL,
+                                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            ON CONFLICT (organization_id, base_currency, quote_currency, effective_date)
+                            DO UPDATE SET
+                                reference_rate = EXCLUDED.reference_rate,
+                                effective_rate = EXCLUDED.effective_rate,
+                                source = EXCLUDED.source,
+                                updated_at = CURRENT_TIMESTAMP
+                        """),
+                        {
+                            "id": str(uuid4()),
+                            "organization_id": tenant.organization_id,
+                            "pair_base": str(pair["base_currency"]),
+                            "pair_quote": str(pair["quote_currency"]),
+                            "effective_date": effective_date,
+                            "rate": Decimal(pair["effective_rate"]),
                         },
                     )
 
