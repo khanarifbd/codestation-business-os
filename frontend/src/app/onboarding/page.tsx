@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Building2, Check, Loader2 } from "lucide-react";
 
+import { BrandMark } from "@/components/brand-mark";
 import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
 import {
   BUSINESS_TYPE_OPTIONS,
@@ -100,9 +101,14 @@ export default function OnboardingPage() {
     <main className="min-h-screen bg-neutral-50 px-5 py-10 text-neutral-950 sm:px-8">
       <div className="mx-auto max-w-5xl">
         <header className="mb-8 flex items-center justify-between">
-          <div>
-            <p className="text-sm text-neutral-500">CodeStation AI</p>
-            <h1 className="text-xl font-semibold">Business OS</h1>
+          <div className="flex items-center gap-3">
+            <div className="flex size-11 items-center justify-center rounded-2xl border border-neutral-200 bg-white p-2.5 shadow-sm">
+              <BrandMark className="h-full w-full object-contain" />
+            </div>
+            <div>
+              <p className="text-sm text-neutral-500">CodeStation AI</p>
+              <h1 className="text-xl font-semibold">Business OS</h1>
+            </div>
           </div>
           <div className="rounded-full border bg-white px-3 py-1 text-xs font-medium text-neutral-600">
             Company setup
@@ -111,8 +117,8 @@ export default function OnboardingPage() {
 
         <div className="grid overflow-hidden rounded-3xl border bg-white shadow-sm lg:grid-cols-[0.72fr_1.28fr]">
           <aside className="border-b bg-neutral-950 p-8 text-white lg:border-b-0 lg:border-r lg:p-10">
-            <div className="flex size-11 items-center justify-center rounded-2xl bg-white/10">
-              <Building2 className="size-5" />
+            <div className="flex size-12 items-center justify-center rounded-2xl border border-white/10 bg-white p-2.5 shadow-lg shadow-black/20">
+              <BrandMark className="h-full w-full object-contain" />
             </div>
             <h2 className="mt-8 text-3xl font-semibold tracking-tight">Set up your company.</h2>
             <p className="mt-4 text-sm leading-6 text-white/50">
