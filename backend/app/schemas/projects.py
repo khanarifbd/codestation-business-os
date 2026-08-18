@@ -90,8 +90,8 @@ class ProjectDetail(BaseModel):
     project_number: str
     order_id: str
     order_number: str
-    quotation_id: str
-    quotation_number: str
+    quotation_id: str | None
+    quotation_number: str | None
     client_id: str
     client_name: str
     source_lead_id: str | None
