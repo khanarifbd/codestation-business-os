@@ -65,7 +65,7 @@ class ClientProjectSummary(BaseModel):
     id: str
     project_number: str
     order_id: str
-    quotation_id: str
+    quotation_id: str | None
     name: str
     status: str
     priority: str
