@@ -23,6 +23,7 @@ class User(Base):
     google_subject: Mapped[str | None] = mapped_column(
         String(255), unique=True, index=True, nullable=True
     )
+    auth_token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     system_role: Mapped[str] = mapped_column(
         String(32), default=SYSTEM_ROLE_USER, nullable=False, index=True
     )
