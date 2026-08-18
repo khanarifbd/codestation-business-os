@@ -38,12 +38,13 @@ export default function SignupPage() {
 
     try {
       const form = new FormData(event.currentTarget);
+      const email = String(form.get("email") ?? "").trim().toLowerCase();
       const response = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           full_name: form.get("full_name"),
-          email: form.get("email"),
+          email,
           password: form.get("password"),
         }),
       });
@@ -53,7 +54,7 @@ export default function SignupPage() {
         throw new Error(payload?.detail ?? "Unable to create your account.");
       }
 
-      router.replace("/onboarding");
+      router.replace(`/verify-email?email=${encodeURIComponent(email)}`);
       router.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create your account.");
@@ -65,7 +66,7 @@ export default function SignupPage() {
     <AuthFrame
       eyebrow="Create your workspace"
       title="Start with one account"
-      description="Create your identity first. In the next step you will configure the company, country, timezone and business defaults."
+      description="Create your identity first. Verify your work email, then configure the company, country, timezone and business defaults."
       asideTitle="Build your operating system around the company."
       asideDescription="Start simple, then connect clients, quotations, orders, projects, invoices, payments, accounting and reports as your business runs."
     >
@@ -100,7 +101,7 @@ export default function SignupPage() {
 
         <div>
           <PasswordField name="password" label="Password" autoComplete="new-password" placeholder="Create a secure password" />
-          <p className="mt-2 text-xs text-neutral-400">Use at least 8 characters. You can skip passwords entirely when you continue with Google.</p>
+          <p className="mt-2 text-xs text-neutral-400">Use at least 8 characters. Password accounts must verify their email before sign-in.</p>
         </div>
 
         {error ? (
@@ -124,7 +125,7 @@ export default function SignupPage() {
       </p>
 
       <p className="mt-4 text-center text-xs leading-5 text-neutral-400">
-        Account creation does not create a company automatically — your tenant workspace is configured in onboarding.
+        Google accounts are verified by Google. Password accounts require email verification.
       </p>
     </AuthFrame>
   );

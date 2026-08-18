@@ -2,8 +2,13 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.core.localization import (
+    normalize_country_code,
+    normalize_currency_code,
+    normalize_timezone,
+)
 from app.schemas.organization import OrganizationRead
 
 
@@ -62,6 +67,11 @@ class IdentifierBase(BaseModel):
     expiry_date: date | None = None
     is_primary: bool = False
 
+    @field_validator("country_code")
+    @classmethod
+    def validate_country_code(cls, value: str | None) -> str | None:
+        return normalize_country_code(value) if value else None
+
 
 class IdentifierCreate(IdentifierBase):
     pass
@@ -82,6 +92,11 @@ class AddressUpdate(BaseModel):
     postal_code: str | None = Field(default=None, max_length=32)
     country_code: str | None = Field(default=None, min_length=2, max_length=2)
 
+    @field_validator("country_code")
+    @classmethod
+    def validate_country_code(cls, value: str | None) -> str | None:
+        return normalize_country_code(value) if value else None
+
 
 class AddressRead(AddressUpdate):
     model_config = ConfigDict(from_attributes=True)
@@ -101,6 +116,21 @@ class LocalizationUpdate(BaseModel):
     decimal_places: int = Field(ge=0, le=6)
     currency_position: Literal["before", "after"]
     first_day_of_week: int = Field(ge=0, le=6)
+
+    @field_validator("country_code")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        return normalize_country_code(value)
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        return normalize_timezone(value)
 
 
 class LocalizationRead(BaseModel):
@@ -124,6 +154,11 @@ class FinancialUpdate(BaseModel):
     default_tax_rate: Decimal = Field(ge=0, le=100)
     prices_include_tax: bool
 
+    @field_validator("accounting_currency")
+    @classmethod
+    def validate_accounting_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
+
 
 class FinancialRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -146,6 +181,16 @@ class SystemDefaultsUpdate(BaseModel):
     default_order_status: str = Field(min_length=1, max_length=64)
     default_invoice_status: str = Field(min_length=1, max_length=64)
     quotation_validity_days: int = Field(ge=1, le=365)
+
+    @field_validator("default_client_country_code")
+    @classmethod
+    def validate_default_country(cls, value: str | None) -> str | None:
+        return normalize_country_code(value) if value else None
+
+    @field_validator("default_client_currency")
+    @classmethod
+    def validate_default_currency(cls, value: str | None) -> str | None:
+        return normalize_currency_code(value) if value else None
 
 
 class SystemDefaultsRead(SystemDefaultsUpdate):

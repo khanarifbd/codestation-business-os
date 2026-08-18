@@ -14,3 +14,4 @@ class TenantContextRead(BaseModel):
     is_owner: bool
     relationships: list[str]
     primary_relationship: str
+    permissions: list[str]

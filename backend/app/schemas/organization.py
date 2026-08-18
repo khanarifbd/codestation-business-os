@@ -1,6 +1,12 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.localization import (
+    normalize_country_code,
+    normalize_currency_code,
+    normalize_timezone,
+)
 
 
 class OrganizationCreate(BaseModel):
@@ -11,6 +17,21 @@ class OrganizationCreate(BaseModel):
     business_type: str | None = Field(default=None, max_length=80)
     team_size: str | None = Field(default=None, max_length=32)
     financial_year_start_month: int = Field(default=1, ge=1, le=12)
+
+    @field_validator("country_code")
+    @classmethod
+    def validate_country_code(cls, value: str) -> str:
+        return normalize_country_code(value)
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        return normalize_timezone(value)
 
 
 class OrganizationRead(BaseModel):

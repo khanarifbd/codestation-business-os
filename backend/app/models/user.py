@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Integer, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from app.core.roles import SYSTEM_ROLE_USER
 from app.db.base import Base
@@ -23,6 +23,7 @@ class User(Base):
     google_subject: Mapped[str | None] = mapped_column(
         String(255), unique=True, index=True, nullable=True
     )
+    auth_token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     system_role: Mapped[str] = mapped_column(
         String(32), default=SYSTEM_ROLE_USER, nullable=False, index=True
     )
@@ -32,3 +33,13 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
+
+    @validates("password_hash")
+    def invalidate_sessions_for_password_change(self, _key: str, value: str | None) -> str | None:
+        # Creating the first credential for a Google-only account does not revoke
+        # its current Google session. Replacing an existing password does: every
+        # access/refresh token minted with the previous version becomes invalid.
+        current = self.password_hash
+        if current is not None and value is not None and value != current:
+            self.auth_token_version = int(self.auth_token_version or 0) + 1
+        return value

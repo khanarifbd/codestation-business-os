@@ -4,10 +4,11 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentTenantAdmin, DbSession
+from app.core.localization import normalize_currency_code
 from app.models.accounting import JournalEntry
 from app.models.company_defaults import OrganizationSystemDefaults
 from app.models.company_settings import OrganizationFinancialSettings
@@ -52,12 +53,27 @@ class CompanyCurrencySettingsUpdate(BaseModel):
     reporting_currency: str = Field(min_length=3, max_length=3)
     default_client_currency: str | None = Field(default=None, min_length=3, max_length=3)
 
+    @field_validator("accounting_currency", "reporting_currency")
+    @classmethod
+    def validate_required_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
+
+    @field_validator("default_client_currency")
+    @classmethod
+    def validate_optional_currency(cls, value: str | None) -> str | None:
+        return normalize_currency_code(value) if value else None
+
 
 class AccountingCurrencyChangeRequest(BaseModel):
     new_currency: str = Field(min_length=3, max_length=3)
     effective_date: date
     transition_rate: Decimal | None = Field(default=None, gt=0)
     reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("new_currency")
+    @classmethod
+    def validate_new_currency(cls, value: str) -> str:
+        return normalize_currency_code(value)
 
 
 def _settings_rows(db: DbSession, organization_id: str):
@@ -149,9 +165,9 @@ def update_company_currency_settings(
     financial, defaults = _settings_rows(db, tenant.organization_id)
     period = ensure_initial_functional_currency_period(db, organization, tenant.user_id)
 
-    requested_accounting = payload.accounting_currency.upper()
-    requested_reporting = payload.reporting_currency.upper()
-    requested_client = payload.default_client_currency.upper() if payload.default_client_currency else None
+    requested_accounting = payload.accounting_currency
+    requested_reporting = payload.reporting_currency
+    requested_client = payload.default_client_currency
     current_accounting = period.currency.upper()
 
     if requested_accounting != current_accounting and _accounting_currency_locked(db, tenant.organization_id):

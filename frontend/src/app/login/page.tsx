@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { ArrowRight, Loader2, LockKeyhole } from "lucide-react";
 
 import { AuthFrame } from "@/components/auth/auth-frame";
@@ -16,6 +16,20 @@ export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("password_changed") === "1") {
+      setNotice("Password changed. Your previous sessions were revoked; sign in again with the new password.");
+    }
+    if (params.get("reset") === "1") {
+      setNotice("Password reset successfully. Sign in with your new password.");
+    }
+    if (params.get("verified") === "1") {
+      setNotice("Email verified. You can now sign in.");
+    }
+  }, []);
 
   async function finishAuthentication(user: AuthUser) {
     if (user.system_role === "super_admin") {
@@ -38,6 +52,7 @@ export default function LoginPage() {
     event.preventDefault();
     setLoading(true);
     setError(null);
+    setNotice(null);
 
     try {
       const form = new FormData(event.currentTarget);
@@ -87,13 +102,22 @@ export default function LoginPage() {
           />
         </label>
 
-        <PasswordField
-          name="password"
-          label="Password"
-          autoComplete="current-password"
-          placeholder="Enter your password"
-        />
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <span className="text-sm font-medium text-neutral-800">Password</span>
+            <Link href="/forgot-password" className="text-xs font-semibold text-neutral-600 underline-offset-4 hover:text-neutral-950 hover:underline">Forgot password?</Link>
+          </div>
+          <PasswordField
+            name="password"
+            label=""
+            autoComplete="current-password"
+            placeholder="Enter your password"
+          />
+        </div>
 
+        {notice ? (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">{notice}</div>
+        ) : null}
         {error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
             {error}
@@ -110,6 +134,10 @@ export default function LoginPage() {
           {!loading ? <ArrowRight className="size-4" /> : null}
         </button>
       </form>
+
+      <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-neutral-500">
+        <Link href="/verify-email" className="font-medium underline-offset-4 hover:text-neutral-950 hover:underline">Resend verification email</Link>
+      </div>
 
       <p className="mt-7 text-center text-sm text-neutral-500">
         New to Business OS?{" "}

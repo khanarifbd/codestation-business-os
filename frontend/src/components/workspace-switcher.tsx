@@ -23,6 +23,7 @@ export type WorkspaceContext = {
   is_owner: boolean;
   relationships: string[];
   primary_relationship: string;
+  permissions: string[];
 };
 
 type WorkspaceMembership = {

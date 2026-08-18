@@ -4,7 +4,7 @@ on:
   push:
     branches: [develop, main]
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, fix/v1-p0-accounting-integrity]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -29,7 +29,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://business_os:business_os_ci@127.0.0.1:5432/codestation_business_os
-      JWT_SECRET_KEY: ci-only-secret
+      JWT_SECRET_KEY: ci-only-secret-change-me-32-bytes-minimum
       GOOGLE_OAUTH_CLIENT_ID: business-os-ci.apps.googleusercontent.com
       PROJECT_CREDENTIAL_ENCRYPTION_KEY: ci-only-project-credential-key-0123456789abcdef
       SUPER_ADMIN_EMAIL: admin@codestationai.com
@@ -54,6 +54,7 @@ jobs:
       - run: uv run alembic upgrade head
       - run: uv run python scripts/verify_onboarding_organization.py
       - run: uv run python scripts/verify_google_auth.py
+      - run: uv run python scripts/verify_auth_launch_security.py
       - run: uv run python scripts/verify_user_profile.py
       - run: uv run python scripts/verify_company_currency_settings.py
       - run: uv run python scripts/verify_reporting_currency.py
@@ -116,7 +117,97 @@ jobs:
           node-version: "22"
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
       - run: pnpm build
         env:
           NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+
+  browser-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: business_os
+          POSTGRES_PASSWORD: business_os_e2e
+          POSTGRES_DB: codestation_business_os
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U business_os -d codestation_business_os"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://business_os:business_os_e2e@127.0.0.1:5432/codestation_business_os
+      JWT_SECRET_KEY: e2e-only-secret-change-me-32-bytes-minimum
+      GOOGLE_OAUTH_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+      PROJECT_CREDENTIAL_ENCRYPTION_KEY: e2e-only-project-credential-key-0123456789abcdef
+      SUPER_ADMIN_EMAIL: e2e-super-admin@example.com
+      SUPER_ADMIN_PASSWORD: e2e-super-admin-password-123!
+      SUPER_ADMIN_NAME: Browser Smoke Super Admin
+      PYTHONPATH: .
+      ENVIRONMENT: test
+      E2E_EMAIL: e2e-owner@example.com
+      E2E_PASSWORD: E2E-Launch-Password-123!
+      E2E_BASE_URL: http://127.0.0.1:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Prepare E2E backend
+        working-directory: backend
+        run: |
+          uv sync --frozen
+          uv run alembic upgrade head
+          uv run python scripts/seed_browser_e2e.py
+          nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/business-os-backend.log 2>&1 &
+      - name: Wait for backend
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/business-os-backend.log || true
+          exit 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: corepack enable
+      - name: Build frontend and install Playwright test runner
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
+          pnpm build
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
+        run: nohup pnpm exec next start -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
+      - name: Wait for frontend
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:3000/login >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/business-os-frontend.log || true
+          exit 1
+      - name: Run critical browser journey
+        working-directory: frontend
+        run: pnpm exec playwright test
+      - name: Print service logs on failure
+        if: failure()
+        run: |
+          echo "--- backend ---"
+          cat /tmp/business-os-backend.log || true
+          echo "--- frontend ---"
+          cat /tmp/business-os-frontend.log || true
