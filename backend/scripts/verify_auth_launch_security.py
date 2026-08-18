@@ -3,7 +3,6 @@ from uuid import uuid4
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
-from sqlalchemy import select
 from starlette.requests import Request
 
 from app.api.dependencies import get_current_user
@@ -20,6 +19,7 @@ from app.db.session import SessionLocal
 from app.models.user import User
 from app.schemas.auth import EmailVerificationRequest, PasswordChangeRequest, ResetPasswordRequest
 from app.schemas.organization import OrganizationCreate
+from app.services.activity_log import record_activity
 from app.services.auth_rate_limit import enforce_auth_rate_limit
 
 
@@ -57,21 +57,42 @@ def expect_validation(callable_) -> None:
     raise AssertionError("expected Pydantic validation failure")
 
 
+def add_fixture_user(db, user: User, marker: str) -> User:
+    db.add(user)
+    db.flush()
+    record_activity(
+        db,
+        action="ci.auth_security.user_created",
+        scope="system",
+        actor_user_id=user.id,
+        actor_type="system",
+        entity_type="user",
+        entity_id=user.id,
+        message="Created isolated authentication security verification user",
+        metadata={"fixture": "auth_launch_security", "marker": marker},
+        request=req("/ci/auth-security/seed"),
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def main() -> None:
     marker = uuid4().hex[:10]
     db = SessionLocal()
     try:
         password = "Launch-security-password-123!"
-        user = User(
-            email=f"launch-security-{marker}@example.com",
-            full_name="Launch Security User",
-            password_hash=hash_password(password),
-            is_active=True,
-            is_verified=True,
+        user = add_fixture_user(
+            db,
+            User(
+                email=f"launch-security-{marker}@example.com",
+                full_name="Launch Security User",
+                password_hash=hash_password(password),
+                is_active=True,
+                is_verified=True,
+            ),
+            marker,
         )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
 
         old_version = int(user.auth_token_version or 0)
         old_access = create_access_token(user.id, old_version)
@@ -127,16 +148,17 @@ def main() -> None:
             401,
         )
 
-        verify_user = User(
-            email=f"verify-{marker}@example.com",
-            full_name="Verify User",
-            password_hash=hash_password("Verify-password-123!"),
-            is_active=True,
-            is_verified=False,
+        verify_user = add_fixture_user(
+            db,
+            User(
+                email=f"verify-{marker}@example.com",
+                full_name="Verify User",
+                password_hash=hash_password("Verify-password-123!"),
+                is_active=True,
+                is_verified=False,
+            ),
+            marker,
         )
-        db.add(verify_user)
-        db.commit()
-        db.refresh(verify_user)
         verification_token = create_email_verification_token(
             verify_user.id,
             verify_user.email,
