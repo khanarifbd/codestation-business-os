@@ -144,6 +144,9 @@ jobs:
       JWT_SECRET_KEY: e2e-only-secret-change-me-32-bytes-minimum
       GOOGLE_OAUTH_CLIENT_ID: business-os-ci.apps.googleusercontent.com
       PROJECT_CREDENTIAL_ENCRYPTION_KEY: e2e-only-project-credential-key-0123456789abcdef
+      SUPER_ADMIN_EMAIL: e2e-super-admin@business-os.local
+      SUPER_ADMIN_PASSWORD: e2e-super-admin-password-123!
+      SUPER_ADMIN_NAME: Browser Smoke Super Admin
       PYTHONPATH: .
       ENVIRONMENT: test
       E2E_EMAIL: e2e-owner@business-os.local
