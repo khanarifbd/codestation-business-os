@@ -64,11 +64,11 @@ export function WorkspaceSwitcher({
     setLoading(true);
     setError(null);
     try {
-      const [organizationsResponse, tenantResponse] = await Promise.all([
-        fetch("/api/organizations", { cache: "no-store" }),
-        fetch("/api/tenant", { cache: "no-store" }),
-      ]);
-      if (organizationsResponse.status === 401 || tenantResponse.status === 401) {
+      // Load memberships first. The organizations BFF validates/heals the
+      // organization_id cookie, so the tenant-context request that follows
+      // always uses a workspace the signed-in user can actually access.
+      const organizationsResponse = await fetch("/api/organizations", { cache: "no-store" });
+      if (organizationsResponse.status === 401) {
         router.replace("/login");
         return;
       }
@@ -76,6 +76,11 @@ export function WorkspaceSwitcher({
       if (!organizationsResponse.ok) throw new Error("Unable to load workspaces");
       setWorkspaces(Array.isArray(organizationsPayload) ? organizationsPayload : []);
 
+      const tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
+      if (tenantResponse.status === 401) {
+        router.replace("/login");
+        return;
+      }
       if (tenantResponse.ok) {
         const tenantPayload = (await tenantResponse.json()) as WorkspaceContext;
         setCurrent(tenantPayload);

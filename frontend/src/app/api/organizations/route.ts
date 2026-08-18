@@ -69,22 +69,37 @@ async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") 
 
   const existingOrganizationId = request.cookies.get("organization_id")?.value;
   let organizationId: string | undefined;
+
   if (method === "POST") {
     organizationId = payload?.organization?.id;
   } else if (Array.isArray(payload)) {
-    const preferred = payload.find(
+    const activeMemberships = payload.filter(
       (item) => item?.organization?.status === "active" && item?.status === "active",
     );
-    organizationId = preferred?.organization?.id ?? payload[0]?.organization?.id;
+    const existingIsValid = Boolean(
+      existingOrganizationId
+      && activeMemberships.some((item) => item?.organization?.id === existingOrganizationId),
+    );
+    organizationId = existingIsValid
+      ? existingOrganizationId
+      : activeMemberships[0]?.organization?.id ?? payload[0]?.organization?.id;
   }
 
-  if (upstream.ok && organizationId && !existingOrganizationId) {
+  if (upstream.ok && organizationId && organizationId !== existingOrganizationId) {
     response.cookies.set("organization_id", organizationId, {
       httpOnly: true,
       secure,
       sameSite: "lax",
       path: "/",
       maxAge: 365 * 24 * 60 * 60,
+    });
+  } else if (upstream.ok && method === "GET" && !organizationId && existingOrganizationId) {
+    response.cookies.set("organization_id", "", {
+      httpOnly: true,
+      secure,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 0,
     });
   }
 
