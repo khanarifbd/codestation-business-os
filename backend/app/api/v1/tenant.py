@@ -16,6 +16,7 @@ router = APIRouter(prefix="/tenant", tags=["Tenant Context"])
 def _tenant_response(db: DbSession, tenant: CurrentTenant) -> TenantContextRead:
     relationships = membership_relationships(db, tenant.membership)
     role = membership_role(db, tenant.membership)
+    permissions = [] if role is None else sorted(set(role.permissions or []))
     return TenantContextRead(
         organization=OrganizationRead.model_validate(tenant.organization),
         membership_id=tenant.membership_id,
@@ -27,6 +28,7 @@ def _tenant_response(db: DbSession, tenant: CurrentTenant) -> TenantContextRead:
         is_owner=tenant.membership.is_owner,
         relationships=relationships,
         primary_relationship=primary_relationship(relationships),
+        permissions=permissions,
     )
 
 
@@ -56,6 +58,7 @@ def switch_tenant(request: Request, db: DbSession, tenant: CurrentTenant) -> Ten
             "is_owner": tenant.membership.is_owner,
             "relationships": response.relationships,
             "primary_relationship": response.primary_relationship,
+            "permissions": response.permissions,
         },
         request=request,
     )
