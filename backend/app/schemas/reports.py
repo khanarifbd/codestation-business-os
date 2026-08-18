@@ -34,15 +34,12 @@ class ReportAccountBalance(BaseModel):
 
 
 class ReportOperationalSummary(BaseModel):
-    open_leads: int
     active_clients: int
-    open_quotations: int
     open_orders: int
     active_projects: int
     overdue_tasks: int
     due_followups: int
     open_invoices: int
-    overdue_invoices: int
 
 
 class ReportProjectRow(BaseModel):
