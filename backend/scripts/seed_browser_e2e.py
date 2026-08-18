@@ -12,7 +12,7 @@ from app.schemas.organization import OrganizationCreate
 from app.services.activity_log import record_activity
 
 
-E2E_EMAIL = os.getenv("E2E_EMAIL", "e2e-owner@business-os.local").lower().strip()
+E2E_EMAIL = os.getenv("E2E_EMAIL", "e2e-owner@example.com").lower().strip()
 E2E_PASSWORD = os.getenv("E2E_PASSWORD", "E2E-Launch-Password-123!")
 
 
