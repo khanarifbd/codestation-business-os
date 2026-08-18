@@ -87,6 +87,8 @@ def _list_item(row) -> OrderListItem:
         quotation_number=quotation_number,
         client_id=order.client_id,
         client_name=client_name,
+        source=order.source,
+        external_order_id=order.external_order_id,
         status=order.status,
         subject=order.subject,
         order_date=order.order_date,
@@ -194,6 +196,8 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
         source_lead_id=order.source_lead_id,
         assigned_employee_id=order.assigned_employee_id,
         assigned_employee_name=assigned_name,
+        source=order.source,
+        external_order_id=order.external_order_id,
         status=order.status,
         subject=order.subject,
         order_date=order.order_date,
@@ -276,7 +280,16 @@ def list_orders(
     query = _order_query(tenant.organization_id)
     if search:
         needle = f"%{search.strip()}%"
-        query = query.where(or_(Order.order_number.ilike(needle), Order.subject.ilike(needle), Client.display_name.ilike(needle), Quotation.quotation_number.ilike(needle)))
+        query = query.where(
+            or_(
+                Order.order_number.ilike(needle),
+                Order.subject.ilike(needle),
+                Order.source.ilike(needle),
+                Order.external_order_id.ilike(needle),
+                Client.display_name.ilike(needle),
+                Quotation.quotation_number.ilike(needle),
+            )
+        )
     if order_status:
         query = query.where(Order.status == order_status)
     if client_id:
