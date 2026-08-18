@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { setAuthCookies, type TokenPair } from "@/lib/auth-session";
 import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
@@ -15,13 +14,6 @@ export async function POST(request: Request) {
     body,
   });
 
-  const payload = await upstream.json();
-  if (!upstream.ok) {
-    return NextResponse.json(payload, { status: upstream.status });
-  }
-
-  const tokens = payload as TokenPair;
-  const response = NextResponse.json({ user: tokens.user }, { status: 201 });
-  setAuthCookies(response, tokens);
-  return response;
+  const payload = await upstream.json().catch(() => ({ detail: "Unexpected authentication response" }));
+  return NextResponse.json(payload, { status: upstream.status });
 }
