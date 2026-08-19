@@ -73,6 +73,7 @@ from app.models.subscription import Subscription
 from app.models.tax import TaxCode
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
+from app.models.user_session import UserSession
 
 __all__ = [
     "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AssetDepreciationEntry", "AttendanceRecord",
@@ -88,7 +89,7 @@ __all__ = [
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
-    "Subscription", "TaxCode", "User", "Vendor", "Warehouse",
+    "Subscription", "TaxCode", "User", "UserSession", "Vendor", "Warehouse",
 ]
 
 # Register service-duration snapshot listeners after all mapped classes above are loaded.
