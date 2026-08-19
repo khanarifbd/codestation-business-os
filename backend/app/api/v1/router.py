@@ -14,6 +14,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.capital import router as capital_router
 from app.api.v1.capital_insights import router as capital_insights_router
 from app.api.v1.client_access import router as client_access_router
+from app.api.v1.client_external_profiles import router as client_external_profiles_router
 from app.api.v1.client_invitations import public_router as client_invitation_public_router, router as client_invitation_router
 from app.api.v1.client_portal import router as client_portal_router
 from app.api.v1.company_currencies import router as company_currencies_router
@@ -89,6 +90,7 @@ api_router.include_router(crm_client_workspace_router)
 api_router.include_router(crm_interests_router)
 api_router.include_router(client_access_router)
 api_router.include_router(client_invitation_router)
+api_router.include_router(client_external_profiles_router)
 api_router.include_router(crm_router)
 api_router.include_router(sales_router)
 api_router.include_router(services_router)
