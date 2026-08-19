@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -12,6 +12,10 @@ class UserSession(Base):
     __table_args__ = (
         Index("ix_user_sessions_user_last_seen", "user_id", "last_seen_at"),
         Index("ix_user_sessions_user_active", "user_id", "revoked_at", "expires_at"),
+        UniqueConstraint(
+            "legacy_refresh_fingerprint",
+            name="uq_user_sessions_legacy_refresh_fingerprint",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -28,11 +32,7 @@ class UserSession(Base):
     operating_system: Mapped[str] = mapped_column(String(80), nullable=False)
     user_agent: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    legacy_refresh_fingerprint: Mapped[str | None] = mapped_column(
-        String(64),
-        nullable=True,
-        unique=True,
-    )
+    legacy_refresh_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
