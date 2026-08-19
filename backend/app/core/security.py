@@ -18,6 +18,7 @@ class TokenClaims:
     token_type: TokenType
     token_version: int
     email: str | None = None
+    session_id: str | None = None
 
 
 def hash_password(password: str) -> str:
@@ -35,6 +36,7 @@ def _create_token(
     *,
     token_version: int = 0,
     email: str | None = None,
+    session_id: str | None = None,
 ) -> str:
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {
@@ -46,24 +48,28 @@ def _create_token(
     }
     if email:
         payload["email"] = email.lower().strip()
+    if session_id:
+        payload["sid"] = session_id
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def create_access_token(user_id: str, token_version: int = 0) -> str:
+def create_access_token(user_id: str, token_version: int = 0, session_id: str | None = None) -> str:
     return _create_token(
         user_id,
         "access",
         timedelta(minutes=settings.access_token_expire_minutes),
         token_version=token_version,
+        session_id=session_id,
     )
 
 
-def create_refresh_token(user_id: str, token_version: int = 0) -> str:
+def create_refresh_token(user_id: str, token_version: int = 0, session_id: str | None = None) -> str:
     return _create_token(
         user_id,
         "refresh",
         timedelta(days=settings.refresh_token_expire_days),
         token_version=token_version,
+        session_id=session_id,
     )
 
 
@@ -123,11 +129,16 @@ def decode_token_claims(token: str, expected_type: TokenType) -> TokenClaims:
     if email is not None and (not isinstance(email, str) or not email):
         raise ValueError("Invalid token email")
 
+    session_id = payload.get("sid")
+    if session_id is not None and (not isinstance(session_id, str) or not session_id):
+        raise ValueError("Invalid session identifier")
+
     return TokenClaims(
         user_id=subject,
         token_type=expected_type,
         token_version=version,
         email=email.lower().strip() if isinstance(email, str) else None,
+        session_id=session_id,
     )
 
 
