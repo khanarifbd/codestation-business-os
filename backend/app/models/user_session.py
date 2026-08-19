@@ -28,6 +28,11 @@ class UserSession(Base):
     operating_system: Mapped[str] = mapped_column(String(80), nullable=False)
     user_agent: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    legacy_refresh_fingerprint: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        unique=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
