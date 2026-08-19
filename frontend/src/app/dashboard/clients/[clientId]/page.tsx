@@ -22,6 +22,7 @@ import {
 
 import { ClientAccessSection } from "@/components/client-access-section";
 import { ClientExternalProfilesSection } from "@/components/client-external-profiles-section";
+import { ClientCredentialsSection, ClientDocumentsSection, ClientNotesSection } from "@/components/client-resources-sections";
 import { ClientServicesSection } from "@/components/client-services-section";
 import { COUNTRY_OPTIONS } from "@/lib/company-options";
 
@@ -45,7 +46,7 @@ type Invoice = { id: string; invoice_number: string; order_id: string | null; pr
 type Payment = { id: string; payment_number: string; invoice_id: string; invoice_number: string; payment_date: string; invoice_currency: string; invoice_amount: string | number; account_currency: string; account_amount: string | number; method: string; reference: string | null; created_at: string };
 type Timeline = { kind: string; title: string; subtitle: string | null; occurred_at: string; href: string | null };
 type Workspace = { client: ClientDetail; access: Access; counts: Counts; business_value: CurrencyAmount[]; invoice_summary: InvoiceCurrencySummary[]; quotations: Quotation[]; orders: Order[]; projects: Project[]; invoices: Invoice[]; payments: Payment[]; timeline: Timeline[] };
-type Tab = "overview" | "sales" | "projects" | "finance" | "activity" | "access" | "services";
+type Tab = "overview" | "sales" | "projects" | "finance" | "activity" | "access" | "services" | "notes" | "documents" | "credentials";
 
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -94,6 +95,9 @@ export default function ClientWorkspacePage() {
       { value: "activity" as Tab, label: "Activity" },
       { value: "access" as Tab, label: "Access & Profiles" },
       { value: "services" as Tab, label: "Services" },
+      { value: "notes" as Tab, label: "Notes" },
+      { value: "documents" as Tab, label: "Documents" },
+      { value: "credentials" as Tab, label: "Credentials" },
     ];
   }, [workspace]);
 
@@ -145,6 +149,9 @@ export default function ClientWorkspacePage() {
     {tab === "activity" ? <ActivityTab events={workspace.timeline} /> : null}
     {tab === "access" ? <AccessProfilesTab clientId={clientId} /> : null}
     {tab === "services" ? <ServicesTab clientId={clientId} /> : null}
+    {tab === "notes" ? <div className="mt-5"><ClientNotesSection clientId={clientId} canManage={access.clients_manage} /></div> : null}
+    {tab === "documents" ? <div className="mt-5"><ClientDocumentsSection clientId={clientId} canManage={access.clients_manage} /></div> : null}
+    {tab === "credentials" ? <div className="mt-5"><ClientCredentialsSection clientId={clientId} canManage={access.clients_manage} /></div> : null}
   </div></main>;
 }
 
