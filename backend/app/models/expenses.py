@@ -58,6 +58,9 @@ class Expense(TenantOwnedMixin, Base):
         Index("ix_expenses_org_status_date", "organization_id", "status", "expense_date"),
         Index("ix_expenses_org_project_date", "organization_id", "project_id", "expense_date"),
         Index("ix_expenses_org_client_date", "organization_id", "client_id", "expense_date"),
+        Index("ix_expenses_org_order_date", "organization_id", "order_id", "expense_date"),
+        Index("ix_expenses_org_invoice_date", "organization_id", "invoice_id", "expense_date"),
+        Index("ix_expenses_org_payment_date", "organization_id", "payment_id", "expense_date"),
         Index("ix_expenses_org_vendor_date", "organization_id", "vendor_id", "expense_date"),
         Index("ix_expenses_org_category_date", "organization_id", "category_id", "expense_date"),
         Index("ix_expenses_org_account_date", "organization_id", "account_id", "expense_date"),
@@ -70,6 +73,9 @@ class Expense(TenantOwnedMixin, Base):
     account_id: Mapped[str] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=False)
     client_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    order_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True)
+    invoice_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True)
+    payment_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("payments.id", ondelete="SET NULL"), nullable=True)
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     expense_date: Mapped[date] = mapped_column(Date, nullable=False)
     expense_currency: Mapped[str] = mapped_column(String(3), nullable=False)
