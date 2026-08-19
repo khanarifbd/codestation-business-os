@@ -11,6 +11,7 @@ import { confirmDiscardChanges, useUnsavedChanges } from "@/hooks/use-unsaved-ch
 import { getApiErrorMessage } from "@/lib/api-error";
 
 type SourceType = "invoice" | "project" | "order" | "advance" | "other";
+type RelationType = "" | "client" | "order" | "project";
 type Account = { id: string; name: string; account_type: string; currency: string; current_balance: string | number; is_active: boolean };
 type Client = { id: string; code: string; name: string; currency: string | null };
 type Invoice = { id: string; invoice_number: string; client_name: string; order_id: string | null; project_id: string | null; status: string; display_status: string; currency: string; total: string | number; balance_due: string | number; subject: string | null };
@@ -18,7 +19,7 @@ type Project = { id: string; number: string; order_id: string; client_id: string
 type Order = { id: string; number: string; client_id: string; client_name: string; currency: string; total: string | number; status: string };
 type Meta = { clients: Client[]; orders: Order[]; projects: Project[]; accounts: Account[] };
 type LedgerAccount = { id: string; name: string; category: string; is_active: boolean };
-type MoneyEntry = { id: string; entry_date: string; financial_account_name: string; category_ledger_account_name: string; currency: string; amount: string | number; description: string; reference: string | null };
+type MoneyEntry = { id: string; entry_date: string; financial_account_name: string; category_ledger_account_name: string; source_type: string | null; source_label: string | null; currency: string; amount: string | number; description: string; reference: string | null };
 type Advance = { id: string; client_name: string; financial_account_name: string; advance_date: string; currency: string; original_amount: string | number; remaining_amount: string | number; reference: string | null };
 type MoneyInForm = { source_id: string; account_id: string; amount: string; date: string; method: string; category_id: string; description: string; reference: string; notes: string };
 
@@ -31,11 +32,13 @@ const sourceCards = [
   { value: "project" as SourceType, title: "Project payment", help: "Money received for a project", icon: FolderKanban },
   { value: "order" as SourceType, title: "Order payment", help: "Money received against an order", icon: ShoppingBag },
   { value: "advance" as SourceType, title: "Client advance", help: "Customer paid before an invoice is due", icon: UserRound },
-  { value: "other" as SourceType, title: "Other income", help: "Income not tied to a customer sale", icon: ReceiptText },
+  { value: "other" as SourceType, title: "Other / Additional income", help: "Tips, bonuses or other non-invoice income", icon: ReceiptText },
 ];
 
 export function MoneyInWorkspace() {
   const [sourceType, setSourceType] = useState<SourceType>("invoice");
+  const [relationType, setRelationType] = useState<RelationType>("");
+  const [relationId, setRelationId] = useState("");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -98,7 +101,7 @@ export function MoneyInWorkspace() {
   const selectedCategory = categories.find((category) => category.id === form.category_id) ?? null;
   const sourceCurrency = sourceInvoice?.currency ?? selectedProject?.currency ?? selectedOrder?.currency ?? selectedClient?.currency ?? selectedAccount?.currency ?? "";
   const compatibleAccounts = accounts.filter((account) => !sourceCurrency || account.currency === sourceCurrency);
-  const isDirty = Boolean(form.source_id || form.account_id || form.amount || form.category_id || form.description || form.reference || form.notes);
+  const isDirty = Boolean(form.source_id || form.account_id || form.amount || form.category_id || form.description || form.reference || form.notes || relationType || relationId);
   useUnsavedChanges(isDirty && !saving);
 
   const invoiceOptions = useMemo(() => invoices.map((invoice) => ({ value: invoice.id, label: `${invoice.invoice_number} · ${invoice.client_name} · due ${money(invoice.balance_due, invoice.currency)}`, keywords: `${invoice.invoice_number} ${invoice.client_name} ${invoice.subject ?? ""} ${invoice.currency}` })), [invoices]);
@@ -107,10 +110,12 @@ export function MoneyInWorkspace() {
   const clientOptions = useMemo(() => clients.map((client) => ({ value: client.id, label: `${client.code} · ${client.name}${client.currency ? ` · ${client.currency}` : ""}`, keywords: `${client.code} ${client.name} ${client.currency ?? ""}` })), [clients]);
   const categoryOptions = useMemo(() => categories.map((category) => ({ value: category.id, label: category.name })), [categories]);
   const accountOptions = useMemo(() => compatibleAccounts.map((account) => ({ value: account.id, label: `${account.name} · ${money(account.current_balance, account.currency)}`, keywords: `${account.name} ${account.currency} ${account.account_type}` })), [compatibleAccounts]);
+  const relationOptions = useMemo(() => relationType === "client" ? clientOptions : relationType === "order" ? orders.map((order) => ({ value: order.id, label: `${order.number} · ${order.client_name} · ${money(order.total, order.currency)}`, keywords: `${order.number} ${order.client_name} ${order.currency}` })) : relationType === "project" ? projects.map((project) => ({ value: project.id, label: `${project.number} · ${project.name} · ${money(project.contract_value, project.currency)}`, keywords: `${project.number} ${project.name} ${project.currency}` })) : [], [relationType, clientOptions, orders, projects]);
+  const relationLabel = relationType === "client" ? clients.find((item) => item.id === relationId)?.name : relationType === "order" ? orders.find((item) => item.id === relationId)?.number : relationType === "project" ? projects.find((item) => item.id === relationId)?.number : null;
 
   function reset(type: SourceType) {
     if (!confirmDiscardChanges(isDirty, "Changing the money source will discard the current form. Continue?")) return;
-    setSourceType(type); setForm(blankForm()); setError(null); setMessage(null); setConfirmOpen(false);
+    setSourceType(type); setRelationType(""); setRelationId(""); setForm(blankForm()); setError(null); setMessage(null); setConfirmOpen(false);
   }
 
   async function ensureInvoice(): Promise<Invoice> {
@@ -124,7 +129,14 @@ export function MoneyInWorkspace() {
     return sent as Invoice;
   }
 
-  function review(event: FormEvent) { event.preventDefault(); setError(null); setMessage(null); setConfirmOpen(true); }
+  function review(event: FormEvent) {
+    event.preventDefault(); setError(null); setMessage(null);
+    if (sourceType === "other" && relationType && !relationId) {
+      setError("Select the related client, order or project, or choose no relationship.");
+      return;
+    }
+    setConfirmOpen(true);
+  }
 
   async function postMoneyIn() {
     setSaving(true); setError(null); setMessage(null);
@@ -134,16 +146,16 @@ export function MoneyInWorkspace() {
         const payload = await response.json(); if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record client advance"));
         setMessage(`Client advance recorded for ${payload.client_name}. It is held as customer credit, not income, until applied to an invoice.`);
       } else if (sourceType === "other") {
-        const response = await fetch("/api/accounting/money", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "income", entry_date: form.date, financial_account_id: form.account_id, category_ledger_account_id: form.category_id, amount: Number(form.amount), description: form.description, reference: form.reference || null, notes: form.notes || null }) });
+        const response = await fetch("/api/accounting/money", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "income", entry_date: form.date, financial_account_id: form.account_id, category_ledger_account_id: form.category_id, amount: Number(form.amount), description: form.description, reference: form.reference || null, notes: form.notes || null, source_type: relationType || null, source_id: relationId || null }) });
         const payload = await response.json(); if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record income"));
-        setMessage("Income recorded. Account balance and accounting ledger were updated.");
+        setMessage("Income recorded. Account balance, accounting ledger and business relationship were updated.");
       } else {
         const invoice = sourceType === "invoice" ? (sourceInvoice ?? (() => { throw new Error("Select an invoice"); })()) : await ensureInvoice();
         const response = await fetch("/api/finance/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invoice_id: invoice.id, account_id: form.account_id, payment_date: form.date, invoice_amount: Number(form.amount), method: form.method, reference: form.reference || null, notes: form.notes || null }) });
         const payload = await response.json(); if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record payment"));
         setMessage(`Payment ${payload.payment_number} recorded and linked to ${invoice.invoice_number}.`);
       }
-      setConfirmOpen(false); setForm(blankForm()); await load();
+      setConfirmOpen(false); setRelationType(""); setRelationId(""); setForm(blankForm()); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not record money received"); setConfirmOpen(false); }
     finally { setSaving(false); }
   }
@@ -152,6 +164,7 @@ export function MoneyInWorkspace() {
   const confirmationDetails = [
     { label: "Business event", value: sourceCards.find((item) => item.value === sourceType)?.title ?? sourceType },
     { label: "Source", value: sourceLabel },
+    ...(sourceType === "other" && relationLabel ? [{ label: "Related to", value: relationLabel }] : []),
     { label: "Amount", value: money(form.amount || 0, sourceCurrency || selectedAccount?.currency || ""), emphasis: true },
     { label: "Account", value: selectedAccount?.name || "—" },
     { label: "Date", value: form.date },
@@ -172,16 +185,18 @@ export function MoneyInWorkspace() {
         {sourceType === "order" ? <div><SearchableSelect label="Order" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((current) => ({ ...current, source_id: value, amount: "" }))} options={orderOptions} placeholder="Select order" searchPlaceholder="Search order or client..." /><Hint>{sourceInvoice ? `Payment will be applied to ${sourceInvoice.invoice_number}.` : "If no open invoice exists, Business OS will create one from the order only after final confirmation."}</Hint></div> : null}
         {sourceType === "advance" ? <div><SearchableSelect label="Client" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((current) => ({ ...current, source_id: value, amount: "" }))} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." /><Hint>This is customer credit, not revenue. Apply it later from Receivables.</Hint></div> : null}
         {sourceType === "other" ? <SearchableSelect label="Income category" required clearable={false} value={form.category_id} onValueChange={(value) => setForm((current) => ({ ...current, category_id: value }))} options={categoryOptions} placeholder="Select category" searchPlaceholder="Search income category..." /> : null}
+        {sourceType === "other" ? <Field label="Related business record (optional)"><select value={relationType} onChange={(event) => { setRelationType(event.target.value as RelationType); setRelationId(""); }} className="w-full rounded-xl border bg-white px-3 py-2.5"><option value="">No relationship</option><option value="client">Client</option><option value="order">Order</option><option value="project">Project</option></select><Hint>Use this for tips, bonuses or other income that belongs to a client, order or project.</Hint></Field> : null}
+        {sourceType === "other" && relationType ? <SearchableSelect label={`Related ${relationType}`} required clearable={false} value={relationId} onValueChange={setRelationId} options={relationOptions} placeholder={`Select ${relationType}`} searchPlaceholder={`Search ${relationType}...`} /> : null}
         <SearchableSelect label="Money received into" required clearable={false} value={form.account_id} onValueChange={(value) => setForm((current) => ({ ...current, account_id: value }))} options={accountOptions} placeholder="Select account" searchPlaceholder="Search bank, cash or wallet..." />
         <MoneyInput label="Amount received" currency={sourceCurrency} required min={0.01} max={sourceInvoice ? Number(sourceInvoice.balance_due) : undefined} value={form.amount} onValueChange={(value) => setForm((current) => ({ ...current, amount: value }))} hint={sourceInvoice ? `Maximum currently due: ${money(sourceInvoice.balance_due, sourceInvoice.currency)}` : undefined} />
         <Field label="Date"><input required type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
         {sourceType !== "other" && sourceType !== "advance" ? <Field label="Payment method"><select value={form.method} onChange={(event) => setForm((current) => ({ ...current, method: event.target.value }))} className="w-full rounded-xl border bg-white px-3 py-2.5"><option value="bank_transfer">Bank transfer</option><option value="cash">Cash</option><option value="card">Card</option><option value="payoneer">Payoneer</option><option value="wise">Wise</option><option value="stripe">Stripe</option><option value="paypal">PayPal</option><option value="other">Other</option></select></Field> : null}
-        {sourceType === "other" ? <Field label="Description"><input required value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="w-full rounded-xl border px-3 py-2.5" placeholder="What was this income for?" /></Field> : null}
+        {sourceType === "other" ? <Field label="Description"><input required value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="w-full rounded-xl border px-3 py-2.5" placeholder="Tip, bonus, referral income..." /></Field> : null}
         <Field label="Reference (optional)"><input value={form.reference} onChange={(event) => setForm((current) => ({ ...current, reference: event.target.value }))} className="w-full rounded-xl border px-3 py-2.5" /></Field>
         <div className="flex justify-end md:col-span-2 lg:col-span-3"><button disabled={saving || loading} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"><ArrowDownLeft className="size-4" />Review money received</button></div>
       </form>
     </section>
-    <section className="grid gap-4 lg:grid-cols-2"><div className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Open client advances</h2><p className="mt-1 text-sm text-neutral-500">Money received before invoicing. It remains customer credit until applied.</p><div className="mt-3 divide-y">{advances.slice(0, 8).map((advance) => <div key={advance.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-medium">{advance.client_name}</p><p className="text-xs text-neutral-400">{advance.advance_date} · {advance.financial_account_name}</p></div><p className="font-semibold">{money(advance.remaining_amount, advance.currency)}</p></div>)}{!loading && !advances.length ? <p className="py-8 text-center text-sm text-neutral-400">No open client advances.</p> : null}</div></div><div className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Recent other income</h2><p className="mt-1 text-sm text-neutral-500">Only direct income not tied to sales or customer advances.</p><div className="mt-3 divide-y">{entries.slice(0, 8).map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-medium">{entry.description}</p><p className="text-xs text-neutral-400">{entry.entry_date} · {entry.financial_account_name}</p></div><p className="font-semibold">{money(entry.amount, entry.currency)}</p></div>)}{!loading && !entries.length ? <p className="py-8 text-center text-sm text-neutral-400">No direct income records yet.</p> : null}</div></div></section>
+    <section className="grid gap-4 lg:grid-cols-2"><div className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Open client advances</h2><p className="mt-1 text-sm text-neutral-500">Money received before invoicing. It remains customer credit until applied.</p><div className="mt-3 divide-y">{advances.slice(0, 8).map((advance) => <div key={advance.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-medium">{advance.client_name}</p><p className="text-xs text-neutral-400">{advance.advance_date} · {advance.financial_account_name}</p></div><p className="font-semibold">{money(advance.remaining_amount, advance.currency)}</p></div>)}{!loading && !advances.length ? <p className="py-8 text-center text-sm text-neutral-400">No open client advances.</p> : null}</div></div><div className="rounded-2xl border bg-white p-5"><h2 className="font-semibold">Recent other income</h2><p className="mt-1 text-sm text-neutral-500">Direct income can optionally be attributed to a client, order or project.</p><div className="mt-3 divide-y">{entries.slice(0, 8).map((entry) => <div key={entry.id} className="flex items-center justify-between gap-3 py-3"><div><p className="font-medium">{entry.description}</p><p className="text-xs text-neutral-400">{entry.entry_date} · {entry.financial_account_name}{entry.source_label ? ` · ${entry.source_label}` : ""}</p></div><p className="font-semibold">{money(entry.amount, entry.currency)}</p></div>)}{!loading && !entries.length ? <p className="py-8 text-center text-sm text-neutral-400">No direct income records yet.</p> : null}</div></div></section>
   </div>
   <FinancialConfirmationDialog open={confirmOpen} title="Post money received?" description="Check the business event, amount and destination account. Once posted, the transaction updates financial balances and accounting records." details={confirmationDetails} confirmLabel="Post money received" loading={saving} warning="Posted financial transactions should be corrected by reversal/correction, not by silently editing history." onCancel={() => setConfirmOpen(false)} onConfirm={postMoneyIn} />
   </main>;
