@@ -12,6 +12,8 @@ from app.core.roles import (
     MEMBERSHIP_STATUS_SUSPENDED,
 )
 from app.models.client_access import ClientMembership
+from app.models.client_invitations import ClientInvitation
+from app.models.common import utc_now
 from app.models.crm import Client
 from app.models.membership import Membership
 from app.models.team import Employee, OrganizationRole
@@ -56,6 +58,7 @@ class ClientAccessStatusItem(BaseModel):
     client_id: str
     enabled: bool
     active_access_count: int
+    pending_invitation_count: int
     has_email: bool
 
 
@@ -182,6 +185,18 @@ def get_client_access_status(
             .group_by(ClientMembership.client_id)
         ).all()
     )
+    pending_counts = dict(
+        db.execute(
+            select(ClientInvitation.client_id, func.count(ClientInvitation.id))
+            .where(
+                ClientInvitation.organization_id == tenant.organization_id,
+                ClientInvitation.client_id.in_(requested_ids),
+                ClientInvitation.status == "pending",
+                ClientInvitation.expires_at > utc_now(),
+            )
+            .group_by(ClientInvitation.client_id)
+        ).all()
+    )
 
     items = []
     for client_id in requested_ids:
@@ -194,6 +209,7 @@ def get_client_access_status(
                 client_id=client.id,
                 enabled=count > 0,
                 active_access_count=count,
+                pending_invitation_count=int(pending_counts.get(client_id, 0)),
                 has_email=bool(client.email or client.billing_email),
             )
         )
@@ -227,7 +243,7 @@ def grant_client_access(
     if user is None:
         raise HTTPException(
             status_code=409,
-            detail="No Business OS account exists for this email yet. Ask the client to sign up with this email, then grant access again.",
+            detail="No Business OS account exists for this email yet. Invite the client from the Client Access section.",
         )
     if not user.is_active:
         raise HTTPException(status_code=409, detail="The user account is inactive")
