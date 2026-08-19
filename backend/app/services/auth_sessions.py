@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Request
-from sqlalchemy import update
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -72,6 +74,7 @@ def create_user_session(
     request: Request,
     *,
     auth_method: str,
+    legacy_refresh_fingerprint: str | None = None,
 ) -> UserSession:
     now = datetime.now(timezone.utc)
     user_agent = (request.headers.get("user-agent") or "").strip()[:1000] or None
@@ -85,6 +88,7 @@ def create_user_session(
         operating_system=operating_system,
         user_agent=user_agent,
         ip_address=_request_ip(request),
+        legacy_refresh_fingerprint=legacy_refresh_fingerprint,
         created_at=now,
         last_seen_at=now,
         expires_at=now + timedelta(days=settings.refresh_token_expire_days),
@@ -92,6 +96,54 @@ def create_user_session(
     db.add(session)
     db.flush()
     return session
+
+
+def get_or_create_legacy_user_session(
+    db: Session,
+    user: User,
+    request: Request,
+    *,
+    refresh_token: str,
+) -> tuple[UserSession, bool]:
+    """Idempotently upgrade one pre-session refresh token to one UserSession.
+
+    Next.js may issue parallel authenticated requests when a browser only has a
+    legacy refresh token. Every request can reach /auth/refresh at the same time.
+    A SHA-256 fingerprint plus a DB uniqueness constraint makes that migration
+    safe without storing the raw bearer token.
+    """
+
+    fingerprint = hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
+    existing = db.scalar(
+        select(UserSession).where(
+            UserSession.user_id == user.id,
+            UserSession.legacy_refresh_fingerprint == fingerprint,
+        )
+    )
+    if existing is not None:
+        return existing, False
+
+    try:
+        with db.begin_nested():
+            created = create_user_session(
+                db,
+                user,
+                request,
+                auth_method="legacy",
+                legacy_refresh_fingerprint=fingerprint,
+            )
+        return created, True
+    except IntegrityError:
+        # Another parallel refresh upgraded the same legacy token first.
+        existing = db.scalar(
+            select(UserSession).where(
+                UserSession.user_id == user.id,
+                UserSession.legacy_refresh_fingerprint == fingerprint,
+            )
+        )
+        if existing is None:
+            raise
+        return existing, False
 
 
 def session_is_active(session: UserSession, *, user: User, now: datetime | None = None) -> bool:
