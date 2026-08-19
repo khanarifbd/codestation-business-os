@@ -31,6 +31,31 @@ class UserProfileRead(BaseModel):
     updated_at: datetime
 
 
+class UserSessionRead(BaseModel):
+    id: str
+    auth_method: str
+    device_type: str
+    browser: str
+    operating_system: str
+    ip_address: str | None
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    revoked_reason: str | None
+    status: str
+    is_current: bool
+
+
+class UserSessionListRead(BaseModel):
+    items: list[UserSessionRead]
+    legacy_current_session: bool = False
+
+
+class UserSessionRevokeResult(BaseModel):
+    revoked_count: int
+
+
 class UserProfileUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
