@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.models.activity_log import ActivityLog
 from app.models.client_profiles import ClientCredential, ClientDocument, ClientNote
 from app.models.crm import Client
+from app.models.team import OrganizationRole
 from app.models.user import User
 from app.schemas.project_execution import CredentialCreate, CredentialRead, CredentialReveal, CredentialUpdate, ProjectDocumentRead
 from app.services.activity_log import record_activity
@@ -81,6 +82,17 @@ def _client(db: DbSession, organization_id: str, client_id: str) -> Client:
     if item is None:
         raise HTTPException(status_code=404, detail="Client not found")
     return item
+
+
+def _can_manage(db: DbSession, tenant: TenantContext) -> bool:
+    role = db.scalar(
+        select(OrganizationRole).where(
+            OrganizationRole.id == tenant.membership.role_id,
+            OrganizationRole.organization_id == tenant.organization_id,
+            OrganizationRole.is_active.is_(True),
+        )
+    )
+    return bool(role and ("*" in (role.permissions or []) or "clients.manage" in (role.permissions or [])))
 
 
 def _note_read(item: ClientNote) -> ClientNoteRead:
@@ -369,16 +381,15 @@ def delete_client_document(client_id: str, document_id: str, request: Request, d
 
 
 @router.get("/{client_id}/credentials", response_model=list[CredentialRead])
-def list_client_credentials(client_id: str, db: DbSession, tenant: ClientResourceManager):
+def list_client_credentials(client_id: str, db: DbSession, tenant: ClientResourceViewer):
     client = _client(db, tenant.organization_id, client_id)
-    items = db.scalars(
-        select(ClientCredential)
-        .where(
-            ClientCredential.organization_id == tenant.organization_id,
-            ClientCredential.client_id == client.id,
-        )
-        .order_by(ClientCredential.created_at.desc())
-    ).all()
+    query = select(ClientCredential).where(
+        ClientCredential.organization_id == tenant.organization_id,
+        ClientCredential.client_id == client.id,
+    )
+    if not _can_manage(db, tenant):
+        query = query.where(ClientCredential.access_level == "team")
+    items = db.scalars(query.order_by(ClientCredential.created_at.desc())).all()
     return [_credential_read(db, item) for item in items]
 
 
@@ -452,7 +463,7 @@ def update_client_credential(client_id: str, credential_id: str, payload: Creden
 
 
 @router.post("/{client_id}/credentials/{credential_id}/reveal", response_model=CredentialReveal)
-def reveal_client_credential(client_id: str, credential_id: str, request: Request, db: DbSession, tenant: ClientResourceManager):
+def reveal_client_credential(client_id: str, credential_id: str, request: Request, db: DbSession, tenant: ClientResourceViewer):
     client = _client(db, tenant.organization_id, client_id)
     item = db.scalar(
         select(ClientCredential).where(
@@ -463,6 +474,8 @@ def reveal_client_credential(client_id: str, credential_id: str, request: Reques
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Client credential not found")
+    if item.access_level == "manager_only" and not _can_manage(db, tenant):
+        raise HTTPException(status_code=403, detail="This credential is restricted to client managers")
     secret = _decrypt_secret(db, item.secret_ciphertext)
     record_activity(
         db, action="clients.credential.revealed", scope="tenant", actor_user_id=tenant.user_id,
