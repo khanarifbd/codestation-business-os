@@ -111,10 +111,10 @@ def touch_user_session(
     extend_expiry: bool = False,
     force: bool = False,
 ) -> None:
-    """Update security telemetry without joining the caller's business transaction.
+    """Update security telemetry outside the caller's business transaction.
 
-    This is intentionally a lightweight Core update: last-seen telemetry is not a
-    business mutation and must not cause unrelated GET requests to commit ORM state.
+    The Core update avoids making the request-scoped ORM Session dirty, so a
+    read-only request never acquires an unrelated pending business mutation.
     """
 
     now = datetime.now(timezone.utc)
@@ -134,11 +134,6 @@ def touch_user_session(
             .where(UserSession.id == session.id, UserSession.revoked_at.is_(None))
             .values(**values)
         )
-
-    session.last_seen_at = now
-    session.ip_address = values["ip_address"]  # type: ignore[assignment]
-    if extend_expiry:
-        session.expires_at = values["expires_at"]  # type: ignore[assignment]
 
 
 def revoke_user_sessions(
