@@ -5,7 +5,7 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.api.v1.client_access import _access_users, _can_manage, _client
+from app.api.v1.client_access import ClientAccessUser, _access_users, _can_manage, _client
 from app.core.roles import (
     MEMBERSHIP_ROLE_CLIENT,
     MEMBERSHIP_STATUS_ACTIVE,
@@ -16,6 +16,7 @@ from app.core.roles import (
 from app.core.security import hash_password, verify_password
 from app.models.client_access import ClientMembership
 from app.models.client_invitations import ClientInvitation
+from app.models.common import utc_now
 from app.models.crm import Client
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -24,7 +25,6 @@ from app.services.account_email import AccountEmailDeliveryError, send_client_po
 from app.services.activity_log import record_activity
 from app.services.team import create_invitation_token, ensure_system_roles, hash_invitation_token, invitation_expiry
 from app.tenancy.context import TenantContext
-from app.models.common import utc_now
 
 router = APIRouter(prefix="/crm/client-access", tags=["Client Access Invitations"])
 public_router = APIRouter(prefix="/client-invitations", tags=["Client Invitations"])
@@ -59,7 +59,7 @@ class ClientAccessOverview(BaseModel):
     enabled: bool
     pending: bool
     can_manage: bool
-    users: list[dict]
+    users: list[ClientAccessUser]
     invitations: list[ClientInvitationRead]
 
 
@@ -110,6 +110,7 @@ def client_access_overview(client_id: str, db: DbSession, tenant: ClientAccessVi
             ClientInvitation.organization_id == tenant.organization_id,
             ClientInvitation.client_id == client.id,
             ClientInvitation.status == "pending",
+            ClientInvitation.expires_at > utc_now(),
         ).order_by(ClientInvitation.created_at.desc())
     ).all()
     email = (client.email or client.billing_email or "").strip().lower() or None
@@ -123,7 +124,7 @@ def client_access_overview(client_id: str, db: DbSession, tenant: ClientAccessVi
         enabled=bool(users),
         pending=bool(pending),
         can_manage=_can_manage(db, tenant),
-        users=[user.model_dump() for user in users],
+        users=users,
         invitations=[_invitation_read(item) for item in pending],
     )
 
