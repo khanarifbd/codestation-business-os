@@ -22,6 +22,7 @@ import {
 
 import { ClientAccessSection } from "@/components/client-access-section";
 import { ClientExternalProfilesSection } from "@/components/client-external-profiles-section";
+import { ClientServicesSection } from "@/components/client-services-section";
 import { COUNTRY_OPTIONS } from "@/lib/company-options";
 
 type ClientDetail = {
@@ -178,6 +179,7 @@ function ActivityTab({ events }: { events: Timeline[] }) {
 
 function AccessProfilesTab({ clientId }: { clientId: string }) {
   return <div className="mt-5 space-y-5">
+    <ClientServicesSection clientId={clientId} />
     <ClientExternalProfilesSection clientId={clientId} />
     <ClientAccessSection clientId={clientId} />
   </div>;
