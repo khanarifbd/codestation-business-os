@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -43,6 +43,9 @@ class Product(TenantOwnedMixin, Base):
     standard_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"), nullable=False)
     last_purchase_cost: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"), nullable=False)
     reorder_level: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=Decimal("0"), nullable=False)
+    # NULL means a one-time service. A positive integer means a fixed-term service in months.
+    # Non-service catalog items must keep this NULL.
+    service_duration_months: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tax_code_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("tax_codes.id", ondelete="SET NULL"), nullable=True)
     track_inventory: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     allow_negative_stock: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
