@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class AccountingMoneyEntryCreate(BaseModel):
@@ -14,8 +14,16 @@ class AccountingMoneyEntryCreate(BaseModel):
     description: str = Field(min_length=1, max_length=500)
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
-    source_type: Literal["order", "project", "other"] | None = None
+    source_type: Literal["client", "order", "project", "other"] | None = None
     source_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source(self):
+        if self.source_type in {"client", "order", "project"} and not self.source_id:
+            raise ValueError("source_id is required for a client, order or project source")
+        if self.source_type in {None, "other"} and self.source_id:
+            raise ValueError("source_id requires a client, order or project source type")
+        return self
 
 
 class AccountingMoneyEntryRead(BaseModel):
