@@ -55,6 +55,7 @@ type OrderDetail = OrderRow & {
   started_at: string | null;
   completed_at: string | null;
   cancelled_at: string | null;
+  cancellation_reason: string | null;
   items: OrderItem[];
 };
 type QuotationMini = { id: string; quotation_number: string; status: string; client_name_snapshot: string; total: string | number; currency: string };
@@ -213,15 +214,15 @@ export default function OrdersPage() {
     } finally { setSaving(false); }
   }
 
-  async function changeStatus(next: "in_progress" | "completed" | "cancelled") {
-    if (!detail) return;
+  async function changeStatus(next: "in_progress" | "completed" | "cancelled", cancellationReason?: string): Promise<boolean> {
+    if (!detail) return false;
     setSaving(true);
     setError(null);
     try {
       const updated = await api(`/orders/${detail.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: next }),
+        body: JSON.stringify({ status: next, ...(next === "cancelled" ? { reason: cancellationReason } : {}) }),
       }) as OrderDetail;
       setDetail(updated);
       setMessage(`Order ${updated.order_number} marked ${updated.status.replace("_", " ")}`);
@@ -230,8 +231,10 @@ export default function OrdersPage() {
         return matchesCurrentFilters(updated) ? [updated, ...without] : without;
       });
       await refreshSummary();
+      return true;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to update order status.");
+      return false;
     } finally { setSaving(false); }
   }
 
@@ -296,12 +299,24 @@ export default function OrdersPage() {
   );
 }
 
-function OrderDrawer({ detail, loading, saving, onClose, onStatus, onProject, onFulfilled }: { detail: OrderDetail | null; loading: boolean; saving: boolean; onClose: () => void; onStatus: (status: "in_progress" | "completed" | "cancelled") => Promise<void>; onProject: (orderId: string) => void; onFulfilled: (fulfillmentNumber: string) => Promise<void> }) {
+function OrderDrawer({ detail, loading, saving, onClose, onStatus, onProject, onFulfilled }: { detail: OrderDetail | null; loading: boolean; saving: boolean; onClose: () => void; onStatus: (status: "in_progress" | "completed" | "cancelled", reason?: string) => Promise<boolean>; onProject: (orderId: string) => void; onFulfilled: (fulfillmentNumber: string) => Promise<void> }) {
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   const stockRemaining = detail?.items.some((item) => item.item_type_snapshot === "stock_item" && item.product_id && Number(item.remaining_quantity || 0) > 0) ?? false;
   const hasPostedFulfillment = detail?.items.some((item) => item.item_type_snapshot === "stock_item" && Number(item.fulfilled_quantity || 0) > 0) ?? false;
+  const trimmedCancelReason = cancelReason.trim();
 
-  return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-4xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Order</p><h2 className="mt-1 text-xl font-semibold">{detail?.order_number ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6">
-    <div className="rounded-2xl border p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Execution status</p><div className="mt-2"><StatusBadge status={detail.status} /></div></div><div className="flex flex-wrap gap-2">{detail.status === "confirmed" ? <><ActionButton disabled={saving} onClick={() => void onStatus("in_progress")} label="Start Order" primary /><ActionButton disabled={saving || hasPostedFulfillment} onClick={() => void onStatus("cancelled")} label="Cancel" title={hasPostedFulfillment ? "Return fulfilled stock before cancelling" : undefined} /></> : null}{detail.status === "in_progress" ? <><ActionButton disabled={saving || stockRemaining} onClick={() => void onStatus("completed")} label={stockRemaining ? "Fulfill stock first" : "Complete"} primary title={stockRemaining ? "All tracked stock lines must be fulfilled before completion" : undefined} /><ActionButton disabled={saving || hasPostedFulfillment} onClick={() => void onStatus("cancelled")} label="Cancel" title={hasPostedFulfillment ? "Return fulfilled stock before cancelling" : undefined} /></> : null}</div></div>{detail.status === "completed" ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"><strong>Order completed.</strong> This execution state is final.</div> : null}{hasPostedFulfillment && detail.status !== "completed" ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">Posted stock fulfillment cannot be cancelled directly. A stock return/reversal is required first.</div> : null}<button onClick={() => onProject(detail.id)} className="mt-4 flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" /> Project workspace</button></div>
+  async function confirmCancellation() {
+    if (trimmedCancelReason.length < 3) return;
+    const success = await onStatus("cancelled", trimmedCancelReason);
+    if (success) {
+      setCancelOpen(false);
+      setCancelReason("");
+    }
+  }
+
+  return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(event) => { if (event.target === event.currentTarget && !cancelOpen) onClose(); }}><aside className="ml-auto h-full w-full max-w-4xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs font-medium uppercase tracking-wide text-neutral-400">Order</p><h2 className="mt-1 text-xl font-semibold">{detail?.order_number ?? "Loading..."}</h2></div><button onClick={onClose} disabled={cancelOpen || saving} className="flex size-10 items-center justify-center rounded-xl border disabled:opacity-40"><X className="size-4" /></button></div>{loading || !detail ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6">
+    <div className="rounded-2xl border p-5"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Execution status</p><div className="mt-2"><StatusBadge status={detail.status} /></div></div><div className="flex flex-wrap gap-2">{detail.status === "confirmed" ? <><ActionButton disabled={saving} onClick={() => void onStatus("in_progress")} label="Start Order" primary /><ActionButton disabled={saving || hasPostedFulfillment} onClick={() => setCancelOpen(true)} label="Cancel" title={hasPostedFulfillment ? "Return fulfilled stock before cancelling" : undefined} /></> : null}{detail.status === "in_progress" ? <><ActionButton disabled={saving || stockRemaining} onClick={() => void onStatus("completed")} label={stockRemaining ? "Fulfill stock first" : "Complete"} primary title={stockRemaining ? "All tracked stock lines must be fulfilled before completion" : undefined} /><ActionButton disabled={saving || hasPostedFulfillment} onClick={() => setCancelOpen(true)} label="Cancel" title={hasPostedFulfillment ? "Return fulfilled stock before cancelling" : undefined} /></> : null}</div></div>{detail.status === "completed" ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"><strong>Order completed.</strong> This execution state is final.</div> : null}{detail.status === "cancelled" ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><strong>Order cancelled.</strong><p className="mt-1 whitespace-pre-wrap">{detail.cancellation_reason ? `Reason: ${detail.cancellation_reason}` : "Cancellation reason is unavailable for this older record."}</p></div> : null}{hasPostedFulfillment && detail.status !== "completed" ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">Posted stock fulfillment cannot be cancelled directly. A stock return/reversal is required first.</div> : null}<button onClick={() => onProject(detail.id)} className="mt-4 flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" /> Project workspace</button></div>
 
     <OrderFulfillmentPanel orderId={detail.id} orderNumber={detail.order_number} status={detail.status} currency={detail.currency} items={detail.items} disabled={saving} onFulfilled={onFulfilled} />
 
@@ -311,7 +326,10 @@ function OrderDrawer({ detail, loading, saving, onClose, onStatus, onProject, on
     <div className="overflow-x-auto rounded-2xl border"><table className="w-full min-w-[860px] text-sm"><thead className="bg-neutral-50 text-xs uppercase text-neutral-400"><tr><th className="px-4 py-3 text-left">Item</th><th className="px-3 py-3 text-right">Ordered</th><th className="px-3 py-3 text-right">Fulfilled</th><th className="px-3 py-3 text-right">Remaining</th><th className="px-3 py-3 text-right">Price</th><th className="px-4 py-3 text-right">Total</th></tr></thead><tbody className="divide-y">{detail.items.map((item) => { const stock = item.item_type_snapshot === "stock_item" && item.product_id; return <tr key={item.id}><td className="px-4 py-3"><p className="font-medium">{item.item_name_snapshot}</p><p className="mt-1 max-w-md text-xs text-neutral-400">{item.sku_snapshot ? `${item.sku_snapshot} · ` : ""}{item.description}</p><p className="mt-1 text-[11px] text-neutral-400">{item.item_type_snapshot.replaceAll("_", " ")} · {item.unit_snapshot} · Disc. {Number(item.discount_percent)}% · Tax {Number(item.tax_rate)}%</p></td><td className="px-3 py-3 text-right">{Number(item.quantity).toLocaleString()}</td><td className="px-3 py-3 text-right">{stock ? Number(item.fulfilled_quantity).toLocaleString() : "—"}</td><td className={`px-3 py-3 text-right ${stock && Number(item.remaining_quantity) > 0 ? "font-semibold text-amber-700" : ""}`}>{stock ? Number(item.remaining_quantity).toLocaleString() : "—"}</td><td className="px-3 py-3 text-right">{money(item.unit_price, detail.currency)}</td><td className="px-4 py-3 text-right font-medium">{money(item.line_total, detail.currency)}</td></tr>; })}</tbody></table></div>
     <div className="ml-auto max-w-sm rounded-2xl border bg-neutral-50 p-5"><TotalRow label="Subtotal" value={money(detail.subtotal, detail.currency)} /><TotalRow label="Discount" value={`- ${money(detail.discount_total, detail.currency)}`} /><TotalRow label="Tax" value={money(detail.tax_total, detail.currency)} /><div className="mt-4 border-t pt-4"><TotalRow label="Total" value={money(detail.total, detail.currency)} strong /></div></div>
     {detail.notes ? <TextBlock label="Client notes" value={detail.notes} /> : null}{detail.terms_conditions ? <TextBlock label="Terms & conditions" value={detail.terms_conditions} /> : null}{detail.internal_notes ? <TextBlock label="Internal notes" value={detail.internal_notes} muted /> : null}
-  </div>}</aside></div>;
+  </div>}</aside>
+
+  {cancelOpen && detail ? <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) { setCancelOpen(false); setCancelReason(""); } }}><div role="dialog" aria-modal="true" aria-labelledby="cancel-order-title" className="w-full max-w-lg rounded-2xl border bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wide text-red-500">Destructive action</p><h3 id="cancel-order-title" className="mt-1 text-xl font-semibold">Cancel {detail.order_number}?</h3><p className="mt-2 text-sm leading-6 text-neutral-500">This ends order execution. The reason is required and will be preserved in the audit trail.</p></div><button type="button" disabled={saving} onClick={() => { setCancelOpen(false); setCancelReason(""); }} className="flex size-9 shrink-0 items-center justify-center rounded-xl border disabled:opacity-40"><X className="size-4" /></button></div><label className="mt-5 block"><span className="text-sm font-semibold">Cancellation reason <span className="text-red-600">*</span></span><textarea autoFocus rows={5} maxLength={1000} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="Explain why this order is being cancelled..." className="mt-2 w-full resize-y rounded-xl border px-3 py-3 text-sm outline-none focus:border-neutral-500" /><span className="mt-1 flex justify-between gap-3 text-xs text-neutral-400"><span>{trimmedCancelReason.length > 0 && trimmedCancelReason.length < 3 ? "Enter at least 3 characters." : "This reason becomes part of the permanent order history."}</span><span>{cancelReason.length}/1000</span></span></label><div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><button type="button" disabled={saving} onClick={() => { setCancelOpen(false); setCancelReason(""); }} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Keep order</button><button type="button" disabled={saving || trimmedCancelReason.length < 3} onClick={() => void confirmCancellation()} className="h-11 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{saving ? "Cancelling..." : "Cancel order"}</button></div></div></div> : null}
+  </div>;
 }
 
 function StatusBadge({ status }: { status: string }) { const styles: Record<string, string> = { confirmed: "border-blue-200 bg-blue-50 text-blue-700", in_progress: "border-amber-200 bg-amber-50 text-amber-700", completed: "border-emerald-200 bg-emerald-50 text-emerald-700", cancelled: "bg-neutral-100 text-neutral-500" }; return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${styles[status] ?? "bg-neutral-50"}`}>{status.replace("_", " ")}</span>; }
