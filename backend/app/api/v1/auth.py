@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
@@ -13,6 +15,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User
+from app.models.user_session import UserSession
 from app.schemas.auth import (
     AuthActionAccepted,
     EmailVerificationRequest,
@@ -34,6 +37,12 @@ from app.services.account_email import (
 )
 from app.services.activity_log import record_activity
 from app.services.auth_rate_limit import enforce_auth_rate_limit
+from app.services.auth_sessions import (
+    create_user_session,
+    revoke_user_sessions,
+    session_is_active,
+    touch_user_session,
+)
 from app.services.google_identity import (
     GoogleIdentityConfigurationError,
     GoogleIdentityError,
@@ -44,11 +53,11 @@ from app.services.google_identity import (
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-def _token_pair(user: User) -> TokenPair:
+def _token_pair(user: User, session_id: str | None = None) -> TokenPair:
     version = int(user.auth_token_version or 0)
     return TokenPair(
-        access_token=create_access_token(user.id, version),
-        refresh_token=create_refresh_token(user.id, version),
+        access_token=create_access_token(user.id, version, session_id),
+        refresh_token=create_refresh_token(user.id, version, session_id),
         user=UserRead.model_validate(user),
     )
 
@@ -246,6 +255,7 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
             detail="Verify your email address before signing in. You can resend the verification email from the sign-in page.",
         )
 
+    user_session = create_user_session(db, user, request, auth_method="password")
     record_activity(
         db,
         action="auth.login.succeeded",
@@ -254,11 +264,17 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
         entity_type="user",
         entity_id=user.id,
         message="User signed in",
-        metadata={"provider": "password"},
+        metadata={
+            "provider": "password",
+            "session_id": user_session.id,
+            "device_type": user_session.device_type,
+            "browser": user_session.browser,
+            "operating_system": user_session.operating_system,
+        },
         request=request,
     )
     db.commit()
-    return _token_pair(user)
+    return _token_pair(user, user_session.id)
 
 
 @router.post("/google", response_model=TokenPair)
@@ -410,6 +426,7 @@ def google_login(payload: GoogleLoginRequest, request: Request, db: DbSession) -
         if not user.is_verified:
             user.is_verified = True
 
+    user_session = create_user_session(db, user, request, auth_method="google")
     record_activity(
         db,
         action="auth.login.succeeded",
@@ -423,12 +440,16 @@ def google_login(payload: GoogleLoginRequest, request: Request, db: DbSession) -
             "linked_now": linked_now,
             "created_now": created_now,
             "hosted_domain": identity.hosted_domain,
+            "session_id": user_session.id,
+            "device_type": user_session.device_type,
+            "browser": user_session.browser,
+            "operating_system": user_session.operating_system,
         },
         request=request,
     )
     db.commit()
     db.refresh(user)
-    return _token_pair(user)
+    return _token_pair(user, user_session.id)
 
 
 @router.post("/refresh", response_model=TokenPair)
@@ -453,7 +474,42 @@ def refresh(payload: RefreshTokenRequest, request: Request, db: DbSession) -> To
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="This session has been revoked. Sign in again.",
         )
-    return _token_pair(user)
+
+    if claims.session_id:
+        user_session = db.scalar(
+            select(UserSession).where(
+                UserSession.id == claims.session_id,
+                UserSession.user_id == user.id,
+            )
+        )
+        if user_session is None or not session_is_active(user_session, user=user):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session has been revoked or expired. Sign in again.",
+            )
+        touch_user_session(user_session, request, extend_expiry=True, force=True)
+        return _token_pair(user, user_session.id)
+
+    # Graceful migration for refresh tokens issued before per-device sessions.
+    user_session = create_user_session(db, user, request, auth_method="legacy")
+    record_activity(
+        db,
+        action="auth.session.upgraded",
+        scope="auth",
+        actor_user_id=user.id,
+        entity_type="user_session",
+        entity_id=user_session.id,
+        message="Legacy browser session upgraded to per-device session tracking",
+        metadata={
+            "session_id": user_session.id,
+            "device_type": user_session.device_type,
+            "browser": user_session.browser,
+            "operating_system": user_session.operating_system,
+        },
+        request=request,
+    )
+    db.commit()
+    return _token_pair(user, user_session.id)
 
 
 @router.post("/verification/resend", response_model=AuthActionAccepted, status_code=status.HTTP_202_ACCEPTED)
@@ -658,6 +714,7 @@ def reset_password(
     user.password_hash = hash_password(payload.new_password)
     user.is_verified = True
     user.auth_token_version = previous_version + 1
+    revoked_count = revoke_user_sessions(db, user_id=user.id, reason="password_reset")
     record_activity(
         db,
         action="auth.password_reset.completed",
@@ -669,6 +726,7 @@ def reset_password(
         message="User reset their password; existing sessions were revoked",
         metadata={
             "sessions_invalidated": True,
+            "sessions_revoked": revoked_count,
             "token_version_before": previous_version,
             "token_version_after": user.auth_token_version,
         },
@@ -684,8 +742,34 @@ def logout(
     db: DbSession,
     current_user: CurrentUser,
 ) -> Response:
+    session_id = getattr(request.state, "auth_session_id", None)
+    if session_id:
+        user_session = db.scalar(
+            select(UserSession)
+            .where(UserSession.id == session_id, UserSession.user_id == current_user.id)
+            .with_for_update()
+        )
+        if user_session is not None and user_session.revoked_at is None:
+            user_session.revoked_at = datetime.now(timezone.utc)
+            user_session.revoked_reason = "user_logout"
+        record_activity(
+            db,
+            action="auth.logout",
+            scope="auth",
+            actor_user_id=current_user.id,
+            entity_type="user_session",
+            entity_id=session_id,
+            message="User signed out of the current device",
+            metadata={"session_id": session_id, "current_device_only": True},
+            request=request,
+        )
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # Compatibility fallback for an access token issued before per-device sessions.
     previous_version = int(current_user.auth_token_version or 0)
     current_user.auth_token_version = previous_version + 1
+    revoked_count = revoke_user_sessions(db, user_id=current_user.id, reason="legacy_logout")
     record_activity(
         db,
         action="auth.logout",
@@ -693,9 +777,11 @@ def logout(
         actor_user_id=current_user.id,
         entity_type="user",
         entity_id=current_user.id,
-        message="User signed out and revoked existing sessions",
+        message="Legacy session signed out and existing sessions were revoked",
         metadata={
             "sessions_invalidated": True,
+            "sessions_revoked": revoked_count,
+            "legacy_session": True,
             "token_version_before": previous_version,
             "token_version_after": current_user.auth_token_version,
         },
