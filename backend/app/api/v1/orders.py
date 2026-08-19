@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.activity_log import ActivityLog
 from app.models.crm import Client
 from app.models.finance import Invoice
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
@@ -176,6 +177,27 @@ def _active_invoice_number(db: DbSession, organization_id: str, order_id: str) -
     )
 
 
+def _cancellation_reason(db: DbSession, organization_id: str, order_id: str) -> str | None:
+    logs = db.scalars(
+        select(ActivityLog)
+        .where(
+            ActivityLog.organization_id == organization_id,
+            ActivityLog.entity_type == "order",
+            ActivityLog.entity_id == order_id,
+            ActivityLog.action == "sales.order.status_changed",
+        )
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .limit(20)
+    ).all()
+    for log in logs:
+        after = log.after_data if isinstance(log.after_data, dict) else {}
+        if after.get("status") != "cancelled":
+            continue
+        reason = after.get("cancellation_reason")
+        return str(reason).strip() if reason else None
+    return None
+
+
 def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
     row = db.execute(_order_query(organization_id).where(Order.id == order_id)).first()
     if row is None:
@@ -223,6 +245,7 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
         started_at=order.started_at,
         completed_at=order.completed_at,
         cancelled_at=order.cancelled_at,
+        cancellation_reason=_cancellation_reason(db, organization_id, order.id) if order.status == "cancelled" else None,
         items=[
             OrderItemRead(
                 id=item.id,
@@ -410,9 +433,13 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
     allowed = {"confirmed": {"in_progress", "cancelled"}, "in_progress": {"completed", "cancelled"}, "completed": set(), "cancelled": set()}
     if payload.status not in allowed.get(order.status, set()):
         raise HTTPException(status_code=409, detail=f"Order cannot move from {order.status} to {payload.status}")
+    cancellation_reason: str | None = None
     if payload.status == "completed":
         _assert_stock_fulfilled(db, tenant.organization_id, order)
     if payload.status == "cancelled":
+        cancellation_reason = (payload.reason or "").strip()
+        if len(cancellation_reason) < 3:
+            raise HTTPException(status_code=400, detail="Cancellation reason is required and must be at least 3 characters")
         if _has_posted_fulfillment(db, tenant.organization_id, order.id):
             raise HTTPException(status_code=409, detail="This order has posted stock fulfillment and cannot be cancelled directly. Reverse the fulfillment before cancelling the order.")
         invoice_number = _active_invoice_number(db, tenant.organization_id, order.id)
@@ -429,6 +456,9 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
     elif payload.status == "cancelled":
         order.cancelled_at = now
     db.flush()
+    after = {"status": order.status}
+    if cancellation_reason:
+        after["cancellation_reason"] = cancellation_reason
     record_activity(
         db,
         action="sales.order.status_changed",
@@ -438,8 +468,13 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
         entity_type="order",
         entity_id=order.id,
         before={"status": previous},
-        after={"status": order.status},
-        message=f"Order {order.order_number} status changed from {previous} to {order.status}",
+        after=after,
+        metadata={"cancellation_reason": cancellation_reason} if cancellation_reason else None,
+        message=(
+            f"Order {order.order_number} cancelled from {previous}: {cancellation_reason[:350]}"
+            if cancellation_reason
+            else f"Order {order.order_number} status changed from {previous} to {order.status}"
+        ),
         request=request,
     )
     db.commit()
