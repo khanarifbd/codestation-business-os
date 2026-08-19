@@ -15,6 +15,7 @@ from app.models.capital import (
     ProjectInvestorFunding,
 )
 from app.models.client_access import ClientMembership
+from app.models.client_invitations import ClientInvitation
 from app.models.company_defaults import OrganizationExchangeRate, OrganizationExchangeRateHistory, OrganizationSystemDefaults
 from app.models.company_settings import (
     OrganizationAddress,
@@ -74,7 +75,7 @@ from app.models.user import User
 
 __all__ = [
     "AccountTransfer", "AccountingMoneyEntry", "AccountingPeriod", "ActivityLog", "AssetDepreciationEntry", "AttendanceRecord",
-    "BankReconciliation", "BankReconciliationItem", "Client", "ClientMembership", "CompanyInvestment", "CompanyInvestmentFunding",
+    "BankReconciliation", "BankReconciliationItem", "Client", "ClientInvitation", "ClientMembership", "CompanyInvestment", "CompanyInvestmentFunding",
     "CompanyInvestor", "CompanyInvestorFunding", "CompanyInvestorPayout", "CompanyLoan", "CustomerAdvance", "CustomerAdvanceApplication",
     "Department", "Designation", "Employee", "EmployeeHRDocument", "EmployeeInvitation", "EmployeeLifecycleEvent", "EmployeeShiftAssignment",
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "FixedAsset", "HRAnnouncement",
