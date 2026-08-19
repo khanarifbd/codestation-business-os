@@ -76,6 +76,7 @@ class OrderItem(TenantOwnedMixin, Base):
     __table_args__ = (
         Index("ix_order_items_org_order_sort", "organization_id", "order_id", "sort_order"),
         Index("ix_order_items_org_product", "organization_id", "product_id"),
+        Index("ix_order_items_org_service_end", "organization_id", "service_end_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -87,6 +88,10 @@ class OrderItem(TenantOwnedMixin, Base):
     sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
     item_type_snapshot: Mapped[str] = mapped_column(String(24), default="service", nullable=False)
     unit_snapshot: Mapped[str] = mapped_column(String(40), default="unit", nullable=False)
+    # NULL means one-time/not-applicable. Positive values preserve the service term sold on this order.
+    service_duration_months_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    service_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    service_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(16, 4), nullable=False)
