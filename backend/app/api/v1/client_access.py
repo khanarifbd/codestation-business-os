@@ -156,6 +156,41 @@ def _deactivate_membership_if_orphaned(db: DbSession, organization_id: str, memb
         membership.status = MEMBERSHIP_STATUS_LEFT
 
 
+def _ensure_membership_for_client(db: DbSession, organization, user: User) -> tuple[Membership, bool]:
+    membership = db.scalar(
+        select(Membership).where(
+            Membership.organization_id == organization.id,
+            Membership.user_id == user.id,
+        )
+    )
+    created = False
+    if membership is None:
+        roles = ensure_system_roles(db, organization)
+        membership = Membership(
+            organization_id=organization.id,
+            user_id=user.id,
+            role_id=roles["client"].id,
+            role=MEMBERSHIP_ROLE_CLIENT,
+            status=MEMBERSHIP_STATUS_ACTIVE,
+            is_owner=False,
+        )
+        db.add(membership)
+        db.flush()
+        created = True
+    elif membership.status == MEMBERSHIP_STATUS_SUSPENDED:
+        raise HTTPException(status_code=409, detail="This user is suspended in the company workspace")
+    elif membership.status == MEMBERSHIP_STATUS_LEFT:
+        # A left/orphaned membership can retain its historical staff role_id. Never
+        # reactivate that stale authorization when the person returns only as a client.
+        roles = ensure_system_roles(db, organization)
+        membership.role_id = roles["client"].id
+        membership.role = MEMBERSHIP_ROLE_CLIENT
+        membership.status = MEMBERSHIP_STATUS_ACTIVE
+        membership.is_owner = False
+        db.flush()
+    return membership, created
+
+
 @router.get("/status", response_model=ClientAccessStatusResponse)
 def get_client_access_status(
     db: DbSession,
@@ -248,30 +283,7 @@ def grant_client_access(
     if not user.is_active:
         raise HTTPException(status_code=409, detail="The user account is inactive")
 
-    membership = db.scalar(
-        select(Membership).where(
-            Membership.organization_id == tenant.organization_id,
-            Membership.user_id == user.id,
-        )
-    )
-    created_membership = False
-    if membership is None:
-        roles = ensure_system_roles(db, tenant.organization)
-        membership = Membership(
-            organization_id=tenant.organization_id,
-            user_id=user.id,
-            role_id=roles["client"].id,
-            role=MEMBERSHIP_ROLE_CLIENT,
-            status=MEMBERSHIP_STATUS_ACTIVE,
-            is_owner=False,
-        )
-        db.add(membership)
-        db.flush()
-        created_membership = True
-    elif membership.status == MEMBERSHIP_STATUS_SUSPENDED:
-        raise HTTPException(status_code=409, detail="This user is suspended in the company workspace")
-    elif membership.status == MEMBERSHIP_STATUS_LEFT:
-        membership.status = MEMBERSHIP_STATUS_ACTIVE
+    membership, created_membership = _ensure_membership_for_client(db, tenant.organization, user)
 
     existing = db.scalar(
         select(ClientMembership).where(
