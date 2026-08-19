@@ -55,6 +55,12 @@ def upgrade() -> None:
         ),
     )
     op.create_index(
+        "ix_client_external_profiles_organization_id",
+        "client_external_profiles",
+        ["organization_id"],
+        unique=False,
+    )
+    op.create_index(
         "ix_client_external_profiles_org_client",
         "client_external_profiles",
         ["organization_id", "client_id"],
@@ -71,6 +77,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_client_external_profiles_org_platform", table_name="client_external_profiles")
     op.drop_index("ix_client_external_profiles_org_client", table_name="client_external_profiles")
+    op.drop_index("ix_client_external_profiles_organization_id", table_name="client_external_profiles")
     op.drop_table("client_external_profiles")
 
     op.drop_index("ix_clients_org_acquisition_source", table_name="clients")
