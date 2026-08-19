@@ -77,6 +77,8 @@ class QuotationItem(TenantOwnedMixin, Base):
     sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
     item_type_snapshot: Mapped[str] = mapped_column(String(24), default="service", nullable=False)
     unit_snapshot: Mapped[str] = mapped_column(String(40), default="unit", nullable=False)
+    # NULL means one-time/not-applicable. Positive values preserve the service term sold on this quotation.
+    service_duration_months_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(16, 4), nullable=False)
