@@ -37,6 +37,7 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     void (async () => {
+      const allowCreateAnother = new URLSearchParams(window.location.search).get("new") === "1";
       const response = await fetch("/api/organizations", { cache: "no-store" });
       if (response.status === 401) {
         router.replace("/login");
@@ -44,7 +45,7 @@ export default function OnboardingPage() {
       }
       if (response.ok) {
         const organizations = (await response.json()) as unknown[];
-        if (organizations.length > 0) {
+        if (organizations.length > 0 && !allowCreateAnother) {
           router.replace("/dashboard");
           return;
         }
