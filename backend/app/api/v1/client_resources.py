@@ -17,7 +17,6 @@ from app.core.config import settings
 from app.models.activity_log import ActivityLog
 from app.models.client_profiles import ClientCredential, ClientDocument, ClientNote
 from app.models.crm import Client
-from app.models.team import OrganizationRole
 from app.models.user import User
 from app.schemas.project_execution import CredentialCreate, CredentialRead, CredentialReveal, CredentialUpdate, ProjectDocumentRead
 from app.services.activity_log import record_activity
@@ -65,6 +64,13 @@ def _clean(value: str | None) -> str | None:
     return value or None
 
 
+def _required(value: str, label: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail=f"{label} cannot be empty")
+    return cleaned
+
+
 def _client(db: DbSession, organization_id: str, client_id: str) -> Client:
     item = db.scalar(
         select(Client).where(
@@ -75,17 +81,6 @@ def _client(db: DbSession, organization_id: str, client_id: str) -> Client:
     if item is None:
         raise HTTPException(status_code=404, detail="Client not found")
     return item
-
-
-def _can_manage(db: DbSession, tenant: TenantContext) -> bool:
-    role = db.scalar(
-        select(OrganizationRole).where(
-            OrganizationRole.id == tenant.membership.role_id,
-            OrganizationRole.organization_id == tenant.organization_id,
-            OrganizationRole.is_active.is_(True),
-        )
-    )
-    return bool(role and ("*" in (role.permissions or []) or "clients.manage" in (role.permissions or [])))
 
 
 def _note_read(item: ClientNote) -> ClientNoteRead:
@@ -183,8 +178,8 @@ def create_client_note(client_id: str, payload: ClientNoteCreate, request: Reque
     item = ClientNote(
         organization_id=tenant.organization_id,
         client_id=client.id,
-        title=payload.title.strip(),
-        content=payload.content.strip(),
+        title=_required(payload.title, "Title"),
+        content=_required(payload.content, "Content"),
         created_by_user_id=tenant.user_id,
     )
     db.add(item); db.flush()
@@ -210,18 +205,18 @@ def update_client_note(client_id: str, note_id: str, payload: ClientNoteUpdate, 
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Client note not found")
-    before = {"title": item.title, "content": item.content}
+    before_title = item.title
     changes = payload.model_dump(exclude_unset=True)
     for field, value in changes.items():
-        value = value.strip() if isinstance(value, str) else value
-        if not value:
+        if value is None:
             raise HTTPException(status_code=400, detail=f"{field.title()} cannot be empty")
+        value = _required(value, field.title())
         setattr(item, field, value)
     db.flush()
     record_activity(
         db, action="clients.note.updated", scope="tenant", actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id, entity_type="client_note", entity_id=item.id,
-        before=before, after={"title": item.title, "content": item.content},
+        before={"title": before_title}, after={"title": item.title, "content_changed": "content" in changes},
         message=f"Client note updated for {client.client_code}: {item.title}", request=request,
     )
     db.commit(); db.refresh(item)
@@ -274,6 +269,8 @@ def upload_client_document(
     notes: Annotated[str | None, Form()] = None,
 ):
     client = _client(db, tenant.organization_id, client_id)
+    clean_title = _required(title, "Title")
+    clean_type = _required(document_type or "other", "Document type").lower()
     try:
         storage_key, size_bytes = storage.save(
             organization_id=tenant.organization_id,
@@ -292,8 +289,8 @@ def upload_client_document(
     item = ClientDocument(
         organization_id=tenant.organization_id,
         client_id=client.id,
-        title=title.strip(),
-        document_type=(document_type or "other").strip().lower(),
+        title=clean_title,
+        document_type=clean_type,
         original_filename=file.filename or "document",
         content_type=file.content_type,
         size_bytes=size_bytes,
@@ -372,27 +369,31 @@ def delete_client_document(client_id: str, document_id: str, request: Request, d
 
 
 @router.get("/{client_id}/credentials", response_model=list[CredentialRead])
-def list_client_credentials(client_id: str, db: DbSession, tenant: ClientResourceViewer):
+def list_client_credentials(client_id: str, db: DbSession, tenant: ClientResourceManager):
     client = _client(db, tenant.organization_id, client_id)
-    query = select(ClientCredential).where(
-        ClientCredential.organization_id == tenant.organization_id,
-        ClientCredential.client_id == client.id,
-    )
-    if not _can_manage(db, tenant):
-        query = query.where(ClientCredential.access_level == "team")
-    items = db.scalars(query.order_by(ClientCredential.created_at.desc())).all()
+    items = db.scalars(
+        select(ClientCredential)
+        .where(
+            ClientCredential.organization_id == tenant.organization_id,
+            ClientCredential.client_id == client.id,
+        )
+        .order_by(ClientCredential.created_at.desc())
+    ).all()
     return [_credential_read(db, item) for item in items]
 
 
 @router.post("/{client_id}/credentials", response_model=CredentialRead, status_code=status.HTTP_201_CREATED)
 def create_client_credential(client_id: str, payload: CredentialCreate, request: Request, db: DbSession, tenant: ClientResourceManager):
     client = _client(db, tenant.organization_id, client_id)
+    name = _required(payload.name, "Name")
+    credential_type = _required(payload.credential_type, "Credential type").lower()
+    environment = _required(payload.environment, "Environment").lower()
     item = ClientCredential(
         organization_id=tenant.organization_id,
         client_id=client.id,
-        name=payload.name.strip(),
-        credential_type=payload.credential_type.strip().lower(),
-        environment=payload.environment.strip().lower(),
+        name=name,
+        credential_type=credential_type,
+        environment=environment,
         username=_clean(payload.username),
         secret_ciphertext=_encrypt_secret(db, payload.secret),
         url=_clean(payload.url),
@@ -427,9 +428,11 @@ def update_client_credential(client_id: str, credential_id: str, payload: Creden
     changes = payload.model_dump(exclude_unset=True)
     secret = changes.pop("secret", None)
     for field, value in changes.items():
+        if field in {"name", "credential_type", "environment", "access_level"} and value is None:
+            raise HTTPException(status_code=400, detail=f"{field} cannot be empty")
         if isinstance(value, str):
             value = _clean(value)
-        if field in {"name", "credential_type", "environment"} and not value:
+        if field in {"name", "credential_type", "environment", "access_level"} and not value:
             raise HTTPException(status_code=400, detail=f"{field} cannot be empty")
         if field in {"credential_type", "environment"} and value:
             value = value.lower()
@@ -449,7 +452,7 @@ def update_client_credential(client_id: str, credential_id: str, payload: Creden
 
 
 @router.post("/{client_id}/credentials/{credential_id}/reveal", response_model=CredentialReveal)
-def reveal_client_credential(client_id: str, credential_id: str, request: Request, db: DbSession, tenant: ClientResourceViewer):
+def reveal_client_credential(client_id: str, credential_id: str, request: Request, db: DbSession, tenant: ClientResourceManager):
     client = _client(db, tenant.organization_id, client_id)
     item = db.scalar(
         select(ClientCredential).where(
@@ -460,8 +463,6 @@ def reveal_client_credential(client_id: str, credential_id: str, request: Reques
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Client credential not found")
-    if item.access_level == "manager_only" and not _can_manage(db, tenant):
-        raise HTTPException(status_code=403, detail="This credential is restricted to client managers")
     secret = _decrypt_secret(db, item.secret_ciphertext)
     record_activity(
         db, action="clients.credential.revealed", scope="tenant", actor_user_id=tenant.user_id,
