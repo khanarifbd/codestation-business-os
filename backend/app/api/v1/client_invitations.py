@@ -5,14 +5,8 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.api.v1.client_access import ClientAccessUser, _access_users, _can_manage, _client
-from app.core.roles import (
-    MEMBERSHIP_ROLE_CLIENT,
-    MEMBERSHIP_STATUS_ACTIVE,
-    MEMBERSHIP_STATUS_LEFT,
-    MEMBERSHIP_STATUS_SUSPENDED,
-    ORGANIZATION_STATUS_ACTIVE,
-)
+from app.api.v1.client_access import ClientAccessUser, _access_users, _can_manage, _client, _ensure_membership_for_client
+from app.core.roles import ORGANIZATION_STATUS_ACTIVE
 from app.core.security import hash_password, verify_password
 from app.models.client_access import ClientMembership
 from app.models.client_invitations import ClientInvitation
@@ -23,7 +17,7 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.services.account_email import AccountEmailDeliveryError, send_client_portal_invitation
 from app.services.activity_log import record_activity
-from app.services.team import create_invitation_token, ensure_system_roles, hash_invitation_token, invitation_expiry
+from app.services.team import create_invitation_token, hash_invitation_token, invitation_expiry
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/crm/client-access", tags=["Client Access Invitations"])
@@ -139,6 +133,9 @@ def invite_client(
 ) -> ClientInvitationRead:
     client = _client(db, tenant.organization_id, client_id)
     email = str(payload.email).strip().lower()
+    full_name = payload.full_name.strip()
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Client name is required for the invitation")
     if db.scalar(select(User.id).where(User.email == email)):
         raise HTTPException(status_code=409, detail="A Business OS account already exists for this email. Grant portal access directly instead.")
 
@@ -153,18 +150,17 @@ def invite_client(
         previous.revoked_at = utc_now()
 
     token, token_hash = create_invitation_token()
-    now = utc_now()
     item = ClientInvitation(
         organization_id=tenant.organization_id,
         client_id=client.id,
         email=email,
-        full_name=payload.full_name.strip(),
+        full_name=full_name,
         token_hash=token_hash,
         status="pending",
         is_primary_contact=payload.is_primary_contact,
         invited_by_user_id=tenant.user_id,
         expires_at=invitation_expiry(),
-        last_sent_at=now,
+        last_sent_at=utc_now(),
     )
     db.add(item)
     db.flush()
@@ -326,30 +322,7 @@ def accept_client_invitation(payload: ClientInvitationAccept, request: Request, 
                 raise HTTPException(status_code=401, detail="Incorrect password for the existing Business OS account")
         user.is_verified = True
 
-    membership = db.scalar(
-        select(Membership).where(
-            Membership.organization_id == organization.id,
-            Membership.user_id == user.id,
-        )
-    )
-    created_membership = False
-    if membership is None:
-        roles = ensure_system_roles(db, organization)
-        membership = Membership(
-            organization_id=organization.id,
-            user_id=user.id,
-            role_id=roles["client"].id,
-            role=MEMBERSHIP_ROLE_CLIENT,
-            status=MEMBERSHIP_STATUS_ACTIVE,
-            is_owner=False,
-        )
-        db.add(membership)
-        db.flush()
-        created_membership = True
-    elif membership.status == MEMBERSHIP_STATUS_SUSPENDED:
-        raise HTTPException(status_code=409, detail="Your membership in this company is suspended")
-    elif membership.status == MEMBERSHIP_STATUS_LEFT:
-        membership.status = MEMBERSHIP_STATUS_ACTIVE
+    membership, created_membership = _ensure_membership_for_client(db, organization, user)
 
     access = db.scalar(
         select(ClientMembership).where(
