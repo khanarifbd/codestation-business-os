@@ -295,10 +295,16 @@ def update_client_external_profile(
         "label": profile.label,
     }
     changes = payload.model_dump(exclude_unset=True)
-    if "platform" in changes and changes["platform"] is not None:
-        profile.platform = _normalize_platform(changes.pop("platform"))
-    if "profile_url" in changes and changes["profile_url"] is not None:
-        profile.profile_url = _normalize_url(changes.pop("profile_url"))
+    if "platform" in changes:
+        platform = changes.pop("platform")
+        if platform is None:
+            raise HTTPException(status_code=400, detail="Platform cannot be cleared")
+        profile.platform = _normalize_platform(platform)
+    if "profile_url" in changes:
+        profile_url = changes.pop("profile_url")
+        if profile_url is None:
+            raise HTTPException(status_code=400, detail="Profile URL cannot be cleared")
+        profile.profile_url = _normalize_url(profile_url)
     for field, value in changes.items():
         setattr(profile, field, _clean(value) if isinstance(value, str) or value is None else value)
     try:
