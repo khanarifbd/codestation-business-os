@@ -20,6 +20,7 @@ import {
 
 import { GoogleReauthButton } from "@/components/auth/google-reauth-button";
 import { PasswordField } from "@/components/auth/password-field";
+import { ProfileSessionsSection } from "@/components/profile-sessions-section";
 import { SearchableSelect } from "@/components/searchable-select";
 import { TIMEZONE_OPTIONS } from "@/lib/company-options";
 
@@ -332,6 +333,8 @@ export default function ProfilePage() {
             </section>
           </div>
         </div>
+
+        <ProfileSessionsSection />
 
         <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
           <div className="flex items-start gap-3 border-b pb-5"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><LockKeyhole className="size-5" /></div><div><h2 className="font-semibold">Password & sign-in</h2><p className="mt-1 text-sm text-neutral-500">Manage the password attached to your global Business OS identity.</p></div></div>
