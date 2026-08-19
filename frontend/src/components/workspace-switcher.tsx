@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Building2, Check, ChevronDown, Loader2 } from "lucide-react";
+import { Building2, Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 export type WorkspaceContext = {
@@ -64,9 +64,6 @@ export function WorkspaceSwitcher({
     setLoading(true);
     setError(null);
     try {
-      // Load memberships first. The organizations BFF validates/heals the
-      // organization_id cookie, so the tenant-context request that follows
-      // always uses a workspace the signed-in user can actually access.
       const organizationsResponse = await fetch("/api/organizations", { cache: "no-store" });
       if (organizationsResponse.status === 401) {
         router.replace("/login");
@@ -178,6 +175,7 @@ export function WorkspaceSwitcher({
         })}
         {!workspaces.length ? <p className="px-3 py-6 text-center text-sm text-neutral-400">No active workspaces</p> : null}
       </div>
+      <div className="border-t p-2"><button type="button" onClick={() => { setOpen(false); router.push("/onboarding?new=1"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold hover:bg-neutral-50"><span className="flex size-9 items-center justify-center rounded-lg border bg-white"><Plus className="size-4" /></span><span><span className="block">Create company workspace</span><span className="mt-0.5 block text-xs font-normal text-neutral-400">Own and operate another company with this account</span></span></button></div>
       {error ? <div className="border-t bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div> : null}
     </div> : null}
   </div>;
