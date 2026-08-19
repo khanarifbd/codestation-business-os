@@ -45,7 +45,7 @@ type Invoice = { id: string; invoice_number: string; order_id: string | null; pr
 type Payment = { id: string; payment_number: string; invoice_id: string; invoice_number: string; payment_date: string; invoice_currency: string; invoice_amount: string | number; account_currency: string; account_amount: string | number; method: string; reference: string | null; created_at: string };
 type Timeline = { kind: string; title: string; subtitle: string | null; occurred_at: string; href: string | null };
 type Workspace = { client: ClientDetail; access: Access; counts: Counts; business_value: CurrencyAmount[]; invoice_summary: InvoiceCurrencySummary[]; quotations: Quotation[]; orders: Order[]; projects: Project[]; invoices: Invoice[]; payments: Payment[]; timeline: Timeline[] };
-type Tab = "overview" | "sales" | "projects" | "finance" | "activity" | "access";
+type Tab = "overview" | "sales" | "projects" | "finance" | "activity" | "access" | "services";
 
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -93,6 +93,7 @@ export default function ClientWorkspacePage() {
       ...(workspace.access.finance ? [{ value: "finance" as Tab, label: "Invoices & Payments" }] : []),
       { value: "activity" as Tab, label: "Activity" },
       { value: "access" as Tab, label: "Access & Profiles" },
+      { value: "services" as Tab, label: "Services" },
     ];
   }, [workspace]);
 
@@ -143,6 +144,7 @@ export default function ClientWorkspacePage() {
     {tab === "finance" ? <FinanceTab invoices={workspace.invoices} payments={workspace.payments} /> : null}
     {tab === "activity" ? <ActivityTab events={workspace.timeline} /> : null}
     {tab === "access" ? <AccessProfilesTab clientId={clientId} /> : null}
+    {tab === "services" ? <ServicesTab clientId={clientId} /> : null}
   </div></main>;
 }
 
@@ -179,10 +181,13 @@ function ActivityTab({ events }: { events: Timeline[] }) {
 
 function AccessProfilesTab({ clientId }: { clientId: string }) {
   return <div className="mt-5 space-y-5">
-    <ClientServicesSection clientId={clientId} />
     <ClientExternalProfilesSection clientId={clientId} />
     <ClientAccessSection clientId={clientId} />
   </div>;
+}
+
+function ServicesTab({ clientId }: { clientId: string }) {
+  return <div className="mt-5"><ClientServicesSection clientId={clientId} /></div>;
 }
 
 function CountCard({ label, value, secondary, icon: Icon, restricted = false }: { label: string; value: number | null; secondary?: string; icon: typeof FileText; restricted?: boolean }) { return <article className="rounded-2xl border bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-400" /></div>{restricted ? <p className="mt-4 text-sm font-medium text-neutral-400">Restricted</p> : <><p className="mt-3 text-2xl font-semibold">{value ?? 0}</p>{secondary ? <p className="mt-1 text-xs text-neutral-400">{secondary}</p> : null}</>}</article>; }
