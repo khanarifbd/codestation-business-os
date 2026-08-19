@@ -51,6 +51,7 @@ class Client(TenantOwnedMixin, Base):
         Index("ix_clients_org_status_created", "organization_id", "status", "created_at"),
         Index("ix_clients_org_name", "organization_id", "display_name"),
         Index("ix_clients_org_email", "organization_id", "email"),
+        Index("ix_clients_org_acquisition_source", "organization_id", "acquisition_source_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -72,6 +73,9 @@ class Client(TenantOwnedMixin, Base):
     address_line2: Mapped[str | None] = mapped_column(String(250), nullable=True)
     tax_identifier: Mapped[str | None] = mapped_column(String(180), nullable=True)
     currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    acquisition_source_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("lead_sources.id", ondelete="SET NULL"), nullable=True
+    )
     assigned_employee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
