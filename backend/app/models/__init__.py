@@ -88,3 +88,6 @@ __all__ = [
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
     "Subscription", "TaxCode", "User", "Vendor", "Warehouse",
 ]
+
+# Register service-duration snapshot listeners after all mapped classes above are loaded.
+from app.services import service_duration_snapshots as _service_duration_snapshots  # noqa: E402,F401
