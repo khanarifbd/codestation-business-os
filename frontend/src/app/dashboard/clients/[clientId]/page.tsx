@@ -20,6 +20,8 @@ import {
   UserRound,
 } from "lucide-react";
 
+import { ClientAccessSection } from "@/components/client-access-section";
+import { ClientExternalProfilesSection } from "@/components/client-external-profiles-section";
 import { COUNTRY_OPTIONS } from "@/lib/company-options";
 
 type ClientDetail = {
@@ -42,7 +44,7 @@ type Invoice = { id: string; invoice_number: string; order_id: string | null; pr
 type Payment = { id: string; payment_number: string; invoice_id: string; invoice_number: string; payment_date: string; invoice_currency: string; invoice_amount: string | number; account_currency: string; account_amount: string | number; method: string; reference: string | null; created_at: string };
 type Timeline = { kind: string; title: string; subtitle: string | null; occurred_at: string; href: string | null };
 type Workspace = { client: ClientDetail; access: Access; counts: Counts; business_value: CurrencyAmount[]; invoice_summary: InvoiceCurrencySummary[]; quotations: Quotation[]; orders: Order[]; projects: Project[]; invoices: Invoice[]; payments: Payment[]; timeline: Timeline[] };
-type Tab = "overview" | "sales" | "projects" | "finance" | "activity";
+type Tab = "overview" | "sales" | "projects" | "finance" | "activity" | "access";
 
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -89,6 +91,7 @@ export default function ClientWorkspacePage() {
       ...(workspace.access.projects ? [{ value: "projects" as Tab, label: "Projects" }] : []),
       ...(workspace.access.finance ? [{ value: "finance" as Tab, label: "Invoices & Payments" }] : []),
       { value: "activity" as Tab, label: "Activity" },
+      { value: "access" as Tab, label: "Access & Profiles" },
     ];
   }, [workspace]);
 
@@ -138,6 +141,7 @@ export default function ClientWorkspacePage() {
     {tab === "projects" ? <ProjectsTab projects={workspace.projects} /> : null}
     {tab === "finance" ? <FinanceTab invoices={workspace.invoices} payments={workspace.payments} /> : null}
     {tab === "activity" ? <ActivityTab events={workspace.timeline} /> : null}
+    {tab === "access" ? <AccessProfilesTab clientId={clientId} /> : null}
   </div></main>;
 }
 
@@ -170,6 +174,13 @@ function FinanceTab({ invoices, payments }: { invoices: Invoice[]; payments: Pay
 
 function ActivityTab({ events }: { events: Timeline[] }) {
   return <Section className="mt-5" title="Relationship timeline"><div className="space-y-1">{events.map((item, index) => <TimelineRow key={`${item.kind}-${item.occurred_at}-${index}`} item={item} />)}{events.length === 0 ? <Empty text="No activity yet." /> : null}</div></Section>;
+}
+
+function AccessProfilesTab({ clientId }: { clientId: string }) {
+  return <div className="mt-5 space-y-5">
+    <ClientExternalProfilesSection clientId={clientId} />
+    <ClientAccessSection clientId={clientId} />
+  </div>;
 }
 
 function CountCard({ label, value, secondary, icon: Icon, restricted = false }: { label: string; value: number | null; secondary?: string; icon: typeof FileText; restricted?: boolean }) { return <article className="rounded-2xl border bg-white p-4 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-400" /></div>{restricted ? <p className="mt-4 text-sm font-medium text-neutral-400">Restricted</p> : <><p className="mt-3 text-2xl font-semibold">{value ?? 0}</p>{secondary ? <p className="mt-1 text-xs text-neutral-400">{secondary}</p> : null}</>}</article>; }
