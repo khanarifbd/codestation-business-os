@@ -16,6 +16,8 @@ DEFAULT_EXPENSE_CATEGORIES: tuple[tuple[str, str, str, int], ...] = (
     ("equipment-hardware", "Equipment & Hardware", "operating", 80),
     ("professional-services", "Professional Services", "operating", 90),
     ("taxes-government-fees", "Taxes & Government Fees", "tax", 100),
+    ("marketplace-platform-fees", "Sales & Marketplace Fees", "financial", 105),
+    ("payment-processing-fees", "Payment Processing Fees", "financial", 108),
     ("bank-financial-charges", "Bank & Financial Charges", "financial", 110),
     ("other", "Other", "other", 999),
 )
