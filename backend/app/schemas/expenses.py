@@ -82,6 +82,9 @@ class ExpenseCreate(BaseModel):
     vendor_id: str | None = None
     client_id: str | None = None
     project_id: str | None = None
+    order_id: str | None = None
+    invoice_id: str | None = None
+    payment_id: str | None = None
     expense_date: date | None = None
     expense_currency: str = Field(min_length=3, max_length=3)
     expense_amount: Decimal = Field(gt=0, le=Decimal("1000000000000"))
@@ -134,6 +137,12 @@ class ExpenseListItem(BaseModel):
     project_id: str | None
     project_number: str | None
     project_name: str | None
+    order_id: str | None
+    order_number: str | None
+    invoice_id: str | None
+    invoice_number: str | None
+    payment_id: str | None
+    payment_number: str | None
     expense_currency: str
     expense_amount: Decimal
     account_currency: str
@@ -180,9 +189,45 @@ class ExpenseMetaProject(BaseModel):
     id: str
     number: str
     name: str
+    order_id: str
     client_id: str
     client_name: str
     currency: str
+    status: str
+
+
+class ExpenseMetaOrder(BaseModel):
+    id: str
+    number: str
+    client_id: str
+    client_name: str
+    currency: str
+    total: Decimal
+    status: str
+
+
+class ExpenseMetaInvoice(BaseModel):
+    id: str
+    number: str
+    client_id: str
+    client_name: str
+    order_id: str | None
+    project_id: str | None
+    currency: str
+    total: Decimal
+    status: str
+
+
+class ExpenseMetaPayment(BaseModel):
+    id: str
+    number: str
+    invoice_id: str
+    invoice_number: str
+    client_id: str
+    client_name: str
+    invoice_currency: str
+    invoice_amount: Decimal
+    payment_date: date
     status: str
 
 
@@ -192,6 +237,9 @@ class ExpenseMeta(BaseModel):
     accounts: list[ExpenseMetaAccount]
     clients: list[ExpenseMetaClient]
     projects: list[ExpenseMetaProject]
+    orders: list[ExpenseMetaOrder]
+    invoices: list[ExpenseMetaInvoice]
+    payments: list[ExpenseMetaPayment]
 
 
 class ExpenseCurrencySummary(BaseModel):
