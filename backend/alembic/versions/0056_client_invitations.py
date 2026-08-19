@@ -35,6 +35,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["invited_by_user_id"], ["users.id"], ondelete="RESTRICT"),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index("ix_client_invitations_organization_id", "client_invitations", ["organization_id"], unique=False)
     op.create_index("ix_client_invitations_token_hash", "client_invitations", ["token_hash"], unique=True)
     op.create_index(
         "ix_client_invitations_org_client_status",
@@ -62,4 +63,5 @@ def downgrade() -> None:
     op.drop_index("ix_client_invitations_org_email_status", table_name="client_invitations")
     op.drop_index("ix_client_invitations_org_client_status", table_name="client_invitations")
     op.drop_index("ix_client_invitations_token_hash", table_name="client_invitations")
+    op.drop_index("ix_client_invitations_organization_id", table_name="client_invitations")
     op.drop_table("client_invitations")
