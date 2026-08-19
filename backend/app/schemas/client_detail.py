@@ -23,8 +23,8 @@ class ClientDetailRead(BaseModel):
     address_line2: str | None
     tax_identifier: str | None
     currency: str | None
-    acquisition_source_id: str | None
-    acquisition_source_name: str | None
+    acquisition_source_id: str | None = None
+    acquisition_source_name: str | None = None
     assigned_employee_id: str | None
     assigned_employee_name: str | None
     status: str
