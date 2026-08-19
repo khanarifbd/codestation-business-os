@@ -563,6 +563,7 @@ def convert_lead(
         address_line2=address_line2,
         tax_identifier=tax_identifier,
         currency=str(currency_value).upper() if currency_value else None,
+        acquisition_source_id=lead.source_id,
         assigned_employee_id=assigned_employee_id,
         status="active",
         notes=notes,
@@ -600,6 +601,7 @@ def convert_lead(
             "converted_client_id": client.id,
             "client_code": client.client_code,
             "client_name": client.display_name,
+            "acquisition_source_id": client.acquisition_source_id,
             "assigned_employee_id": client.assigned_employee_id,
         },
         message=f"Lead {lead.lead_code} converted to client {client.client_code}",
@@ -655,6 +657,7 @@ def create_client(
     tenant: ClientManager,
 ) -> ClientListItem:
     _tenant_employee(db, tenant.organization_id, payload.assigned_employee_id)
+    source = _tenant_source(db, tenant.organization_id, payload.acquisition_source_id)
     defaults = _defaults(db, tenant.organization_id)
     client = Client(
         organization_id=tenant.organization_id,
@@ -676,6 +679,7 @@ def create_client(
         address_line2=_clean(payload.address_line2),
         tax_identifier=_clean(payload.tax_identifier),
         currency=(payload.currency.upper() if payload.currency else (defaults.default_client_currency if defaults else tenant.organization.currency)),
+        acquisition_source_id=source.id if source else None,
         assigned_employee_id=payload.assigned_employee_id,
         status="active",
         notes=_clean(payload.notes),
@@ -690,7 +694,14 @@ def create_client(
         organization_id=tenant.organization_id,
         entity_type="client",
         entity_id=client.id,
-        after={"id": client.id, "client_code": client.client_code, "display_name": client.display_name, "assigned_employee_id": client.assigned_employee_id, "status": client.status},
+        after={
+            "id": client.id,
+            "client_code": client.client_code,
+            "display_name": client.display_name,
+            "acquisition_source_id": client.acquisition_source_id,
+            "assigned_employee_id": client.assigned_employee_id,
+            "status": client.status,
+        },
         message=f"Client created: {client.client_code}",
         request=request,
     )
@@ -710,8 +721,16 @@ def update_client(
     client = db.scalar(select(Client).where(Client.id == client_id, Client.organization_id == tenant.organization_id))
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
-    before = {"display_name": client.display_name, "email": client.email, "assigned_employee_id": client.assigned_employee_id, "status": client.status}
+    before = {
+        "display_name": client.display_name,
+        "email": client.email,
+        "acquisition_source_id": client.acquisition_source_id,
+        "assigned_employee_id": client.assigned_employee_id,
+        "status": client.status,
+    }
     changes = payload.model_dump(exclude_unset=True)
+    if "acquisition_source_id" in changes:
+        _tenant_source(db, tenant.organization_id, changes["acquisition_source_id"])
     if "assigned_employee_id" in changes:
         _tenant_employee(db, tenant.organization_id, changes["assigned_employee_id"])
     for field, value in changes.items():
@@ -723,7 +742,13 @@ def update_client(
             value = str(value).lower()
         setattr(client, field, value)
     db.flush()
-    after = {"display_name": client.display_name, "email": client.email, "assigned_employee_id": client.assigned_employee_id, "status": client.status}
+    after = {
+        "display_name": client.display_name,
+        "email": client.email,
+        "acquisition_source_id": client.acquisition_source_id,
+        "assigned_employee_id": client.assigned_employee_id,
+        "status": client.status,
+    }
     record_activity(
         db,
         action="crm.client.updated",
@@ -945,10 +970,19 @@ def delete_lead_source(
             Lead.source_id == item.id,
         )
     ) or 0
-    if lead_count:
+    client_count = db.scalar(
+        select(func.count()).select_from(Client).where(
+            Client.organization_id == tenant.organization_id,
+            Client.acquisition_source_id == item.id,
+        )
+    ) or 0
+    if lead_count or client_count:
         raise HTTPException(
             status_code=409,
-            detail=f"This lead source is used by {lead_count} lead(s). Disable it instead to preserve lead history.",
+            detail=(
+                f"This source is used by {lead_count} lead(s) and {client_count} client(s). "
+                "Disable it instead to preserve acquisition history."
+            ),
         )
 
     before = LeadSourceRead.model_validate(item).model_dump(mode="json")
