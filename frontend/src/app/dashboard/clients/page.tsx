@@ -21,7 +21,7 @@ type ClientDetail = Client & {
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
 type Meta = { employees: EmployeeOption[]; default_country_code: string | null; default_currency: string | null };
 type Summary = { total: number; active: number; inactive: number };
-type PortalAccessStatus = { client_id: string; enabled: boolean; active_access_count: number; has_email: boolean };
+type PortalAccessStatus = { client_id: string; enabled: boolean; active_access_count: number; pending_invitation_count: number; has_email: boolean };
 type PortalAccessStatusResponse = { can_manage: boolean; items: PortalAccessStatus[] };
 
 const inputClass = "mt-2 h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm outline-none transition focus:border-neutral-500";
@@ -245,13 +245,22 @@ function ClientDrawer({ detail, loading, meta, saving, onClose, onSave, onStatus
   return <div className="fixed inset-0 z-50 bg-black/30" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="ml-auto h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl"><div className="sticky top-0 z-10 flex items-center justify-between border-b bg-white px-6 py-5"><div><p className="text-xs uppercase tracking-wide text-neutral-400">Client master</p><h2 className="mt-1 text-xl font-semibold">{detail?.display_name ?? "Loading..."}</h2></div><button onClick={onClose} className="flex size-10 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{loading || !detail || !meta ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin" /></div> : <div className="space-y-6 p-6"><div className="flex flex-col gap-4 rounded-2xl border p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs uppercase tracking-wide text-neutral-400">{detail.client_code}</p><div className="mt-2"><Status status={detail.status} /></div>{detail.source_lead_code ? <p className="mt-2 text-xs text-neutral-500">Originated from CRM · {detail.source_lead_code} · {detail.source_lead_status}</p> : <p className="mt-2 text-xs text-neutral-400">Direct client record</p>}</div><div className="flex flex-wrap gap-2"><button disabled={detail.status !== "active"} onClick={onQuotation} className="flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-30"><FileText className="size-4" /> Create Quotation</button><button disabled={saving} onClick={onStatus} className="h-10 rounded-xl border px-4 text-sm font-semibold">{detail.status === "active" ? "Deactivate" : "Activate"}</button></div></div><ClientForm meta={meta} detail={detail} saving={saving} onSubmit={onSave} /></div>}</aside></div>;
 }
 
-function PortalAccessToggle({ status, canManage, working, onToggle }: { status?: PortalAccessStatus; canManage: boolean; working: boolean; onToggle: () => void }) {
+function PortalAccessToggle(props: { status?: PortalAccessStatus; canManage: boolean; working: boolean; onToggle: () => void }) {
+  const { status } = props;
   if (!status) return <span className="text-xs text-neutral-400">Loading...</span>;
-  const unavailable = !status.enabled && !status.has_email;
-  const disabled = working || !canManage || unavailable;
-  const label = status.enabled ? "Enabled" : unavailable ? "No email" : "Disabled";
-  const title = !canManage ? "Your role can view clients but cannot manage portal access." : unavailable ? "Add an email or billing email before enabling portal access." : status.enabled ? "Disable client portal access" : "Enable client portal access";
-  return <div className="inline-flex items-center gap-2.5"><button type="button" role="switch" aria-checked={status.enabled} aria-label={`${label} client portal access`} title={title} disabled={disabled} onClick={onToggle} className={`relative h-6 w-11 shrink-0 rounded-full transition ${status.enabled ? "bg-emerald-500" : "bg-neutral-200"} disabled:cursor-not-allowed disabled:opacity-60`}><span className={`absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition ${status.enabled ? "left-[22px]" : "left-0.5"}`} /></button><span className={`text-xs font-medium ${status.enabled ? "text-emerald-700" : "text-neutral-500"}`}>{working ? "Updating..." : label}</span></div>;
+  const pending = !status.enabled && status.pending_invitation_count > 0;
+  const label = status.enabled ? "Enabled" : pending ? "Invitation pending" : !status.has_email ? "No email" : "Disabled";
+  const className = status.enabled
+    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+    : pending
+      ? "border-amber-200 bg-amber-50 text-amber-700"
+      : "border-neutral-200 bg-neutral-50 text-neutral-500";
+  const detail = status.enabled
+    ? `${status.active_access_count} active portal user${status.active_access_count === 1 ? "" : "s"}`
+    : pending
+      ? `${status.pending_invitation_count} pending invitation${status.pending_invitation_count === 1 ? "" : "s"}`
+      : "Manage from client profile";
+  return <div title={`${detail}. Open View → Client Access to manage.`}><span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${className}`}>{label}</span><p className="mt-1 text-[11px] text-neutral-400">{detail}</p></div>;
 }
 
 function Stat({ label, value, icon: Icon }: { label: string; value: number | string; icon: typeof Building2 }) { return <article className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-4 text-2xl font-semibold">{value}</p></article>; }
