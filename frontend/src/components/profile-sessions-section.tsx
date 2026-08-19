@@ -70,6 +70,42 @@ function endedReason(session: UserSession) {
   return "Ended";
 }
 
+function SessionRow({
+  session,
+  workingId,
+  onSignOut,
+}: {
+  session: UserSession;
+  workingId: string | null;
+  onSignOut: (session: UserSession) => void;
+}) {
+  const Icon = sessionIcon(session.device_type);
+  const active = session.status === "active";
+  return <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex min-w-0 items-start gap-3">
+      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><Icon className="size-5 text-neutral-600" /></div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-semibold text-neutral-900">{session.browser} on {session.operating_system}</p>
+          {session.is_current ? <span className="rounded-full bg-neutral-950 px-2 py-0.5 text-[11px] font-semibold text-white">Current device</span> : null}
+          {!session.is_current && active ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Active</span> : null}
+          {!active ? <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-500">{endedReason(session)}</span> : null}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
+          <span>{session.device_type}</span>
+          <span>{authMethodLabel(session.auth_method)}</span>
+          {session.ip_address ? <span>IP {session.ip_address}</span> : null}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-400">
+          <span>Signed in {formatDate(session.created_at)}</span>
+          <span className="inline-flex items-center gap-1"><Clock3 className="size-3" />Last active {relativeTime(session.last_seen_at)}</span>
+        </div>
+      </div>
+    </div>
+    {active && !session.is_current ? <button type="button" disabled={workingId === session.id} onClick={() => onSignOut(session)} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-50">{workingId === session.id ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}Sign out</button> : null}
+  </div>;
+}
+
 export function ProfileSessionsSection() {
   const [data, setData] = useState<SessionList | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,10 +131,28 @@ export function ProfileSessionsSection() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const otherActiveCount = useMemo(
-    () => data?.items.filter((item) => item.status === "active" && !item.is_current).length ?? 0,
+  const activeSessions = useMemo(
+    () => data?.items.filter((item) => item.status === "active") ?? [],
     [data],
   );
+  const historySessions = useMemo(
+    () => data?.items.filter((item) => item.status !== "active") ?? [],
+    [data],
+  );
+  const otherActiveCount = useMemo(
+    () => activeSessions.filter((item) => !item.is_current).length,
+    [activeSessions],
+  );
+  const duplicateLegacyUpgradeDetected = useMemo(() => {
+    const legacy = activeSessions.filter((item) => item.auth_method === "legacy" && !item.is_current);
+    if (legacy.length < 2) return false;
+    const signatures = new Map<string, number>();
+    for (const item of legacy) {
+      const key = `${item.browser}|${item.operating_system}|${item.ip_address ?? ""}`;
+      signatures.set(key, (signatures.get(key) ?? 0) + 1);
+    }
+    return [...signatures.values()].some((count) => count > 1);
+  }, [activeSessions]);
 
   async function signOutSession(session: UserSession) {
     if (!window.confirm(`Sign out ${session.browser} on ${session.operating_system}?`)) return;
@@ -144,7 +198,7 @@ export function ProfileSessionsSection() {
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><ShieldCheck className="size-5" /></div>
           <div>
             <h2 className="font-semibold">Devices & sessions</h2>
-            <p className="mt-1 max-w-2xl text-sm text-neutral-500">Review recent sign-ins and remotely sign out devices you no longer trust. Session history is shown for the last 90 days.</p>
+            <p className="mt-1 max-w-2xl text-sm text-neutral-500">Review active devices separately from recent sign-in history and remotely revoke access you no longer trust.</p>
           </div>
         </div>
         <button type="button" disabled={workingAll || loading || !otherActiveCount || Boolean(data?.legacy_current_session)} onClick={() => void signOutOtherDevices()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45">
@@ -153,40 +207,31 @@ export function ProfileSessionsSection() {
       </div>
 
       {data?.legacy_current_session ? <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">This browser was signed in before device-session tracking was enabled. It will be upgraded automatically on the next token refresh or sign-in; existing access is not interrupted.</div> : null}
+      {duplicateLegacyUpgradeDetected ? <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"><p className="font-semibold">Duplicate legacy session records detected</p><p className="mt-1">These can be created by parallel requests during the initial session-tracking rollout and do not mean multiple physical devices signed in. Use <strong>Sign out all other devices</strong> once to keep only this current session active.</p></div> : null}
       {error ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
       {message ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
-      <div className="mt-5 divide-y rounded-2xl border">
-        {loading ? <div className="flex items-center justify-center gap-2 p-8 text-sm text-neutral-500"><Loader2 className="size-4 animate-spin" />Loading device sessions...</div> : null}
-        {!loading && !data?.items.length ? <div className="p-8 text-center text-sm text-neutral-500">No tracked device sessions yet.</div> : null}
-        {data?.items.map((session) => {
-          const Icon = sessionIcon(session.device_type);
-          const active = session.status === "active";
-          return <div key={session.id} className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><Icon className="size-5 text-neutral-600" /></div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-semibold text-neutral-900">{session.browser} on {session.operating_system}</p>
-                  {session.is_current ? <span className="rounded-full bg-neutral-950 px-2 py-0.5 text-[11px] font-semibold text-white">Current device</span> : null}
-                  {!session.is_current && active ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Active</span> : null}
-                  {!active ? <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-500">{endedReason(session)}</span> : null}
-                </div>
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-neutral-500">
-                  <span>{session.device_type}</span>
-                  <span>{authMethodLabel(session.auth_method)}</span>
-                  {session.ip_address ? <span>IP {session.ip_address}</span> : null}
-                </div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-400">
-                  <span>Signed in {formatDate(session.created_at)}</span>
-                  <span className="inline-flex items-center gap-1"><Clock3 className="size-3" />Last active {relativeTime(session.last_seen_at)}</span>
-                </div>
-              </div>
-            </div>
-            {active && !session.is_current ? <button type="button" disabled={workingId === session.id} onClick={() => void signOutSession(session)} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border px-3 text-sm font-semibold transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:opacity-50">{workingId === session.id ? <Loader2 className="size-4 animate-spin" /> : <LogOut className="size-4" />}Sign out</button> : null}
-          </div>;
-        })}
+      <div className="mt-5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-neutral-900">Active devices</h3>
+          {!loading ? <span className="text-xs text-neutral-400">{activeSessions.length} active</span> : null}
+        </div>
+        <div className="mt-3 divide-y rounded-2xl border">
+          {loading ? <div className="flex items-center justify-center gap-2 p-8 text-sm text-neutral-500"><Loader2 className="size-4 animate-spin" />Loading device sessions...</div> : null}
+          {!loading && !activeSessions.length ? <div className="p-8 text-center text-sm text-neutral-500">No active tracked sessions.</div> : null}
+          {activeSessions.map((session) => <SessionRow key={session.id} session={session} workingId={workingId} onSignOut={(item) => void signOutSession(item)} />)}
+        </div>
       </div>
+
+      {!loading && historySessions.length ? <div className="mt-7 border-t pt-6">
+        <div className="flex items-center justify-between gap-3">
+          <div><h3 className="text-sm font-semibold text-neutral-900">Recent sign-in history</h3><p className="mt-1 text-xs text-neutral-400">Ended and expired sessions from the last 90 days.</p></div>
+          <span className="text-xs text-neutral-400">{historySessions.length} recent</span>
+        </div>
+        <div className="mt-3 divide-y rounded-2xl border bg-neutral-50/40">
+          {historySessions.map((session) => <SessionRow key={session.id} session={session} workingId={workingId} onSignOut={(item) => void signOutSession(item)} />)}
+        </div>
+      </div> : null}
     </section>
   );
 }
