@@ -9,7 +9,10 @@ from sqlalchemy import case, func, select
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
+from app.models.crm import Client
 from app.models.finance import FinancialAccount, FinancialTransaction
+from app.models.orders import Order
+from app.models.projects import Project
 from app.schemas.accounting_money import AccountingMoneyEntryCreate, AccountingMoneyEntryRead
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal
 from app.services.activity_log import record_activity
@@ -42,6 +45,22 @@ def _financial_balance(db: DbSession, account: FinancialAccount) -> Decimal:
     return _money(Decimal(account.opening_balance) + Decimal(net))
 
 
+def _source_label(db: DbSession, organization_id: str, item: AccountingMoneyEntry) -> str | None:
+    if item.project_id:
+        project = db.scalar(select(Project).where(Project.id == item.project_id, Project.organization_id == organization_id))
+        if project:
+            return f"{project.project_number} · {project.name}"
+    if item.order_id:
+        order = db.scalar(select(Order).where(Order.id == item.order_id, Order.organization_id == organization_id))
+        if order:
+            return f"{order.order_number} · {order.client_name_snapshot}"
+    if item.client_id:
+        client = db.scalar(select(Client).where(Client.id == item.client_id, Client.organization_id == organization_id))
+        if client:
+            return f"{client.client_code} · {client.display_name}"
+    return None
+
+
 def _read(db: DbSession, organization_id: str, item: AccountingMoneyEntry) -> AccountingMoneyEntryRead:
     row = db.execute(
         select(FinancialAccount.name, LedgerAccount.name)
@@ -61,6 +80,12 @@ def _read(db: DbSession, organization_id: str, item: AccountingMoneyEntry) -> Ac
         financial_account_name=row[0] if row else "—",
         category_ledger_account_id=item.category_ledger_account_id,
         category_ledger_account_name=row[1] if row else "—",
+        source_type=item.source_type,
+        source_id=item.source_id,
+        client_id=item.client_id,
+        order_id=item.order_id,
+        project_id=item.project_id,
+        source_label=_source_label(db, organization_id, item),
         currency=item.currency,
         amount=item.amount,
         description=item.description,
@@ -68,6 +93,38 @@ def _read(db: DbSession, organization_id: str, item: AccountingMoneyEntry) -> Ac
         notes=item.notes,
         created_at=item.created_at,
     )
+
+
+def _resolve_source(
+    db: DbSession,
+    organization_id: str,
+    source_type: str | None,
+    source_id: str | None,
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    if source_type in {None, "other"}:
+        return source_type, None, None, None, None
+    if not source_id:
+        raise HTTPException(status_code=400, detail="Business source is required")
+
+    if source_type == "client":
+        client = db.scalar(select(Client).where(Client.id == source_id, Client.organization_id == organization_id))
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found in this organization")
+        return source_type, client.id, client.id, None, None
+
+    if source_type == "order":
+        order = db.scalar(select(Order).where(Order.id == source_id, Order.organization_id == organization_id))
+        if order is None:
+            raise HTTPException(status_code=404, detail="Order not found in this organization")
+        return source_type, order.id, order.client_id, order.id, None
+
+    if source_type == "project":
+        project = db.scalar(select(Project).where(Project.id == source_id, Project.organization_id == organization_id))
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found in this organization")
+        return source_type, project.id, project.client_id, project.order_id, project.id
+
+    raise HTTPException(status_code=400, detail="Unsupported business source")
 
 
 @router.get("", response_model=list[AccountingMoneyEntryRead])
@@ -97,6 +154,13 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
     if payload.kind == "income" and financial.account_type == "credit_card":
         raise HTTPException(status_code=400, detail="Money received cannot be deposited into a credit card account")
 
+    source_type, source_id, client_id, order_id, project_id = _resolve_source(
+        db,
+        tenant.organization_id,
+        payload.source_type,
+        payload.source_id,
+    )
+
     amount = _money(payload.amount)
     if payload.kind == "expense" and financial.account_type != "credit_card" and _financial_balance(db, financial) < amount:
         raise HTTPException(status_code=409, detail="Selected account does not have enough balance")
@@ -107,6 +171,11 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
         entry_date=payload.entry_date,
         financial_account_id=financial.id,
         category_ledger_account_id=category.id,
+        source_type=source_type,
+        source_id=source_id,
+        client_id=client_id,
+        order_id=order_id,
+        project_id=project_id,
         currency=financial.currency,
         amount=amount,
         description=payload.description.strip(),
@@ -170,7 +239,18 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
         organization_id=tenant.organization_id,
         entity_type="accounting_money_entry",
         entity_id=item.id,
-        after={"kind": item.kind, "amount": str(item.amount), "currency": item.currency, "financial_account_id": financial.id, "category_ledger_account_id": category.id},
+        after={
+            "kind": item.kind,
+            "amount": str(item.amount),
+            "currency": item.currency,
+            "financial_account_id": financial.id,
+            "category_ledger_account_id": category.id,
+            "source_type": item.source_type,
+            "source_id": item.source_id,
+            "client_id": item.client_id,
+            "order_id": item.order_id,
+            "project_id": item.project_id,
+        },
         message=f"{payload.kind.title()} recorded: {item.currency} {item.amount} — {item.description}",
         request=request,
     )
