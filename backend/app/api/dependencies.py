@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +16,8 @@ from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.team import OrganizationRole
 from app.models.user import User
+from app.models.user_session import UserSession
+from app.services.auth_sessions import session_is_active, touch_user_session
 from app.tenancy.context import TenantContext
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -24,6 +26,7 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 def get_current_user(
+    request: Request,
     db: DbSession,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
 ) -> User:
@@ -56,6 +59,27 @@ def get_current_user(
             detail="This session has been revoked. Sign in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Tokens issued before per-device sessions were introduced intentionally keep
+    # working until their normal access-token expiry. Their next refresh upgrades
+    # the browser to a server-side session without forcing a deployment logout.
+    request.state.auth_session_id = None
+    if claims.session_id:
+        user_session = db.scalar(
+            select(UserSession).where(
+                UserSession.id == claims.session_id,
+                UserSession.user_id == user.id,
+            )
+        )
+        if user_session is None or not session_is_active(user_session, user=user):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="This session has been revoked or expired. Sign in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        request.state.auth_session_id = user_session.id
+        touch_user_session(user_session, request)
+
     return user
 
 
