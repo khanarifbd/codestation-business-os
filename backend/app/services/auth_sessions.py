@@ -124,17 +124,19 @@ def get_or_create_legacy_user_session(
         return existing, False
 
     try:
-        with db.begin_nested():
-            created = create_user_session(
-                db,
-                user,
-                request,
-                auth_method="legacy",
-                legacy_refresh_fingerprint=fingerprint,
-            )
+        created = create_user_session(
+            db,
+            user,
+            request,
+            auth_method="legacy",
+            legacy_refresh_fingerprint=fingerprint,
+        )
         return created, True
     except IntegrityError:
-        # Another parallel refresh upgraded the same legacy token first.
+        # Another parallel refresh upgraded the same legacy token first. This
+        # refresh path has not mutated any other business state, so a full
+        # request transaction rollback is both safe and keeps the audit guard clean.
+        db.rollback()
         existing = db.scalar(
             select(UserSession).where(
                 UserSession.user_id == user.id,
