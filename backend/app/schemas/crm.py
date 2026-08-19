@@ -223,6 +223,7 @@ class ClientCreate(BaseModel):
     address_line2: str | None = Field(default=None, max_length=250)
     tax_identifier: str | None = Field(default=None, max_length=180)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    acquisition_source_id: str | None = None
     assigned_employee_id: str | None = None
     notes: str | None = None
 
@@ -245,6 +246,7 @@ class ClientUpdate(BaseModel):
     address_line2: str | None = Field(default=None, max_length=250)
     tax_identifier: str | None = Field(default=None, max_length=180)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    acquisition_source_id: str | None = None
     assigned_employee_id: str | None = None
     status: Literal["active", "inactive"] | None = None
     notes: str | None = None
