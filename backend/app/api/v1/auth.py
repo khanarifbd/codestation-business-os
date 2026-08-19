@@ -39,6 +39,7 @@ from app.services.activity_log import record_activity
 from app.services.auth_rate_limit import enforce_auth_rate_limit
 from app.services.auth_sessions import (
     create_user_session,
+    get_or_create_legacy_user_session,
     revoke_user_sessions,
     session_is_active,
     touch_user_session,
@@ -491,24 +492,41 @@ def refresh(payload: RefreshTokenRequest, request: Request, db: DbSession) -> To
         return _token_pair(user, user_session.id)
 
     # Graceful migration for refresh tokens issued before per-device sessions.
-    user_session = create_user_session(db, user, request, auth_method="legacy")
-    record_activity(
+    # This path must be idempotent because one browser can issue several parallel
+    # API requests while it only has the same legacy refresh token available.
+    user_session, created_now = get_or_create_legacy_user_session(
         db,
-        action="auth.session.upgraded",
-        scope="auth",
-        actor_user_id=user.id,
-        entity_type="user_session",
-        entity_id=user_session.id,
-        message="Legacy browser session upgraded to per-device session tracking",
-        metadata={
-            "session_id": user_session.id,
-            "device_type": user_session.device_type,
-            "browser": user_session.browser,
-            "operating_system": user_session.operating_system,
-        },
-        request=request,
+        user,
+        request,
+        refresh_token=payload.refresh_token,
     )
-    db.commit()
+    if not session_is_active(user_session, user=user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session has been revoked or expired. Sign in again.",
+        )
+
+    if created_now:
+        record_activity(
+            db,
+            action="auth.session.upgraded",
+            scope="auth",
+            actor_user_id=user.id,
+            entity_type="user_session",
+            entity_id=user_session.id,
+            message="Legacy browser session upgraded to per-device session tracking",
+            metadata={
+                "session_id": user_session.id,
+                "device_type": user_session.device_type,
+                "browser": user_session.browser,
+                "operating_system": user_session.operating_system,
+            },
+            request=request,
+        )
+        db.commit()
+    else:
+        touch_user_session(user_session, request, extend_expiry=True, force=True)
+
     return _token_pair(user, user_session.id)
 
 
