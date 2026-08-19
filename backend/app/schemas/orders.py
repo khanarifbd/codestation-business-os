@@ -12,6 +12,7 @@ CustomSalesItemType = Literal["service", "non_stock_item"]
 
 class OrderStatusChange(BaseModel):
     status: Literal["in_progress", "completed", "cancelled"]
+    reason: str | None = Field(default=None, max_length=1000)
 
 
 class OrderItemInput(BaseModel):
@@ -125,6 +126,7 @@ class OrderDetail(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     cancelled_at: datetime | None
+    cancellation_reason: str | None = None
     items: list[OrderItemRead]
     created_at: datetime
     updated_at: datetime
