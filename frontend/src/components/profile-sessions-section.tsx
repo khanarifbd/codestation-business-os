@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Clock3, Laptop, Loader2, LogOut, MonitorSmartphone, ShieldCheck, Smartphone, Tablet } from "lucide-react";
+import { ChevronDown, ChevronUp, Clock3, Laptop, Loader2, LogOut, MonitorSmartphone, ShieldCheck, Smartphone, Tablet } from "lucide-react";
 
 type UserSession = {
   id: string;
@@ -111,6 +111,7 @@ export function ProfileSessionsSection() {
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [workingAll, setWorkingAll] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -138,6 +139,10 @@ export function ProfileSessionsSection() {
   const historySessions = useMemo(
     () => data?.items.filter((item) => item.status !== "active") ?? [],
     [data],
+  );
+  const visibleHistorySessions = useMemo(
+    () => showAllHistory ? historySessions : historySessions.slice(0, 3),
+    [historySessions, showAllHistory],
   );
   const otherActiveCount = useMemo(
     () => activeSessions.filter((item) => !item.is_current).length,
@@ -198,7 +203,7 @@ export function ProfileSessionsSection() {
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><ShieldCheck className="size-5" /></div>
           <div>
             <h2 className="font-semibold">Devices & sessions</h2>
-            <p className="mt-1 max-w-2xl text-sm text-neutral-500">Review active devices separately from recent sign-in history and remotely revoke access you no longer trust.</p>
+            <p className="mt-1 max-w-2xl text-sm text-neutral-500">Review active devices and remotely revoke access you no longer trust.</p>
           </div>
         </div>
         <button type="button" disabled={workingAll || loading || !otherActiveCount || Boolean(data?.legacy_current_session)} onClick={() => void signOutOtherDevices()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45">
@@ -224,12 +229,12 @@ export function ProfileSessionsSection() {
       </div>
 
       {!loading && historySessions.length ? <div className="mt-7 border-t pt-6">
-        <div className="flex items-center justify-between gap-3">
-          <div><h3 className="text-sm font-semibold text-neutral-900">Recent sign-in history</h3><p className="mt-1 text-xs text-neutral-400">Ended and expired sessions from the last 90 days.</p></div>
-          <span className="text-xs text-neutral-400">{historySessions.length} recent</span>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div><h3 className="text-sm font-semibold text-neutral-900">Recent sign-in history</h3><p className="mt-1 text-xs text-neutral-400">Ended and expired sessions from the last 90 days. Showing {visibleHistorySessions.length} of {historySessions.length}.</p></div>
+          {historySessions.length > 3 ? <button type="button" onClick={() => setShowAllHistory((value) => !value)} className="inline-flex h-9 items-center justify-center gap-2 self-start rounded-xl border px-3 text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 sm:self-auto">{showAllHistory ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}{showAllHistory ? "Show less" : `View all (${historySessions.length})`}</button> : null}
         </div>
         <div className="mt-3 divide-y rounded-2xl border bg-neutral-50/40">
-          {historySessions.map((session) => <SessionRow key={session.id} session={session} workingId={workingId} onSignOut={(item) => void signOutSession(item)} />)}
+          {visibleHistorySessions.map((session) => <SessionRow key={session.id} session={session} workingId={workingId} onSignOut={(item) => void signOutSession(item)} />)}
         </div>
       </div> : null}
     </section>
