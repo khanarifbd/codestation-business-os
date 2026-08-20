@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta, timezone
-from ipaddress import ip_address
 
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import and_, or_, select
 
 from app.api.dependencies import CurrentUser, DbSession
+from app.core.client_ip import displayable_client_ip
 from app.models.user_session import UserSession
 from app.schemas.auth import UserSessionListRead, UserSessionRead, UserSessionRevokeResult
 from app.services.activity_log import record_activity
@@ -12,16 +12,6 @@ from app.services.auth_sessions import revoke_user_sessions
 
 router = APIRouter(prefix="/profile", tags=["User Profile"])
 _SESSION_HISTORY_DAYS = 90
-
-
-def _displayable_ip(value: str | None) -> str | None:
-    if not value:
-        return None
-    try:
-        parsed = ip_address(value)
-    except ValueError:
-        return None
-    return str(parsed) if parsed.is_global else None
 
 
 def _session_read(row: UserSession, *, current_user: CurrentUser, current_session_id: str | None) -> UserSessionRead:
@@ -43,7 +33,7 @@ def _session_read(row: UserSession, *, current_user: CurrentUser, current_sessio
         device_type=row.device_type,
         browser=row.browser,
         operating_system=row.operating_system,
-        ip_address=_displayable_ip(row.ip_address),
+        ip_address=displayable_client_ip(row.ip_address),
         created_at=row.created_at,
         last_seen_at=row.last_seen_at,
         expires_at=row.expires_at,
