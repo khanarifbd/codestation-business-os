@@ -6,6 +6,8 @@ from fastapi import Request
 
 from app.core.config import settings
 
+_TRUSTED_CLIENT_IP_HEADER = "x-business-os-client-ip"
+
 
 def _parse_ip(value: str | None):
     candidate = (value or "").strip()
@@ -23,37 +25,64 @@ def _forwarded_candidates(value: str | None):
     return [parsed for item in (value or "").split(",") if (parsed := _parse_ip(item)) is not None]
 
 
+def _is_external_client_ip(candidate) -> bool:
+    """Return true for an address that may represent the user's network edge.
+
+    RFC1918/private, loopback, link-local, multicast and unspecified addresses
+    are internal infrastructure values and must never be presented as a user's
+    public/security IP. Shared-address/CGNAT space is allowed because some ISPs
+    legitimately expose it at an upstream trusted proxy even though Python does
+    not classify it as globally routable.
+    """
+
+    return bool(
+        candidate is not None
+        and not candidate.is_private
+        and not candidate.is_loopback
+        and not candidate.is_link_local
+        and not candidate.is_multicast
+        and not candidate.is_unspecified
+    )
+
+
+def displayable_client_ip(value: str | None) -> str | None:
+    parsed = _parse_ip(value)
+    return str(parsed) if _is_external_client_ip(parsed) else None
+
+
 def request_client_ip(request: Request) -> str | None:
     """Resolve the browser/client IP across the trusted Business OS proxy chain.
 
-    Production traffic enters through the host Nginx reverse proxy and then may
-    pass through the Next.js BFF before reaching FastAPI. We prefer the
-    X-Forwarded-For chain and walk it from the trusted edge side back toward the
-    client, skipping private/internal hops such as Docker bridge addresses.
-
-    The edge Nginx configuration overwrites X-Forwarded-For with its direct peer
-    address, which prevents a browser-supplied forwarding header from becoming
-    authoritative. The right-to-left scan also remains compatible while older
-    deployed Nginx configurations are being upgraded.
+    The public Nginx ingress overwrites X-Business-OS-Client-IP with its direct
+    peer address. Next.js forwards that header to FastAPI, so it is the primary
+    source for BFF traffic and cannot be chosen by the browser. X-Forwarded-For
+    and X-Real-IP remain compatibility fallbacks while older live Nginx configs
+    are upgraded.
     """
+
+    trusted_edge_ip = _parse_ip(request.headers.get(_TRUSTED_CLIENT_IP_HEADER))
+    if _is_external_client_ip(trusted_edge_ip):
+        return str(trusted_edge_ip)
 
     forwarded = _forwarded_candidates(request.headers.get("x-forwarded-for"))
     for candidate in reversed(forwarded):
-        if candidate.is_global:
+        if _is_external_client_ip(candidate):
             return str(candidate)
 
     real_ip = _parse_ip(request.headers.get("x-real-ip"))
-    if real_ip is not None and real_ip.is_global:
+    if _is_external_client_ip(real_ip):
         return str(real_ip)
 
     direct_ip = _parse_ip(request.client.host if request.client else None)
-    if direct_ip is not None and direct_ip.is_global:
+    if _is_external_client_ip(direct_ip):
         return str(direct_ip)
 
     # Local development legitimately uses loopback/private addresses. In
     # staging/production, returning a Docker/private proxy address would mislead
     # users and weaken security telemetry, so omit it instead.
     if settings.environment.lower().strip() not in {"staging", "production"}:
+        if trusted_edge_ip is not None:
+            return str(trusted_edge_ip)
         if forwarded:
             return str(forwarded[-1])
         if real_ip is not None:
