@@ -11,6 +11,7 @@ import {
   Loader2,
   LockKeyhole,
   Mail,
+  MonitorSmartphone,
   Phone,
   Save,
   ShieldCheck,
@@ -41,6 +42,8 @@ type Profile = {
   updated_at: string;
 };
 
+type ProfileTab = "profile" | "security" | "sessions";
+
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const AVATAR_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -64,6 +67,7 @@ function avatarUrl(profile: Profile) {
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [activeTab, setActiveTab] = useState<ProfileTab>("profile");
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -266,6 +270,12 @@ export default function ProfilePage() {
     return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-5xl rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{profileError ?? "Your profile is unavailable."}</div></main>;
   }
 
+  const tabs: Array<{ id: ProfileTab; label: string; description: string; icon: typeof UserRound }> = [
+    { id: "profile", label: "Profile", description: "Personal details", icon: UserRound },
+    { id: "security", label: "Security", description: "Password & sign-in", icon: ShieldCheck },
+    { id: "sessions", label: "Sessions", description: "Devices & history", icon: MonitorSmartphone },
+  ];
+
   return (
     <main className="p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-6xl space-y-6">
@@ -302,7 +312,20 @@ export default function ProfilePage() {
           </div>
         </section>
 
-        <div className="grid gap-6 xl:grid-cols-[1.35fr_0.85fr]">
+        <section className="rounded-2xl border bg-white p-2 shadow-sm" aria-label="Profile settings navigation">
+          <div className="grid grid-cols-3 gap-2" role="tablist">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const selected = activeTab === tab.id;
+              return <button key={tab.id} type="button" role="tab" aria-selected={selected} onClick={() => setActiveTab(tab.id)} className={`flex min-w-0 items-center justify-center gap-2 rounded-xl px-3 py-3 text-left transition sm:justify-start sm:px-4 ${selected ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600 hover:bg-neutral-50 hover:text-neutral-950"}`}>
+                <Icon className="size-4 shrink-0" />
+                <span className="min-w-0"><span className="block text-sm font-semibold">{tab.label}</span><span className={`hidden truncate text-xs sm:block ${selected ? "text-white/55" : "text-neutral-400"}`}>{tab.description}</span></span>
+              </button>;
+            })}
+          </div>
+        </section>
+
+        {activeTab === "profile" ? <div className="grid gap-6 xl:grid-cols-[1.35fr_0.85fr]">
           <form onSubmit={saveProfile} className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
             <div className="flex items-start justify-between gap-4 border-b pb-5">
               <div><div className="flex items-center gap-2"><UserRound className="size-5" /><h2 className="font-semibold">Personal information</h2></div><p className="mt-1 text-sm text-neutral-500">Your personal account details are shared across every Business OS workspace you can access.</p></div>
@@ -318,56 +341,64 @@ export default function ProfilePage() {
             <div className="mt-6 flex justify-end border-t pt-5"><button type="submit" disabled={savingProfile} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{savingProfile ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}Save profile</button></div>
           </form>
 
-          <div className="space-y-6">
-            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex items-center gap-2"><ShieldCheck className="size-5" /><h2 className="font-semibold">Account security</h2></div>
-              <div className="mt-5 space-y-3 text-sm">
-                <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><Mail className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Email identity</p><p className="mt-1 break-all text-neutral-500">{profile.email}</p></div></div>
-                <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><KeyRound className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Sign-in methods</p><p className="mt-1 text-neutral-500">{[profile.has_password ? "Password" : null, profile.google_connected ? "Google" : null].filter(Boolean).join(" + ") || "Account authentication"}</p></div></div>
-                <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><Clock3 className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Personal timezone</p><p className="mt-1 text-neutral-500">{profile.timezone || "Workspace / device default"}</p></div></div>
-              </div>
-            </section>
-            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex items-center gap-2"><CalendarDays className="size-5" /><h2 className="font-semibold">Account details</h2></div>
-              <dl className="mt-5 space-y-4 text-sm"><div className="flex items-center justify-between gap-4"><dt className="text-neutral-500">Account ID</dt><dd className="max-w-[220px] truncate font-mono text-xs">{profile.id}</dd></div><div className="flex items-center justify-between gap-4"><dt className="text-neutral-500">Created</dt><dd className="font-medium">{readableDate(profile.created_at)}</dd></div><div className="flex items-center justify-between gap-4"><dt className="text-neutral-500">Last updated</dt><dd className="font-medium">{readableDate(profile.updated_at)}</dd></div></dl>
-            </section>
-          </div>
-        </div>
+          <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex items-center gap-2"><CalendarDays className="size-5" /><h2 className="font-semibold">Account details</h2></div>
+            <p className="mt-1 text-sm text-neutral-500">Read-only identity information for this Business OS account.</p>
+            <dl className="mt-6 space-y-4 text-sm">
+              <div className="flex items-center justify-between gap-4 rounded-2xl bg-neutral-50 p-4"><dt className="text-neutral-500">Account ID</dt><dd className="max-w-[220px] truncate font-mono text-xs">{profile.id}</dd></div>
+              <div className="flex items-center justify-between gap-4 rounded-2xl bg-neutral-50 p-4"><dt className="text-neutral-500">Created</dt><dd className="font-medium">{readableDate(profile.created_at)}</dd></div>
+              <div className="flex items-center justify-between gap-4 rounded-2xl bg-neutral-50 p-4"><dt className="text-neutral-500">Last updated</dt><dd className="font-medium">{readableDate(profile.updated_at)}</dd></div>
+            </dl>
+          </section>
+        </div> : null}
 
-        <ProfileSessionsSection />
+        {activeTab === "security" ? <div className="grid gap-6 xl:grid-cols-[1.35fr_0.85fr] xl:items-start">
+          <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex items-start gap-3 border-b pb-5"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><LockKeyhole className="size-5" /></div><div><h2 className="font-semibold">Password & sign-in</h2><p className="mt-1 text-sm text-neutral-500">Manage the password attached to your global Business OS identity.</p></div></div>
 
-        <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
-          <div className="flex items-start gap-3 border-b pb-5"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><LockKeyhole className="size-5" /></div><div><h2 className="font-semibold">Password & sign-in</h2><p className="mt-1 text-sm text-neutral-500">Manage the password attached to your global Business OS identity.</p></div></div>
+            {profile.has_password ? (
+              <form onSubmit={changePassword} className="mt-6">
+                <div className="grid gap-5 md:grid-cols-3">
+                  <PasswordField name="current_password" label="Current password" autoComplete="current-password" placeholder="Current password" />
+                  <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
+                  <PasswordField name="confirm_password" label="Confirm new password" autoComplete="new-password" placeholder="Repeat new password" />
+                </div>
+                {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
+                {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
+                <div className="mt-6 flex justify-end"><button type="submit" disabled={savingPassword} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{savingPassword ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}Change password</button></div>
+              </form>
+            ) : profile.google_connected ? (
+              <form ref={passwordSetupFormRef} onSubmit={(event) => event.preventDefault()} className="mt-6">
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-6 text-blue-900">
+                  <p className="font-semibold">Create an optional password for this Google account</p>
+                  <p className="mt-1 text-blue-800">After you set one, you can sign in either with Google or with your email and password. To protect against a stolen Business OS session, we require a fresh verification from the Google account already linked to this profile.</p>
+                </div>
+                <div className="mt-5 grid gap-5 md:grid-cols-2">
+                  <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
+                  <PasswordField name="confirm_password" label="Confirm password" autoComplete="new-password" placeholder="Repeat new password" />
+                </div>
+                {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
+                {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
+                <div className="mt-5 border-t pt-5"><p className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">Verify identity and save</p><GoogleReauthButton busy={savingPassword} onCredential={setupPasswordWithGoogle} /></div>
+              </form>
+            ) : (
+              <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">A secure password setup method is not available for this account yet.</div>
+            )}
+          </section>
 
-          {profile.has_password ? (
-            <form onSubmit={changePassword} className="mt-6 max-w-3xl">
-              <div className="grid gap-5 md:grid-cols-3">
-                <PasswordField name="current_password" label="Current password" autoComplete="current-password" placeholder="Current password" />
-                <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
-                <PasswordField name="confirm_password" label="Confirm new password" autoComplete="new-password" placeholder="Repeat new password" />
-              </div>
-              {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
-              {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
-              <div className="mt-6 flex justify-end"><button type="submit" disabled={savingPassword} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{savingPassword ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}Change password</button></div>
-            </form>
-          ) : profile.google_connected ? (
-            <form ref={passwordSetupFormRef} onSubmit={(event) => event.preventDefault()} className="mt-6 max-w-3xl">
-              <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-6 text-blue-900">
-                <p className="font-semibold">Create an optional password for this Google account</p>
-                <p className="mt-1 text-blue-800">After you set one, you can sign in either with Google or with your email and password. To protect against a stolen Business OS session, we require a fresh verification from the Google account already linked to this profile.</p>
-              </div>
-              <div className="mt-5 grid gap-5 md:grid-cols-2">
-                <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
-                <PasswordField name="confirm_password" label="Confirm password" autoComplete="new-password" placeholder="Repeat new password" />
-              </div>
-              {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
-              {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
-              <div className="mt-5 border-t pt-5"><p className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">Verify identity and save</p><GoogleReauthButton busy={savingPassword} onCredential={setupPasswordWithGoogle} /></div>
-            </form>
-          ) : (
-            <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">A secure password setup method is not available for this account yet.</div>
-          )}
-        </section>
+          <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+            <div className="flex items-center gap-2"><ShieldCheck className="size-5" /><h2 className="font-semibold">Security overview</h2></div>
+            <p className="mt-1 text-sm text-neutral-500">Quick status of the identity and sign-in methods protecting this account.</p>
+            <div className="mt-5 space-y-3 text-sm">
+              <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><Mail className="mt-0.5 size-4 text-neutral-400" /><div className="min-w-0"><p className="font-medium">Email identity</p><p className="mt-1 break-all text-neutral-500">{profile.email}</p><p className="mt-1 text-xs text-emerald-700">{profile.is_verified ? "Verified" : "Verification required"}</p></div></div>
+              <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><KeyRound className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Sign-in methods</p><p className="mt-1 text-neutral-500">{[profile.has_password ? "Password" : null, profile.google_connected ? "Google" : null].filter(Boolean).join(" + ") || "Account authentication"}</p></div></div>
+              <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><MonitorSmartphone className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Device security</p><p className="mt-1 text-neutral-500">Review and remotely sign out devices from the Sessions tab.</p><button type="button" onClick={() => setActiveTab("sessions")} className="mt-2 text-xs font-semibold text-neutral-950 underline-offset-4 hover:underline">Open sessions</button></div></div>
+              <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><Clock3 className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Personal timezone</p><p className="mt-1 text-neutral-500">{profile.timezone || "Workspace / device default"}</p></div></div>
+            </div>
+          </section>
+        </div> : null}
+
+        {activeTab === "sessions" ? <ProfileSessionsSection /> : null}
       </div>
     </main>
   );
