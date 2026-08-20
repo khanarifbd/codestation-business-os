@@ -8,24 +8,13 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.client_ip import request_client_ip
 from app.core.config import settings
 from app.db.session import engine
 from app.models.user import User
 from app.models.user_session import UserSession
 
 _SESSION_TOUCH_INTERVAL = timedelta(minutes=5)
-
-
-def _request_ip(request: Request) -> str | None:
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()[:64]
-    forwarded_for = request.headers.get("x-forwarded-for")
-    if forwarded_for:
-        return forwarded_for.split(",")[-1].strip()[:64]
-    if request.client:
-        return request.client.host[:64]
-    return None
 
 
 def describe_user_agent(user_agent: str | None) -> tuple[str, str, str]:
@@ -87,7 +76,7 @@ def create_user_session(
         browser=browser,
         operating_system=operating_system,
         user_agent=user_agent,
-        ip_address=_request_ip(request),
+        ip_address=request_client_ip(request),
         legacy_refresh_fingerprint=legacy_refresh_fingerprint,
         created_at=now,
         last_seen_at=now,
@@ -177,7 +166,7 @@ def touch_user_session(
 
     values: dict[str, object] = {
         "last_seen_at": now,
-        "ip_address": _request_ip(request),
+        "ip_address": request_client_ip(request),
     }
     if extend_expiry:
         values["expires_at"] = now + timedelta(days=settings.refresh_token_expire_days)
