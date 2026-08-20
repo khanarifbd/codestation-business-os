@@ -6,19 +6,12 @@ from hashlib import sha256
 from fastapi import HTTPException, Request, status
 from sqlalchemy import text
 
+from app.core.client_ip import request_client_ip
 from app.db.session import SessionLocal
 
 
 def _client_ip(request: Request) -> str:
-    # In production Nginx replaces X-Real-IP with the actual peer address before
-    # requests reach Next.js/FastAPI. Do not use an arbitrary X-Forwarded-For value
-    # ahead of that trusted proxy header.
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()[:128]
-    if request.client:
-        return request.client.host[:128]
-    return "unknown"
+    return request_client_ip(request) or "unknown"
 
 
 def enforce_auth_rate_limit(
