@@ -49,6 +49,8 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID}
     restart: unless-stopped
+    environment:
+      INTERNAL_API_URL: http://backend:8000/api/v1
     depends_on:
       backend:
         condition: service_healthy
