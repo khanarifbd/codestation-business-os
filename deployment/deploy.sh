@@ -151,6 +151,45 @@ ensure_nginx_upload_limit() {
   fi
 }
 
+ensure_nginx_client_ip_headers() {
+  if [[ ! -f "${NGINX_SITE}" ]] || ! command -v nginx >/dev/null 2>&1; then
+    return
+  fi
+
+  local backup="${NGINX_SITE}.pre-client-ip"
+  cp "${NGINX_SITE}" "${backup}"
+
+  # The Business OS host Nginx is the public ingress. Remove any stale copies,
+  # then set one trusted client-IP header beside every X-Real-IP directive.
+  # Also overwrite X-Forwarded-For at the edge so browser-supplied values cannot
+  # become authoritative in security/audit logs.
+  sed -i '/proxy_set_header X-Business-OS-Client-IP /d' "${NGINX_SITE}"
+  sed -i 's|proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;|proxy_set_header X-Forwarded-For \$remote_addr;|g' "${NGINX_SITE}"
+  sed -i '/proxy_set_header X-Real-IP \$remote_addr;/a\        proxy_set_header X-Business-OS-Client-IP $remote_addr;' "${NGINX_SITE}"
+
+  if ! grep -q 'proxy_set_header X-Business-OS-Client-IP \$remote_addr;' "${NGINX_SITE}"; then
+    mv "${backup}" "${NGINX_SITE}"
+    echo "ERROR: Could not add trusted client-IP forwarding to Business OS Nginx site."
+    exit 1
+  fi
+
+  if cmp -s "${backup}" "${NGINX_SITE}"; then
+    rm -f "${backup}"
+    return
+  fi
+
+  echo "==> Enabling trusted client IP forwarding in Business OS Nginx site"
+  if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx
+    rm -f "${backup}"
+  else
+    mv "${backup}" "${NGINX_SITE}"
+    nginx -t
+    echo "ERROR: Nginx client-IP update failed and was rolled back."
+    exit 1
+  fi
+}
+
 if ! grep -q '^JWT_SECRET_KEY=' "${ENV_FILE}"; then
   echo "==> Generating JWT secret for this environment"
   printf '\nJWT_SECRET_KEY=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
@@ -209,6 +248,7 @@ git pull --ff-only origin "${BRANCH}"
 ensure_project_credential_key
 ensure_backup_encryption_key
 ensure_nginx_upload_limit
+ensure_nginx_client_ip_headers
 validate_google_oauth_config
 validate_account_email_config
 validate_backup_config
