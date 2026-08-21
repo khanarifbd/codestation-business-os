@@ -17,6 +17,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -48,11 +49,17 @@ export default function LoginPage() {
     router.refresh();
   }
 
+  function prepareGoogleLink(credential: string) {
+    setPendingGoogleCredential(credential);
+    setError(null);
+    setNotice("Enter your existing Business OS password below once. After it is verified, this Google account will be connected securely.");
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError(null);
-    setNotice(null);
+    if (!pendingGoogleCredential) setNotice(null);
 
     try {
       const form = new FormData(event.currentTarget);
@@ -71,6 +78,24 @@ export default function LoginPage() {
       }
 
       const login = (await response.json()) as LoginResponse;
+
+      if (pendingGoogleCredential) {
+        const linkResponse = await fetch("/api/profile/google-link", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential: pendingGoogleCredential }),
+        });
+        const linkPayload = await linkResponse.json().catch(() => null);
+        if (!linkResponse.ok) {
+          await fetch("/api/auth/logout", { method: "POST" }).catch(() => null);
+          setPendingGoogleCredential(null);
+          throw new Error(
+            `${linkPayload?.detail ?? "Google could not be connected."} Click Continue with Google again and retry.`,
+          );
+        }
+        setPendingGoogleCredential(null);
+      }
+
       await finishAuthentication(login.user);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to sign in. Please try again.");
@@ -86,7 +111,7 @@ export default function LoginPage() {
       asideTitle="Your business, connected from lead to ledger."
       asideDescription="Move from client conversations to delivery, invoicing, payments and accounting without stitching together separate tools."
     >
-      <GoogleAuthSection mode="login" onAuthenticated={finishAuthentication} />
+      <GoogleAuthSection mode="login" onAuthenticated={finishAuthentication} onLinkRequired={prepareGoogleLink} />
 
       <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
         <label className="block text-sm font-medium text-neutral-800">
@@ -116,7 +141,10 @@ export default function LoginPage() {
         </div>
 
         {notice ? (
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">{notice}</div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800" role="status">
+            <p>{notice}</p>
+            {pendingGoogleCredential ? <button type="button" onClick={() => { setPendingGoogleCredential(null); setNotice(null); }} className="mt-2 text-xs font-semibold underline underline-offset-4">Cancel Google connection</button> : null}
+          </div>
         ) : null}
         {error ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
@@ -130,7 +158,7 @@ export default function LoginPage() {
           className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-950/10 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {loading ? <Loader2 className="size-4 animate-spin" /> : <LockKeyhole className="size-4" />}
-          {loading ? "Signing in…" : "Sign in securely"}
+          {loading ? (pendingGoogleCredential ? "Connecting Google…" : "Signing in…") : (pendingGoogleCredential ? "Confirm password & connect Google" : "Sign in securely")}
           {!loading ? <ArrowRight className="size-4" /> : null}
         </button>
       </form>
