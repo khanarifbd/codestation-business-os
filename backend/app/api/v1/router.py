@@ -58,6 +58,7 @@ from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.profile import router as profile_router
+from app.api.v1.profile_identity import router as profile_identity_router
 from app.api.v1.profile_sessions import router as profile_sessions_router
 from app.api.v1.project_execution import router as project_execution_router
 from app.api.v1.projects import router as projects_router
@@ -74,6 +75,7 @@ api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
 api_router.include_router(profile_router)
+api_router.include_router(profile_identity_router)
 api_router.include_router(profile_sessions_router)
 api_router.include_router(invitation_router)
 api_router.include_router(client_invitation_public_router)
