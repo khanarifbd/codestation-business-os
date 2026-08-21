@@ -52,6 +52,7 @@ from app.api.v1.inventory_management import router as inventory_management_route
 from app.api.v1.inventory_workflows import router as inventory_workflows_router
 from app.api.v1.manual_orders import router as manual_orders_router
 from app.api.v1.order_links import router as order_links_router
+from app.api.v1.order_settlements import router as order_settlements_router
 from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.payables import router as payables_router
@@ -125,6 +126,7 @@ api_router.include_router(tax_router)
 api_router.include_router(customer_advances_router)
 api_router.include_router(payables_router)
 api_router.include_router(finance_router)
+api_router.include_router(order_settlements_router)
 api_router.include_router(finance_invoice_drafts_router)
 api_router.include_router(finance_pagination_router)
 api_router.include_router(finance_transfers_router)
