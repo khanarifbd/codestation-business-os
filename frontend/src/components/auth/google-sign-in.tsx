@@ -42,6 +42,8 @@ declare global {
   }
 }
 
+const EXISTING_ACCOUNT_LINK_DETAIL_PREFIX = "This email already has a Business OS account.";
+
 export function GoogleAuthSection({
   mode,
   onAuthenticated,
@@ -87,13 +89,19 @@ export function GoogleAuthSection({
       });
       const payload = await upstream.json().catch(() => null);
       if (!upstream.ok) {
-        if (mode === "login" && upstream.status === 409 && linkRequiredRef.current) {
-          linkRequiredRef.current(response.credential);
+        const detail = typeof payload?.detail === "string" ? payload.detail : "";
+        const needsAuthenticatedLink =
+          mode === "login"
+          && upstream.status === 409
+          && detail.startsWith(EXISTING_ACCOUNT_LINK_DETAIL_PREFIX)
+          && Boolean(linkRequiredRef.current);
+        if (needsAuthenticatedLink) {
+          linkRequiredRef.current?.(response.credential);
           setError("This email already uses password sign-in. Enter your password below once to securely connect this Google account.");
           setBusy(false);
           return;
         }
-        throw new Error(payload?.detail ?? "Unable to sign in with Google.");
+        throw new Error(detail || "Unable to sign in with Google.");
       }
       await callbackRef.current(payload.user as AuthUser);
     } catch (reason) {
