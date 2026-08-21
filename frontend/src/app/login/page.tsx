@@ -52,7 +52,7 @@ export default function LoginPage() {
   function prepareGoogleLink(credential: string) {
     setPendingGoogleCredential(credential);
     setError(null);
-    setNotice("Enter your existing Business OS password below once. After it is verified, this Google account will be connected securely.");
+    setNotice("Enter your existing Business OS email or username and password below once. After it is verified, this Google account will be connected securely.");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -67,7 +67,7 @@ export default function LoginPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          email: form.get("email"),
+          identifier: String(form.get("identifier") ?? "").trim(),
           password: form.get("password"),
         }),
       });
@@ -115,15 +115,15 @@ export default function LoginPage() {
 
       <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
         <label className="block text-sm font-medium text-neutral-800">
-          Email address
+          Email or username
           <input
-            name="email"
-            type="email"
-            autoComplete="email"
+            name="identifier"
+            type="text"
+            autoComplete="username"
             required
             autoFocus
             className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 text-[15px] outline-none transition placeholder:text-neutral-400 hover:border-neutral-300 focus:border-neutral-500 focus:ring-4 focus:ring-neutral-950/[0.04]"
-            placeholder="you@company.com"
+            placeholder="you@company.com or username"
           />
         </label>
 
