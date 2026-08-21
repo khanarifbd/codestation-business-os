@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class UserRead(BaseModel):
@@ -8,6 +8,7 @@ class UserRead(BaseModel):
 
     id: str
     email: EmailStr
+    username: str | None = None
     full_name: str
     system_role: str
     is_active: bool
@@ -95,8 +96,19 @@ class SignUpRequest(BaseModel):
 class LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    email: EmailStr
+    identifier: str | None = Field(default=None, min_length=3, max_length=320)
+    email: EmailStr | None = None
     password: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def require_login_identifier(self) -> "LoginRequest":
+        if not self.identifier and not self.email:
+            raise ValueError("Email or username is required")
+        return self
+
+    @property
+    def login_identifier(self) -> str:
+        return (self.identifier or str(self.email or "")).strip()
 
 
 class GoogleLoginRequest(BaseModel):
