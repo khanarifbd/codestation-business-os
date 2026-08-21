@@ -71,6 +71,12 @@ class PasswordChangeRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
+class GoogleIdentityLinkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credential: str = Field(min_length=100, max_length=16_384)
+
+
 class GooglePasswordSetupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
