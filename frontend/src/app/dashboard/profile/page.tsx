@@ -22,6 +22,7 @@ import {
 import { GoogleReauthButton } from "@/components/auth/google-reauth-button";
 import { PasswordField } from "@/components/auth/password-field";
 import { ProfileSessionsSection } from "@/components/profile-sessions-section";
+import { ProfileSignInIdentities } from "@/components/profile-sign-in-identities";
 import { SearchableSelect } from "@/components/searchable-select";
 import { TIMEZONE_OPTIONS } from "@/lib/company-options";
 
@@ -96,8 +97,8 @@ export default function ProfilePage() {
     window.dispatchEvent(new Event("business-os-profile-updated"));
   }
 
-  async function loadProfile() {
-    setLoading(true);
+  async function loadProfile(showLoading = true) {
+    if (showLoading) setLoading(true);
     setProfileError(null);
     try {
       const response = await fetch("/api/profile", { cache: "no-store" });
@@ -107,7 +108,7 @@ export default function ProfilePage() {
     } catch (reason) {
       setProfileError(reason instanceof Error ? reason.message : "Unable to load your profile.");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   }
 
@@ -353,45 +354,49 @@ export default function ProfilePage() {
         </div> : null}
 
         {activeTab === "security" ? <div className="grid gap-6 xl:grid-cols-[1.35fr_0.85fr] xl:items-start">
-          <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
-            <div className="flex items-start gap-3 border-b pb-5"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><LockKeyhole className="size-5" /></div><div><h2 className="font-semibold">Password & sign-in</h2><p className="mt-1 text-sm text-neutral-500">Manage the password attached to your global Business OS identity.</p></div></div>
+          <div className="space-y-6">
+            <ProfileSignInIdentities onProfileChanged={() => loadProfile(false)} />
 
-            {profile.has_password ? (
-              <form onSubmit={changePassword} className="mt-6">
-                <div className="grid gap-5 md:grid-cols-3">
-                  <PasswordField name="current_password" label="Current password" autoComplete="current-password" placeholder="Current password" />
-                  <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
-                  <PasswordField name="confirm_password" label="Confirm new password" autoComplete="new-password" placeholder="Repeat new password" />
-                </div>
-                {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
-                {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
-                <div className="mt-6 flex justify-end"><button type="submit" disabled={savingPassword} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{savingPassword ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}Change password</button></div>
-              </form>
-            ) : profile.google_connected ? (
-              <form ref={passwordSetupFormRef} onSubmit={(event) => event.preventDefault()} className="mt-6">
-                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-6 text-blue-900">
-                  <p className="font-semibold">Create an optional password for this Google account</p>
-                  <p className="mt-1 text-blue-800">After you set one, you can sign in either with Google or with your email and password. To protect against a stolen Business OS session, we require a fresh verification from the Google account already linked to this profile.</p>
-                </div>
-                <div className="mt-5 grid gap-5 md:grid-cols-2">
-                  <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
-                  <PasswordField name="confirm_password" label="Confirm password" autoComplete="new-password" placeholder="Repeat new password" />
-                </div>
-                {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
-                {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
-                <div className="mt-5 border-t pt-5"><p className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">Verify identity and save</p><GoogleReauthButton busy={savingPassword} onCredential={setupPasswordWithGoogle} /></div>
-              </form>
-            ) : (
-              <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">A secure password setup method is not available for this account yet.</div>
-            )}
-          </section>
+            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex items-start gap-3 border-b pb-5"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><LockKeyhole className="size-5" /></div><div><h2 className="font-semibold">Password & sign-in</h2><p className="mt-1 text-sm text-neutral-500">Manage the password attached to your global Business OS identity.</p></div></div>
+
+              {profile.has_password ? (
+                <form onSubmit={changePassword} className="mt-6">
+                  <div className="grid gap-5 md:grid-cols-3">
+                    <PasswordField name="current_password" label="Current password" autoComplete="current-password" placeholder="Current password" />
+                    <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
+                    <PasswordField name="confirm_password" label="Confirm new password" autoComplete="new-password" placeholder="Repeat new password" />
+                  </div>
+                  {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
+                  {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
+                  <div className="mt-6 flex justify-end"><button type="submit" disabled={savingPassword} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">{savingPassword ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}Change password</button></div>
+                </form>
+              ) : profile.google_connected ? (
+                <form ref={passwordSetupFormRef} onSubmit={(event) => event.preventDefault()} className="mt-6">
+                  <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm leading-6 text-blue-900">
+                    <p className="font-semibold">Create an optional password for this Google account</p>
+                    <p className="mt-1 text-blue-800">After you set one, you can sign in with Google, email or username. To protect against a stolen Business OS session, we require a fresh verification from the Google account already linked to this profile.</p>
+                  </div>
+                  <div className="mt-5 grid gap-5 md:grid-cols-2">
+                    <PasswordField name="new_password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
+                    <PasswordField name="confirm_password" label="Confirm password" autoComplete="new-password" placeholder="Repeat new password" />
+                  </div>
+                  {passwordError ? <div role="alert" className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{passwordError}</div> : null}
+                  {passwordMessage ? <div className="mt-5 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"><CheckCircle2 className="size-4" />{passwordMessage}</div> : null}
+                  <div className="mt-5 border-t pt-5"><p className="mb-3 text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">Verify identity and save</p><GoogleReauthButton busy={savingPassword} busyLabel="Saving password…" onCredential={setupPasswordWithGoogle} /></div>
+                </form>
+              ) : (
+                <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">Connect Google above first to create a password securely for this account.</div>
+              )}
+            </section>
+          </div>
 
           <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
             <div className="flex items-center gap-2"><ShieldCheck className="size-5" /><h2 className="font-semibold">Security overview</h2></div>
             <p className="mt-1 text-sm text-neutral-500">Quick status of the identity and sign-in methods protecting this account.</p>
             <div className="mt-5 space-y-3 text-sm">
               <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><Mail className="mt-0.5 size-4 text-neutral-400" /><div className="min-w-0"><p className="font-medium">Email identity</p><p className="mt-1 break-all text-neutral-500">{profile.email}</p><p className="mt-1 text-xs text-emerald-700">{profile.is_verified ? "Verified" : "Verification required"}</p></div></div>
-              <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><KeyRound className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Sign-in methods</p><p className="mt-1 text-neutral-500">{[profile.has_password ? "Password" : null, profile.google_connected ? "Google" : null].filter(Boolean).join(" + ") || "Account authentication"}</p></div></div>
+              <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><KeyRound className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Sign-in methods</p><p className="mt-1 text-neutral-500">{[profile.has_password ? "Email / username + Password" : null, profile.google_connected ? "Google" : null].filter(Boolean).join(" + ") || "Account authentication"}</p></div></div>
               <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><MonitorSmartphone className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Device security</p><p className="mt-1 text-neutral-500">Review and remotely sign out devices from the Sessions tab.</p><button type="button" onClick={() => setActiveTab("sessions")} className="mt-2 text-xs font-semibold text-neutral-950 underline-offset-4 hover:underline">Open sessions</button></div></div>
               <div className="flex items-start gap-3 rounded-2xl bg-neutral-50 p-4"><Clock3 className="mt-0.5 size-4 text-neutral-400" /><div><p className="font-medium">Personal timezone</p><p className="mt-1 text-neutral-500">{profile.timezone || "Workspace / device default"}</p></div></div>
             </div>
