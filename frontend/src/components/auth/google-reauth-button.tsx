@@ -25,9 +25,11 @@ type GoogleWindow = Window & { google?: { accounts: { id: GoogleApi } } };
 export function GoogleReauthButton({
   onCredential,
   busy = false,
+  busyLabel = "Verifying with Google…",
 }: {
   onCredential: (credential: string) => void | Promise<void>;
   busy?: boolean;
+  busyLabel?: string;
 }) {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
   const buttonRef = useRef<HTMLDivElement>(null);
@@ -91,7 +93,7 @@ export function GoogleReauthButton({
       <div className="relative min-h-11 w-full max-w-md">
         <div ref={buttonRef} className="flex min-h-11 w-full justify-start" aria-label="Verify with Google" />
         {!scriptReady && !error ? <div className="absolute inset-0 flex items-center justify-center rounded-md border bg-white text-sm text-neutral-500"><Loader2 className="mr-2 size-4 animate-spin" />Loading Google verification…</div> : null}
-        {busy ? <div className="absolute inset-0 flex items-center justify-center rounded-md border bg-white/95 text-sm font-medium text-neutral-700"><Loader2 className="mr-2 size-4 animate-spin" />Saving password…</div> : null}
+        {busy ? <div className="absolute inset-0 flex items-center justify-center rounded-md border bg-white/95 text-sm font-medium text-neutral-700"><Loader2 className="mr-2 size-4 animate-spin" />{busyLabel}</div> : null}
       </div>
       {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     </div>
