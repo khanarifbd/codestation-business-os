@@ -206,6 +206,18 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
     else:
         user = db.scalar(select(User).where(User.username == identifier))
 
+    if user is not None:
+        # Email and username are aliases for the same global account. Keep a
+        # second account-level bucket so alternating between aliases cannot
+        # multiply the password-attempt allowance from one client IP.
+        enforce_auth_rate_limit(
+            request,
+            action="login_account",
+            limit=10,
+            window_seconds=600,
+            identity=user.id,
+        )
+
     if user is None or user.password_hash is None or not verify_password(payload.password, user.password_hash):
         record_activity(
             db,
