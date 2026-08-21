@@ -50,6 +50,7 @@ from app.services.google_identity import (
     GoogleIdentityUnavailableError,
     verify_google_id_token,
 )
+from app.services.user_identity import normalize_login_identifier
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -191,15 +192,20 @@ def signup(payload: SignUpRequest, request: Request, db: DbSession) -> AuthActio
 
 @router.post("/login", response_model=TokenPair)
 def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
-    email = payload.email.lower().strip()
+    identifier_type, identifier = normalize_login_identifier(payload.login_identifier)
     enforce_auth_rate_limit(
         request,
         action="login",
         limit=10,
         window_seconds=600,
-        identity=email,
+        identity=f"{identifier_type}:{identifier}",
     )
-    user = db.scalar(select(User).where(User.email == email))
+
+    if identifier_type == "email":
+        user = db.scalar(select(User).where(User.email == identifier))
+    else:
+        user = db.scalar(select(User).where(User.username == identifier))
+
     if user is None or user.password_hash is None or not verify_password(payload.password, user.password_hash):
         record_activity(
             db,
@@ -210,14 +216,18 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
             entity_type="user" if user is not None else None,
             entity_id=user.id if user is not None else None,
             outcome="failure",
-            message="Invalid email or password",
-            metadata={"email": email, "provider": "password"},
+            message="Invalid email/username or password",
+            metadata={
+                "login_identifier_type": identifier_type,
+                "login_identifier": identifier,
+                "provider": "password",
+            },
             request=request,
         )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
+            detail="Invalid email/username or password",
         )
     if not user.is_active:
         record_activity(
@@ -229,7 +239,10 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
             entity_id=user.id,
             outcome="failure",
             message="Login blocked because the account is inactive",
-            metadata={"email": email, "provider": "password"},
+            metadata={
+                "login_identifier_type": identifier_type,
+                "provider": "password",
+            },
             request=request,
         )
         db.commit()
@@ -247,7 +260,11 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
             entity_id=user.id,
             outcome="failure",
             message="Password login blocked pending email verification",
-            metadata={"email": email, "provider": "password", "reason": "email_unverified"},
+            metadata={
+                "login_identifier_type": identifier_type,
+                "provider": "password",
+                "reason": "email_unverified",
+            },
             request=request,
         )
         db.commit()
@@ -267,6 +284,7 @@ def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenPair:
         message="User signed in",
         metadata={
             "provider": "password",
+            "login_identifier_type": identifier_type,
             "session_id": user_session.id,
             "device_type": user_session.device_type,
             "browser": user_session.browser,
