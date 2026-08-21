@@ -13,6 +13,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(32), unique=True, index=True, nullable=True)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -33,6 +34,13 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
     )
+
+    @validates("username")
+    def normalize_username(self, _key: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
 
     @validates("password_hash")
     def invalidate_sessions_for_password_change(self, _key: str, value: str | None) -> str | None:
