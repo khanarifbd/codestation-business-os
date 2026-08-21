@@ -7,10 +7,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.dependencies import CurrentUser, DbSession
+from app.core.roles import SYSTEM_ROLE_SUPER_ADMIN
 from app.core.security import hash_password, verify_password
+from app.models.user import User
 from app.schemas.auth import (
+    GoogleIdentityLinkRequest,
     GooglePasswordSetupRequest,
     PasswordChangeRequest,
     UserProfileRead,
@@ -85,6 +90,29 @@ def _record_password_setup_failure(
         db,
         action="user.password.setup_failed",
         scope="account",
+        actor_user_id=current_user.id,
+        entity_type="user",
+        entity_id=current_user.id,
+        outcome="failure",
+        message=message,
+        metadata={"reason": reason, "provider": "google"},
+        request=request,
+    )
+    db.commit()
+
+
+def _record_google_link_failure(
+    db: DbSession,
+    request: Request,
+    current_user: CurrentUser,
+    *,
+    message: str,
+    reason: str,
+) -> None:
+    record_activity(
+        db,
+        action="auth.google.link_failed",
+        scope="auth",
         actor_user_id=current_user.id,
         entity_type="user",
         entity_id=current_user.id,
@@ -248,6 +276,150 @@ def remove_avatar(
     db.commit()
     db.refresh(current_user)
     avatar_storage.delete(old_key)
+    return _profile_read(current_user)
+
+
+@router.post("/google-link", response_model=UserProfileRead)
+def link_google_identity(
+    payload: GoogleIdentityLinkRequest,
+    request: Request,
+    db: DbSession,
+    current_user: CurrentUser,
+) -> UserProfileRead:
+    if current_user.system_role == SYSTEM_ROLE_SUPER_ADMIN:
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking is disabled for platform super admin accounts",
+            reason="super_admin_password_only",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform super admin accounts must use password sign-in",
+        )
+
+    try:
+        identity = verify_google_id_token(payload.credential)
+    except GoogleIdentityConfigurationError as exc:
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking failed because Google verification is not configured",
+            reason="google_not_configured",
+        )
+        raise HTTPException(status_code=503, detail="Google verification is not configured") from exc
+    except GoogleIdentityUnavailableError as exc:
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking failed because Google verification is unavailable",
+            reason="google_unavailable",
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Google verification is temporarily unavailable. Please try again.",
+        ) from exc
+    except GoogleIdentityError as exc:
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking failed because the Google credential was invalid",
+            reason="invalid_google_credential",
+        )
+        raise HTTPException(status_code=401, detail="Unable to verify your Google account") from exc
+
+    current_email = current_user.email.lower().strip()
+    if not hmac.compare_digest(identity.email, current_email):
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking rejected because the Google email did not match the account email",
+            reason="email_mismatch",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Use the Google account for {current_user.email} to connect Google sign-in",
+        )
+
+    now = int(time.time())
+    if identity.issued_at is None or identity.issued_at < now - _GOOGLE_REAUTH_MAX_AGE_SECONDS:
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking rejected because the Google credential was not fresh",
+            reason="stale_google_credential",
+        )
+        raise HTTPException(status_code=401, detail="Google verification expired. Please verify again.")
+
+    existing_owner = db.scalar(select(User).where(User.google_subject == identity.subject))
+    if existing_owner is not None and existing_owner.id != current_user.id:
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking rejected because the Google identity belongs to another user",
+            reason="google_subject_in_use",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Google account is already connected to another Business OS account",
+        )
+
+    if current_user.google_subject is not None:
+        if hmac.compare_digest(current_user.google_subject, identity.subject):
+            return _profile_read(current_user)
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking rejected because another Google identity is already connected",
+            reason="different_google_identity_already_linked",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Business OS account is already connected to a different Google account",
+        )
+
+    current_user.google_subject = identity.subject
+    current_user.is_verified = True
+    record_activity(
+        db,
+        action="auth.google.linked",
+        scope="auth",
+        actor_user_id=current_user.id,
+        entity_type="user",
+        entity_id=current_user.id,
+        message="Google identity linked to authenticated user",
+        metadata={
+            "provider": "google",
+            "hosted_domain": identity.hosted_domain,
+            "link_method": "authenticated_profile",
+        },
+        request=request,
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        _record_google_link_failure(
+            db,
+            request,
+            current_user,
+            message="Google linking failed because the Google identity was linked concurrently",
+            reason="google_subject_conflict",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This Google account is already connected to another Business OS account",
+        ) from exc
+
+    db.refresh(current_user)
     return _profile_read(current_user)
 
 
