@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 export type AuthUser = {
   id: string;
   email: string;
+  username?: string | null;
   full_name: string;
   system_role: "super_admin" | "user" | string;
   is_active: boolean;
