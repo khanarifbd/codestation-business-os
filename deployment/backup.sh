@@ -119,36 +119,38 @@ BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" openssl enc \
   -pass env:BACKUP_ENCRYPTION_KEY \
   -in "${bundle}" -out "${backup_file}"
 
-sha256sum "${backup_file}" > "${checksum_file}"
-chmod 600 "${backup_file}" "${checksum_file}"
+(
+  cd "${BACKUP_DIR}"
+  sha256sum "$(basename "${backup_file}")" > "$(basename "${checksum_file}")"
+)
 
-echo "==> Validating encrypted backup"
-BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" openssl enc \
-  -d -aes-256-cbc -pbkdf2 -iter 200000 \
+# Prove that the just-created encrypted archive can be decrypted and listed.
+verification_bundle="${work_dir}/verification.tar.gz"
+BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" openssl enc -d \
+  -aes-256-cbc -pbkdf2 -iter 200000 \
   -pass env:BACKUP_ENCRYPTION_KEY \
-  -in "${backup_file}" -out "${work_dir}/validation-bundle.tar.gz"
-tar -tzf "${work_dir}/validation-bundle.tar.gz" >/dev/null
+  -in "${backup_file}" -out "${verification_bundle}"
+tar -tzf "${verification_bundle}" >/dev/null
+rm -f "${verification_bundle}"
 
 if [[ -n "${BACKUP_REMOTE_RSYNC_TARGET}" ]]; then
   if command -v rsync >/dev/null 2>&1; then
     echo "==> Copying encrypted backup off-server"
-    if ! rsync -a --protect-args "${backup_file}" "${checksum_file}" "${BACKUP_REMOTE_RSYNC_TARGET}"; then
-      if is_true "${BACKUP_REMOTE_REQUIRED}"; then
-        fail "Remote backup copy failed and BACKUP_REMOTE_REQUIRED=true"
-      fi
-      echo "WARNING: Remote backup copy failed; local encrypted backup remains available."
-    fi
+    remote_target="${BACKUP_REMOTE_RSYNC_TARGET%/}/"
+    rsync -az --protect-args "${backup_file}" "${checksum_file}" "${remote_target}"
   elif is_true "${BACKUP_REMOTE_REQUIRED}"; then
     fail "rsync is required because BACKUP_REMOTE_REQUIRED=true"
   else
-    echo "WARNING: rsync is not installed; skipping optional remote backup copy."
+    echo "WARNING: rsync is unavailable; encrypted off-server copy was skipped" >&2
   fi
+elif ! is_true "${BACKUP_REMOTE_REQUIRED}"; then
+  echo "WARNING: BACKUP_REMOTE_RSYNC_TARGET is not configured; backup is local-only" >&2
 fi
 
 if (( BACKUP_RETENTION_DAYS > 0 )); then
-  find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'business-os-*.tar.gz.enc' -mtime "+${BACKUP_RETENTION_DAYS}" -delete
-  find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'business-os-*.tar.gz.enc.sha256' -mtime "+${BACKUP_RETENTION_DAYS}" -delete
+  find "${BACKUP_DIR}" -maxdepth 1 -type f \
+    \( -name 'business-os-*.tar.gz.enc' -o -name 'business-os-*.tar.gz.enc.sha256' \) \
+    -mtime "+${BACKUP_RETENTION_DAYS}" -delete
 fi
 
 echo "Backup created: ${backup_file}"
-echo "Checksum:       ${checksum_file}"
