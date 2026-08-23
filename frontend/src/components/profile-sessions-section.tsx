@@ -62,6 +62,7 @@ function authMethodLabel(value: string) {
 
 function endedReason(session: UserSession) {
   if (session.status === "expired") return "Expired";
+  if (session.revoked_reason === "new_sign_in_same_device") return "Replaced by a newer sign-in";
   if (session.revoked_reason === "remote_sign_out") return "Signed out remotely";
   if (session.revoked_reason === "sign_out_other_devices") return "Signed out from another device";
   if (session.revoked_reason === "user_logout") return "Signed out";
@@ -203,7 +204,7 @@ export function ProfileSessionsSection() {
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><ShieldCheck className="size-5" /></div>
           <div>
             <h2 className="font-semibold">Devices & sessions</h2>
-            <p className="mt-1 max-w-2xl text-sm text-neutral-500">Review active devices and remotely revoke access you no longer trust.</p>
+            <p className="mt-1 max-w-2xl text-sm text-neutral-500">Review active browser devices and remotely revoke access you no longer trust. Re-signing in from the same browser replaces its previous active session.</p>
           </div>
         </div>
         <button type="button" disabled={workingAll || loading || !otherActiveCount || Boolean(data?.legacy_current_session)} onClick={() => void signOutOtherDevices()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45">
