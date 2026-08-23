@@ -95,13 +95,15 @@ export default function PrivacyPage() {
               <a className="font-semibold text-neutral-950 underline underline-offset-4" href="mailto:info@codestationai.com">
                 info@codestationai.com
               </a>
-              .
+              , or visit our <Link href="/contact" className="font-semibold text-neutral-950 underline underline-offset-4">Contact page</Link>.
             </p>
           </section>
         </div>
 
         <footer className="flex flex-wrap gap-4 border-t border-neutral-200 pt-6 text-sm">
           <Link href="/" className="font-semibold">Home</Link>
+          <Link href="/contact" className="font-semibold">Contact Us</Link>
+          <Link href="/support" className="font-semibold">Help & Support</Link>
           <Link href="/terms" className="font-semibold">Terms of Service</Link>
           <Link href="/login" className="font-semibold">Sign in</Link>
         </footer>
