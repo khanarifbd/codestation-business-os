@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRight,
+  ArrowUp,
   BadgeDollarSign,
   BarChart3,
   BriefcaseBusiness,
@@ -128,11 +129,11 @@ const audiences = [
 
 export default function Home() {
   return (
-    <main className="min-h-screen overflow-x-clip bg-neutral-950 text-white">
+    <main id="top" className="min-h-screen overflow-x-clip bg-neutral-950 text-white">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[760px] bg-[radial-gradient(circle_at_18%_16%,rgba(255,255,255,0.09),transparent_28%),radial-gradient(circle_at_82%_22%,rgba(59,130,246,0.10),transparent_24%)]" />
 
       <header className="sticky top-0 z-50 border-b border-white/10 bg-neutral-950/80 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-10">
+        <div className="mx-auto flex w-full max-w-[1480px] items-center justify-between px-5 py-4 sm:px-6 lg:px-10">
           <Link href="/" className="group flex items-center gap-3">
             <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] p-2.5">
               <BrandMark variant="light" className="h-full w-full object-contain" />
@@ -163,7 +164,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="relative mx-auto grid w-full max-w-7xl gap-12 px-5 pb-20 pt-16 sm:px-6 sm:pt-20 lg:grid-cols-[1.03fr_0.97fr] lg:items-center lg:px-10 lg:pb-28 lg:pt-24">
+      <section className="relative mx-auto grid w-full max-w-[1480px] gap-12 px-5 pb-20 pt-16 sm:px-6 sm:pt-20 lg:grid-cols-[1.03fr_0.97fr] lg:items-center lg:px-10 lg:pb-28 lg:pt-24">
         <div className="max-w-3xl">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs font-medium text-white/60">
             <Layers3 className="size-3.5" />
@@ -253,7 +254,7 @@ export default function Home() {
       </section>
 
       <section className="border-y border-white/10 bg-white/[0.025]">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-6 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-10">
+        <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-5 px-5 py-6 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-10">
           <p className="max-w-xl text-sm leading-6 text-white/45">
             Built for teams that have outgrown disconnected spreadsheets, chats and single-purpose tools.
           </p>
@@ -263,7 +264,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="workflow" className="mx-auto w-full max-w-7xl px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
+      <section id="workflow" className="mx-auto w-full max-w-[1480px] px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
         <SectionEyebrow>One connected workflow</SectionEyebrow>
         <div className="mt-4 grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:items-end">
           <div>
@@ -290,7 +291,7 @@ export default function Home() {
       </section>
 
       <section id="platform" className="border-y border-white/10 bg-white/[0.025]">
-        <div className="mx-auto w-full max-w-7xl px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
+        <div className="mx-auto w-full max-w-[1480px] px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
           <SectionEyebrow>Everything your team needs to operate</SectionEyebrow>
           <div className="mt-4 max-w-3xl">
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Core business operations, designed to work together.</h2>
@@ -316,7 +317,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
+      <section className="mx-auto w-full max-w-[1480px] px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
         <div className="grid gap-12 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
           <div className="lg:sticky lg:top-28">
             <SectionEyebrow>Monitor without micromanaging</SectionEyebrow>
@@ -339,7 +340,7 @@ export default function Home() {
       </section>
 
       <section id="finance" className="border-y border-white/10 bg-[#0d0d0d]">
-        <div className="mx-auto grid w-full max-w-7xl gap-12 px-5 py-20 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-10 lg:py-28">
+        <div className="mx-auto grid w-full max-w-[1480px] gap-12 px-5 py-20 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-10 lg:py-28">
           <div>
             <SectionEyebrow>Finance that stays connected to operations</SectionEyebrow>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">From invoice to ledger, without losing the business context.</h2>
@@ -380,7 +381,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="security" className="mx-auto w-full max-w-7xl px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
+      <section id="security" className="mx-auto w-full max-w-[1480px] px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
         <div className="rounded-[32px] border border-white/10 bg-white/[0.035] p-6 sm:p-9 lg:p-12">
           <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
             <div>
@@ -401,7 +402,7 @@ export default function Home() {
       </section>
 
       <section className="border-y border-white/10 bg-white/[0.025]">
-        <div className="mx-auto grid w-full max-w-7xl gap-10 px-5 py-20 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-10 lg:py-24">
+        <div className="mx-auto grid w-full max-w-[1480px] gap-10 px-5 py-20 sm:px-6 lg:grid-cols-2 lg:items-center lg:px-10 lg:py-24">
           <div>
             <SectionEyebrow>Built for growing service businesses</SectionEyebrow>
             <h2 className="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl">Start with the operations you need today. Keep one system as the company grows.</h2>
@@ -412,7 +413,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-5 pt-20 sm:px-6 lg:px-10 lg:pt-28">
+      <section className="mx-auto w-full max-w-[1480px] px-5 pt-20 sm:px-6 lg:px-10 lg:pt-28">
         <div className="grid gap-4 lg:grid-cols-2">
           <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 sm:p-8">
             <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05]"><Mail className="size-5 text-white/70" /></div>
@@ -429,7 +430,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
+      <section className="mx-auto w-full max-w-[1480px] px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
         <div className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white p-7 text-neutral-950 sm:p-10 lg:p-14">
           <div className="pointer-events-none absolute -right-24 -top-24 size-80 rounded-full border border-neutral-200" />
           <div className="pointer-events-none absolute -right-10 -top-10 size-52 rounded-full border border-neutral-200" />
@@ -448,18 +449,17 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto w-full max-w-7xl px-5 pb-8 sm:px-6 lg:px-10">
-        <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5 sm:p-6">
-          <h2 className="text-base font-semibold">Google Sign-In and your data</h2>
-          <p className="mt-2 max-w-5xl text-sm leading-6 text-white/45">
-            Google Sign-In is optional and is used only to authenticate and safely link your Business OS identity. Business OS does not receive your Google password, and signing in does not grant access to Gmail, Drive, Calendar or other Google services.
-          </p>
-          <Link href="/privacy" className="mt-3 inline-flex text-sm font-semibold text-white/70 underline underline-offset-4">Read our Privacy Policy</Link>
-        </div>
-      </section>
+      <a
+        href="#top"
+        aria-label="Scroll to top"
+        title="Scroll to top"
+        className="fixed bottom-5 right-5 z-40 inline-flex size-11 items-center justify-center rounded-full border border-white/15 bg-neutral-900/90 text-white/75 shadow-xl shadow-black/30 backdrop-blur transition hover:-translate-y-0.5 hover:bg-white hover:text-neutral-950 sm:bottom-7 sm:right-7"
+      >
+        <ArrowUp className="size-4" />
+      </a>
 
       <footer className="border-t border-white/10">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-8 text-xs text-white/40 sm:px-6 lg:px-10 xl:flex-row xl:items-center xl:justify-between">
+        <div className="mx-auto flex w-full max-w-[1480px] flex-col gap-5 px-5 py-8 text-xs text-white/40 sm:px-6 lg:px-10 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] p-2"><BrandMark variant="light" className="h-full w-full" /></div>
             <div><p className="font-semibold text-white/65">CodeStation AI Business OS</p><p className="mt-0.5">One connected system to run your business.</p></div>
