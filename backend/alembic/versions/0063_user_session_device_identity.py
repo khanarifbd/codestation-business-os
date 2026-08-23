@@ -1,6 +1,6 @@
 """add persistent browser device identity to user sessions
 
-Revision ID: 0063_user_session_device_identity
+Revision ID: 0063_session_device_id
 Revises: 0062_user_login_identity
 Create Date: 2026-08-23
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0063_user_session_device_identity"
+revision: str = "0063_session_device_id"
 down_revision: str | None = "0062_user_login_identity"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
