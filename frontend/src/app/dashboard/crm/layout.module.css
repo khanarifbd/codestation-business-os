@@ -1,0 +1,132 @@
+.scope {
+  min-width: 0;
+}
+
+/* Pipeline settings cards must be allowed to shrink inside the two-column page. */
+.scope section:has(> form input[name="name"]) {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Give the create controls a clear, contained surface instead of letting the
+   form visually blend into the settings list. */
+.scope section > form:has(input[name="name"]) {
+  border: 1px solid #e5e5e5;
+  border-radius: 16px;
+  background: #fafafa;
+  padding: 16px;
+}
+
+/* Status create form: half-width cards do not have enough room for four forced
+   columns. Keep it two-column on normal desktop widths and one-column mobile. */
+.scope section > form:has(input[type="color"]) {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 14px !important;
+}
+
+.scope section > form:has(input[type="color"]) > button {
+  width: 100%;
+  margin-top: 0 !important;
+  align-self: end;
+}
+
+/* Source create form keeps a compact action column when space allows. */
+.scope section > form:has(input[name="name"]):not(:has(input[type="color"])) {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 14px !important;
+  align-items: end;
+}
+
+.scope section > form:has(input[name="name"]):not(:has(input[type="color"])) > button {
+  width: 100%;
+}
+
+/* Existing status editor. The previous four-column md grid overflowed its
+   half-width settings card. Turn it into a contained responsive edit panel. */
+.scope section > div > form:has(select[name="category"]):has(input[type="color"]) {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 14px !important;
+  margin: 8px;
+  padding: 16px !important;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  background: #fafafa;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.03);
+}
+
+.scope section > div > form:has(select[name="category"]):has(input[type="color"]) > * {
+  min-width: 0;
+}
+
+.scope section > div > form:has(select[name="category"]):has(input[type="color"]) > div:last-child {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-bottom: 0 !important;
+}
+
+/* Existing source editor gets the same visual language and never forces its
+   controls outside the card. */
+.scope section > div > form:has(input[name="name"]):not(:has(select[name="category"])) {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 14px !important;
+  margin: 8px;
+  padding: 16px !important;
+  border: 1px solid #d4d4d4;
+  border-radius: 14px;
+  background: #fafafa;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.03);
+}
+
+.scope section > div > form:has(input[name="name"]):not(:has(select[name="category"])) > * {
+  min-width: 0;
+}
+
+.scope section > div > form:has(input[name="name"]):not(:has(select[name="category"])) > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-bottom: 0 !important;
+}
+
+/* Inputs/selects inside settings editors should be able to shrink with their
+   grid column instead of contributing intrinsic width overflow. */
+.scope form:has(input[name="name"]) label,
+.scope form:has(input[name="name"]) input,
+.scope form:has(input[name="name"]) select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (min-width: 640px) {
+  .scope section > form:has(input[type="color"]) {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.7fr) !important;
+  }
+
+  .scope section > form:has(input[type="color"]) > button {
+    grid-column: 2;
+  }
+
+  .scope section > form:has(input[name="name"]):not(:has(input[type="color"])) {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .scope section > form:has(input[name="name"]):not(:has(input[type="color"])) > button {
+    width: auto;
+    min-width: 76px;
+  }
+
+  .scope section > div > form:has(select[name="category"]):has(input[type="color"]) {
+    grid-template-columns: minmax(0, 1fr) minmax(150px, 0.72fr) !important;
+  }
+
+  .scope section > div > form:has(input[name="name"]):not(:has(select[name="category"])) {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    align-items: end;
+  }
+}
