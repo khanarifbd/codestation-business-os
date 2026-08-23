@@ -18,7 +18,9 @@ import {
   Globe2,
   Landmark,
   Layers3,
+  LifeBuoy,
   LockKeyhole,
+  Mail,
   ReceiptText,
   ShieldCheck,
   TrendingUp,
@@ -141,11 +143,13 @@ export default function Home() {
             </div>
           </Link>
 
-          <nav className="hidden items-center gap-7 text-sm text-white/55 lg:flex">
+          <nav className="hidden items-center gap-6 text-sm text-white/55 lg:flex">
             <a href="#platform" className="transition hover:text-white">Platform</a>
             <a href="#workflow" className="transition hover:text-white">Workflow</a>
             <a href="#finance" className="transition hover:text-white">Finance</a>
             <a href="#security" className="transition hover:text-white">Security</a>
+            <Link href="/contact" className="transition hover:text-white">Contact</Link>
+            <Link href="/support" className="transition hover:text-white">Support</Link>
           </nav>
 
           <div className="flex items-center gap-2">
@@ -408,6 +412,23 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="mx-auto w-full max-w-7xl px-5 pt-20 sm:px-6 lg:px-10 lg:pt-28">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 sm:p-8">
+            <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05]"><Mail className="size-5 text-white/70" /></div>
+            <h2 className="mt-7 text-2xl font-semibold tracking-tight">Questions before you start?</h2>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-white/45">Talk to CodeStation AI about your company, workflow, rollout, finance requirements or whether Business OS is the right fit.</p>
+            <Link href="/contact" className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-white/80 transition hover:text-white">Contact us <ArrowRight className="size-4" /></Link>
+          </article>
+          <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 sm:p-8">
+            <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05]"><LifeBuoy className="size-5 text-white/70" /></div>
+            <h2 className="mt-7 text-2xl font-semibold tracking-tight">Already using Business OS?</h2>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-white/45">Get help with account access, CRM, projects, finance, accounting, permissions or another part of your workspace.</p>
+            <Link href="/support" className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-white/80 transition hover:text-white">Visit Help & Support <ArrowRight className="size-4" /></Link>
+          </article>
+        </div>
+      </section>
+
       <section className="mx-auto w-full max-w-7xl px-5 py-20 sm:px-6 lg:px-10 lg:py-28">
         <div className="relative overflow-hidden rounded-[36px] border border-white/10 bg-white p-7 text-neutral-950 sm:p-10 lg:p-14">
           <div className="pointer-events-none absolute -right-24 -top-24 size-80 rounded-full border border-neutral-200" />
@@ -418,9 +439,10 @@ export default function Home() {
             <p className="mt-5 max-w-2xl text-base leading-7 text-neutral-500">
               Create your organization workspace and connect the flow from lead and client management through projects, invoicing, payments and financial reporting.
             </p>
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
               <Link href="/signup" className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-neutral-950 px-6 text-sm font-semibold text-white">Create your workspace <ArrowRight className="size-4" /></Link>
-              <Link href="/login" className="inline-flex h-12 items-center justify-center rounded-full border border-neutral-200 px-6 text-sm font-semibold">Sign in to Business OS</Link>
+              <Link href="/contact" className="inline-flex h-12 items-center justify-center rounded-full border border-neutral-200 px-6 text-sm font-semibold">Contact us</Link>
+              <Link href="/login" className="inline-flex h-12 items-center justify-center rounded-full border border-neutral-200 px-6 text-sm font-semibold">Sign in</Link>
             </div>
           </div>
         </div>
@@ -437,12 +459,14 @@ export default function Home() {
       </section>
 
       <footer className="border-t border-white/10">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-8 text-xs text-white/40 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-10">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-5 py-8 text-xs text-white/40 sm:px-6 lg:px-10 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] p-2"><BrandMark variant="light" className="h-full w-full" /></div>
             <div><p className="font-semibold text-white/65">CodeStation AI Business OS</p><p className="mt-0.5">One connected system to run your business.</p></div>
           </div>
           <nav className="flex flex-wrap gap-x-5 gap-y-2">
+            <Link href="/contact" className="transition hover:text-white/75">Contact Us</Link>
+            <Link href="/support" className="transition hover:text-white/75">Help & Support</Link>
             <Link href="/privacy" className="transition hover:text-white/75">Privacy Policy</Link>
             <Link href="/terms" className="transition hover:text-white/75">Terms of Service</Link>
             <Link href="/login" className="transition hover:text-white/75">Sign in</Link>
