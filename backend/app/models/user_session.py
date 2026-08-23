@@ -12,6 +12,7 @@ class UserSession(Base):
     __table_args__ = (
         Index("ix_user_sessions_user_last_seen", "user_id", "last_seen_at"),
         Index("ix_user_sessions_user_active", "user_id", "revoked_at", "expires_at"),
+        Index("ix_user_sessions_user_device", "user_id", "device_id_hash"),
         UniqueConstraint(
             "legacy_refresh_fingerprint",
             name="uq_user_sessions_legacy_refresh_fingerprint",
@@ -32,6 +33,7 @@ class UserSession(Base):
     operating_system: Mapped[str] = mapped_column(String(80), nullable=False)
     user_agent: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    device_id_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     legacy_refresh_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
