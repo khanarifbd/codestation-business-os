@@ -4,7 +4,7 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${BUSINESS_OS_ENV_FILE:-${ROOT_DIR}/.env.staging}"
-COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
+COMPOSE_FILE="${BUSINESS_OS_COMPOSE_FILE:-${ROOT_DIR}/deployment/docker-compose.yml}"
 
 cd "${ROOT_DIR}"
 
@@ -28,6 +28,7 @@ is_true() {
 }
 
 [[ -f "${ENV_FILE}" ]] || fail "Missing ${ENV_FILE}"
+[[ -f "${COMPOSE_FILE}" ]] || fail "Missing ${COMPOSE_FILE}"
 command -v docker >/dev/null 2>&1 || fail "docker is required"
 command -v openssl >/dev/null 2>&1 || fail "openssl is required"
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
@@ -118,38 +119,36 @@ BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" openssl enc \
   -pass env:BACKUP_ENCRYPTION_KEY \
   -in "${bundle}" -out "${backup_file}"
 
-(
-  cd "${BACKUP_DIR}"
-  sha256sum "$(basename "${backup_file}")" > "$(basename "${checksum_file}")"
-)
+sha256sum "${backup_file}" > "${checksum_file}"
+chmod 600 "${backup_file}" "${checksum_file}"
 
-# Prove that the just-created encrypted archive can be decrypted and listed.
-verification_bundle="${work_dir}/verification.tar.gz"
-BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" openssl enc -d \
-  -aes-256-cbc -pbkdf2 -iter 200000 \
+echo "==> Validating encrypted backup"
+BACKUP_ENCRYPTION_KEY="${BACKUP_ENCRYPTION_KEY}" openssl enc \
+  -d -aes-256-cbc -pbkdf2 -iter 200000 \
   -pass env:BACKUP_ENCRYPTION_KEY \
-  -in "${backup_file}" -out "${verification_bundle}"
-tar -tzf "${verification_bundle}" >/dev/null
-rm -f "${verification_bundle}"
+  -in "${backup_file}" -out "${work_dir}/validation-bundle.tar.gz"
+tar -tzf "${work_dir}/validation-bundle.tar.gz" >/dev/null
 
 if [[ -n "${BACKUP_REMOTE_RSYNC_TARGET}" ]]; then
   if command -v rsync >/dev/null 2>&1; then
     echo "==> Copying encrypted backup off-server"
-    remote_target="${BACKUP_REMOTE_RSYNC_TARGET%/}/"
-    rsync -az --protect-args "${backup_file}" "${checksum_file}" "${remote_target}"
+    if ! rsync -a --protect-args "${backup_file}" "${checksum_file}" "${BACKUP_REMOTE_RSYNC_TARGET}"; then
+      if is_true "${BACKUP_REMOTE_REQUIRED}"; then
+        fail "Remote backup copy failed and BACKUP_REMOTE_REQUIRED=true"
+      fi
+      echo "WARNING: Remote backup copy failed; local encrypted backup remains available."
+    fi
   elif is_true "${BACKUP_REMOTE_REQUIRED}"; then
     fail "rsync is required because BACKUP_REMOTE_REQUIRED=true"
   else
-    echo "WARNING: rsync is unavailable; encrypted off-server copy was skipped" >&2
+    echo "WARNING: rsync is not installed; skipping optional remote backup copy."
   fi
-elif ! is_true "${BACKUP_REMOTE_REQUIRED}"; then
-  echo "WARNING: BACKUP_REMOTE_RSYNC_TARGET is not configured; backup is local-only" >&2
 fi
 
 if (( BACKUP_RETENTION_DAYS > 0 )); then
-  find "${BACKUP_DIR}" -maxdepth 1 -type f \
-    \( -name 'business-os-*.tar.gz.enc' -o -name 'business-os-*.tar.gz.enc.sha256' \) \
-    -mtime "+${BACKUP_RETENTION_DAYS}" -delete
+  find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'business-os-*.tar.gz.enc' -mtime "+${BACKUP_RETENTION_DAYS}" -delete
+  find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'business-os-*.tar.gz.enc.sha256' -mtime "+${BACKUP_RETENTION_DAYS}" -delete
 fi
 
 echo "Backup created: ${backup_file}"
+echo "Checksum:       ${checksum_file}"
