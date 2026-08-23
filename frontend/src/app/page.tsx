@@ -128,10 +128,10 @@ const audiences = [
 
 export default function Home() {
   return (
-    <main className="min-h-screen overflow-hidden bg-neutral-950 text-white">
+    <main className="min-h-screen overflow-x-clip bg-neutral-950 text-white">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-[760px] bg-[radial-gradient(circle_at_18%_16%,rgba(255,255,255,0.09),transparent_28%),radial-gradient(circle_at_82%_22%,rgba(59,130,246,0.10),transparent_24%)]" />
 
-      <header className="relative z-20 border-b border-white/10 bg-neutral-950/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-neutral-950/80 backdrop-blur-xl">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-4 sm:px-6 lg:px-10">
           <Link href="/" className="group flex items-center gap-3">
             <div className="flex size-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.06] p-2.5">
