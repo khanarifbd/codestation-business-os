@@ -1,10 +1,10 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Landmark, Link2, LockKeyhole, Pencil, Printer, QrCode, Save, WalletCards, X } from "lucide-react";
 
 import { SearchableSelect } from "@/components/searchable-select";
+import QRCode from "@/lib/qrcode-svg";
 
 type PaymentMethod = "bank_transfer" | "cash" | "card" | "payoneer" | "wise" | "stripe" | "paypal" | "other";
 
@@ -132,8 +132,21 @@ function toForm(payment: PaymentInstructions): PaymentForm {
   };
 }
 
-function qrImageUrl(paymentUrl: string) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=${encodeURIComponent(paymentUrl)}`;
+function LocalPaymentQr({ value }: { value: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const svg = QRCode({ msg: value, dim: 176, pad: 4, ecl: "M", pal: ["#000", "#fff"] });
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "QR code for invoice payment link");
+    svg.classList.add("size-44");
+    container.replaceChildren(svg);
+    return () => { container.replaceChildren(); };
+  }, [value]);
+
+  return <div ref={containerRef} className="size-44" />;
 }
 
 export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
@@ -179,11 +192,12 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
   useEffect(() => { void load(); }, [load]);
 
   const accountOptions = useMemo(() => [
-    { value: "", label: "No financial account", description: "Use only a payment link or custom instructions" },
+    { value: "", label: "No financial account", description: "Use only a payment link or custom instructions", keywords: "custom payment link" },
     ...destinations.map((account) => ({
       value: account.id,
       label: `${account.name} · ${account.currency}`,
       description: account.provider_name || account.account_reference || account.account_type.replaceAll("_", " "),
+      keywords: `${account.provider_name ?? ""} ${account.account_holder_name ?? ""} ${account.account_reference ?? ""} ${account.account_type} ${account.currency}`,
     })),
   ], [destinations]);
 
@@ -292,8 +306,8 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
 
       {editing ? <div className="mt-6 grid gap-4 md:grid-cols-2">
         <Field label="Payment method"><select value={form.method} onChange={(event) => changeMethod(event.target.value as PaymentMethod | "")} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm">{methodOptions.map((item) => <option key={item.value || "none"} value={item.value}>{item.label}</option>)}</select></Field>
-        <SearchableSelect label="Receive into" value={form.accountId} onValueChange={selectDestination} options={accountOptions} placeholder="Select bank, wallet or gateway" searchPlaceholder="Search payment destination..." clearable />
-        <div className="md:col-span-2"><Field label="Payment URL"><div className="relative"><Link2 className="absolute left-3 top-3 size-4 text-neutral-400" /><input type="url" value={form.paymentUrl} onChange={(event) => setForm((value) => ({ ...value, paymentUrl: event.target.value }))} className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm" placeholder="https://pay.example.com/..." /></div><p className="mt-1 text-xs text-neutral-400">When a URL is present, the client-facing invoice shows a clickable link and QR code.</p></Field></div>
+        <SearchableSelect label="Receive into" value={form.accountId} onValueChange={selectDestination} options={accountOptions} placeholder="Select bank, wallet or gateway" searchPlaceholder="Search account, provider, currency..." clearable />
+        <div className="md:col-span-2"><Field label="Payment URL"><div className="relative"><Link2 className="absolute left-3 top-3 size-4 text-neutral-400" /><input type="url" value={form.paymentUrl} onChange={(event) => setForm((value) => ({ ...value, paymentUrl: event.target.value }))} className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm" placeholder="https://pay.example.com/..." /></div><p className="mt-1 text-xs text-neutral-400">When a URL is present, the client-facing invoice shows a clickable link and locally generated QR code.</p></Field></div>
         <div className="md:col-span-2"><Field label="Client payment instructions"><textarea value={form.instructions} onChange={(event) => setForm((value) => ({ ...value, instructions: event.target.value }))} className="min-h-24 w-full rounded-xl border px-3 py-2.5 text-sm" placeholder="Use the invoice number as the payment reference." /></Field></div>
         {currencyMismatch ? <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Invoice currency is <strong>{invoice.currency}</strong>, but the selected destination is <strong>{selectedDestination?.currency}</strong>. Business OS will not invent a converted amount. Record the actual exchange rate when the payment is received.</div> : null}
         {form.accountId ? <label className="md:col-span-2 flex items-start gap-3 rounded-xl border bg-neutral-50 px-4 py-3 text-sm"><input type="checkbox" checked={saveDefaults} onChange={(event) => setSaveDefaults(event.target.checked)} className="mt-1" /><span><strong>Save URL and instructions as defaults for this account</strong><span className="mt-0.5 block text-xs text-neutral-500">Future invoices selecting this account can prefill the same client payment details.</span></span></label> : null}
@@ -328,7 +342,7 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
 
       <div className="flex justify-end border-b pb-8"><div className="w-full max-w-sm space-y-2 text-sm"><TotalRow label="Subtotal" value={money(invoice.subtotal, invoice.currency)} /><TotalRow label="Discount" value={money(invoice.discount_total, invoice.currency)} /><TotalRow label="Tax" value={money(invoice.tax_total, invoice.currency)} /><div className="my-3 border-t" /><TotalRow label="Total" value={money(invoice.total, invoice.currency)} strong /><TotalRow label="Paid" value={money(invoice.amount_paid, invoice.currency)} /><div className="rounded-xl bg-neutral-950 px-4 py-3 text-white"><div className="flex items-center justify-between gap-4"><span className="font-medium">Amount due</span><span className="text-lg font-semibold tabular-nums">{money(invoice.balance_due, invoice.currency)}</span></div></div></div></div>
 
-      {hasPaymentInstructions ? <div className="grid gap-6 border-b py-8 md:grid-cols-[1fr_auto]"><div><div className="flex items-center gap-2"><Landmark className="size-5" /><h3 className="font-semibold">Payment instructions</h3></div><p className="mt-3 text-sm font-medium">{methodLabel(payment.payment_method)}</p>{payment.payment_provider ? <PaymentLine label="Provider / bank" value={payment.payment_provider} /> : null}{payment.payment_account_name ? <PaymentLine label="Destination" value={payment.payment_account_name} /> : null}{payment.payment_account_holder ? <PaymentLine label="Account holder" value={payment.payment_account_holder} /> : null}{payment.payment_account_reference ? <PaymentLine label="Account / reference" value={payment.payment_account_reference} /> : null}{payment.payment_currency ? <PaymentLine label="Receive currency" value={payment.payment_currency} /> : null}<PaymentLine label="Payment reference" value={invoice.invoice_number} />{payment.payment_instructions ? <p className="mt-4 max-w-2xl whitespace-pre-wrap text-sm leading-6 text-neutral-600">{payment.payment_instructions}</p> : null}{payment.payment_url ? <a href={payment.payment_url} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 break-all text-sm font-semibold text-blue-700 underline underline-offset-4">Open payment link <ExternalLink className="size-4 shrink-0" /></a> : null}</div>{payment.payment_url ? <div className="flex flex-col items-center rounded-2xl border bg-white p-3"><img src={qrImageUrl(payment.payment_url)} alt="QR code for invoice payment link" width={176} height={176} className="size-44" referrerPolicy="no-referrer" /><p className="mt-2 text-center text-[11px] font-medium uppercase tracking-wide text-neutral-400">Scan to pay</p></div> : null}</div> : null}
+      {hasPaymentInstructions ? <div className="grid gap-6 border-b py-8 md:grid-cols-[1fr_auto]"><div><div className="flex items-center gap-2"><Landmark className="size-5" /><h3 className="font-semibold">Payment instructions</h3></div><p className="mt-3 text-sm font-medium">{methodLabel(payment.payment_method)}</p>{payment.payment_provider ? <PaymentLine label="Provider / bank" value={payment.payment_provider} /> : null}{payment.payment_account_name ? <PaymentLine label="Destination" value={payment.payment_account_name} /> : null}{payment.payment_account_holder ? <PaymentLine label="Account holder" value={payment.payment_account_holder} /> : null}{payment.payment_account_reference ? <PaymentLine label="Account / reference" value={payment.payment_account_reference} /> : null}{payment.payment_currency ? <PaymentLine label="Receive currency" value={payment.payment_currency} /> : null}<PaymentLine label="Payment reference" value={invoice.invoice_number} />{payment.payment_instructions ? <p className="mt-4 max-w-2xl whitespace-pre-wrap text-sm leading-6 text-neutral-600">{payment.payment_instructions}</p> : null}{payment.payment_url ? <a href={payment.payment_url} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 break-all text-sm font-semibold text-blue-700 underline underline-offset-4">Open payment link <ExternalLink className="size-4 shrink-0" /></a> : null}</div>{payment.payment_url ? <div className="flex flex-col items-center rounded-2xl border bg-white p-3"><LocalPaymentQr value={payment.payment_url} /><p className="mt-2 text-center text-[11px] font-medium uppercase tracking-wide text-neutral-400">Scan to pay</p></div> : null}</div> : null}
 
       {(invoice.notes || invoice.terms_conditions) ? <div className="grid gap-6 pt-8 md:grid-cols-2">{invoice.notes ? <div><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Notes</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{invoice.notes}</p></div> : null}{invoice.terms_conditions ? <div><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Terms & conditions</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{invoice.terms_conditions}</p></div> : null}</div> : null}
     </section>
