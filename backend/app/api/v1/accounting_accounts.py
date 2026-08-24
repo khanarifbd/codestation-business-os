@@ -6,11 +6,13 @@ from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import Field, field_validator
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.schemas.finance import FinancialAccountCreate, FinancialAccountRead
+from app.schemas.invoice_payment import normalize_payment_url
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
@@ -18,6 +20,16 @@ from app.tenancy.context import TenantContext
 router = APIRouter(prefix="/accounting/financial-accounts", tags=["Accounting"])
 AccountingManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
 MONEY = Decimal("0.01")
+
+
+class AccountingFinancialAccountCreate(FinancialAccountCreate):
+    payment_url: str | None = Field(default=None, max_length=1000)
+    payment_instructions: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("payment_url")
+    @classmethod
+    def validate_payment_url(cls, value: str | None) -> str | None:
+        return normalize_payment_url(value)
 
 
 def _money(value: Decimal) -> Decimal:
@@ -61,8 +73,6 @@ def _read(db: DbSession, account: FinancialAccount) -> FinancialAccountRead:
         current_balance=_balance(db, account),
         is_active=account.is_active,
         notes=account.notes,
-        payment_url=account.payment_url,
-        payment_instructions=account.payment_instructions,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
@@ -70,7 +80,7 @@ def _read(db: DbSession, account: FinancialAccount) -> FinancialAccountRead:
 
 @router.post("", response_model=FinancialAccountRead, status_code=status.HTTP_201_CREATED)
 def create_accounting_financial_account(
-    payload: FinancialAccountCreate,
+    payload: AccountingFinancialAccountCreate,
     request: Request,
     db: DbSession,
     tenant: AccountingManager,
