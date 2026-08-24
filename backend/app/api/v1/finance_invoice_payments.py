@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
@@ -79,7 +79,7 @@ def list_payment_destinations(db: DbSession, tenant: FinanceViewer):
 def update_payment_destination_defaults(
     account_id: str,
     payload: PaymentDestinationSettingsUpdate,
-    request,
+    request: Request,
     db: DbSession,
     tenant: FinanceManager,
 ):
@@ -136,7 +136,7 @@ def get_invoice_payment_instructions(invoice_id: str, db: DbSession, tenant: Fin
 def update_invoice_payment_instructions(
     invoice_id: str,
     payload: InvoicePaymentInstructionsUpdate,
-    request,
+    request: Request,
     db: DbSession,
     tenant: FinanceManager,
 ):
