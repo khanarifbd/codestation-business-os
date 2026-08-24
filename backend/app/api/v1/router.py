@@ -35,6 +35,7 @@ from app.api.v1.finance_auto_post import router as finance_auto_post_router
 from app.api.v1.finance_controls import router as finance_controls_router
 from app.api.v1.finance_expenses import router as finance_expenses_router
 from app.api.v1.finance_invoice_drafts import router as finance_invoice_drafts_router
+from app.api.v1.finance_invoice_payments import router as finance_invoice_payments_router
 from app.api.v1.finance_pagination import router as finance_pagination_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
 from app.api.v1.financial_correction_history import router as financial_correction_history_router
@@ -128,6 +129,7 @@ api_router.include_router(payables_router)
 api_router.include_router(finance_router)
 api_router.include_router(order_settlements_router)
 api_router.include_router(finance_invoice_drafts_router)
+api_router.include_router(finance_invoice_payments_router)
 api_router.include_router(finance_pagination_router)
 api_router.include_router(finance_transfers_router)
 api_router.include_router(finance_expenses_router)
