@@ -6,6 +6,7 @@ import { Check, ChevronDown, Search, X } from "lucide-react";
 export type SearchOption = {
   value: string;
   label: string;
+  description?: string;
   keywords?: string;
 };
 
@@ -79,7 +80,7 @@ export function SearchableSelect({
     const needle = query.trim().toLowerCase();
     if (!needle) return options;
     return options.filter((option) =>
-      `${option.label} ${option.value} ${option.keywords ?? ""}`.toLowerCase().includes(needle),
+      `${option.label} ${option.value} ${option.description ?? ""} ${option.keywords ?? ""}`.toLowerCase().includes(needle),
     );
   }, [options, query]);
 
@@ -132,7 +133,7 @@ export function SearchableSelect({
           </div>
           <div className="max-h-64 overflow-y-auto p-1.5" role="listbox">
             {showCustom ? <button type="button" onClick={() => choose(customValue)} className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50">Use “{customValue}”</button> : null}
-            {filtered.map((option) => <button key={`${option.value}-${option.label}`} type="button" onClick={() => choose(option.value)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"><span className="min-w-0"><span className="block truncate">{option.label}</span>{option.label !== option.value ? <span className="mt-0.5 block truncate text-xs text-neutral-400">{option.value}</span> : null}</span>{value === option.value ? <Check className="size-4 shrink-0 text-neutral-700" /> : null}</button>)}
+            {filtered.map((option) => <button key={`${option.value}-${option.label}`} type="button" onClick={() => choose(option.value)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"><span className="min-w-0"><span className="block truncate">{option.label}</span>{option.description ? <span className="mt-0.5 block truncate text-xs text-neutral-400">{option.description}</span> : option.label !== option.value ? <span className="mt-0.5 block truncate text-xs text-neutral-400">{option.value}</span> : null}</span>{value === option.value ? <Check className="size-4 shrink-0 text-neutral-700" /> : null}</button>)}
             {filtered.length === 0 && !showCustom ? <p className="px-3 py-6 text-center text-sm text-neutral-400">No matches found</p> : null}
           </div>
         </div>
