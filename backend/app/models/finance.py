@@ -26,6 +26,8 @@ class FinancialAccount(TenantOwnedMixin, Base):
     opening_balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    payment_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -68,6 +70,7 @@ class Invoice(TenantOwnedMixin, Base):
         Index("ix_invoices_org_due_date", "organization_id", "due_date"),
         Index("ix_invoices_org_order", "organization_id", "order_id"),
         Index("ix_invoices_org_project", "organization_id", "project_id"),
+        Index("ix_invoices_org_payment_account", "organization_id", "payment_account_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -96,6 +99,16 @@ class Invoice(TenantOwnedMixin, Base):
     client_email_snapshot: Mapped[str | None] = mapped_column(String(320), nullable=True)
     client_address_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_tax_identifier_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+
+    payment_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    payment_account_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="SET NULL"), nullable=True)
+    payment_account_name_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_provider_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_account_holder_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_account_reference_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_currency_snapshot: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    payment_url_snapshot: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    payment_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     subtotal: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
     discount_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
