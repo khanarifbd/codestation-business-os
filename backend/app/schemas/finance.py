@@ -4,8 +4,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.invoice_payment import normalize_payment_url
-
 AccountType = Literal["bank", "cash", "mobile_wallet", "credit_card", "payment_gateway", "petty_cash", "other"]
 InvoiceLifecycleAction = Literal["send", "cancel"]
 PaymentMethod = Literal["bank_transfer", "cash", "card", "payoneer", "wise", "stripe", "paypal", "other"]
@@ -29,18 +27,11 @@ class FinancialAccountCreate(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     opening_balance: Decimal = Field(default=Decimal("0"))
     notes: str | None = None
-    payment_url: str | None = Field(default=None, max_length=1000)
-    payment_instructions: str | None = Field(default=None, max_length=5000)
 
     @field_validator("account_type", mode="before")
     @classmethod
     def normalize_account_type(cls, value):
         return _canonical_account_type(value)
-
-    @field_validator("payment_url")
-    @classmethod
-    def validate_payment_url(cls, value: str | None) -> str | None:
-        return normalize_payment_url(value)
 
 
 class FinancialAccountUpdate(BaseModel):
@@ -50,19 +41,12 @@ class FinancialAccountUpdate(BaseModel):
     account_holder_name: str | None = Field(default=None, max_length=180)
     account_reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
-    payment_url: str | None = Field(default=None, max_length=1000)
-    payment_instructions: str | None = Field(default=None, max_length=5000)
     is_active: bool | None = None
 
     @field_validator("account_type", mode="before")
     @classmethod
     def normalize_account_type(cls, value):
         return _canonical_account_type(value)
-
-    @field_validator("payment_url")
-    @classmethod
-    def validate_payment_url(cls, value: str | None) -> str | None:
-        return normalize_payment_url(value)
 
 
 class FinancialAccountRead(BaseModel):
@@ -77,8 +61,6 @@ class FinancialAccountRead(BaseModel):
     current_balance: Decimal
     is_active: bool
     notes: str | None
-    payment_url: str | None = None
-    payment_instructions: str | None = None
     created_at: datetime
     updated_at: datetime
 
