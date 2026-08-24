@@ -5,16 +5,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <>
       <style>{`
         @media (min-width: 1024px) {
-          .business-dashboard-scope .tabular-nums {
+          .tabular-nums {
             white-space: nowrap;
             overflow-wrap: normal;
             word-break: normal;
           }
         }
       `}</style>
-      <DashboardShell>
-        <div className="business-dashboard-scope">{children}</div>
-      </DashboardShell>
+      <DashboardShell>{children}</DashboardShell>
     </>
   );
 }
