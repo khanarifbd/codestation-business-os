@@ -95,8 +95,10 @@ def update_payment_destination_defaults(
         "payment_url_configured": bool(account.payment_url),
         "payment_instructions_configured": bool(account.payment_instructions),
     }
-    account.payment_url = payload.payment_url
-    account.payment_instructions = _clean(payload.payment_instructions)
+    if "payment_url" in payload.model_fields_set:
+        account.payment_url = payload.payment_url
+    if "payment_instructions" in payload.model_fields_set:
+        account.payment_instructions = _clean(payload.payment_instructions)
     db.flush()
     record_activity(
         db,
