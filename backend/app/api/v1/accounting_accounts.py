@@ -61,6 +61,8 @@ def _read(db: DbSession, account: FinancialAccount) -> FinancialAccountRead:
         current_balance=_balance(db, account),
         is_active=account.is_active,
         notes=account.notes,
+        payment_url=account.payment_url,
+        payment_instructions=account.payment_instructions,
         created_at=account.created_at,
         updated_at=account.updated_at,
     )
@@ -87,6 +89,8 @@ def create_accounting_financial_account(
         currency=payload.currency.upper(),
         opening_balance=opening,
         notes=_clean(payload.notes),
+        payment_url=payload.payment_url,
+        payment_instructions=_clean(payload.payment_instructions),
         created_by_user_id=tenant.user_id,
     )
     db.add(account)
@@ -137,6 +141,8 @@ def create_accounting_financial_account(
             "currency": account.currency,
             "opening_balance": str(account.opening_balance),
             "ledger_account_id": ledger.id,
+            "payment_url_configured": bool(account.payment_url),
+            "payment_instructions_configured": bool(account.payment_instructions),
         },
         message=f"Financial account created and mapped to accounting: {account.name}",
         request=request,
