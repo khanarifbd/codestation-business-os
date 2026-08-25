@@ -100,6 +100,45 @@ type Overview = {
   clients: ClientProfitRow[];
 };
 
+type CurrencyValue = {
+  currency: string;
+  amount: string | number;
+};
+
+type PipelineCurrencyValue = CurrencyValue & {
+  weighted_amount: string | number;
+};
+
+type OrderPulse = {
+  open_orders: number;
+  values: CurrencyValue[];
+};
+
+type ProjectPulse = {
+  active_projects: number;
+  values: CurrencyValue[];
+};
+
+type CrmPulse = {
+  open_leads: number;
+  values: PipelineCurrencyValue[];
+};
+
+type FinancePulse = {
+  open_invoices: number;
+  overdue_invoices: number;
+  outstanding: CurrencyValue[];
+  overdue: CurrencyValue[];
+};
+
+type PeoplePulse = {
+  active_employees: number;
+  present_today: number;
+  late_today: number;
+  on_leave_today: number;
+  pending_leave: number;
+};
+
 type Preset = "month" | "last_month" | "quarter" | "year";
 
 function iso(d: Date) {
@@ -141,10 +180,25 @@ function periodLabel(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(new Date(year, month - 1, 1));
 }
 
+async function optionalPulse<T>(path: string): Promise<T | null> {
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    if (!response.ok) return null;
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const [tenant, setTenant] = useState<TenantContext | null>(null);
   const [data, setData] = useState<Overview | null>(null);
+  const [orderPulse, setOrderPulse] = useState<OrderPulse | null>(null);
+  const [projectPulse, setProjectPulse] = useState<ProjectPulse | null>(null);
+  const [crmPulse, setCrmPulse] = useState<CrmPulse | null>(null);
+  const [financePulse, setFinancePulse] = useState<FinancePulse | null>(null);
+  const [peoplePulse, setPeoplePulse] = useState<PeoplePulse | null>(null);
   const [preset, setPreset] = useState<Preset>("month");
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
@@ -183,7 +237,21 @@ export default function DashboardPage() {
         setTenant((await tenantResponse.json()) as TenantContext);
 
         const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
-        const reportResponse = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
+        const [reportResponse, nextOrderPulse, nextProjectPulse, nextCrmPulse, nextFinancePulse, nextPeoplePulse] = await Promise.all([
+          fetch(`/api/reports/overview?${params}`, { cache: "no-store" }),
+          optionalPulse<OrderPulse>("/api/dashboard-pulse/orders"),
+          optionalPulse<ProjectPulse>("/api/dashboard-pulse/projects"),
+          optionalPulse<CrmPulse>("/api/dashboard-pulse/crm"),
+          optionalPulse<FinancePulse>("/api/dashboard-pulse/finance"),
+          optionalPulse<PeoplePulse>("/api/dashboard-pulse/people"),
+        ]);
+
+        setOrderPulse(nextOrderPulse);
+        setProjectPulse(nextProjectPulse);
+        setCrmPulse(nextCrmPulse);
+        setFinancePulse(nextFinancePulse);
+        setPeoplePulse(nextPeoplePulse);
+
         if (reportResponse.status === 401) {
           router.replace("/login");
           return;
@@ -252,6 +320,10 @@ export default function DashboardPage() {
       });
   }, [data, company]);
 
+  const weightedPipeline = useMemo<CurrencyValue[]>(() => (
+    crmPulse?.values.map((row) => ({ currency: row.currency, amount: row.weighted_amount })) ?? []
+  ), [crmPulse]);
+
   if (loading) {
     return (
       <main className="min-h-screen overflow-x-hidden bg-neutral-100 p-4 sm:p-8 lg:p-10">
@@ -284,6 +356,8 @@ export default function DashboardPage() {
       </main>
     );
   }
+
+  const hasPulse = Boolean(orderPulse || projectPulse || crmPulse || financePulse || peoplePulse);
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-neutral-100 p-3 sm:p-8 lg:p-10">
@@ -326,6 +400,51 @@ export default function DashboardPage() {
           <MetricCard label="Overdue tasks" value={data.operations.overdue_tasks} note="Past due and still open" href="/dashboard/projects" icon={AlertTriangle} attention />
           <MetricCard label="Due follow-ups" value={data.operations.due_followups} note="CRM follow-up required" href="/dashboard/crm" icon={TrendingUp} attention />
         </section>
+
+        {hasPulse ? (
+          <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm sm:mt-5 sm:p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+              <div>
+                <p className="text-sm text-neutral-500">Right now</p>
+                <h2 className="mt-1 text-lg font-semibold sm:text-xl">Current business pulse</h2>
+                <p className="mt-1 text-xs leading-5 text-neutral-400">Order, project, pipeline and collection values stay in their original currencies. No cross-currency totals are combined.</p>
+              </div>
+            </div>
+
+            <div className={`mt-4 grid gap-4 sm:mt-5 ${peoplePulse ? "xl:grid-cols-3" : "xl:grid-cols-2"}`}>
+              {(orderPulse || projectPulse || crmPulse) ? (
+                <PulseCard title="Sales & delivery" note="Commercial work currently in motion" href="/dashboard/orders" icon={ReceiptText}>
+                  {orderPulse ? <PulseValueRow label="Open order value" count={orderPulse.open_orders} values={orderPulse.values} reportingCurrency={company.currency} /> : null}
+                  {projectPulse ? <PulseValueRow label="Active project value" count={projectPulse.active_projects} values={projectPulse.values} reportingCurrency={company.currency} /> : null}
+                  {crmPulse ? <PulseValueRow label="Open CRM pipeline" count={crmPulse.open_leads} values={crmPulse.values} reportingCurrency={company.currency} secondaryLabel="Probability weighted" secondaryValues={weightedPipeline} /> : null}
+                </PulseCard>
+              ) : null}
+
+              {peoplePulse ? (
+                <PulseCard title="People today" note="Today's workforce snapshot" href="/dashboard/hr" icon={Users}>
+                  <div className="grid grid-cols-2 gap-2">
+                    <PeopleStat label="Active employees" value={peoplePulse.active_employees} />
+                    <PeopleStat label="Present today" value={peoplePulse.present_today} />
+                    <PeopleStat label="On leave" value={peoplePulse.on_leave_today} />
+                    <PeopleStat label="Pending leave" value={peoplePulse.pending_leave} attention={peoplePulse.pending_leave > 0} />
+                  </div>
+                  <div className="mt-3 flex items-center justify-between rounded-xl border bg-neutral-50 px-3 py-2.5 text-sm">
+                    <span className="text-neutral-500">Late today</span>
+                    <span className="font-semibold tabular-nums">{peoplePulse.late_today}</span>
+                  </div>
+                  <p className="mt-3 text-[11px] leading-4 text-neutral-400">Business OS does not infer absence from missing attendance records, so weekly-off or not-yet-recorded employees are not misclassified.</p>
+                </PulseCard>
+              ) : null}
+
+              {financePulse ? (
+                <PulseCard title="Collections" note="Current unpaid invoice position" href="/dashboard/accounting/receivables" icon={FileText}>
+                  <PulseValueRow label="Outstanding" count={financePulse.open_invoices} values={financePulse.outstanding} reportingCurrency={company.currency} countLabel="open invoices" />
+                  <PulseValueRow label="Overdue" count={financePulse.overdue_invoices} values={financePulse.overdue} reportingCurrency={company.currency} countLabel="overdue invoices" attention={financePulse.overdue_invoices > 0} />
+                </PulseCard>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
 
         <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm sm:mt-5 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -482,6 +601,28 @@ export default function DashboardPage() {
 
 function MetricCard({ label, value, note, href, icon: Icon, attention = false }: { label: string; value: number; note: string; href: string; icon: LucideIcon; attention?: boolean }) {
   return <Link href={href} className="group min-w-0 rounded-2xl border bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-md sm:p-4"><div className="flex items-start justify-between gap-2"><p className="min-w-0 text-xs leading-4 text-neutral-500 sm:text-sm">{label}</p><Icon className={`size-4 shrink-0 ${attention && value > 0 ? "text-amber-500" : "text-neutral-300"}`} /></div><p className="mt-3 text-2xl font-semibold tracking-tight sm:mt-4 sm:text-3xl">{value}</p><div className="mt-2 flex items-end justify-between gap-2"><p className="min-w-0 text-[11px] leading-4 text-neutral-400 sm:text-xs">{note}</p><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></div></Link>;
+}
+
+function PulseCard({ title, note, href, icon: Icon, children }: { title: string; note: string; href: string; icon: LucideIcon; children: React.ReactNode }) {
+  return <article className="min-w-0 rounded-2xl border bg-neutral-50/60 p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div><div className="flex items-center gap-2"><Icon className="size-5 shrink-0 text-neutral-300" /><Link href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View →</Link></div></div><div className="mt-4 divide-y rounded-xl border bg-white">{children}</div></article>;
+}
+
+function PulseValueRow({ label, count, values, reportingCurrency, countLabel = "active", secondaryLabel, secondaryValues, attention = false }: { label: string; count: number; values: CurrencyValue[]; reportingCurrency: string; countLabel?: string; secondaryLabel?: string; secondaryValues?: CurrencyValue[]; attention?: boolean }) {
+  return <div className="p-3.5 sm:p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-neutral-700">{label}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${attention ? "bg-amber-50 text-amber-700" : "bg-neutral-100 text-neutral-500"}`}>{count} {countLabel}</span></div><CurrencyChips values={values} reportingCurrency={reportingCurrency} /><div>{secondaryLabel && secondaryValues ? <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[11px] text-neutral-400">{secondaryLabel}</span><CurrencyChips values={secondaryValues} reportingCurrency={reportingCurrency} compact /></div> : null}</div></div>;
+}
+
+function CurrencyChips({ values, reportingCurrency, compact = false }: { values: CurrencyValue[]; reportingCurrency: string; compact?: boolean }) {
+  const sorted = [...values].filter((row) => Number(row.amount) !== 0).sort((a, b) => {
+    if (a.currency === reportingCurrency) return -1;
+    if (b.currency === reportingCurrency) return 1;
+    return a.currency.localeCompare(b.currency);
+  });
+  if (!sorted.length) return compact ? <span className="text-[11px] text-neutral-400">No value</span> : <p className="mt-2 text-xs text-neutral-400">No recorded value</p>;
+  return <div className={`${compact ? "contents" : "mt-2 flex flex-wrap gap-1.5"}`}>{sorted.map((row) => <span key={`${row.currency}-${row.amount}`} className={`whitespace-nowrap rounded-lg border bg-white font-semibold tabular-nums text-neutral-700 ${compact ? "px-2 py-1 text-[10px]" : "px-2.5 py-1.5 text-xs"}`}>{money(row.amount, row.currency)}</span>)}</div>;
+}
+
+function PeopleStat({ label, value, attention = false }: { label: string; value: number; attention?: boolean }) {
+  return <div className={`rounded-xl border p-3 ${attention ? "border-amber-200 bg-amber-50" : "bg-white"}`}><p className="text-[11px] leading-4 text-neutral-400">{label}</p><p className={`mt-2 text-xl font-semibold tabular-nums ${attention ? "text-amber-800" : "text-neutral-950"}`}>{value}</p></div>;
 }
 
 function MoneyTile({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
