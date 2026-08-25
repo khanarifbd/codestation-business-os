@@ -15,6 +15,10 @@ class OrderStatusChange(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class OrderSourceLeadUpdate(BaseModel):
+    source_lead_id: str | None = None
+
+
 class OrderItemInput(BaseModel):
     product_id: str | None = None
     item_name: str | None = Field(default=None, max_length=220)
@@ -29,6 +33,7 @@ class OrderItemInput(BaseModel):
 
 class ManualOrderCreate(BaseModel):
     client_id: str
+    source_lead_id: str | None = None
     subject: str | None = Field(default=None, max_length=220)
     order_date: date
     currency: str | None = Field(default=None, min_length=3, max_length=3)
