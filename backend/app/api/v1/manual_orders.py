@@ -13,7 +13,7 @@ from app.models.company_settings import (
     OrganizationIdentifier,
     OrganizationProfile,
 )
-from app.models.crm import Client
+from app.models.crm import Client, Lead
 from app.models.orders import Order, OrderItem
 from app.models.team import Employee
 from app.schemas.orders import ManualOrderCreate, OrderDetail
@@ -48,6 +48,40 @@ def _client_address_text(client: Client) -> str | None:
     return value or None
 
 
+def _resolve_source_lead(
+    db: DbSession,
+    *,
+    organization_id: str,
+    client_id: str,
+    requested_lead_id: str | None,
+) -> Lead | None:
+    if requested_lead_id:
+        lead = db.scalar(
+            select(Lead).where(
+                Lead.id == requested_lead_id,
+                Lead.organization_id == organization_id,
+                Lead.converted_client_id == client_id,
+            )
+        )
+        if lead is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Source lead must belong to this company and be converted to the selected client",
+            )
+        return lead
+
+    candidates = db.scalars(
+        select(Lead)
+        .where(
+            Lead.organization_id == organization_id,
+            Lead.converted_client_id == client_id,
+        )
+        .order_by(Lead.converted_at.desc().nullslast(), Lead.created_at.desc())
+        .limit(2)
+    ).all()
+    return candidates[0] if len(candidates) == 1 else None
+
+
 @router.post("/orders", response_model=OrderDetail, status_code=status.HTTP_201_CREATED)
 def create_manual_order(
     payload: ManualOrderCreate,
@@ -66,6 +100,13 @@ def create_manual_order(
     )
     if client is None:
         raise HTTPException(status_code=400, detail="Active client not found in this company")
+
+    source_lead = _resolve_source_lead(
+        db,
+        organization_id=tenant.organization_id,
+        client_id=client.id,
+        requested_lead_id=payload.source_lead_id,
+    )
 
     if payload.assigned_employee_id:
         employee = db.scalar(
@@ -147,7 +188,7 @@ def create_manual_order(
         order_number=next_sequence_code(db, tenant.organization_id, "order"),
         quotation_id=None,
         client_id=client.id,
-        source_lead_id=None,
+        source_lead_id=source_lead.id if source_lead else None,
         assigned_employee_id=payload.assigned_employee_id,
         created_by_user_id=tenant.user_id,
         source=source,
@@ -218,6 +259,7 @@ def create_manual_order(
             "order_source": order.source,
             "external_order_id": order.external_order_id,
             "client_id": order.client_id,
+            "source_lead_id": order.source_lead_id,
             "status": order.status,
             "currency": order.currency,
             "total": str(order.total),
@@ -227,6 +269,7 @@ def create_manual_order(
             "source": "manual",
             "order_source": order.source,
             "external_order_id": order.external_order_id,
+            "source_lead_id": order.source_lead_id,
         },
         message=f"Manual order {order.order_number} created for {client.display_name}",
         request=request,
