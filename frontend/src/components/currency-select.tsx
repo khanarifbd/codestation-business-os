@@ -10,6 +10,7 @@ export function CurrencySelect({
   required = false,
   clearable = true,
   placeholder = "Select currency",
+  disabled = false,
 }: {
   label?: string;
   value: string | null;
@@ -17,6 +18,7 @@ export function CurrencySelect({
   required?: boolean;
   clearable?: boolean;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   return (
     <SearchableSelect
@@ -28,6 +30,7 @@ export function CurrencySelect({
       clearable={clearable}
       placeholder={placeholder}
       searchPlaceholder="Search currency or code..."
+      disabled={disabled}
     />
   );
 }
