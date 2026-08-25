@@ -6,6 +6,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Summary = { total: number; confirmed: number; in_progress: number; completed: number; cancelled: number };
+type CurrencyValue = { currency: string; amount: string | number };
+type ValueSummary = {
+  total: CurrencyValue[];
+  confirmed: CurrencyValue[];
+  in_progress: CurrencyValue[];
+  completed: CurrencyValue[];
+  cancelled: CurrencyValue[];
+};
 type OrderRow = {
   id: string;
   order_number: string;
@@ -31,12 +39,17 @@ function money(value: string | number, currency: string) {
   return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function compactMoney(value: string | number, currency: string) {
+  return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
 export default function OrdersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const quotationId = searchParams.get("quotation_id");
   const requestedOrderId = searchParams.get("order_id");
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [valueSummary, setValueSummary] = useState<ValueSummary | null>(null);
   const [rows, setRows] = useState<OrderRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,7 +85,12 @@ export default function OrdersPage() {
   }, [search, statusFilter]);
 
   const refreshSummary = useCallback(async () => {
-    setSummary(await api("/orders/summary") as Summary);
+    const [summaryPayload, valuePayload] = await Promise.all([
+      api("/orders/summary"),
+      api("/order-value-summary"),
+    ]);
+    setSummary(summaryPayload as Summary);
+    setValueSummary(valuePayload as ValueSummary);
   }, [api]);
 
   const refreshList = useCallback(async (showLoader = false) => {
@@ -90,11 +108,13 @@ export default function OrdersPage() {
     setLoading(true);
     setError(null);
     try {
-      const [summaryPayload, listPayload] = await Promise.all([
+      const [summaryPayload, valuePayload, listPayload] = await Promise.all([
         api("/orders/summary"),
+        api("/order-value-summary"),
         api(`/orders?${query}`),
       ]);
       setSummary(summaryPayload as Summary);
+      setValueSummary(valuePayload as ValueSummary);
       const typed = listPayload as OrderPage;
       setRows(typed.items);
       setNextCursor(typed.next_cursor);
@@ -185,11 +205,11 @@ export default function OrdersPage() {
         {quotation ? <section className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-blue-950"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Quotation handoff</p><h2 className="mt-1 font-semibold">{quotation.quotation_number} · {quotation.client_name_snapshot}</h2><p className="mt-1 text-sm text-blue-700">{money(quotation.total, quotation.currency)} · Status: {quotation.status}</p></div>{quotationOrderLink ? <Link href={`/dashboard/orders/${encodeURIComponent(quotationOrderLink.order_id)}`} className="inline-flex h-11 items-center justify-center rounded-xl bg-white px-4 text-sm font-semibold shadow-sm">Open {quotationOrderLink.order_number}</Link> : <button disabled={saving || quotation.status !== "accepted"} onClick={() => void convertQuotation()} className="h-11 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Creating..." : "Create Order"}</button>}</div></section> : null}
 
         <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-5">
-          <Stat label="Total" value={summary?.total ?? 0} icon={ClipboardCheck} />
-          <Stat label="Confirmed" value={summary?.confirmed ?? 0} icon={ClipboardCheck} />
-          <Stat label="In progress" value={summary?.in_progress ?? 0} icon={PlayCircle} />
-          <Stat label="Completed" value={summary?.completed ?? 0} icon={CheckCircle2} />
-          <Stat label="Cancelled" value={summary?.cancelled ?? 0} icon={XCircle} />
+          <Stat label="Total" value={summary?.total ?? 0} values={valueSummary?.total ?? []} icon={ClipboardCheck} />
+          <Stat label="Confirmed" value={summary?.confirmed ?? 0} values={valueSummary?.confirmed ?? []} icon={ClipboardCheck} />
+          <Stat label="In progress" value={summary?.in_progress ?? 0} values={valueSummary?.in_progress ?? []} icon={PlayCircle} />
+          <Stat label="Completed" value={summary?.completed ?? 0} values={valueSummary?.completed ?? []} icon={CheckCircle2} />
+          <Stat label="Cancelled" value={summary?.cancelled ?? 0} values={valueSummary?.cancelled ?? []} icon={XCircle} />
         </div>
 
         {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
@@ -214,5 +234,5 @@ export default function OrdersPage() {
 }
 
 function StatusBadge({ status }: { status: string }) { const styles: Record<string, string> = { confirmed: "border-blue-200 bg-blue-50 text-blue-700", in_progress: "border-amber-200 bg-amber-50 text-amber-700", completed: "border-emerald-200 bg-emerald-50 text-emerald-700", cancelled: "border-neutral-200 bg-neutral-100 text-neutral-500" }; return <span className={`inline-flex shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${styles[status] ?? "bg-neutral-50"}`}>{status.replace("_", " ")}</span>; }
-function Stat({ label, value, icon: Icon }: { label: string; value: string | number; icon: typeof ClipboardCheck }) { return <article className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5"><div className="flex items-center justify-between"><p className="text-xs text-neutral-500 sm:text-sm">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-3 text-xl font-semibold sm:mt-4 sm:text-2xl">{value}</p></article>; }
+function Stat({ label, value, values, icon: Icon }: { label: string; value: string | number; values: CurrencyValue[]; icon: typeof ClipboardCheck }) { return <article className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5"><div className="flex items-center justify-between"><p className="text-xs text-neutral-500 sm:text-sm">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-3 text-xl font-semibold sm:mt-4 sm:text-2xl">{value}</p><div className="mt-3 flex min-h-7 flex-wrap items-center gap-1.5" aria-label={`${label} order value by currency`}>{values.length ? values.map((item) => <span key={item.currency} className="inline-flex whitespace-nowrap rounded-full border bg-neutral-50 px-2 py-1 text-[11px] font-semibold text-neutral-700">{compactMoney(item.amount, item.currency)}</span>) : <span className="text-[11px] text-neutral-400">No order value</span>}</div></article>; }
 function Mini({ label, value }: { label: string; value: string }) { return <div className="min-w-0"><p className="text-neutral-400">{label}</p><p className="mt-1 break-words font-medium text-neutral-700">{value}</p></div>; }
