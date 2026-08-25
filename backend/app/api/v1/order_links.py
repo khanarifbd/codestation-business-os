@@ -61,7 +61,7 @@ def get_quotation_order_link(
     return QuotationOrderLink(order_id=order.id, order_number=order.order_number, status=order.status)
 
 
-@router.get("/orders/value-summary", response_model=OrderValueSummary)
+@router.get("/order-value-summary", response_model=OrderValueSummary)
 def get_order_value_summary(db: DbSession, tenant: OrderViewer) -> OrderValueSummary:
     rows = db.execute(
         select(
