@@ -7,13 +7,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.models.projects import Project, ProjectDocument
+from app.api.v1.project_execution import _ensure_open, _project, _require_manager
+from app.models.projects import ProjectDocument
 from app.schemas.project_execution import ProjectDocumentRead
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Project Documents"])
-ProjectManager = Annotated[TenantContext, Depends(require_tenant_permission("projects.manage"))]
+ProjectWorker = Annotated[TenantContext, Depends(require_tenant_permission("projects.work"))]
 
 
 class ProjectDocumentUpdate(BaseModel):
@@ -36,18 +37,11 @@ def update_project_document(
     payload: ProjectDocumentUpdate,
     request: Request,
     db: DbSession,
-    tenant: ProjectManager,
+    tenant: ProjectWorker,
 ) -> ProjectDocumentRead:
-    project = db.scalar(
-        select(Project).where(
-            Project.id == project_id,
-            Project.organization_id == tenant.organization_id,
-        )
-    )
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if project.status in {"completed", "cancelled"}:
-        raise HTTPException(status_code=409, detail=f"{project.status.capitalize()} projects are locked")
+    project = _project(db, tenant, project_id, lock=True)
+    _require_manager(db, tenant, project)
+    _ensure_open(project)
 
     item = db.scalar(
         select(ProjectDocument)
