@@ -29,6 +29,8 @@ ALLOWED_CONTENT_TYPES = {
     "application/zip",
 }
 
+PROJECT_DOCUMENT_NAMESPACE = "projects"
+
 
 class DocumentStorage(Protocol):
     def save(
@@ -62,15 +64,22 @@ class LocalDocumentStorage:
         content_type: str | None,
         namespace: str = "company-documents",
     ) -> tuple[str, int]:
-        suffix = Path(original_filename or "").suffix.lower()
-        if suffix not in ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document file type")
-        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document content type")
-
         namespace_path = Path(namespace.strip("/"))
         if namespace_path.is_absolute() or ".." in namespace_path.parts:
             raise HTTPException(status_code=400, detail="Invalid storage namespace")
+
+        # Project workspaces are private file vaults used for source files,
+        # certificates, JSON/configs, archives and other delivery artifacts.
+        # Keep the stricter allowlist for other document areas, but allow any
+        # file type inside an organization-scoped project namespace.
+        allow_all_file_types = bool(namespace_path.parts) and namespace_path.parts[0] == PROJECT_DOCUMENT_NAMESPACE
+
+        suffix = Path(original_filename or "").suffix.lower()
+        if not allow_all_file_types:
+            if suffix not in ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document file type")
+            if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document content type")
 
         relative = Path("organizations") / organization_id / namespace_path / f"{uuid4().hex}{suffix}"
         destination = (self.root / relative).resolve()
