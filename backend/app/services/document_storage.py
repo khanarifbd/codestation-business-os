@@ -29,7 +29,7 @@ ALLOWED_CONTENT_TYPES = {
     "application/zip",
 }
 
-PROJECT_DOCUMENT_NAMESPACE = "projects"
+UNRESTRICTED_DOCUMENT_NAMESPACE_ROOTS = {"projects", "clients"}
 
 
 class DocumentStorage(Protocol):
@@ -68,11 +68,17 @@ class LocalDocumentStorage:
         if namespace_path.is_absolute() or ".." in namespace_path.parts:
             raise HTTPException(status_code=400, detail="Invalid storage namespace")
 
-        # Project workspaces are private file vaults used for source files,
-        # certificates, JSON/configs, archives and other delivery artifacts.
-        # Keep the stricter allowlist for other document areas, but allow any
-        # file type inside an organization-scoped project namespace.
-        allow_all_file_types = bool(namespace_path.parts) and namespace_path.parts[0] == PROJECT_DOCUMENT_NAMESPACE
+        # Project and client document areas are private tenant-scoped file vaults
+        # used for source files, certificates, JSON/configs, archives and other
+        # delivery/relationship artifacts. Keep the stricter allowlist for all
+        # other document areas. Only the explicit */<id>/documents namespaces are
+        # unrestricted; unrelated project/client storage namespaces stay strict.
+        parts = namespace_path.parts
+        allow_all_file_types = (
+            len(parts) >= 3
+            and parts[0] in UNRESTRICTED_DOCUMENT_NAMESPACE_ROOTS
+            and parts[2] == "documents"
+        )
 
         suffix = Path(original_filename or "").suffix.lower()
         if not allow_all_file_types:
