@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.api.dependencies import CurrentSuperAdmin, DbSession
 from app.core.roles import (
@@ -10,12 +10,15 @@ from app.core.roles import (
     SYSTEM_ROLE_SUPER_ADMIN,
 )
 from app.models.common import utc_now
+from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.subscription import Subscription
 from app.models.user import User
 from app.schemas.organization import OrganizationRead
 from app.schemas.platform import (
     OrganizationStatusUpdate,
+    PlatformOrganizationDirectoryItem,
+    PlatformOrganizationDirectoryPage,
     PlatformOrganizationRead,
     PlatformSummaryRead,
     PlatformUserRead,
@@ -271,6 +274,124 @@ def platform_organizations(
         )
         for organization, subscription, admin in rows
     ]
+
+
+@router.get("/organization-directory", response_model=PlatformOrganizationDirectoryPage)
+def platform_organization_directory(
+    db: DbSession,
+    _: CurrentSuperAdmin,
+    q: str | None = Query(default=None, max_length=120),
+    organization_status: str | None = Query(default=None),
+    subscription_status: str | None = Query(default=None),
+    country_code: str | None = Query(default=None, min_length=2, max_length=2),
+    setup_completed: bool | None = Query(default=None),
+    plan_code: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> PlatformOrganizationDirectoryPage:
+    allowed_organization_statuses = {ORGANIZATION_STATUS_ACTIVE, ORGANIZATION_STATUS_SUSPENDED}
+    allowed_subscription_statuses = {"trialing", "active", "past_due", "suspended", "canceled", "none"}
+
+    if organization_status and organization_status not in allowed_organization_statuses:
+        raise HTTPException(status_code=400, detail="Invalid organization status filter")
+    if subscription_status and subscription_status not in allowed_subscription_statuses:
+        raise HTTPException(status_code=400, detail="Invalid subscription status filter")
+
+    normalized_query = (q or "").strip()
+    normalized_country = (country_code or "").strip().upper() or None
+    normalized_plan = (plan_code or "").strip() or None
+
+    conditions = []
+    if normalized_query:
+        pattern = f"%{normalized_query}%"
+        conditions.append(
+            or_(
+                Organization.name.ilike(pattern),
+                Organization.slug.ilike(pattern),
+                User.full_name.ilike(pattern),
+                User.email.ilike(pattern),
+            )
+        )
+    if organization_status:
+        conditions.append(Organization.status == organization_status)
+    if subscription_status == "none":
+        conditions.append(Subscription.id.is_(None))
+    elif subscription_status:
+        conditions.append(Subscription.status == subscription_status)
+    if normalized_country:
+        conditions.append(Organization.country_code == normalized_country)
+    if setup_completed is not None:
+        conditions.append(Organization.setup_completed.is_(setup_completed))
+    if normalized_plan:
+        conditions.append(Subscription.plan_code == normalized_plan)
+
+    member_counts = (
+        select(
+            Membership.organization_id.label("organization_id"),
+            func.count(Membership.id).label("member_count"),
+            func.count(Membership.id)
+            .filter(Membership.status == "active")
+            .label("active_member_count"),
+        )
+        .group_by(Membership.organization_id)
+        .subquery()
+    )
+
+    base_statement = (
+        select(Organization, Subscription, User)
+        .join(User, User.id == Organization.created_by_user_id)
+        .outerjoin(Subscription, Subscription.organization_id == Organization.id)
+    )
+    if conditions:
+        base_statement = base_statement.where(*conditions)
+
+    total = db.scalar(select(func.count()).select_from(base_statement.subquery())) or 0
+
+    rows = db.execute(
+        select(
+            Organization,
+            Subscription,
+            User,
+            func.coalesce(member_counts.c.member_count, 0),
+            func.coalesce(member_counts.c.active_member_count, 0),
+        )
+        .join(User, User.id == Organization.created_by_user_id)
+        .outerjoin(Subscription, Subscription.organization_id == Organization.id)
+        .outerjoin(member_counts, member_counts.c.organization_id == Organization.id)
+        .where(*conditions)
+        .order_by(Organization.created_at.desc(), Organization.id.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+
+    country_codes = list(
+        db.scalars(select(Organization.country_code).distinct().order_by(Organization.country_code)).all()
+    )
+    plan_codes = list(
+        db.scalars(select(Subscription.plan_code).distinct().order_by(Subscription.plan_code)).all()
+    )
+
+    return PlatformOrganizationDirectoryPage(
+        items=[
+            PlatformOrganizationDirectoryItem(
+                organization=OrganizationRead.model_validate(organization),
+                subscription=(
+                    SubscriptionRead.model_validate(subscription) if subscription is not None else None
+                ),
+                created_by_email=creator.email,
+                created_by_name=creator.full_name,
+                member_count=int(member_count or 0),
+                active_member_count=int(active_member_count or 0),
+                created_at=organization.created_at,
+            )
+            for organization, subscription, creator, member_count, active_member_count in rows
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+        country_codes=country_codes,
+        plan_codes=plan_codes,
+    )
 
 
 @router.patch(
