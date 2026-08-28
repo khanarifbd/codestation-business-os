@@ -41,11 +41,29 @@ class PlatformUserRead(BaseModel):
 
 class PlatformSummaryRead(BaseModel):
     total_users: int
+    active_users: int
+    suspended_users: int
+    verified_users: int
+    unverified_users: int
+    new_users_7d: int
+    new_users_30d: int
+
     total_companies: int
     active_companies: int
     suspended_companies: int
+    setup_incomplete_companies: int
+    new_companies_7d: int
+    new_companies_30d: int
+
+    total_subscriptions: int
     trialing_subscriptions: int
     active_subscriptions: int
+    past_due_subscriptions: int
+    suspended_subscriptions: int
+    canceled_subscriptions: int
+    trials_ending_7d: int
+    periods_ending_7d: int
+    companies_without_subscription: int
 
 
 class OrganizationStatusUpdate(BaseModel):
