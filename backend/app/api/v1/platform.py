@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 
@@ -66,8 +68,37 @@ def platform_summary(
     db: DbSession,
     _: CurrentSuperAdmin,
 ) -> PlatformSummaryRead:
+    now = utc_now()
+    seven_days_ago = now - timedelta(days=7)
+    thirty_days_ago = now - timedelta(days=30)
+    seven_days_from_now = now + timedelta(days=7)
+
     return PlatformSummaryRead(
         total_users=db.scalar(select(func.count()).select_from(User)) or 0,
+        active_users=db.scalar(
+            select(func.count()).select_from(User).where(User.is_active.is_(True))
+        )
+        or 0,
+        suspended_users=db.scalar(
+            select(func.count()).select_from(User).where(User.is_active.is_(False))
+        )
+        or 0,
+        verified_users=db.scalar(
+            select(func.count()).select_from(User).where(User.is_verified.is_(True))
+        )
+        or 0,
+        unverified_users=db.scalar(
+            select(func.count()).select_from(User).where(User.is_verified.is_(False))
+        )
+        or 0,
+        new_users_7d=db.scalar(
+            select(func.count()).select_from(User).where(User.created_at >= seven_days_ago)
+        )
+        or 0,
+        new_users_30d=db.scalar(
+            select(func.count()).select_from(User).where(User.created_at >= thirty_days_ago)
+        )
+        or 0,
         total_companies=db.scalar(select(func.count()).select_from(Organization)) or 0,
         active_companies=db.scalar(
             select(func.count()).select_from(Organization).where(
@@ -81,12 +112,69 @@ def platform_summary(
             )
         )
         or 0,
+        setup_incomplete_companies=db.scalar(
+            select(func.count()).select_from(Organization).where(
+                Organization.status == ORGANIZATION_STATUS_ACTIVE,
+                Organization.setup_completed.is_(False),
+            )
+        )
+        or 0,
+        new_companies_7d=db.scalar(
+            select(func.count()).select_from(Organization).where(
+                Organization.created_at >= seven_days_ago
+            )
+        )
+        or 0,
+        new_companies_30d=db.scalar(
+            select(func.count()).select_from(Organization).where(
+                Organization.created_at >= thirty_days_ago
+            )
+        )
+        or 0,
+        total_subscriptions=db.scalar(select(func.count()).select_from(Subscription)) or 0,
         trialing_subscriptions=db.scalar(
             select(func.count()).select_from(Subscription).where(Subscription.status == "trialing")
         )
         or 0,
         active_subscriptions=db.scalar(
             select(func.count()).select_from(Subscription).where(Subscription.status == "active")
+        )
+        or 0,
+        past_due_subscriptions=db.scalar(
+            select(func.count()).select_from(Subscription).where(Subscription.status == "past_due")
+        )
+        or 0,
+        suspended_subscriptions=db.scalar(
+            select(func.count()).select_from(Subscription).where(Subscription.status == "suspended")
+        )
+        or 0,
+        canceled_subscriptions=db.scalar(
+            select(func.count()).select_from(Subscription).where(Subscription.status == "canceled")
+        )
+        or 0,
+        trials_ending_7d=db.scalar(
+            select(func.count()).select_from(Subscription).where(
+                Subscription.status == "trialing",
+                Subscription.trial_ends_at.is_not(None),
+                Subscription.trial_ends_at >= now,
+                Subscription.trial_ends_at <= seven_days_from_now,
+            )
+        )
+        or 0,
+        periods_ending_7d=db.scalar(
+            select(func.count()).select_from(Subscription).where(
+                Subscription.status.in_(["active", "trialing"]),
+                Subscription.current_period_end.is_not(None),
+                Subscription.current_period_end >= now,
+                Subscription.current_period_end <= seven_days_from_now,
+            )
+        )
+        or 0,
+        companies_without_subscription=db.scalar(
+            select(func.count())
+            .select_from(Organization)
+            .outerjoin(Subscription, Subscription.organization_id == Organization.id)
+            .where(Subscription.id.is_(None))
         )
         or 0,
     )
