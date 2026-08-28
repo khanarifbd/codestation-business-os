@@ -27,6 +27,25 @@ class PlatformOrganizationRead(BaseModel):
     admin_name: str
 
 
+class PlatformOrganizationDirectoryItem(BaseModel):
+    organization: OrganizationRead
+    subscription: SubscriptionRead | None
+    created_by_email: EmailStr
+    created_by_name: str
+    member_count: int
+    active_member_count: int
+    created_at: datetime
+
+
+class PlatformOrganizationDirectoryPage(BaseModel):
+    items: list[PlatformOrganizationDirectoryItem]
+    total: int
+    limit: int
+    offset: int
+    country_codes: list[str]
+    plan_codes: list[str]
+
+
 class PlatformUserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -47,14 +66,12 @@ class PlatformSummaryRead(BaseModel):
     unverified_users: int
     new_users_7d: int
     new_users_30d: int
-
     total_companies: int
     active_companies: int
     suspended_companies: int
     setup_incomplete_companies: int
     new_companies_7d: int
     new_companies_30d: int
-
     total_subscriptions: int
     trialing_subscriptions: int
     active_subscriptions: int
