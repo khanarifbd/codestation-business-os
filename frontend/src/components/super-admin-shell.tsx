@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   Building2,
@@ -79,7 +79,7 @@ function Navigation({ pathname, onNavigate }: { pathname: string; onNavigate?: (
   );
 }
 
-export function SuperAdminShell({ children }: { children: React.ReactNode }) {
+export function SuperAdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
