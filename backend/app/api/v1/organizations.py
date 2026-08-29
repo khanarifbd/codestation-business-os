@@ -5,7 +5,11 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
-from app.core.roles import MEMBERSHIP_ROLE_ADMIN, SUBSCRIPTION_STATUS_ACTIVE
+from app.core.roles import (
+    MEMBERSHIP_ROLE_ADMIN,
+    SUBSCRIPTION_STATUS_ACTIVE,
+    SYSTEM_ROLE_SUPER_ADMIN,
+)
 from app.models.common import new_uuid, utc_now
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -77,6 +81,12 @@ def create_organization(
     db: DbSession,
     current_user: CurrentUser,
 ) -> OrganizationMembershipRead:
+    if current_user.system_role == SYSTEM_ROLE_SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform super admin accounts cannot create tenant workspaces through onboarding",
+        )
+
     organization = Organization(
         name=payload.name.strip(),
         slug=_unique_slug(db, payload.name),
