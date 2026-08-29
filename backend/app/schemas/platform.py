@@ -46,6 +46,63 @@ class PlatformOrganizationDirectoryPage(BaseModel):
     plan_codes: list[str]
 
 
+class PlatformOrganizationMemberRead(BaseModel):
+    membership_id: str
+    user_id: str
+    full_name: str
+    email: EmailStr
+    username: str | None
+    role_id: str
+    role_name: str
+    role_slug: str
+    membership_status: str
+    is_owner: bool
+    user_is_active: bool
+    user_is_verified: bool
+    joined_at: datetime
+
+
+class PlatformOrganizationUsageRead(BaseModel):
+    employees: int
+    active_employees: int
+    clients: int
+    active_clients: int
+    leads: int
+    quotations: int
+    orders: int
+    open_orders: int
+    projects: int
+    active_projects: int
+    invoices: int
+    open_invoices: int
+
+
+class PlatformOrganizationActivityRead(BaseModel):
+    id: str
+    action: str
+    outcome: str
+    message: str | None
+    actor_user_id: str | None
+    actor_name: str | None
+    actor_email: EmailStr | None
+    entity_type: str | None
+    entity_id: str | None
+    created_at: datetime
+
+
+class PlatformOrganizationDetailRead(BaseModel):
+    organization: OrganizationRead
+    subscription: SubscriptionRead | None
+    created_at: datetime
+    updated_at: datetime
+    created_by_user_id: str
+    created_by_name: str
+    created_by_email: EmailStr
+    members: list[PlatformOrganizationMemberRead]
+    usage: PlatformOrganizationUsageRead
+    recent_activity: list[PlatformOrganizationActivityRead]
+
+
 class PlatformUserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
