@@ -395,7 +395,9 @@ export default function SuperAdminOrganizationsPage() {
                           <Building2 className="size-4 text-neutral-600" />
                         </div>
                         <div className="min-w-0">
-                          <p className="max-w-56 truncate font-semibold">{organization.name}</p>
+                          <button type="button" onClick={() => router.push(`/super-admin/organizations/${organization.id}`)} className="block max-w-56 truncate text-left font-semibold hover:underline">
+                            {organization.name}
+                          </button>
                           <p className="mt-1 max-w-56 truncate text-xs text-neutral-400">{organization.slug}</p>
                         </div>
                       </div>
@@ -460,14 +462,23 @@ export default function SuperAdminOrganizationsPage() {
                       {new Date(item.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void toggleOrganizationStatus(item)}
-                        className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {organization.status === "suspended" ? "Reactivate" : "Suspend"}
-                      </button>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/super-admin/organizations/${organization.id}`)}
+                          className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-800"
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void toggleOrganizationStatus(item)}
+                          className="rounded-lg border border-neutral-200 px-3 py-2 text-xs font-semibold hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {organization.status === "suspended" ? "Reactivate" : "Suspend"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -488,7 +499,9 @@ export default function SuperAdminOrganizationsPage() {
                     <Building2 className="size-4 text-neutral-600" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">{organization.name}</p>
+                    <button type="button" onClick={() => router.push(`/super-admin/organizations/${organization.id}`)} className="block max-w-full truncate text-left font-semibold hover:underline">
+                      {organization.name}
+                    </button>
                     <p className="mt-1 truncate text-xs text-neutral-400">{organization.slug}</p>
                   </div>
                   <span className={`rounded-full border px-2.5 py-1 text-[11px] font-medium capitalize ${statusClass(organization.status)}`}>
@@ -515,12 +528,19 @@ export default function SuperAdminOrganizationsPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mt-4 flex flex-col gap-3 border-t pt-4">
                   <div>
                     <p className="text-xs text-neutral-400">Plan</p>
                     <p className="mt-1 text-sm font-medium capitalize">{subscription?.plan_code ?? "Not assigned"}</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/super-admin/organizations/${organization.id}`)}
+                      className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white"
+                    >
+                      Open details
+                    </button>
                     <select
                       value={subscription?.status ?? "none"}
                       disabled={busy}
