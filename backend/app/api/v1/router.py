@@ -60,6 +60,7 @@ from app.api.v1.organizations import router as organizations_router
 from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
 from app.api.v1.platform import router as platform_router
+from app.api.v1.platform_organization_detail import router as platform_organization_detail_router
 from app.api.v1.profile import router as profile_router
 from app.api.v1.profile_identity import router as profile_identity_router
 from app.api.v1.profile_sessions import router as profile_sessions_router
@@ -152,4 +153,5 @@ api_router.include_router(company_defaults_router)
 api_router.include_router(exchange_rates_router)
 api_router.include_router(tenant_activity_router)
 api_router.include_router(platform_router)
+api_router.include_router(platform_organization_detail_router)
 api_router.include_router(platform_activity_router)
