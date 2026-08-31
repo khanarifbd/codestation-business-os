@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -132,6 +132,28 @@ class ProjectWorkLog(TenantOwnedMixin, Base):
     progress_percent: Mapped[int] = mapped_column(Integer, nullable=False)
     time_spent_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class ProjectReview(TenantOwnedMixin, Base):
+    __tablename__ = "project_reviews"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "project_id", name="uq_project_reviews_org_project"),
+        CheckConstraint("rating IS NULL OR (rating >= 1 AND rating <= 5)", name="ck_project_reviews_rating"),
+        Index("ix_project_reviews_org_received", "organization_id", "received_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewer_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    received_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    updated_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
 class ProjectDocument(TenantOwnedMixin, Base):
