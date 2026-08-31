@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Check, Copy, Download, Eye, EyeOff, FileText, KeyRound, Loader2, LockKeyhole, Pencil, Plus, ShieldCheck, Trash2, UsersRound, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
+import { ProjectReviewTips } from "@/components/project-review-tips";
+
 type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null };
 type ProjectDetail = { id: string; project_number: string; order_number: string; quotation_number: string; client_name: string; name: string; status: string; priority: string; planned_start_date: string | null; due_date: string | null; currency: string; contract_value: string | number; project_manager_name: string | null; description: string | null; notes: string | null; members: ProjectMember[] };
 type Summary = { progress_percent: number; milestone_count: number; task_count: number; open_task_count: number; overdue_task_count: number; blocked_task_count: number; document_count: number; credential_count: number };
@@ -15,12 +17,13 @@ type CredentialRow = { id: string; name: string; credential_type: string; enviro
 type Workspace = { summary: Summary; milestones: MilestoneRow[]; tasks: TaskRow[]; recent_work: WorkLog[]; documents: DocumentRow[]; credentials: CredentialRow[]; can_manage_credentials: boolean };
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
 type Meta = { employees: EmployeeOption[] };
-type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "credentials" | "team";
+type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "credentials" | "team" | "review_tips";
 type CredentialValues = { name: string; credential_type: string; environment: string; username: string; secret: string; url: string; notes: string; access_level: string };
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" }, { id: "milestones", label: "Milestones" }, { id: "tasks", label: "Tasks" },
   { id: "work", label: "Work Log" }, { id: "documents", label: "Documents" }, { id: "credentials", label: "Credentials" }, { id: "team", label: "Team" },
+  { id: "review_tips", label: "Review & Tips" },
 ];
 const previewTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "text/plain"]);
 
@@ -79,7 +82,12 @@ export default function ProjectWorkspacePage() {
 
   async function changeProjectStatus(status: string) {
     setSaving(true); setError(null);
-    try { await api(`/${projectId}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }); setMessage(`Project marked ${pretty(status)}.`); await refresh(); }
+    try {
+      await api(`/${projectId}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+      setMessage(status === "completed" ? "Project completed. Client review or tip can be added now or anytime later." : `Project marked ${pretty(status)}.`);
+      await refresh();
+      if (status === "completed") setTab("review_tips");
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update project."); }
     finally { setSaving(false); }
   }
@@ -215,6 +223,7 @@ export default function ProjectWorkspacePage() {
       {tab === "documents" ? <Documents projectId={projectId} rows={workspace.documents} canManage={workspace.can_manage_credentials} onAdd={() => setModal("document")} onChanged={() => void refreshWorkspace()} /> : null}
       {tab === "credentials" ? <Credentials rows={workspace.credentials} revealed={revealed} canManage={workspace.can_manage_credentials} copiedKey={copiedKey} onAdd={() => { setSelectedCredential(null); setCredentialError(null); setModal("credential"); }} onReveal={(id) => void revealCredential(id)} onHide={hideCredential} onCopySecret={(item) => void copySecret(item)} onCopy={(value,key,label) => void copyValue(value,key,label)} onEdit={(item) => { setSelectedCredential(item); setCredentialError(null); setModal("credential_edit"); }} onDelete={(item) => void deleteCredential(item)} /> : null}
       {tab === "team" ? <Team project={project} onManage={() => setModal("team")} /> : null}
+      {tab === "review_tips" ? <ProjectReviewTips projectId={projectId} projectNumber={project.project_number} projectStatus={project.status} projectCurrency={project.currency} /> : null}
     </section>
   </div>
 
