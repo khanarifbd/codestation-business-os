@@ -64,6 +64,7 @@ from app.models.projects import (
     ProjectDocument,
     ProjectMember,
     ProjectMilestone,
+    ProjectReview,
     ProjectTask,
     ProjectWorkLog,
 )
@@ -88,7 +89,7 @@ __all__ = [
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
-    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
+    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
     "Subscription", "TaxCode", "User", "UserSession", "Vendor", "Warehouse",
 ]
 
