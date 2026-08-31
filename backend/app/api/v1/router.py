@@ -66,6 +66,7 @@ from app.api.v1.profile_identity import router as profile_identity_router
 from app.api.v1.profile_sessions import router as profile_sessions_router
 from app.api.v1.project_documents import router as project_documents_router
 from app.api.v1.project_execution import router as project_execution_router
+from app.api.v1.project_feedback import router as project_feedback_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.reports_fast import router as reports_fast_router
 from app.api.v1.reports import router as reports_router
@@ -111,6 +112,7 @@ api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
+api_router.include_router(project_feedback_router)
 api_router.include_router(project_documents_router)
 api_router.include_router(inventory_router)
 api_router.include_router(inventory_management_router)
