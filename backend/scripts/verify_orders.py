@@ -213,6 +213,7 @@ def main() -> None:
         )
         if started.status != "in_progress" or started.started_at is None:
             raise AssertionError("Confirmed order did not start correctly")
+        original_started_at = started.started_at
 
         completed = change_order_status(
             created.id,
@@ -235,6 +236,30 @@ def main() -> None:
             ),
         )
         db.rollback()
+
+        reopened = change_order_status(
+            created.id,
+            OrderStatusChange(status="in_progress"),
+            make_request("PATCH", f"/api/v1/sales/orders/{created.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if reopened.status != "in_progress":
+            raise AssertionError("Completed order did not reopen correctly")
+        if reopened.completed_at is not None:
+            raise AssertionError("Reopened order retained a completed timestamp")
+        if reopened.started_at != original_started_at:
+            raise AssertionError("Reopening an order must preserve the original start timestamp")
+
+        recompleted = change_order_status(
+            created.id,
+            OrderStatusChange(status="completed"),
+            make_request("PATCH", f"/api/v1/sales/orders/{created.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if recompleted.status != "completed" or recompleted.completed_at is None:
+            raise AssertionError("Reopened order could not be completed again")
     finally:
         db.close()
 
