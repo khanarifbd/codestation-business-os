@@ -58,7 +58,7 @@ export function HRModuleNav() {
     { label: "Overview", href: "/dashboard/hr", icon: Gauge, show: Boolean(access?.can_view) },
     { label: "Team", href: "/dashboard/hr/people", icon: UsersRound, show: Boolean(access?.can_view_people) },
     { label: "Time & Leave", href: "/dashboard/hr/time", icon: CalendarClock, show: Boolean(access?.can_view) },
-    { label: "My HR", href: "/dashboard/hr/me", icon: UserRound, show: Boolean(access?.can_self) },
+    { label: "My HR & Pay", href: "/dashboard/hr/me", icon: UserRound, show: Boolean(access?.can_self) },
   ].filter(item => item.show), [access]);
 
   const more = useMemo<Item[]>(() => [
@@ -68,6 +68,8 @@ export function HRModuleNav() {
   ].filter(item => item.show), [access]);
 
   if (loading) return <div className="border-b bg-white px-4 py-3 sm:px-8 lg:px-10"><Loader2 className="size-4 animate-spin text-neutral-400" /></div>;
+  const selfServiceOnly = Boolean(access?.can_self) && !access?.can_view && !access?.can_view_people && !access?.can_manage;
+  if (selfServiceOnly) return null;
   if (!primary.length && !more.length) return null;
 
   const active = (href: string) => href === "/dashboard/hr" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
