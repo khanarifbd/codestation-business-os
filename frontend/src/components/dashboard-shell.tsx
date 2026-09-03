@@ -46,7 +46,6 @@ const employeeExpandedWorkspacePermissions = [
   "clients.view",
   "quotations.view",
   "orders.view",
-  "projects.view",
   "finance.view",
   "capital.view",
   "payroll.view",
