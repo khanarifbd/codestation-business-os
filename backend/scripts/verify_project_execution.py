@@ -15,6 +15,7 @@ from app.api.v1.project_execution import (
     update_credential,
     update_task_progress,
 )
+from app.api.v1.workspace import notifications, personal_task_detail, personal_workspace
 from app.db.session import SessionLocal, engine
 from app.models.projects import Project, ProjectCredential, ProjectMilestone, ProjectWorkLog
 from app.schemas.project_execution import CredentialCreate, CredentialUpdate, MilestoneCreate, TaskCreate, TaskProgressUpdate
@@ -25,6 +26,7 @@ class FixtureTenant:
     organization_id: str
     user_id: str
     membership: object
+    organization: object
 
 
 def make_request(method: str, path: str) -> Request:
@@ -79,7 +81,12 @@ def main() -> None:
         if connection.execute(text("SELECT prefix FROM organization_document_sequences WHERE organization_id=:organization_id AND document_type='task'"), {"organization_id": organization_id}).scalar_one() != "TSK":
             raise AssertionError("task sequence was not backfilled")
 
-    tenant = FixtureTenant(organization_id=organization_id, user_id=user_id, membership=SimpleNamespace(role_id=role_id))
+    tenant = FixtureTenant(
+        organization_id=organization_id,
+        user_id=user_id,
+        membership=SimpleNamespace(role_id=role_id),
+        organization=SimpleNamespace(timezone="UTC"),
+    )
     db = SessionLocal()
     try:
         milestone = create_milestone(
@@ -91,7 +98,13 @@ def main() -> None:
         )
         task = create_task(
             project_id,
-            TaskCreate(title="CI Execution Task", milestone_id=milestone.id, assignee_employee_id=employee_id, priority="high"),
+            TaskCreate(
+                title="CI Execution Task",
+                milestone_id=milestone.id,
+                assignee_employee_id=employee_id,
+                priority="high",
+                due_date=date.today(),
+            ),
             make_request("POST", f"/api/v1/projects/{project_id}/tasks"),
             db,
             tenant,  # type: ignore[arg-type]
@@ -116,6 +129,24 @@ def main() -> None:
         if db.scalar(select(ProjectWorkLog).where(ProjectWorkLog.task_id == task.id)) is None:
             raise AssertionError("Work log was not persisted")
 
+        employee_workspace = personal_workspace(db, tenant)  # type: ignore[arg-type]
+        employee_task = next((item for item in employee_workspace["tasks"] if item["id"] == task.id), None)
+        if employee_task is None or employee_task["project_id"] != project_id or not employee_task["project_number"]:
+            raise AssertionError("Assigned task missing from employee workspace")
+        if employee_workspace["summary"]["assigned_tasks"] < 1:
+            raise AssertionError("Employee assigned task count was not calculated")
+
+        task_detail = personal_task_detail(task.id, db, tenant)  # type: ignore[arg-type]
+        if task_detail["task"]["id"] != task.id or not task_detail["activity"]:
+            raise AssertionError("Employee task detail or activity is missing")
+        if task_detail["activity"][0]["progress_percent"] != 65:
+            raise AssertionError("Latest employee task activity has the wrong progress")
+
+        alerts = notifications(db, tenant)  # type: ignore[arg-type]
+        task_alert = next((item for item in alerts["items"] if task.id in item["href"]), None)
+        if task_alert is None or not task_alert["href"].startswith("/dashboard/my-work?task="):
+            raise AssertionError("Employee task notification did not deep-link to My Work")
+
         completed = update_task_progress(
             project_id,
             task.id,
@@ -129,6 +160,8 @@ def main() -> None:
         db.refresh(project); db.refresh(milestone_row)
         if project.progress_percent != 100 or milestone_row.progress_percent != 100 or milestone_row.status != "completed":
             raise AssertionError("Completion did not cascade correctly")
+        if any(item["id"] == task.id for item in personal_workspace(db, tenant)["tasks"]):  # type: ignore[arg-type]
+            raise AssertionError("Completed task remained in employee open work")
 
         credential = create_credential(
             project_id,
