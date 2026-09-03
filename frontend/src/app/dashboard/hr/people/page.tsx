@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Loader2, MailPlus, Pencil, Plus, Search, UserCheck, UsersRound, X } from "lucide-react";
+import { Building2, Copy, Link2, Loader2, MailPlus, Pencil, Plus, RefreshCw, Search, Trash2, UserCheck, UsersRound, X } from "lucide-react";
 import { SearchableSelect } from "@/components/searchable-select";
 
 type Person = {
@@ -39,6 +39,7 @@ type Bundle = {
 };
 type Modal = "edit" | "invite" | "department" | "designation" | null;
 type View = "directory" | "structure" | "invitations";
+type InviteAction = "copy" | "resend" | "revoke";
 
 const input = "h-11 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm outline-none focus:border-neutral-500";
 
@@ -46,6 +47,8 @@ export default function HRPeoplePage() {
   const [bundle, setBundle] = useState<Bundle | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [inviteAction, setInviteAction] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [view, setView] = useState<View>("directory");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<Modal>(null);
@@ -80,11 +83,34 @@ export default function HRPeoplePage() {
   const managerOptions = [{ value: "", label: "No manager" }, ...(bundle?.people ?? []).filter(person => person.id !== editing?.id && person.employment_status === "active").map(person => ({ value: person.id, label: `${person.full_name} · ${person.employee_code}` }))];
   const roleOptions = (bundle?.invite_roles ?? []).map(role => ({ value: role.id, label: role.name }));
 
-  async function mutate(action: () => Promise<void>, success: string) {
+  async function mutate(action: () => Promise<void>, success: string | (() => string)) {
     setSaving(true); setError(null); setMessage(null);
-    try { await action(); setMessage(success); setModal(null); setEditing(null); await load(); }
+    try { await action(); setMessage(typeof success === "function" ? success() : success); setModal(null); setEditing(null); await load(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save People change."); }
     finally { setSaving(false); }
+  }
+
+  async function publishInviteLink(token: string) {
+    const url = `${window.location.origin}/invite/${token}`;
+    setInviteLink(url);
+    try {
+      await navigator.clipboard?.writeText(url);
+      return Boolean(navigator.clipboard);
+    } catch {
+      return false;
+    }
+  }
+
+  async function copyVisibleInviteLink() {
+    if (!inviteLink) return;
+    setError(null);
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(inviteLink);
+      setMessage("Invitation link copied.");
+    } catch {
+      setMessage("Clipboard permission is unavailable. Select the invitation link below and copy it manually.");
+    }
   }
 
   async function updatePerson(event: FormEvent<HTMLFormElement>) {
@@ -110,14 +136,54 @@ export default function HRPeoplePage() {
   async function invite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    let inviteUrl = "";
+    let success = "Employee invitation created.";
     await mutate(async () => {
-      const result = await api<{ invite_token: string; email: string }>("/people/invitations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      const result = await api<{ invite_token: string; email: string; email_sent: boolean }>("/people/invitations/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
         full_name: String(form.get("full_name") || "").trim(), email: String(form.get("email") || "").trim(), role_id: String(form.get("role_id") || ""), department_id: String(form.get("department_id") || "") || null, designation_id: String(form.get("designation_id") || "") || null, employee_code: String(form.get("employee_code") || "").trim() || null,
       }) });
-      inviteUrl = `${window.location.origin}/invite/${result.invite_token}`;
-      await navigator.clipboard?.writeText(inviteUrl).catch(() => undefined);
-    }, "Employee invitation created. The invite link was copied when browser permission allowed.");
+      if (result.email_sent) {
+        success = `Invitation email sent to ${result.email}.`;
+        setInviteLink(null);
+      } else {
+        const copied = await publishInviteLink(result.invite_token);
+        success = copied
+          ? `Invitation created, but email could not be sent. A fresh invite link was copied for ${result.email}.`
+          : `Invitation created, but email could not be sent. Use the invite link shown below for ${result.email}.`;
+      }
+    }, () => success);
+  }
+
+  async function handleInvitationAction(row: Invitation, action: InviteAction) {
+    if (action === "revoke" && !window.confirm(`Revoke the invitation for ${row.email}? The current invite link will stop working.`)) return;
+    const key = `${row.id}:${action}`;
+    setInviteAction(key); setError(null); setMessage(null);
+    try {
+      if (action === "copy") {
+        const result = await api<{ invite_token: string; expires_at: string }>(`/people/invitations/${row.id}/link`, { method: "POST" });
+        const copied = await publishInviteLink(result.invite_token);
+        setMessage(copied ? `Fresh invitation link copied for ${row.email}.` : `Fresh invitation link is ready below for ${row.email}.`);
+      } else if (action === "resend") {
+        const result = await api<{ invite_token: string; email_sent: boolean; expires_at: string }>(`/people/invitations/${row.id}/resend`, { method: "POST" });
+        if (result.email_sent) {
+          setInviteLink(null);
+          setMessage(`Invitation email resent to ${row.email}. A new 7-day link is active.`);
+        } else {
+          const copied = await publishInviteLink(result.invite_token);
+          setMessage(copied
+            ? `Email could not be sent to ${row.email}. A fresh invite link was copied instead.`
+            : `Email could not be sent to ${row.email}. Use the fresh invite link shown below.`);
+        }
+      } else {
+        await api(`/people/invitations/${row.id}/revoke`, { method: "POST" });
+        setInviteLink(null);
+        setMessage(`Invitation revoked for ${row.email}.`);
+      }
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to update the invitation.");
+    } finally {
+      setInviteAction(null);
+    }
   }
 
   async function addStructure(event: FormEvent<HTMLFormElement>, kind: "department" | "designation") {
@@ -133,16 +199,17 @@ export default function HRPeoplePage() {
   return <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1500px]">
     <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm font-medium text-neutral-500">Your company directory</p><h1 className="mt-1 text-3xl font-semibold">People</h1><p className="mt-2 max-w-2xl text-sm text-neutral-500">Invite people, keep their work profile accurate and organize departments without exposing company security controls.</p></div>{bundle.capabilities.can_invite_employees ? <button onClick={() => setModal("invite")} disabled={!roleOptions.length} className="flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><MailPlus className="size-4" />Invite person</button> : null}</header>
     {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}{error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+    {inviteLink ? <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-4 shadow-sm"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-semibold"><Link2 className="size-4" />Invitation link ready</p><p className="mt-1 text-xs text-neutral-500">This is the newest active link. Generating another link will invalidate this one.</p></div><button type="button" onClick={() => setInviteLink(null)} className="flex size-8 shrink-0 items-center justify-center rounded-lg border text-neutral-500"><X className="size-3.5" /></button></div><div className="mt-3 flex flex-col gap-2 sm:flex-row"><input value={inviteLink} readOnly onFocus={event => event.currentTarget.select()} className="h-10 min-w-0 flex-1 rounded-xl border bg-neutral-50 px-3 text-xs text-neutral-600 outline-none focus:border-neutral-400" /><button type="button" onClick={() => void copyVisibleInviteLink()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border px-4 text-xs font-semibold"><Copy className="size-3.5" />Copy link</button></div></div> : null}
 
     <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="People" value={bundle.people.length} icon={UsersRound} /><Metric label="Active" value={active} icon={UserCheck} /><Metric label="Departments" value={bundle.departments.length} icon={Building2} /><Metric label="Invites pending" value={bundle.invitations.length} icon={MailPlus} /></div>
 
     <section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm"><div className="flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-center lg:justify-between lg:p-5"><div className="flex gap-1 overflow-x-auto rounded-xl bg-neutral-100 p-1"><Tab active={view === "directory"} onClick={() => setView("directory")}>Directory</Tab><Tab active={view === "structure"} onClick={() => setView("structure")}>Structure</Tab>{bundle.capabilities.can_invite_employees ? <Tab active={view === "invitations"} onClick={() => setView("invitations")}>Invitations</Tab> : null}</div>{view === "directory" ? <div className="relative w-full lg:w-80"><Search className="absolute left-3 top-3.5 size-4 text-neutral-400" /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, code, team or role..." className="h-11 w-full rounded-xl border pl-9 pr-3 text-sm" /></div> : null}</div>
-      {view === "directory" ? <Directory rows={people} canManage={bundle.capabilities.can_manage_people} onEdit={person => { setEditing(person); setModal("edit"); }} /> : view === "structure" ? <Structure departments={bundle.departments} designations={bundle.designations} canManage={bundle.capabilities.can_manage_structure} onAdd={kind => setModal(kind)} /> : <Invitations rows={bundle.invitations} />}
+      {view === "directory" ? <Directory rows={people} canManage={bundle.capabilities.can_manage_people} onEdit={person => { setEditing(person); setModal("edit"); }} /> : view === "structure" ? <Structure departments={bundle.departments} designations={bundle.designations} canManage={bundle.capabilities.can_manage_structure} onAdd={kind => setModal(kind)} /> : <Invitations rows={bundle.invitations} actionKey={inviteAction} onAction={handleInvitationAction} />}
     </section>
   </div>
 
   {modal === "edit" && editing ? <Modal title={`Edit ${editing.full_name}`} onClose={() => { setModal(null); setEditing(null); }}><form onSubmit={updatePerson} className="space-y-4"><div className="rounded-xl bg-neutral-50 p-4"><p className="font-medium">{editing.full_name}</p><p className="mt-1 text-xs text-neutral-500">{editing.employee_code} · {editing.role_name} · login {editing.login_email}</p><p className="mt-2 text-xs text-neutral-400">Role and login access are security settings and are intentionally managed separately by a company administrator.</p></div><div className="grid gap-4 sm:grid-cols-2"><SearchableSelect label="Department" name="department_id" defaultValue={editing.department_id} options={departmentOptions} searchPlaceholder="Search department..." /><SearchableSelect label="Designation" name="designation_id" defaultValue={editing.designation_id} options={designationOptions} searchPlaceholder="Search designation..." /><SearchableSelect label="Manager" name="manager_employee_id" defaultValue={editing.manager_employee_id} options={managerOptions} searchPlaceholder="Search manager..." /><label className="block text-sm font-medium">Employment type<select name="employment_type" defaultValue={editing.employment_type} className={`mt-2 ${input}`}><option value="full_time">Full time</option><option value="part_time">Part time</option><option value="contract">Contract</option><option value="internship">Internship</option><option value="temporary">Temporary</option></select></label><Field label="Work email" name="work_email" type="email" defaultValue={editing.work_email ?? ""} /><Field label="Phone" name="phone" defaultValue={editing.phone ?? ""} /><Field label="Work phone" name="work_phone" defaultValue={editing.work_phone ?? ""} /><Field label="Work location" name="work_location" defaultValue={editing.work_location ?? ""} /><Field label="Join date" name="join_date" type="date" defaultValue={editing.join_date ?? ""} /><Field label="End date" name="end_date" type="date" defaultValue={editing.end_date ?? ""} /></div><label className="block text-sm font-medium">Internal HR note<textarea name="notes" defaultValue={editing.notes ?? ""} className="mt-2 min-h-24 w-full rounded-xl border p-3 text-sm" /></label><Submit saving={saving} label="Save profile" /></form></Modal> : null}
-  {modal === "invite" ? <Modal title="Invite a person" onClose={() => setModal(null)}><form onSubmit={invite} className="space-y-4"><Field label="Full name" name="full_name" required /><Field label="Email" name="email" type="email" required /><SearchableSelect label="Employee role" name="role_id" required clearable={false} options={roleOptions} searchPlaceholder="Search allowed roles..." /><div className="grid gap-4 sm:grid-cols-2"><SearchableSelect label="Department" name="department_id" options={departmentOptions} searchPlaceholder="Search department..." /><SearchableSelect label="Designation" name="designation_id" options={designationOptions} searchPlaceholder="Search designation..." /></div><Field label="Employee code (optional)" name="employee_code" placeholder="Auto-generated if blank" /><p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-500">Only roles you are allowed to grant are shown. Delegated HR users cannot invite someone into a higher-privilege role.</p><Submit saving={saving} label="Create invitation" /></form></Modal> : null}
+  {modal === "invite" ? <Modal title="Invite a person" onClose={() => setModal(null)}><form onSubmit={invite} className="space-y-4"><Field label="Full name" name="full_name" required /><Field label="Email" name="email" type="email" required /><SearchableSelect label="Employee role" name="role_id" required clearable={false} options={roleOptions} searchPlaceholder="Search allowed roles..." /><div className="grid gap-4 sm:grid-cols-2"><SearchableSelect label="Department" name="department_id" options={departmentOptions} searchPlaceholder="Search department..." /><SearchableSelect label="Designation" name="designation_id" options={designationOptions} searchPlaceholder="Search designation..." /></div><Field label="Employee code (optional)" name="employee_code" placeholder="Auto-generated if blank" /><p className="rounded-xl bg-neutral-50 p-3 text-xs leading-5 text-neutral-500">The invitation is emailed automatically when SMTP delivery is available. If email delivery fails, Business OS keeps the invitation valid and gives you a fresh link to share manually. Only roles you are allowed to grant are shown.</p><Submit saving={saving} label="Send invitation" /></form></Modal> : null}
   {modal === "department" ? <Modal title="Add department" onClose={() => setModal(null)}><form onSubmit={e => void addStructure(e, "department")} className="space-y-4"><Field label="Department name" name="name" required placeholder="Engineering" /><Field label="Code" name="code" placeholder="ENG" /><TextArea label="Description" name="description" /><Submit saving={saving} label="Add department" /></form></Modal> : null}
   {modal === "designation" ? <Modal title="Add designation" onClose={() => setModal(null)}><form onSubmit={e => void addStructure(e, "designation")} className="space-y-4"><Field label="Designation name" name="name" required placeholder="Senior Engineer" /><Field label="Code" name="code" placeholder="SWE-SR" /><TextArea label="Description" name="description" /><Submit saving={saving} label="Add designation" /></form></Modal> : null}
   </main>;
@@ -151,7 +218,8 @@ export default function HRPeoplePage() {
 function Directory({ rows, canManage, onEdit }: { rows: Person[]; canManage: boolean; onEdit: (person: Person) => void }) { if (!rows.length) return <Empty text="No people found." />; return <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-sm"><thead className="bg-neutral-50 text-left text-xs uppercase text-neutral-400"><tr><th className="px-5 py-3">Person</th><th>Team</th><th>Role</th><th>Type</th><th>Status</th><th>Location</th><th className="pr-5 text-right">Action</th></tr></thead><tbody className="divide-y">{rows.map(person => <tr key={person.id}><td className="px-5 py-4"><p className="font-medium">{person.full_name}</p><p className="mt-1 text-xs text-neutral-400">{person.employee_code} · {person.work_email || person.login_email}</p></td><td><p>{person.department_name || "—"}</p><p className="mt-1 text-xs text-neutral-400">{person.designation_name || "No designation"}</p></td><td>{person.role_name}</td><td className="capitalize">{person.employment_type.replaceAll("_", " ")}</td><td><Status value={person.employment_status === "active" && person.membership_status !== "active" ? "access suspended" : person.employment_status} /></td><td>{person.work_location || "—"}</td><td className="pr-5 text-right">{canManage ? <button onClick={() => onEdit(person)} className="inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold"><Pencil className="size-3" />Edit</button> : <span className="text-xs text-neutral-400">View only</span>}</td></tr>)}</tbody></table></div>; }
 function Structure({ departments, designations, canManage, onAdd }: { departments: NamedOption[]; designations: NamedOption[]; canManage: boolean; onAdd: (kind: "department" | "designation") => void }) { return <div className="grid gap-6 p-5 lg:grid-cols-2"><StructureList title="Departments" rows={departments} canManage={canManage} onAdd={() => onAdd("department")} /><StructureList title="Designations" rows={designations} canManage={canManage} onAdd={() => onAdd("designation")} /></div>; }
 function StructureList({ title, rows, canManage, onAdd }: { title: string; rows: NamedOption[]; canManage: boolean; onAdd: () => void }) { return <section className="rounded-xl border p-4"><div className="flex items-center justify-between"><div><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs text-neutral-500">Keep the list short and meaningful.</p></div>{canManage ? <button onClick={onAdd} className="rounded-lg border px-3 py-2 text-xs font-semibold"><Plus className="mr-1 inline size-3" />Add</button> : null}</div><div className="mt-4 space-y-2">{rows.length ? rows.map(item => <div key={item.id} className="rounded-lg bg-neutral-50 px-3 py-2.5"><p className="text-sm font-medium">{item.name}</p>{item.code ? <p className="mt-0.5 text-xs text-neutral-400">{item.code}</p> : null}</div>) : <Empty text={`No ${title.toLowerCase()} yet.`} />}</div></section>; }
-function Invitations({ rows }: { rows: Invitation[] }) { if (!rows.length) return <Empty text="No active pending invitations." />; return <div className="divide-y">{rows.map(row => <div key={row.id} className="flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-medium">{row.full_name}</p><p className="mt-1 text-sm text-neutral-500">{row.email} · {row.role_name} · {row.employee_code}</p></div><p className="text-xs text-neutral-400">Expires {new Date(row.expires_at).toLocaleDateString()}</p></div>)}</div>; }
+function Invitations({ rows, actionKey, onAction }: { rows: Invitation[]; actionKey: string | null; onAction: (row: Invitation, action: InviteAction) => void }) { if (!rows.length) return <Empty text="No active pending invitations." />; return <div className="divide-y">{rows.map(row => { const busy = actionKey?.startsWith(`${row.id}:`) ?? false; return <div key={row.id} className="p-5"><div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-semibold">{row.full_name}</p><span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Pending</span></div><p className="mt-1 break-all text-sm text-neutral-500">{row.email}</p><div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-400"><span>{row.role_name}</span><span>{row.employee_code}</span><span>Expires {new Date(row.expires_at).toLocaleDateString()}</span></div></div><div className="flex flex-wrap gap-2"><InviteActionButton label="Copy link" icon={Copy} busy={actionKey === `${row.id}:copy`} disabled={busy || Boolean(actionKey && !busy)} onClick={() => onAction(row, "copy")} /><InviteActionButton label="Resend email" icon={RefreshCw} busy={actionKey === `${row.id}:resend`} disabled={busy || Boolean(actionKey && !busy)} onClick={() => onAction(row, "resend")} /><InviteActionButton label="Revoke" icon={Trash2} busy={actionKey === `${row.id}:revoke`} disabled={busy || Boolean(actionKey && !busy)} danger onClick={() => onAction(row, "revoke")} /></div></div></div>; })}</div>; }
+function InviteActionButton({ label, icon: Icon, busy, disabled, danger = false, onClick }: { label: string; icon: typeof Copy; busy: boolean; disabled: boolean; danger?: boolean; onClick: () => void }) { return <button type="button" onClick={onClick} disabled={disabled} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${danger ? "border-red-200 text-red-600 hover:bg-red-50" : "border-neutral-200 text-neutral-700 hover:bg-neutral-50"}`}>{busy ? <Loader2 className="size-3.5 animate-spin" /> : <Icon className="size-3.5" />}{label}</button>; }
 function Metric({ label, value, icon: Icon }: { label: string; value: number; icon: typeof UsersRound }) { return <article className="rounded-2xl border bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-4 text-3xl font-semibold">{value}</p></article>; }
 function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) { return <button onClick={onClick} className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${active ? "bg-white shadow-sm" : "text-neutral-500"}`}>{children}</button>; }
 function Status({ value }: { value: string }) { const positive = value === "active"; const cls = positive ? "border-emerald-200 bg-emerald-50 text-emerald-700" : value.includes("suspend") || value === "terminated" ? "border-red-200 bg-red-50 text-red-700" : "bg-neutral-50 text-neutral-600"; return <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${cls}`}>{value.replaceAll("_", " ")}</span>; }
