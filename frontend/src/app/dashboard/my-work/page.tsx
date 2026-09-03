@@ -5,13 +5,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import {
   AlertTriangle,
   ArrowUpDown,
-  Banknote,
   CalendarDays,
   CheckCircle2,
   ChevronRight,
   Clock3,
   Columns3,
-  FileCheck2,
   FolderKanban,
   List,
   ListChecks,
@@ -61,15 +59,6 @@ type WorkspaceData = {
   projects: Project[];
 };
 
-type EmployeeHomeData = {
-  today: string;
-  attendance: { status: string; check_in_at: string | null; check_out_at: string | null; work_minutes: number } | null;
-  pending_leave: number;
-  annual_leave: { allowance_days: string; approved_days: string; pending_days: string; remaining_days: string } | null;
-  latest_payslip: { entry_id: string; period_name: string; currency: string; net_pay: string; status: string } | null;
-  policies_to_acknowledge: number;
-};
-
 type TaskActivity = {
   id: string;
   employee_name: string;
@@ -106,10 +95,6 @@ function formatMinutes(value: number | null) {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
-function formatMoney(value: string, currency: string) {
-  return `${currency} ${Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
-}
-
 function dueTone(dueDate: string | null, today?: string) {
   if (!dueDate || !today) return "text-neutral-400";
   if (dueDate < today) return "text-red-600";
@@ -127,7 +112,6 @@ function updateTaskQuery(taskId: string | null) {
 
 export default function MyWorkPage() {
   const [data, setData] = useState<WorkspaceData | null>(null);
-  const [home, setHome] = useState<EmployeeHomeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -184,20 +168,11 @@ export default function MyWorkPage() {
     if (showLoading) setLoading(true);
     setError(null);
     try {
-      const [workspaceResponse, homeResponse] = await Promise.all([
-        fetch("/api/workspace/me", { cache: "no-store" }),
-        fetch("/api/hr/self/home", { cache: "no-store" }),
-      ]);
+      const workspaceResponse = await fetch("/api/workspace/me", { cache: "no-store" });
       const payload = await workspaceResponse.json().catch(() => null);
       if (!workspaceResponse.ok) throw new Error(payload?.detail ?? "Unable to load your work.");
       const next = payload as WorkspaceData;
       setData(next);
-
-      if (homeResponse.ok) {
-        setHome((await homeResponse.json()) as EmployeeHomeData);
-      } else {
-        setHome(null);
-      }
 
       if (!deepLinkHandled.current && typeof window !== "undefined") {
         deepLinkHandled.current = true;
@@ -308,19 +283,7 @@ export default function MyWorkPage() {
         {error ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {message ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
-        <section className="mt-6 rounded-2xl border bg-white p-4 shadow-sm sm:p-5">
-          <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">Today</p><h2 className="mt-1 font-semibold">Your day at a glance</h2></div><Link href="/dashboard/hr/me" className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">Open My HR & Pay</Link></div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-            <HomeCard icon={Clock3} label="Attendance" value={home?.attendance ? pretty(home.attendance.status) : "Not checked in"} />
-            <HomeCard icon={ListChecks} label="Tasks due today" value={String(data.summary.due_today)} emphasis={data.summary.due_today > 0} />
-            <HomeCard icon={CalendarDays} label="Pending leave" value={String(home?.pending_leave ?? 0)} emphasis={(home?.pending_leave ?? 0) > 0} />
-            <HomeCard icon={CalendarDays} label="Annual leave left" value={home?.annual_leave ? `${home.annual_leave.remaining_days} days` : "—"} />
-            <HomeCard icon={Banknote} label="Latest net pay" value={home?.latest_payslip ? formatMoney(home.latest_payslip.net_pay, home.latest_payslip.currency) : "No payslip"} />
-            <HomeCard icon={FileCheck2} label="Policies to read" value={String(home?.policies_to_acknowledge ?? 0)} emphasis={(home?.policies_to_acknowledge ?? 0) > 0} />
-          </div>
-        </section>
-
-        <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SummaryCard icon={ListChecks} label="Assigned tasks" value={data.summary.assigned_tasks} />
           <SummaryCard icon={AlertTriangle} label="Overdue" value={data.summary.overdue_tasks} emphasis={data.summary.overdue_tasks > 0} />
           <SummaryCard icon={Clock3} label="Due in 3 days" value={data.summary.due_soon} />
@@ -394,10 +357,6 @@ export default function MyWorkPage() {
       {selectedTaskId ? <TaskDrawer detail={detail} loading={detailLoading} error={detailError} saving={saving} progress={progress} nextStatus={nextStatus} note={note} timeSpent={timeSpent} onClose={closeTask} onProgressChange={(value) => { setProgress(value); if (Number(value) === 100) setNextStatus("completed"); else if (nextStatus === "completed") setNextStatus("in_progress"); }} onStatusChange={(value) => { setNextStatus(value); if (value === "completed") setProgress("100"); }} onNoteChange={setNote} onTimeSpentChange={setTimeSpent} onSubmit={saveProgress} /> : null}
     </main>
   );
-}
-
-function HomeCard({ icon: Icon, label, value, emphasis = false }: { icon: typeof Clock3; label: string; value: string; emphasis?: boolean }) {
-  return <div className={`rounded-xl border bg-neutral-50 p-3 ${emphasis ? "border-amber-200 bg-amber-50" : ""}`}><div className="flex items-center justify-between gap-2"><p className="text-xs text-neutral-500">{label}</p><Icon className={`size-3.5 ${emphasis ? "text-amber-600" : "text-neutral-300"}`} /></div><p className={`mt-2 truncate text-sm font-semibold capitalize ${emphasis ? "text-amber-900" : ""}`}>{value}</p></div>;
 }
 
 function SummaryCard({ icon: Icon, label, value, emphasis = false }: { icon: typeof ListChecks; label: string; value: number; emphasis?: boolean }) {
