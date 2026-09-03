@@ -1,4 +1,4 @@
-"""Verify Client Portal V1 read APIs enforce client-membership isolation."""
+"""Verify Client Portal reads enforce client relationship and explicit sharing boundaries."""
 
 from dataclasses import dataclass
 from datetime import date
@@ -11,9 +11,11 @@ from sqlalchemy import select
 from app.api.v1.client_portal import (
     get_client_portal_context,
     get_client_portal_invoice,
+    get_client_portal_order,
     get_client_portal_project,
     get_client_portal_quotation,
     list_client_portal_invoices,
+    list_client_portal_orders,
     list_client_portal_projects,
     list_client_portal_quotations,
 )
@@ -24,7 +26,7 @@ from app.models.finance import Invoice
 from app.models.membership import Membership
 from app.models.orders import Order
 from app.models.organization import Organization
-from app.models.projects import Project
+from app.models.projects import Project, ProjectMilestone
 from app.models.sales import Quotation
 
 
@@ -40,6 +42,10 @@ class Tenant:
     @property
     def membership_id(self) -> str:
         return self.membership.id
+
+    @property
+    def user_id(self) -> str:
+        return self.membership.user_id
 
 
 def expect_not_found(fn) -> None:
@@ -148,6 +154,7 @@ def main() -> None:
         linked_order = Order(
             organization_id=organization.id,
             order_number=f"O-PORTAL-{token}",
+            quotation_id=visible_quotation.id,
             client_id=linked_client.id,
             created_by_user_id=membership.user_id,
             status="confirmed",
@@ -161,6 +168,7 @@ def main() -> None:
         other_order = Order(
             organization_id=organization.id,
             order_number=f"O-OTHER-{token}",
+            quotation_id=other_quotation.id,
             client_id=other_client.id,
             created_by_user_id=membership.user_id,
             status="confirmed",
@@ -201,6 +209,38 @@ def main() -> None:
             contract_value=Decimal("500.00"),
         )
         db.add_all([linked_project, other_project])
+        db.flush()
+
+        shared_milestone = ProjectMilestone(
+            organization_id=organization.id,
+            project_id=linked_project.id,
+            title="Shared milestone",
+            description="Safe client update",
+            status="in_progress",
+            progress_percent=60,
+            client_visible=True,
+            created_by_user_id=membership.user_id,
+        )
+        internal_milestone = ProjectMilestone(
+            organization_id=organization.id,
+            project_id=linked_project.id,
+            title="Internal milestone",
+            description="Must never reach the client portal",
+            status="planned",
+            progress_percent=0,
+            client_visible=False,
+            created_by_user_id=membership.user_id,
+        )
+        other_milestone = ProjectMilestone(
+            organization_id=organization.id,
+            project_id=other_project.id,
+            title="Other client milestone",
+            status="in_progress",
+            progress_percent=50,
+            client_visible=True,
+            created_by_user_id=membership.user_id,
+        )
+        db.add_all([shared_milestone, internal_milestone, other_milestone])
         db.flush()
 
         visible_invoice = Invoice(
@@ -258,13 +298,27 @@ def main() -> None:
             raise AssertionError("Linked client missing from portal context")
         if other_client.id in {client.id for client in context.clients}:
             raise AssertionError("Unlinked client leaked into portal context")
+        if context.order_count != 1:
+            raise AssertionError(f"Client Portal order count mismatch: {context.order_count}")
 
         projects = list_client_portal_projects(db, tenant)  # type: ignore[arg-type]
         project_ids = {project.id for project in projects}
         if linked_project.id not in project_ids or other_project.id in project_ids:
             raise AssertionError("Project relationship isolation failed")
-        get_client_portal_project(linked_project.id, db, tenant)  # type: ignore[arg-type]
+        project_detail = get_client_portal_project(linked_project.id, db, tenant)  # type: ignore[arg-type]
+        milestone_ids = {item.id for item in project_detail.milestones}
+        if shared_milestone.id not in milestone_ids:
+            raise AssertionError("Explicitly shared milestone missing from Client Portal")
+        if internal_milestone.id in milestone_ids or other_milestone.id in milestone_ids:
+            raise AssertionError("Internal or unrelated milestone leaked into Client Portal")
         expect_not_found(lambda: get_client_portal_project(other_project.id, db, tenant))  # type: ignore[arg-type]
+
+        orders = list_client_portal_orders(db, tenant)  # type: ignore[arg-type]
+        order_ids = {order.id for order in orders}
+        if linked_order.id not in order_ids or other_order.id in order_ids:
+            raise AssertionError("Order relationship isolation failed")
+        get_client_portal_order(linked_order.id, db, tenant)  # type: ignore[arg-type]
+        expect_not_found(lambda: get_client_portal_order(other_order.id, db, tenant))  # type: ignore[arg-type]
 
         invoices = list_client_portal_invoices(db, tenant)  # type: ignore[arg-type]
         invoice_ids = {invoice.id for invoice in invoices}
@@ -282,7 +336,7 @@ def main() -> None:
         expect_not_found(lambda: get_client_portal_quotation(draft_quotation.id, db, tenant))  # type: ignore[arg-type]
         expect_not_found(lambda: get_client_portal_quotation(other_quotation.id, db, tenant))  # type: ignore[arg-type]
 
-        print("Client Portal relationship isolation verification passed")
+        print("Client Portal relationship and sharing isolation verification passed")
     finally:
         db.rollback()
         db.close()
