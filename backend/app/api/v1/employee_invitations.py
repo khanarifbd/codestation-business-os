@@ -49,6 +49,10 @@ def _role_name(db: DbSession, organization_id: str, role_id: str) -> str:
     return name or "Employee"
 
 
+def _ensure_invitation_is_manageable(db: DbSession, tenant: TenantContext, item: EmployeeInvitation) -> None:
+    ensure_grantable_employee_role(db, tenant, item.role_id)
+
+
 def _try_send_employee_invitation(
     *,
     tenant: TenantContext,
@@ -140,6 +144,7 @@ def resend_employee_invitation(
     tenant: EmployeeInviter,
 ):
     item = _pending_invitation(db, tenant.organization_id, invitation_id, lock=True)
+    _ensure_invitation_is_manageable(db, tenant, item)
     role_name = _role_name(db, tenant.organization_id, item.role_id)
     token, token_hash = create_invitation_token()
     item.token_hash = token_hash
@@ -177,6 +182,7 @@ def refresh_employee_invitation_link(
     tenant: EmployeeInviter,
 ):
     item = _pending_invitation(db, tenant.organization_id, invitation_id, lock=True)
+    _ensure_invitation_is_manageable(db, tenant, item)
     token, token_hash = create_invitation_token()
     before_expiry = item.expires_at.isoformat()
     item.token_hash = token_hash
@@ -211,6 +217,7 @@ def revoke_employee_invitation(
     tenant: EmployeeInviter,
 ):
     item = _pending_invitation(db, tenant.organization_id, invitation_id, lock=True)
+    _ensure_invitation_is_manageable(db, tenant, item)
     item.status = "revoked"
     record_activity(
         db,
