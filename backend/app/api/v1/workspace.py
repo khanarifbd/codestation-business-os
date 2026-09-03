@@ -82,7 +82,13 @@ def personal_workspace(db: DbSession, tenant: ProjectWorker) -> dict:
             "today": today,
             "timezone": tenant.organization.timezone,
             "employee": None,
-            "summary": {"assigned_tasks": 0, "overdue_tasks": 0, "active_projects": 0, "due_soon": 0},
+            "summary": {
+                "assigned_tasks": 0,
+                "overdue_tasks": 0,
+                "due_today": 0,
+                "active_projects": 0,
+                "due_soon": 0,
+            },
             "tasks": [],
             "projects": [],
         }
@@ -110,6 +116,14 @@ def personal_workspace(db: DbSession, tenant: ProjectWorker) -> dict:
             select(func.count(ProjectTask.id))
             .join(Project, Project.id == ProjectTask.project_id)
             .where(*task_filters, ProjectTask.due_date.is_not(None), ProjectTask.due_date < today)
+        )
+        or 0
+    )
+    due_today = int(
+        db.scalar(
+            select(func.count(ProjectTask.id))
+            .join(Project, Project.id == ProjectTask.project_id)
+            .where(*task_filters, ProjectTask.due_date == today)
         )
         or 0
     )
@@ -152,6 +166,7 @@ def personal_workspace(db: DbSession, tenant: ProjectWorker) -> dict:
         "summary": {
             "assigned_tasks": assigned_tasks,
             "overdue_tasks": overdue_tasks,
+            "due_today": due_today,
             "active_projects": active_projects,
             "due_soon": due_soon,
         },
