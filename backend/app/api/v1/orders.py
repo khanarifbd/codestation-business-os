@@ -349,7 +349,7 @@ def change_order_status(
     allowed = {
         "confirmed": {"in_progress", "cancelled"},
         "in_progress": {"completed", "cancelled"},
-        "completed": set(),
+        "completed": {"in_progress"},
         "cancelled": set(),
     }
     if payload.status not in allowed.get(order.status, set()):
@@ -359,16 +359,20 @@ def change_order_status(
     now = datetime.now(timezone.utc)
     order.status = payload.status
     if payload.status == "in_progress":
-        order.started_at = now
+        if previous == "completed":
+            order.completed_at = None
+        else:
+            order.started_at = now
     elif payload.status == "completed":
         order.completed_at = now
     elif payload.status == "cancelled":
         order.cancelled_at = now
     db.flush()
 
+    is_reopen = previous == "completed" and order.status == "in_progress"
     record_activity(
         db,
-        action="sales.order.status_changed",
+        action="sales.order.reopened" if is_reopen else "sales.order.status_changed",
         scope="tenant",
         actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id,
@@ -376,7 +380,11 @@ def change_order_status(
         entity_id=order.id,
         before={"status": previous},
         after={"status": order.status},
-        message=f"Order {order.order_number} status changed from {previous} to {order.status}",
+        message=(
+            f"Order {order.order_number} reopened from completed to in_progress"
+            if is_reopen
+            else f"Order {order.order_number} status changed from {previous} to {order.status}"
+        ),
         request=request,
     )
     db.commit()
