@@ -260,7 +260,7 @@ def main() -> None:
         ))
         db.rollback()
         expect(409, lambda: change_order_status(
-            order.id, OrderStatusChange(status="cancelled"),
+            order.id, OrderStatusChange(status="cancelled", reason="Verify posted fulfillment cancellation guard"),
             req("PATCH", f"/sales/orders/{order.id}/status"), db, tenant,  # type: ignore[arg-type]
         ))
         db.rollback()
