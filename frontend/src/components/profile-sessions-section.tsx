@@ -24,11 +24,11 @@ type SessionList = {
   legacy_current_session: boolean;
 };
 
-function sessionIcon(type: string) {
-  if (type === "mobile") return Smartphone;
-  if (type === "tablet") return Tablet;
-  if (type === "desktop") return Laptop;
-  return MonitorSmartphone;
+function SessionDeviceIcon({ type }: { type: string }) {
+  if (type === "mobile") return <Smartphone className="size-5 text-neutral-600" />;
+  if (type === "tablet") return <Tablet className="size-5 text-neutral-600" />;
+  if (type === "desktop") return <Laptop className="size-5 text-neutral-600" />;
+  return <MonitorSmartphone className="size-5 text-neutral-600" />;
 }
 
 function formatDate(value: string) {
@@ -80,11 +80,10 @@ function SessionRow({
   workingId: string | null;
   onSignOut: (session: UserSession) => void;
 }) {
-  const Icon = sessionIcon(session.device_type);
   const active = session.status === "active";
   return <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
     <div className="flex min-w-0 items-start gap-3">
-      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><Icon className="size-5 text-neutral-600" /></div>
+      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><SessionDeviceIcon type={session.device_type} /></div>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="font-semibold text-neutral-900">{session.browser} on {session.operating_system}</p>

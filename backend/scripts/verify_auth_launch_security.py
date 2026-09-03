@@ -98,7 +98,7 @@ def main() -> None:
         old_access = create_access_token(user.id, old_version)
         old_refresh = create_refresh_token(user.id, old_version)
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=old_access)
-        if get_current_user(db, credentials).id != user.id:
+        if get_current_user(req("/api/v1/auth/me"), db, credentials).id != user.id:
             raise AssertionError("fresh access token was not accepted")
 
         change_password(
@@ -113,7 +113,10 @@ def main() -> None:
         db.refresh(user)
         if int(user.auth_token_version or 0) <= old_version:
             raise AssertionError("password change did not increment auth token version")
-        expect_http_status(lambda: get_current_user(db, credentials), 401)
+        expect_http_status(
+            lambda: get_current_user(req("/api/v1/auth/me"), db, credentials),
+            401,
+        )
 
         from app.api.v1.auth import refresh
         from app.schemas.auth import RefreshTokenRequest
@@ -134,6 +137,7 @@ def main() -> None:
         db.refresh(user)
         expect_http_status(
             lambda: get_current_user(
+                req("/api/v1/auth/me"),
                 db,
                 HTTPAuthorizationCredentials(scheme="Bearer", credentials=session_access),
             ),

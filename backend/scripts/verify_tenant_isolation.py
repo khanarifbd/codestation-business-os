@@ -100,7 +100,7 @@ def main() -> None:
         )
         expect_not_found(
             "Project detail",
-            lambda: project_detail(db, foreign_tenant.organization_id, project.id),
+            lambda: project_detail(db, foreign_tenant, project.id),  # type: ignore[arg-type]
         )
         expect_not_found(
             "Finance invoice detail",
