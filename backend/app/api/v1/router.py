@@ -30,6 +30,7 @@ from app.api.v1.crm_status import router as crm_status_router
 from app.api.v1.crm_summary import router as crm_summary_router
 from app.api.v1.customer_advances import router as customer_advances_router
 from app.api.v1.dashboard_pulse import router as dashboard_pulse_router
+from app.api.v1.employee_invitations import router as employee_invitations_router
 from app.api.v1.exchange_rates import router as exchange_rates_router
 from app.api.v1.finance import router as finance_router
 from app.api.v1.finance_auto_post import router as finance_auto_post_router
@@ -89,6 +90,7 @@ api_router.include_router(organizations_router)
 api_router.include_router(tenant_router)
 api_router.include_router(client_portal_router)
 api_router.include_router(team_router)
+api_router.include_router(employee_invitations_router)
 api_router.include_router(hr_workspace_router)
 api_router.include_router(hr_router)
 api_router.include_router(hr_extended_router)

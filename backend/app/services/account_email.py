@@ -158,3 +158,40 @@ def send_client_portal_invitation(
             "<p>If you were not expecting this invitation, you can ignore this email.</p>"
         ),
     )
+
+
+def send_employee_invitation(
+    *,
+    email: str,
+    full_name: str,
+    company_name: str,
+    role_name: str,
+    employee_code: str,
+    token: str,
+) -> bool:
+    invite_url = f"{settings.public_app_url.rstrip('/')}/invite/{token}"
+    safe_name = html.escape(full_name)
+    safe_company = html.escape(company_name)
+    safe_role = html.escape(role_name)
+    safe_employee_code = html.escape(employee_code)
+    safe_url = html.escape(invite_url, quote=True)
+    return _send_message(
+        to_email=email,
+        subject=f"{company_name} invited you to CodeStation AI Business OS",
+        text_body=(
+            f"Hello {full_name},\n\n"
+            f"{company_name} invited you to join its CodeStation AI Business OS workspace as {role_name}.\n"
+            f"Employee code: {employee_code}\n\n"
+            f"Accept the invitation:\n{invite_url}\n\n"
+            "This invitation expires in 7 days. If you were not expecting this invitation, you can ignore this email."
+        ),
+        html_body=(
+            f"<p>Hello {safe_name},</p>"
+            f"<p><strong>{safe_company}</strong> invited you to join its CodeStation AI Business OS workspace.</p>"
+            f"<p>Your role is <strong>{safe_role}</strong> and your employee code is <strong>{safe_employee_code}</strong>.</p>"
+            "<p>Use the same Business OS account across companies. If you do not have an account yet, you can create one while accepting this invitation.</p>"
+            f'<p><a href="{safe_url}" style="display:inline-block;padding:12px 18px;border-radius:10px;background:#171717;color:#ffffff;text-decoration:none;font-weight:700">Accept employee invitation</a></p>'
+            "<p>This invitation expires in 7 days.</p>"
+            "<p>If you were not expecting this invitation, you can ignore this email.</p>"
+        ),
+    )
