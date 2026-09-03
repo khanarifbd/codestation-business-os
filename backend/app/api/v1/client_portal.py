@@ -1,16 +1,20 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.api.dependencies import CurrentTenant, DbSession
+from app.api.v1.sales import change_quotation_status
 from app.models.client_access import ClientMembership
 from app.models.crm import Client
 from app.models.finance import Invoice, InvoiceItem, Payment
-from app.models.projects import Project
+from app.models.orders import Order, OrderItem
+from app.models.projects import Project, ProjectMilestone
 from app.models.sales import Quotation, QuotationItem
+from app.schemas.sales import QuotationStatusChange
 
 router = APIRouter(prefix="/client-portal", tags=["Client Portal"])
 
@@ -39,8 +43,19 @@ class ClientPortalContext(BaseModel):
     membership_id: str
     clients: list[ClientPortalClient]
     project_count: int
+    order_count: int
     quotation_count: int
     financials: list[ClientPortalFinancial]
+
+
+class ClientPortalMilestone(BaseModel):
+    id: str
+    title: str
+    description: str | None
+    status: str
+    progress_percent: int
+    due_date: date | None
+    completed_at: datetime | None
 
 
 class ClientPortalProject(BaseModel):
@@ -57,6 +72,57 @@ class ClientPortalProject(BaseModel):
     description: str | None
     actual_started_at: datetime | None
     completed_at: datetime | None
+
+
+class ClientPortalProjectDetail(ClientPortalProject):
+    milestones: list[ClientPortalMilestone]
+
+
+class ClientPortalOrder(BaseModel):
+    id: str
+    order_number: str
+    client_id: str
+    quotation_id: str | None
+    status: str
+    subject: str | None
+    order_date: date
+    currency: str
+    total: Decimal
+    confirmed_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    cancelled_at: datetime | None
+
+
+class ClientPortalOrderItem(BaseModel):
+    id: str
+    item_name: str
+    description: str
+    quantity: Decimal
+    unit: str
+    unit_price: Decimal
+    discount_percent: Decimal
+    tax_rate: Decimal
+    line_total: Decimal
+    service_duration_months: int | None
+    service_start_date: date | None
+    service_end_date: date | None
+
+
+class ClientPortalOrderDetail(ClientPortalOrder):
+    seller_name: str
+    seller_email: str | None
+    seller_address: str | None
+    client_name: str
+    client_contact: str | None
+    client_email: str | None
+    client_address: str | None
+    subtotal: Decimal
+    discount_total: Decimal
+    tax_total: Decimal
+    notes: str | None
+    terms_conditions: str | None
+    items: list[ClientPortalOrderItem]
 
 
 class ClientPortalInvoice(BaseModel):
@@ -163,6 +229,11 @@ class ClientPortalQuotationDetail(ClientPortalQuotation):
     items: list[ClientPortalQuotationItem]
 
 
+class ClientPortalQuotationDecision(BaseModel):
+    status: Literal["accepted", "rejected"]
+    reason: str | None = Field(default=None, max_length=500)
+
+
 def _client_portal_rows(db: DbSession, tenant: CurrentTenant):
     rows = db.execute(
         select(ClientMembership, Client)
@@ -202,6 +273,24 @@ def _project_response(project: Project) -> ClientPortalProject:
     )
 
 
+def _order_response(order: Order) -> ClientPortalOrder:
+    return ClientPortalOrder(
+        id=order.id,
+        order_number=order.order_number,
+        client_id=order.client_id,
+        quotation_id=order.quotation_id,
+        status=order.status,
+        subject=order.subject,
+        order_date=order.order_date,
+        currency=order.currency,
+        total=order.total,
+        confirmed_at=order.confirmed_at,
+        started_at=order.started_at,
+        completed_at=order.completed_at,
+        cancelled_at=order.cancelled_at,
+    )
+
+
 def _invoice_response(invoice: Invoice) -> ClientPortalInvoice:
     return ClientPortalInvoice(
         id=invoice.id,
@@ -231,6 +320,48 @@ def _quotation_response(quotation: Quotation) -> ClientPortalQuotation:
         valid_until=quotation.valid_until,
         currency=quotation.currency,
         total=quotation.total,
+    )
+
+
+def _quotation_detail(db: DbSession, tenant: CurrentTenant, quotation: Quotation) -> ClientPortalQuotationDetail:
+    items = db.scalars(
+        select(QuotationItem)
+        .where(
+            QuotationItem.organization_id == tenant.organization_id,
+            QuotationItem.quotation_id == quotation.id,
+        )
+        .order_by(QuotationItem.sort_order.asc(), QuotationItem.created_at.asc())
+    ).all()
+    return ClientPortalQuotationDetail(
+        **_quotation_response(quotation).model_dump(),
+        seller_name=quotation.seller_name_snapshot,
+        seller_email=quotation.seller_email_snapshot,
+        seller_address=quotation.seller_address_snapshot,
+        client_name=quotation.client_name_snapshot,
+        client_contact=quotation.client_contact_snapshot,
+        client_email=quotation.client_email_snapshot,
+        client_address=quotation.client_address_snapshot,
+        subtotal=quotation.subtotal,
+        discount_total=quotation.discount_total,
+        tax_total=quotation.tax_total,
+        notes=quotation.notes,
+        terms_conditions=quotation.terms_conditions,
+        accepted_at=quotation.accepted_at,
+        rejected_at=quotation.rejected_at,
+        items=[
+            ClientPortalQuotationItem(
+                id=item.id,
+                item_name=item.item_name_snapshot,
+                description=item.description,
+                quantity=item.quantity,
+                unit=item.unit_snapshot,
+                unit_price=item.unit_price,
+                discount_percent=item.discount_percent,
+                tax_rate=item.tax_rate,
+                line_total=item.line_total,
+            )
+            for item in items
+        ],
     )
 
 
@@ -283,6 +414,12 @@ def get_client_portal_context(db: DbSession, tenant: CurrentTenant) -> ClientPor
             Project.client_id.in_(client_ids),
         )
     ) or 0
+    order_count = db.scalar(
+        select(func.count(Order.id)).where(
+            Order.organization_id == tenant.organization_id,
+            Order.client_id.in_(client_ids),
+        )
+    ) or 0
     quotation_count = db.scalar(
         select(func.count(Quotation.id)).where(
             Quotation.organization_id == tenant.organization_id,
@@ -297,6 +434,7 @@ def get_client_portal_context(db: DbSession, tenant: CurrentTenant) -> ClientPor
         membership_id=tenant.membership_id,
         clients=clients,
         project_count=int(project_count),
+        order_count=int(order_count),
         quotation_count=int(quotation_count),
         financials=financials,
     )
@@ -316,8 +454,8 @@ def list_client_portal_projects(db: DbSession, tenant: CurrentTenant) -> list[Cl
     return [_project_response(project) for project in projects]
 
 
-@router.get("/projects/{project_id}", response_model=ClientPortalProject)
-def get_client_portal_project(project_id: str, db: DbSession, tenant: CurrentTenant) -> ClientPortalProject:
+@router.get("/projects/{project_id}", response_model=ClientPortalProjectDetail)
+def get_client_portal_project(project_id: str, db: DbSession, tenant: CurrentTenant) -> ClientPortalProjectDetail:
     client_ids = _client_portal_client_ids(db, tenant)
     project = db.scalar(
         select(Project).where(
@@ -328,7 +466,98 @@ def get_client_portal_project(project_id: str, db: DbSession, tenant: CurrentTen
     )
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return _project_response(project)
+    milestones = db.scalars(
+        select(ProjectMilestone)
+        .where(
+            ProjectMilestone.organization_id == tenant.organization_id,
+            ProjectMilestone.project_id == project.id,
+            ProjectMilestone.client_visible.is_(True),
+        )
+        .order_by(ProjectMilestone.sort_order.asc(), ProjectMilestone.created_at.asc())
+    ).all()
+    return ClientPortalProjectDetail(
+        **_project_response(project).model_dump(),
+        milestones=[
+            ClientPortalMilestone(
+                id=item.id,
+                title=item.title,
+                description=item.description,
+                status=item.status,
+                progress_percent=item.progress_percent,
+                due_date=item.due_date,
+                completed_at=item.completed_at,
+            )
+            for item in milestones
+        ],
+    )
+
+
+@router.get("/orders", response_model=list[ClientPortalOrder])
+def list_client_portal_orders(db: DbSession, tenant: CurrentTenant) -> list[ClientPortalOrder]:
+    client_ids = _client_portal_client_ids(db, tenant)
+    orders = db.scalars(
+        select(Order)
+        .where(
+            Order.organization_id == tenant.organization_id,
+            Order.client_id.in_(client_ids),
+        )
+        .order_by(Order.order_date.desc(), Order.created_at.desc())
+    ).all()
+    return [_order_response(order) for order in orders]
+
+
+@router.get("/orders/{order_id}", response_model=ClientPortalOrderDetail)
+def get_client_portal_order(order_id: str, db: DbSession, tenant: CurrentTenant) -> ClientPortalOrderDetail:
+    client_ids = _client_portal_client_ids(db, tenant)
+    order = db.scalar(
+        select(Order).where(
+            Order.id == order_id,
+            Order.organization_id == tenant.organization_id,
+            Order.client_id.in_(client_ids),
+        )
+    )
+    if order is None:
+        raise HTTPException(status_code=404, detail="Order not found")
+    items = db.scalars(
+        select(OrderItem)
+        .where(
+            OrderItem.organization_id == tenant.organization_id,
+            OrderItem.order_id == order.id,
+        )
+        .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
+    ).all()
+    return ClientPortalOrderDetail(
+        **_order_response(order).model_dump(),
+        seller_name=order.seller_name_snapshot,
+        seller_email=order.seller_email_snapshot,
+        seller_address=order.seller_address_snapshot,
+        client_name=order.client_name_snapshot,
+        client_contact=order.client_contact_snapshot,
+        client_email=order.client_email_snapshot,
+        client_address=order.client_address_snapshot,
+        subtotal=order.subtotal,
+        discount_total=order.discount_total,
+        tax_total=order.tax_total,
+        notes=order.notes,
+        terms_conditions=order.terms_conditions,
+        items=[
+            ClientPortalOrderItem(
+                id=item.id,
+                item_name=item.item_name_snapshot,
+                description=item.description,
+                quantity=item.quantity,
+                unit=item.unit_snapshot,
+                unit_price=item.unit_price,
+                discount_percent=item.discount_percent,
+                tax_rate=item.tax_rate,
+                line_total=item.line_total,
+                service_duration_months=item.service_duration_months_snapshot,
+                service_start_date=item.service_start_date,
+                service_end_date=item.service_end_date,
+            )
+            for item in items
+        ],
+    )
 
 
 @router.get("/invoices", response_model=list[ClientPortalInvoice])
@@ -460,44 +689,47 @@ def get_client_portal_quotation(
     )
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
+    return _quotation_detail(db, tenant, quotation)
 
-    items = db.scalars(
-        select(QuotationItem)
-        .where(
-            QuotationItem.organization_id == tenant.organization_id,
-            QuotationItem.quotation_id == quotation.id,
+
+@router.post("/quotations/{quotation_id}/decision", response_model=ClientPortalQuotationDetail)
+def decide_client_portal_quotation(
+    quotation_id: str,
+    payload: ClientPortalQuotationDecision,
+    request: Request,
+    db: DbSession,
+    tenant: CurrentTenant,
+) -> ClientPortalQuotationDetail:
+    client_ids = _client_portal_client_ids(db, tenant)
+    quotation = db.scalar(
+        select(Quotation).where(
+            Quotation.id == quotation_id,
+            Quotation.organization_id == tenant.organization_id,
+            Quotation.client_id.in_(client_ids),
+            Quotation.status.notin_(["draft", "cancelled"]),
         )
-        .order_by(QuotationItem.sort_order.asc(), QuotationItem.created_at.asc())
-    ).all()
-
-    return ClientPortalQuotationDetail(
-        **_quotation_response(quotation).model_dump(),
-        seller_name=quotation.seller_name_snapshot,
-        seller_email=quotation.seller_email_snapshot,
-        seller_address=quotation.seller_address_snapshot,
-        client_name=quotation.client_name_snapshot,
-        client_contact=quotation.client_contact_snapshot,
-        client_email=quotation.client_email_snapshot,
-        client_address=quotation.client_address_snapshot,
-        subtotal=quotation.subtotal,
-        discount_total=quotation.discount_total,
-        tax_total=quotation.tax_total,
-        notes=quotation.notes,
-        terms_conditions=quotation.terms_conditions,
-        accepted_at=quotation.accepted_at,
-        rejected_at=quotation.rejected_at,
-        items=[
-            ClientPortalQuotationItem(
-                id=item.id,
-                item_name=item.item_name_snapshot,
-                description=item.description,
-                quantity=item.quantity,
-                unit=item.unit_snapshot,
-                unit_price=item.unit_price,
-                discount_percent=item.discount_percent,
-                tax_rate=item.tax_rate,
-                line_total=item.line_total,
-            )
-            for item in items
-        ],
     )
+    if quotation is None:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    if quotation.status != "sent":
+        raise HTTPException(status_code=409, detail="Only sent quotations can be accepted or rejected")
+
+    # Relationship authorization is enforced above. Reuse the established quotation
+    # transition + audit workflow so staff and client actions follow identical rules.
+    change_quotation_status(
+        quotation_id,
+        QuotationStatusChange(status=payload.status, reason=payload.reason),
+        request,
+        db,
+        tenant,
+    )
+    updated = db.scalar(
+        select(Quotation).where(
+            Quotation.id == quotation_id,
+            Quotation.organization_id == tenant.organization_id,
+            Quotation.client_id.in_(client_ids),
+        )
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    return _quotation_detail(db, tenant, updated)
