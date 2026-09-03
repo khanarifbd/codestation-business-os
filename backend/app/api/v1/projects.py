@@ -3,13 +3,14 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
-from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.dependencies import DbSession, require_any_tenant_permission, require_tenant_permission
 from app.models.crm import Client
 from app.models.membership import Membership
 from app.models.orders import Order
@@ -19,6 +20,7 @@ from app.models.team import Employee
 from app.models.user import User
 from app.schemas.projects import (
     OrderProjectLink,
+    ProjectAccessRead,
     ProjectCreateFromOrder,
     ProjectDetail,
     ProjectEmployeeOption,
@@ -33,12 +35,21 @@ from app.schemas.projects import (
 )
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.project_access import (
+    ALL_PROJECT_TABS,
+    DEFAULT_MEMBER_TABS,
+    employee_for_user,
+    normalize_tabs,
+    project_access,
+    require_project_access,
+    role_permissions,
+)
 from app.services.project_completion import complete_project_execution
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
-ProjectViewer = Annotated[TenantContext, Depends(require_tenant_permission("projects.view"))]
+ProjectAccessor = Annotated[TenantContext, Depends(require_any_tenant_permission("projects.view", "projects.work"))]
 ProjectManager = Annotated[TenantContext, Depends(require_tenant_permission("projects.manage"))]
 
 
@@ -140,7 +151,7 @@ def _project_query(organization_id: str):
     )
 
 
-def _list_item(row) -> ProjectListItem:
+def _list_item(row, *, hide_financial: bool = False) -> ProjectListItem:
     project, client_name, order_number, _quotation_number, manager_name, member_count = row
     return ProjectListItem(
         id=project.id,
@@ -152,10 +163,11 @@ def _list_item(row) -> ProjectListItem:
         name=project.name,
         status=project.status,
         priority=project.priority,
+        progress_percent=project.progress_percent,
         planned_start_date=project.planned_start_date,
         due_date=project.due_date,
         currency=project.currency,
-        contract_value=project.contract_value,
+        contract_value=Decimal("0") if hide_financial else project.contract_value,
         project_manager_employee_id=project.project_manager_employee_id,
         project_manager_name=manager_name,
         member_count=int(member_count or 0),
@@ -187,6 +199,7 @@ def _member_reads(db: DbSession, organization_id: str, project_id: str) -> list[
             employee_code=employee_code,
             full_name=full_name,
             role_label=member.role_label,
+            tab_permissions=list(normalize_tabs(member.tab_permissions)),
             is_active=member.is_active,
             added_at=member.added_at,
         )
@@ -194,11 +207,15 @@ def _member_reads(db: DbSession, organization_id: str, project_id: str) -> list[
     ]
 
 
-def _detail(db: DbSession, organization_id: str, project_id: str) -> ProjectDetail:
-    row = db.execute(_project_query(organization_id).where(Project.id == project_id)).first()
+def _detail(db: DbSession, tenant: TenantContext, project_id: str) -> ProjectDetail:
+    row = db.execute(_project_query(tenant.organization_id).where(Project.id == project_id)).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Project not found")
     project, client_name, order_number, quotation_number, manager_name, _member_count = row
+    access = require_project_access(db, tenant, project)
+    allowed_tabs = [tab for tab in ALL_PROJECT_TABS if tab in access.allowed_tabs]
+    can_see_overview = "overview" in access.allowed_tabs
+    can_see_team = "team" in access.allowed_tabs or access.can_manage_project
     return ProjectDetail(
         id=project.id,
         project_number=project.project_number,
@@ -208,22 +225,29 @@ def _detail(db: DbSession, organization_id: str, project_id: str) -> ProjectDeta
         quotation_number=quotation_number,
         client_id=project.client_id,
         client_name=client_name,
-        source_lead_id=project.source_lead_id,
+        source_lead_id=project.source_lead_id if can_see_overview else None,
         project_manager_employee_id=project.project_manager_employee_id,
         project_manager_name=manager_name,
         name=project.name,
         status=project.status,
         priority=project.priority,
+        progress_percent=project.progress_percent,
         planned_start_date=project.planned_start_date,
         due_date=project.due_date,
         currency=project.currency,
-        contract_value=project.contract_value,
-        description=project.description,
-        notes=project.notes,
+        contract_value=project.contract_value if can_see_overview or access.can_manage_project else Decimal("0"),
+        description=project.description if can_see_overview else None,
+        notes=project.notes if can_see_overview and access.can_manage_project else None,
         actual_started_at=project.actual_started_at,
         completed_at=project.completed_at,
         cancelled_at=project.cancelled_at,
-        members=_member_reads(db, organization_id, project.id),
+        members=_member_reads(db, tenant.organization_id, project.id) if can_see_team else [],
+        access=ProjectAccessRead(
+            allowed_tabs=allowed_tabs,
+            can_manage_project=access.can_manage_project,
+            is_project_manager=access.is_project_manager,
+            current_employee_id=access.current_employee_id,
+        ),
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
@@ -241,11 +265,22 @@ def _sync_team(
     manager_employee_id: str | None,
     member_employee_ids: list[str],
     actor_user_id: str,
+    member_tab_permissions: dict[str, list[str]] | None = None,
 ) -> None:
     desired_ids = {employee_id for employee_id in member_employee_ids if employee_id}
     if manager_employee_id:
         desired_ids.add(manager_employee_id)
     _validate_employee_ids(db, project.organization_id, desired_ids)
+    requested_permissions = member_tab_permissions or {}
+
+    for employee_id in requested_permissions:
+        if employee_id not in desired_ids:
+            raise HTTPException(status_code=400, detail="Tab permissions can only be assigned to selected project members")
+    for employee_id in desired_ids:
+        if employee_id == manager_employee_id:
+            continue
+        if employee_id in requested_permissions and not normalize_tabs(requested_permissions[employee_id]):
+            raise HTTPException(status_code=400, detail="Each selected project member must have at least one project tab")
 
     existing = db.scalars(
         select(ProjectMember).where(
@@ -257,16 +292,25 @@ def _sync_team(
 
     for employee_id, member in by_employee.items():
         member.is_active = employee_id in desired_ids
-        if member.is_active:
-            member.role_label = "Project Manager" if employee_id == manager_employee_id else "Team Member"
+        if not member.is_active:
+            continue
+        member.role_label = "Project Manager" if employee_id == manager_employee_id else "Team Member"
+        if employee_id == manager_employee_id:
+            member.tab_permissions = list(ALL_PROJECT_TABS)
+        elif employee_id in requested_permissions:
+            member.tab_permissions = list(normalize_tabs(requested_permissions[employee_id]))
+        elif not normalize_tabs(member.tab_permissions):
+            member.tab_permissions = list(DEFAULT_MEMBER_TABS)
 
     for employee_id in desired_ids - set(by_employee):
+        tabs = ALL_PROJECT_TABS if employee_id == manager_employee_id else normalize_tabs(requested_permissions.get(employee_id)) or DEFAULT_MEMBER_TABS
         db.add(
             ProjectMember(
                 organization_id=project.organization_id,
                 project_id=project.id,
                 employee_id=employee_id,
                 role_label="Project Manager" if employee_id == manager_employee_id else "Team Member",
+                tab_permissions=list(tabs),
                 is_active=True,
                 added_by_user_id=actor_user_id,
             )
@@ -274,37 +318,57 @@ def _sync_team(
     project.project_manager_employee_id = manager_employee_id
 
 
+def _scope_worker_query(db: DbSession, tenant: TenantContext, query):
+    permissions = role_permissions(db, tenant)
+    if "*" in permissions or "projects.manage" in permissions or "projects.view" in permissions:
+        return query, False
+    employee = employee_for_user(db, tenant)
+    if employee is None:
+        return query.where(Project.id == "__no_project__"), True
+    member_project_ids = select(ProjectMember.project_id).where(
+        ProjectMember.organization_id == tenant.organization_id,
+        ProjectMember.employee_id == employee.id,
+        ProjectMember.is_active.is_(True),
+    )
+    return query.where(Project.id.in_(member_project_ids)), True
+
+
 @router.get("/meta", response_model=ProjectMeta)
-def get_project_meta(db: DbSession, tenant: ProjectViewer) -> ProjectMeta:
-    return ProjectMeta(employees=_employee_options(db, tenant.organization_id))
+def get_project_meta(db: DbSession, tenant: ProjectAccessor) -> ProjectMeta:
+    permissions = role_permissions(db, tenant)
+    can_manage = "*" in permissions or "projects.manage" in permissions
+    return ProjectMeta(
+        employees=_employee_options(db, tenant.organization_id) if can_manage else [],
+        can_manage_projects=can_manage,
+    )
 
 
 @router.get("/summary", response_model=ProjectSummary)
-def project_summary(db: DbSession, tenant: ProjectViewer) -> ProjectSummary:
-    row = db.execute(
-        select(
-            func.count(Project.id),
-            func.count(Project.id).filter(Project.status == "planned"),
-            func.count(Project.id).filter(Project.status == "active"),
-            func.count(Project.id).filter(Project.status == "on_hold"),
-            func.count(Project.id).filter(Project.status == "completed"),
-            func.count(Project.id).filter(Project.status == "cancelled"),
-        ).where(Project.organization_id == tenant.organization_id)
-    ).one()
+def project_summary(db: DbSession, tenant: ProjectAccessor) -> ProjectSummary:
+    query = select(
+        func.count(Project.id),
+        func.count(Project.id).filter(Project.status == "planned"),
+        func.count(Project.id).filter(Project.status == "active"),
+        func.count(Project.id).filter(Project.status == "on_hold"),
+        func.count(Project.id).filter(Project.status == "completed"),
+        func.count(Project.id).filter(Project.status == "cancelled"),
+    ).where(Project.organization_id == tenant.organization_id)
+    query, _ = _scope_worker_query(db, tenant, query)
+    row = db.execute(query).one()
     return ProjectSummary(total=row[0], planned=row[1], active=row[2], on_hold=row[3], completed=row[4], cancelled=row[5])
 
 
 @router.get("", response_model=ProjectPage)
 def list_projects(
     db: DbSession,
-    tenant: ProjectViewer,
+    tenant: ProjectAccessor,
     limit: Annotated[int, Query(ge=1, le=100)] = 30,
     cursor: str | None = None,
     search: str | None = None,
     project_status: str | None = Query(default=None, alias="status"),
     client_id: str | None = None,
 ) -> ProjectPage:
-    query = _project_query(tenant.organization_id)
+    query, hide_financial = _scope_worker_query(db, tenant, _project_query(tenant.organization_id))
     if search:
         needle = f"%{search.strip()}%"
         query = query.where(
@@ -326,24 +390,25 @@ def list_projects(
     has_more = len(rows) > limit
     rows = rows[:limit]
     return ProjectPage(
-        items=[_list_item(row) for row in rows],
+        items=[_list_item(row, hide_financial=hide_financial) for row in rows],
         next_cursor=_encode_cursor(rows[-1][0].created_at, rows[-1][0].id) if has_more and rows else None,
     )
 
 
 @router.get("/order/{order_id}/link", response_model=OrderProjectLink | None)
-def get_order_project_link(order_id: str, db: DbSession, tenant: ProjectViewer) -> OrderProjectLink | None:
+def get_order_project_link(order_id: str, db: DbSession, tenant: ProjectAccessor) -> OrderProjectLink | None:
     project = db.scalar(
         select(Project).where(Project.organization_id == tenant.organization_id, Project.order_id == order_id)
     )
     if project is None:
         return None
+    require_project_access(db, tenant, project)
     return OrderProjectLink(project_id=project.id, project_number=project.project_number, status=project.status)
 
 
 @router.get("/{project_id}", response_model=ProjectDetail)
-def get_project(project_id: str, db: DbSession, tenant: ProjectViewer) -> ProjectDetail:
-    return _detail(db, tenant.organization_id, project_id)
+def get_project(project_id: str, db: DbSession, tenant: ProjectAccessor) -> ProjectDetail:
+    return _detail(db, tenant, project_id)
 
 
 @router.post("/from-order/{order_id}", response_model=ProjectDetail, status_code=status.HTTP_201_CREATED)
@@ -440,7 +505,7 @@ def create_project_from_order(
         request=request,
     )
     db.commit()
-    return _detail(db, tenant.organization_id, project.id)
+    return _detail(db, tenant, project.id)
 
 
 @router.patch("/{project_id}", response_model=ProjectDetail)
@@ -486,12 +551,14 @@ def update_project(
                     project_id=project.id,
                     employee_id=manager_id,
                     role_label="Project Manager",
+                    tab_permissions=list(ALL_PROJECT_TABS),
                     is_active=True,
                     added_by_user_id=tenant.user_id,
                 ))
             else:
                 member.is_active = True
                 member.role_label = "Project Manager"
+                member.tab_permissions = list(ALL_PROJECT_TABS)
         for member in db.scalars(
             select(ProjectMember).where(
                 ProjectMember.organization_id == tenant.organization_id,
@@ -501,6 +568,8 @@ def update_project(
         ).all():
             if member.employee_id != manager_id and member.role_label == "Project Manager":
                 member.role_label = "Team Member"
+                if not normalize_tabs(member.tab_permissions):
+                    member.tab_permissions = list(DEFAULT_MEMBER_TABS)
 
     for field in ("name", "priority", "planned_start_date", "due_date", "description", "notes"):
         if field not in changes:
@@ -536,7 +605,7 @@ def update_project(
         request=request,
     )
     db.commit()
-    return _detail(db, tenant.organization_id, project.id)
+    return _detail(db, tenant, project.id)
 
 
 @router.put("/{project_id}/team", response_model=ProjectDetail)
@@ -559,7 +628,10 @@ def update_project_team(
     before_members = _member_reads(db, tenant.organization_id, project.id)
     before = {
         "project_manager_employee_id": project.project_manager_employee_id,
-        "member_employee_ids": [member.employee_id for member in before_members],
+        "members": [
+            {"employee_id": member.employee_id, "tab_permissions": member.tab_permissions}
+            for member in before_members
+        ],
     }
     _sync_team(
         db,
@@ -567,12 +639,16 @@ def update_project_team(
         manager_employee_id=payload.project_manager_employee_id,
         member_employee_ids=payload.member_employee_ids,
         actor_user_id=tenant.user_id,
+        member_tab_permissions=payload.member_tab_permissions,
     )
     db.flush()
     after_members = _member_reads(db, tenant.organization_id, project.id)
     after = {
         "project_manager_employee_id": project.project_manager_employee_id,
-        "member_employee_ids": [member.employee_id for member in after_members],
+        "members": [
+            {"employee_id": member.employee_id, "tab_permissions": member.tab_permissions}
+            for member in after_members
+        ],
     }
     record_activity(
         db,
@@ -584,11 +660,11 @@ def update_project_team(
         entity_id=project.id,
         before=before,
         after=after,
-        message=f"Project team updated: {project.project_number}",
+        message=f"Project team and access updated: {project.project_number}",
         request=request,
     )
     db.commit()
-    return _detail(db, tenant.organization_id, project.id)
+    return _detail(db, tenant, project.id)
 
 
 @router.patch("/{project_id}/status", response_model=ProjectDetail)
@@ -607,7 +683,7 @@ def change_project_status(
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     if project.status == payload.status:
-        return _detail(db, tenant.organization_id, project.id)
+        return _detail(db, tenant, project.id)
 
     allowed = {
         "planned": {"active", "cancelled"},
@@ -651,4 +727,4 @@ def change_project_status(
         request=request,
     )
     db.commit()
-    return _detail(db, tenant.organization_id, project.id)
+    return _detail(db, tenant, project.id)

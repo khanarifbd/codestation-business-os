@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 
-from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.dependencies import DbSession, require_any_tenant_permission
 from app.models.accounting import LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.finance import FinancialAccount
@@ -22,10 +22,14 @@ from app.schemas.project_feedback import (
     ProjectTipRead,
 )
 from app.services.activity_log import record_activity
+from app.services.project_access import require_project_tab
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Project Feedback"])
-ProjectWorker = Annotated[TenantContext, Depends(require_tenant_permission("projects.work"))]
+ProjectAccessor = Annotated[
+    TenantContext,
+    Depends(require_any_tenant_permission("projects.view", "projects.work", "projects.manage")),
+]
 
 
 def _clean(value: str | None) -> str | None:
@@ -100,7 +104,8 @@ def _require_participant(
     can_manage = _has_permission(permissions, "projects.manage") or bool(
         employee and project.project_manager_employee_id == employee.id
     )
-    if can_manage or _is_project_member(db, project, employee):
+    can_view = _has_permission(permissions, "projects.view")
+    if can_manage or can_view or _is_project_member(db, project, employee):
         return
     raise HTTPException(status_code=403, detail="You are not assigned to this project")
 
@@ -190,9 +195,10 @@ def _tip_totals(tips: list[ProjectTipRead]) -> list[ProjectTipCurrencyTotal]:
 def get_project_feedback(
     project_id: str,
     db: DbSession,
-    tenant: ProjectWorker,
+    tenant: ProjectAccessor,
 ) -> ProjectFeedbackWorkspace:
     project = _project(db, tenant, project_id)
+    require_project_tab(db, tenant, project, "review_tips")
     employee = _employee_for_user(db, tenant)
     permissions = _permissions(db, tenant)
     _require_participant(db, tenant, project, permissions, employee)
@@ -203,6 +209,8 @@ def get_project_feedback(
             ProjectReview.project_id == project.id,
         )
     )
+    # Project-tab access controls whether the section is available. Financial
+    # permissions remain a separate boundary and are never granted by the tab.
     can_view_tips = _has_permission(permissions, "finance.view") or _has_permission(
         permissions, "finance.manage"
     )
@@ -229,9 +237,10 @@ def upsert_project_review(
     payload: ProjectReviewUpsert,
     request: Request,
     db: DbSession,
-    tenant: ProjectWorker,
+    tenant: ProjectAccessor,
 ) -> ProjectReviewRead:
     project = _project(db, tenant, project_id, lock=True)
+    require_project_tab(db, tenant, project, "review_tips")
     employee = _employee_for_user(db, tenant)
     permissions = _permissions(db, tenant)
     _require_participant(db, tenant, project, permissions, employee)

@@ -1,13 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Copy, Download, Eye, EyeOff, FileText, KeyRound, Loader2, LockKeyhole, Pencil, Plus, ShieldCheck, Trash2, UsersRound, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ProjectReviewTips } from "@/components/project-review-tips";
 
-type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null };
-type ProjectDetail = { id: string; project_number: string; order_number: string; quotation_number: string; client_name: string; name: string; status: string; priority: string; planned_start_date: string | null; due_date: string | null; currency: string; contract_value: string | number; project_manager_name: string | null; description: string | null; notes: string | null; members: ProjectMember[] };
+type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "credentials" | "team" | "review_tips";
+type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null; tab_permissions: Tab[] };
+type ProjectAccess = { allowed_tabs: Tab[]; can_manage_project: boolean; is_project_manager: boolean; current_employee_id: string | null };
+type ProjectDetail = { id: string; project_number: string; order_number: string; quotation_number: string | null; client_name: string; name: string; status: string; priority: string; planned_start_date: string | null; due_date: string | null; currency: string; contract_value: string | number; project_manager_employee_id: string | null; project_manager_name: string | null; description: string | null; notes: string | null; members: ProjectMember[]; access: ProjectAccess };
 type Summary = { progress_percent: number; milestone_count: number; task_count: number; open_task_count: number; overdue_task_count: number; blocked_task_count: number; document_count: number; credential_count: number };
 type MilestoneRow = { id: string; title: string; description: string | null; status: string; sort_order: number; progress_percent: number; due_date: string | null };
 type TaskRow = { id: string; task_code: string; milestone_id: string | null; milestone_title: string | null; title: string; description: string | null; status: string; priority: string; progress_percent: number; assignee_employee_id: string | null; assignee_name: string | null; planned_start_date: string | null; due_date: string | null; estimated_minutes: number | null };
@@ -16,8 +18,7 @@ type DocumentRow = { id: string; title: string; document_type: string; original_
 type CredentialRow = { id: string; name: string; credential_type: string; environment: string; username: string | null; url: string | null; notes: string | null; access_level: string; last_revealed_by: string | null; last_revealed_at: string | null; created_at: string; updated_at: string };
 type Workspace = { summary: Summary; milestones: MilestoneRow[]; tasks: TaskRow[]; recent_work: WorkLog[]; documents: DocumentRow[]; credentials: CredentialRow[]; can_manage_credentials: boolean };
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
-type Meta = { employees: EmployeeOption[] };
-type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "credentials" | "team" | "review_tips";
+type Meta = { employees: EmployeeOption[]; can_manage_projects: boolean };
 type CredentialValues = { name: string; credential_type: string; environment: string; username: string; secret: string; url: string; notes: string; access_level: string };
 
 const tabs: { id: Tab; label: string }[] = [
@@ -25,6 +26,8 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "work", label: "Work Log" }, { id: "documents", label: "Documents" }, { id: "credentials", label: "Credentials" }, { id: "team", label: "Team" },
   { id: "review_tips", label: "Review & Tips" },
 ];
+const allTabIds = tabs.map((item) => item.id);
+const defaultMemberTabs: Tab[] = ["overview", "milestones", "tasks", "work", "documents", "team"];
 const previewTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "text/plain"]);
 
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -42,7 +45,7 @@ export default function ProjectWorkspacePage() {
   const projectId = params.projectId;
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [meta, setMeta] = useState<Meta>({ employees: [] });
+  const [meta, setMeta] = useState<Meta>({ employees: [], can_manage_projects: false });
   const [tab, setTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -79,6 +82,17 @@ export default function ProjectWorkspacePage() {
   }, [api, projectId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    if (!project) return;
+    if (!project.access.allowed_tabs.includes(tab)) {
+      const first = tabs.find((item) => project.access.allowed_tabs.includes(item.id));
+      if (first) setTab(first.id);
+    }
+  }, [project, tab]);
+
+  const visibleTabs = useMemo(() => tabs.filter((item) => project?.access.allowed_tabs.includes(item.id)), [project]);
+  const canManageExecution = Boolean(project?.access.can_manage_project || project?.access.is_project_manager);
+  const canManageTeam = Boolean(project?.access.can_manage_project && meta.can_manage_projects);
 
   async function changeProjectStatus(status: string) {
     setSaving(true); setError(null);
@@ -193,9 +207,16 @@ export default function ProjectWorkspacePage() {
     finally { setSaving(false); }
   }
 
-  async function saveTeam(managerId: string, memberIds: string[]) {
+  async function saveTeam(managerId: string, memberIds: string[], memberTabPermissions: Record<string, Tab[]>) {
     setSaving(true); setError(null);
-    try { await api(`/${projectId}/team`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_manager_employee_id: managerId || null, member_employee_ids: memberIds }) }); setModal(null); setMessage("Project team updated."); await refresh(); }
+    try {
+      await api(`/${projectId}/team`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_manager_employee_id: managerId || null, member_employee_ids: memberIds, member_tab_permissions: memberTabPermissions }),
+      });
+      setModal(null); setMessage("Project team access updated."); await refresh();
+    }
     catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to update team."); }
     finally { setSaving(false); }
   }
@@ -203,47 +224,65 @@ export default function ProjectWorkspacePage() {
   if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
   if (!project || !workspace) return <main className="p-10"><p className="text-red-600">{error || "Project not available."}</p></main>;
 
+  const canSeeOverview = project.access.allowed_tabs.includes("overview");
+  const canSeeTasks = project.access.allowed_tabs.includes("tasks") || canSeeOverview;
+  const canSeeMilestones = project.access.allowed_tabs.includes("milestones") || canSeeOverview;
+
   return <main className="min-h-screen bg-neutral-100 p-5 sm:p-7 lg:p-9"><div className="mx-auto max-w-[1500px]">
     <button onClick={() => router.push("/dashboard/projects")} className="mb-5 inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Projects</button>
-    <section className="rounded-2xl border bg-white p-5 shadow-sm sm:p-6"><div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-semibold text-neutral-500">{project.project_number}</span><Badge value={project.status} /><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs capitalize text-neutral-600">{project.priority}</span></div><h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{project.name}</h1><p className="mt-2 text-sm text-neutral-500">{project.client_name} · {project.order_number} · {project.quotation_number}</p></div><div className="flex flex-wrap gap-2">{project.status === "planned" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Start Project" primary /> : null}{project.status === "active" ? <><Action disabled={saving} onClick={() => void changeProjectStatus("on_hold")} label="Put on Hold" /><Action disabled={saving} onClick={() => void changeProjectStatus("completed")} label="Complete" primary /></> : null}{project.status === "on_hold" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Resume" primary /> : null}</div></div>
+    <section className="rounded-2xl border bg-white p-5 shadow-sm sm:p-6">
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-semibold text-neutral-500">{project.project_number}</span><Badge value={project.status} /><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs capitalize text-neutral-600">{project.priority}</span></div>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">{project.name}</h1>
+          <p className="mt-2 text-sm text-neutral-500">{project.client_name}{project.access.can_manage_project ? ` · ${project.order_number}${project.quotation_number ? ` · ${project.quotation_number}` : ""}` : ""}</p>
+        </div>
+        {project.access.can_manage_project ? (
+          <div className="flex flex-wrap gap-2">
+            {project.status === "planned" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Start Project" primary /> : null}
+            {project.status === "active" ? <><Action disabled={saving} onClick={() => void changeProjectStatus("on_hold")} label="Put on Hold" /><Action disabled={saving} onClick={() => void changeProjectStatus("completed")} label="Complete" primary /></> : null}
+            {project.status === "on_hold" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Resume" primary /> : null}
+          </div>
+        ) : null}
+      </div>
       <div className="mt-6"><div className="mb-2 flex items-center justify-between text-sm"><span className="font-medium">Overall progress</span><span className="font-semibold">{workspace.summary.progress_percent}%</span></div><Progress value={workspace.summary.progress_percent} /></div>
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><Metric label="Open tasks" value={workspace.summary.open_task_count} /><Metric label="Overdue" value={workspace.summary.overdue_task_count} danger={workspace.summary.overdue_task_count > 0} /><Metric label="Blocked" value={workspace.summary.blocked_task_count} danger={workspace.summary.blocked_task_count > 0} /><Metric label="Milestones" value={workspace.summary.milestone_count} /><Metric label="Documents" value={workspace.summary.document_count} /><Metric label="Credentials" value={workspace.summary.credential_count} /></div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{canSeeTasks ? <><Metric label="Open tasks" value={workspace.summary.open_task_count} /><Metric label="Overdue" value={workspace.summary.overdue_task_count} danger={workspace.summary.overdue_task_count > 0} /><Metric label="Blocked" value={workspace.summary.blocked_task_count} danger={workspace.summary.blocked_task_count > 0} /></> : null}{canSeeMilestones ? <Metric label="Milestones" value={workspace.summary.milestone_count} /> : null}{project.access.allowed_tabs.includes("documents") ? <Metric label="Documents" value={workspace.summary.document_count} /> : null}{project.access.allowed_tabs.includes("credentials") ? <Metric label="Credentials" value={workspace.summary.credential_count} /> : null}</div>
     </section>
 
     {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
     {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-    <div className="mt-5 overflow-x-auto rounded-2xl border bg-white p-2 shadow-sm"><div className="flex min-w-max gap-1">{tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab === item.id ? "bg-neutral-950 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}>{item.label}</button>)}</div></div>
+    <div className="mt-5 overflow-x-auto rounded-2xl border bg-white p-2 shadow-sm"><div className="flex min-w-max gap-1">{visibleTabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab === item.id ? "bg-neutral-950 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}>{item.label}</button>)}</div></div>
 
     <section className="mt-5">
-      {tab === "overview" ? <Overview project={project} workspace={workspace} /> : null}
-      {tab === "milestones" ? <Milestones rows={workspace.milestones} onAdd={() => setModal("milestone")} /> : null}
-      {tab === "tasks" ? <Tasks rows={workspace.tasks} onAdd={() => setModal("task")} onProgress={(task) => { setSelectedTask(task); setModal("progress"); }} /> : null}
-      {tab === "work" ? <WorkLogs rows={workspace.recent_work} /> : null}
-      {tab === "documents" ? <Documents projectId={projectId} rows={workspace.documents} canManage={workspace.can_manage_credentials} onAdd={() => setModal("document")} onChanged={() => void refreshWorkspace()} /> : null}
-      {tab === "credentials" ? <Credentials rows={workspace.credentials} revealed={revealed} canManage={workspace.can_manage_credentials} copiedKey={copiedKey} onAdd={() => { setSelectedCredential(null); setCredentialError(null); setModal("credential"); }} onReveal={(id) => void revealCredential(id)} onHide={hideCredential} onCopySecret={(item) => void copySecret(item)} onCopy={(value,key,label) => void copyValue(value,key,label)} onEdit={(item) => { setSelectedCredential(item); setCredentialError(null); setModal("credential_edit"); }} onDelete={(item) => void deleteCredential(item)} /> : null}
-      {tab === "team" ? <Team project={project} onManage={() => setModal("team")} /> : null}
-      {tab === "review_tips" ? <ProjectReviewTips projectId={projectId} projectNumber={project.project_number} projectStatus={project.status} projectCurrency={project.currency} /> : null}
+      {tab === "overview" && project.access.allowed_tabs.includes("overview") ? <Overview project={project} workspace={workspace} canManageProject={project.access.can_manage_project} /> : null}
+      {tab === "milestones" && project.access.allowed_tabs.includes("milestones") ? <Milestones rows={workspace.milestones} onAdd={canManageExecution ? () => setModal("milestone") : undefined} /> : null}
+      {tab === "tasks" && project.access.allowed_tabs.includes("tasks") ? <Tasks rows={workspace.tasks} currentEmployeeId={project.access.current_employee_id} canManage={canManageExecution} onAdd={canManageExecution ? () => setModal("task") : undefined} onProgress={(task) => { setSelectedTask(task); setModal("progress"); }} /> : null}
+      {tab === "work" && project.access.allowed_tabs.includes("work") ? <WorkLogs rows={workspace.recent_work} /> : null}
+      {tab === "documents" && project.access.allowed_tabs.includes("documents") ? <Documents projectId={projectId} rows={workspace.documents} canManage={canManageExecution} onAdd={() => setModal("document")} onChanged={() => void refreshWorkspace()} /> : null}
+      {tab === "credentials" && project.access.allowed_tabs.includes("credentials") ? <Credentials rows={workspace.credentials} revealed={revealed} canManage={workspace.can_manage_credentials} copiedKey={copiedKey} onAdd={() => { setSelectedCredential(null); setCredentialError(null); setModal("credential"); }} onReveal={(id) => void revealCredential(id)} onHide={hideCredential} onCopySecret={(item) => void copySecret(item)} onCopy={(value,key,label) => void copyValue(value,key,label)} onEdit={(item) => { setSelectedCredential(item); setCredentialError(null); setModal("credential_edit"); }} onDelete={(item) => void deleteCredential(item)} /> : null}
+      {tab === "team" && project.access.allowed_tabs.includes("team") ? <Team project={project} canManage={canManageTeam} onManage={() => setModal("team")} /> : null}
+      {tab === "review_tips" && project.access.allowed_tabs.includes("review_tips") ? <ProjectReviewTips projectId={projectId} projectNumber={project.project_number} projectStatus={project.status} projectCurrency={project.currency} /> : null}
     </section>
   </div>
 
-  {modal === "milestone" ? <MilestoneModal saving={saving} onClose={() => setModal(null)} onSave={createMilestone} /> : null}
-  {modal === "task" ? <TaskModal saving={saving} milestones={workspace.milestones} members={project.members} onClose={() => setModal(null)} onSave={createTask} /> : null}
+  {modal === "milestone" && canManageExecution ? <MilestoneModal saving={saving} onClose={() => setModal(null)} onSave={createMilestone} /> : null}
+  {modal === "task" && canManageExecution ? <TaskModal saving={saving} milestones={workspace.milestones} members={project.members} onClose={() => setModal(null)} onSave={createTask} /> : null}
   {modal === "progress" && selectedTask ? <ProgressModal saving={saving} task={selectedTask} onClose={() => { setModal(null); setSelectedTask(null); }} onSave={updateProgress} /> : null}
-  {modal === "document" ? <DocumentModal saving={saving} onClose={() => setModal(null)} onSave={uploadDocument} /> : null}
-  {modal === "credential" ? <CredentialModal error={credentialError} saving={saving} credential={null} onClose={() => { setCredentialError(null); setModal(null); }} onSave={createCredential} /> : null}
-  {modal === "credential_edit" && selectedCredential ? <CredentialModal error={credentialError} saving={saving} credential={selectedCredential} onClose={() => { setCredentialError(null); setSelectedCredential(null); setModal(null); }} onSave={updateCredential} /> : null}
-  {modal === "team" ? <TeamModal saving={saving} project={project} employees={meta.employees} onClose={() => setModal(null)} onSave={saveTeam} /> : null}
+  {modal === "document" && canManageExecution ? <DocumentModal saving={saving} onClose={() => setModal(null)} onSave={uploadDocument} /> : null}
+  {modal === "credential" && workspace.can_manage_credentials ? <CredentialModal error={credentialError} saving={saving} credential={null} onClose={() => { setCredentialError(null); setModal(null); }} onSave={createCredential} /> : null}
+  {modal === "credential_edit" && selectedCredential && workspace.can_manage_credentials ? <CredentialModal error={credentialError} saving={saving} credential={selectedCredential} onClose={() => { setCredentialError(null); setSelectedCredential(null); setModal(null); }} onSave={updateCredential} /> : null}
+  {modal === "team" && canManageTeam ? <TeamModal saving={saving} project={project} employees={meta.employees} onClose={() => setModal(null)} onSave={saveTeam} /> : null}
   </main>;
 }
 
-function Overview({ project, workspace }: { project: ProjectDetail; workspace: Workspace }) {
-  return <div className="grid gap-5 xl:grid-cols-[1.3fr_.7fr]"><div className="space-y-5"><Card title="Project information"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Info label="Manager" value={project.project_manager_name || "Unassigned"} /><Info label="Planned start" value={project.planned_start_date || "—"} /><Info label="Due date" value={project.due_date || "—"} /><Info label="Contract" value={money(project.contract_value, project.currency)} /><Info label="Team" value={`${project.members.length} members`} /><Info label="Progress" value={`${workspace.summary.progress_percent}%`} /></div>{project.description ? <p className="mt-5 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{project.description}</p> : null}</Card><Card title="Milestone health">{workspace.milestones.length ? <div className="space-y-4">{workspace.milestones.slice(0,5).map((item) => <div key={item.id}><div className="flex justify-between gap-4 text-sm"><span className="font-medium">{item.title}</span><span>{item.progress_percent}%</span></div><Progress value={item.progress_percent} /></div>)}</div> : <Empty text="No milestones yet." />}</Card></div><Card title="Recent work">{workspace.recent_work.length ? <div className="space-y-4">{workspace.recent_work.slice(0,8).map((log) => <div key={log.id} className="border-b pb-4 last:border-0"><div className="flex justify-between gap-3"><p className="text-sm font-medium">{log.employee_name} · {log.task_code}</p><span className="text-xs text-neutral-400">{log.progress_percent}%</span></div><p className="mt-1 text-sm text-neutral-600">{log.note}</p><p className="mt-1 text-xs text-neutral-400">{new Date(log.created_at).toLocaleString()}</p></div>)}</div> : <Empty text="No work updates yet." />}</Card></div>;
+function Overview({ project, workspace, canManageProject }: { project: ProjectDetail; workspace: Workspace; canManageProject: boolean }) {
+  return <div className="grid gap-5 xl:grid-cols-[1.3fr_.7fr]"><div className="space-y-5"><Card title="Project information"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><Info label="Manager" value={project.project_manager_name || "Unassigned"} /><Info label="Planned start" value={project.planned_start_date || "—"} /><Info label="Due date" value={project.due_date || "—"} />{canManageProject ? <Info label="Contract" value={money(project.contract_value, project.currency)} /> : null}{project.access.allowed_tabs.includes("team") ? <Info label="Team" value={`${project.members.length} members`} /> : null}<Info label="Progress" value={`${workspace.summary.progress_percent}%`} /></div>{project.description ? <p className="mt-5 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{project.description}</p> : null}</Card><Card title="Milestone health">{workspace.milestones.length ? <div className="space-y-4">{workspace.milestones.slice(0,5).map((item) => <div key={item.id}><div className="flex justify-between gap-4 text-sm"><span className="font-medium">{item.title}</span><span>{item.progress_percent}%</span></div><Progress value={item.progress_percent} /></div>)}</div> : <Empty text="No milestones yet or milestone access is not enabled." />}</Card></div><Card title="Recent work">{workspace.recent_work.length ? <div className="space-y-4">{workspace.recent_work.slice(0,8).map((log) => <div key={log.id} className="border-b pb-4 last:border-0"><div className="flex justify-between gap-3"><p className="text-sm font-medium">{log.employee_name} · {log.task_code}</p><span className="text-xs text-neutral-400">{log.progress_percent}%</span></div><p className="mt-1 text-sm text-neutral-600">{log.note}</p><p className="mt-1 text-xs text-neutral-400">{new Date(log.created_at).toLocaleString()}</p></div>)}</div> : <Empty text="No recent work or Work Log access is not enabled." />}</Card></div>;
 }
 
-function Milestones({ rows, onAdd }: { rows: MilestoneRow[]; onAdd: () => void }) { return <Card title="Milestones" action={<AddButton label="Add milestone" onClick={onAdd} />}><div className="space-y-3">{rows.length ? rows.map((item) => <div key={item.id} className="rounded-xl border p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{item.title}</p><p className="mt-1 text-xs text-neutral-400">Due {item.due_date || "not set"}</p></div><Badge value={item.status} /></div><div className="mt-4"><div className="mb-1 text-right text-xs font-medium">{item.progress_percent}%</div><Progress value={item.progress_percent} /></div>{item.description ? <p className="mt-3 text-sm text-neutral-600">{item.description}</p> : null}</div>) : <Empty text="Create milestones to group delivery work." />}</div></Card>; }
+function Milestones({ rows, onAdd }: { rows: MilestoneRow[]; onAdd?: () => void }) { return <Card title="Milestones" action={onAdd ? <AddButton label="Add milestone" onClick={onAdd} /> : undefined}><div className="space-y-3">{rows.length ? rows.map((item) => <div key={item.id} className="rounded-xl border p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{item.title}</p><p className="mt-1 text-xs text-neutral-400">Due {item.due_date || "not set"}</p></div><Badge value={item.status} /></div><div className="mt-4"><div className="mb-1 text-right text-xs font-medium">{item.progress_percent}%</div><Progress value={item.progress_percent} /></div>{item.description ? <p className="mt-3 text-sm text-neutral-600">{item.description}</p> : null}</div>) : <Empty text="No milestones yet." />}</div></Card>; }
 
-function Tasks({ rows, onAdd, onProgress }: { rows: TaskRow[]; onAdd: () => void; onProgress: (task: TaskRow) => void }) { return <Card title="Tasks" action={<AddButton label="Add task" onClick={onAdd} />}><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="text-xs uppercase text-neutral-400"><tr><th className="pb-3">Task</th><th className="pb-3">Milestone</th><th className="pb-3">Assignee</th><th className="pb-3">Status</th><th className="pb-3">Due</th><th className="pb-3">Progress</th><th className="pb-3 text-right">Action</th></tr></thead><tbody className="divide-y">{rows.map((task) => <tr key={task.id}><td className="py-4 pr-4"><p className="font-medium">{task.task_code} · {task.title}</p><p className="mt-1 text-xs capitalize text-neutral-400">{task.priority} priority</p></td><td className="py-4 pr-4">{task.milestone_title || "—"}</td><td className="py-4 pr-4">{task.assignee_name || "Unassigned"}</td><td className="py-4 pr-4"><Badge value={task.status} /></td><td className="py-4 pr-4">{task.due_date || "—"}</td><td className="py-4 pr-4"><div className="w-32"><Progress value={task.progress_percent} /></div><span className="mt-1 block text-xs text-neutral-400">{task.progress_percent}%</span></td><td className="py-4 text-right"><button disabled={task.status === "cancelled"} onClick={() => onProgress(task)} className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40">Update Work</button></td></tr>)}</tbody></table>{!rows.length ? <Empty text="No tasks yet." /> : null}</div></Card>; }
+function Tasks({ rows, currentEmployeeId, canManage, onAdd, onProgress }: { rows: TaskRow[]; currentEmployeeId: string | null; canManage: boolean; onAdd?: () => void; onProgress: (task: TaskRow) => void }) { return <Card title="Tasks" action={onAdd ? <AddButton label="Add task" onClick={onAdd} /> : undefined}><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="text-xs uppercase text-neutral-400"><tr><th className="pb-3">Task</th><th className="pb-3">Milestone</th><th className="pb-3">Assignee</th><th className="pb-3">Status</th><th className="pb-3">Due</th><th className="pb-3">Progress</th><th className="pb-3 text-right">Action</th></tr></thead><tbody className="divide-y">{rows.map((task) => { const canUpdate = canManage || Boolean(currentEmployeeId && task.assignee_employee_id === currentEmployeeId); return <tr key={task.id}><td className="py-4 pr-4"><p className="font-medium">{task.task_code} · {task.title}</p><p className="mt-1 text-xs capitalize text-neutral-400">{task.priority} priority</p></td><td className="py-4 pr-4">{task.milestone_title || "—"}</td><td className="py-4 pr-4">{task.assignee_name || "Unassigned"}</td><td className="py-4 pr-4"><Badge value={task.status} /></td><td className="py-4 pr-4">{task.due_date || "—"}</td><td className="py-4 pr-4"><div className="w-32"><Progress value={task.progress_percent} /></div><span className="mt-1 block text-xs text-neutral-400">{task.progress_percent}%</span></td><td className="py-4 text-right">{canUpdate ? <button disabled={task.status === "cancelled"} onClick={() => onProgress(task)} className="rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-40">Update Work</button> : <span className="text-xs text-neutral-400">View only</span>}</td></tr>; })}</tbody></table>{!rows.length ? <Empty text="No tasks yet." /> : null}</div></Card>; }
 
 function WorkLogs({ rows }: { rows: WorkLog[] }) { return <Card title="Work Log"><div className="space-y-3">{rows.length ? rows.map((log) => <article key={log.id} className="rounded-xl border p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">{log.employee_name} · {log.task_code}</p><div className="flex gap-2 text-xs text-neutral-400"><span>{log.progress_percent}%</span>{log.time_spent_minutes ? <span>· {(log.time_spent_minutes/60).toFixed(1)}h</span> : null}<span>· {new Date(log.created_at).toLocaleString()}</span></div></div><p className="mt-2 text-sm leading-6 text-neutral-600">{log.note}</p><p className="mt-1 text-xs text-neutral-400">{log.task_title}</p></article>) : <Empty text="Team updates will appear here." />}</div></Card>; }
 
@@ -308,7 +347,7 @@ function Credentials({ rows, revealed, canManage, copiedKey, onAdd, onReveal, on
 }
 
 function MiniCopy({ copied, label, onClick }: { copied:boolean; label:string; onClick:()=>void }) { return <button title={label} onClick={onClick} className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-white">{copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5 text-neutral-500" />}</button>; }
-function Team({ project, onManage }: { project: ProjectDetail; onManage: () => void }) { return <Card title="Project team" action={<button onClick={onManage} className="rounded-lg border px-3 py-2 text-xs font-semibold">Manage team</button>}><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{project.members.map((member) => <div key={member.id} className="rounded-xl border p-4"><UsersRound className="size-5 text-neutral-400" /><p className="mt-3 font-medium">{member.full_name}</p><p className="mt-1 text-xs text-neutral-400">{member.employee_code}</p><span className="mt-3 inline-flex rounded-full bg-neutral-100 px-2.5 py-1 text-xs">{member.role_label || "Team Member"}</span></div>)}</div></Card>; }
+function Team({ project, canManage, onManage }: { project: ProjectDetail; canManage: boolean; onManage: () => void }) { return <Card title="Project team" action={canManage ? <button onClick={onManage} className="rounded-lg border px-3 py-2 text-xs font-semibold">Manage team & access</button> : undefined}><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{project.members.map((member) => <div key={member.id} className="rounded-xl border p-4"><UsersRound className="size-5 text-neutral-400" /><p className="mt-3 font-medium">{member.full_name}</p><p className="mt-1 text-xs text-neutral-400">{member.employee_code}</p><span className="mt-3 inline-flex rounded-full bg-neutral-100 px-2.5 py-1 text-xs">{member.role_label || "Team Member"}</span>{canManage ? <div className="mt-3 flex flex-wrap gap-1">{member.tab_permissions.map((permission) => <span key={permission} className="rounded-full border bg-neutral-50 px-2 py-0.5 text-[10px] text-neutral-500">{tabs.find((item) => item.id === permission)?.label ?? pretty(permission)}</span>)}</div> : null}</div>)}</div></Card>; }
 
 function MilestoneModal({ saving, onClose, onSave }: { saving:boolean; onClose:()=>void; onSave:(v:{title:string;description:string;due_date:string})=>Promise<void> }) { const [title,setTitle]=useState(""); const [description,setDescription]=useState(""); const [due,setDue]=useState(""); return <Modal title="Add milestone" onClose={onClose}><Field label="Title"><input value={title} onChange={(e)=>setTitle(e.target.value)} className="control" /></Field><Field label="Due date"><input type="date" value={due} onChange={(e)=>setDue(e.target.value)} className="control" /></Field><Field label="Description"><textarea value={description} onChange={(e)=>setDescription(e.target.value)} className="textarea" /></Field><ModalActions saving={saving} disabled={!title.trim()} onClose={onClose} onSave={() => void onSave({title:title.trim(),description,due_date:due})} /></Modal>; }
 function TaskModal({ saving, milestones, members, onClose, onSave }: { saving:boolean; milestones:MilestoneRow[]; members:ProjectMember[]; onClose:()=>void; onSave:(v:{title:string;description:string;milestone_id:string;priority:string;assignee_employee_id:string;planned_start_date:string;due_date:string;estimated_hours:string})=>Promise<void> }) { const [title,setTitle]=useState(""); const [description,setDescription]=useState(""); const [milestone,setMilestone]=useState(""); const [priority,setPriority]=useState("normal"); const [assignee,setAssignee]=useState(""); const [start,setStart]=useState(""); const [due,setDue]=useState(""); const [hours,setHours]=useState(""); return <Modal title="Add task" onClose={onClose}><div className="grid gap-4 sm:grid-cols-2"><Field label="Task title"><input value={title} onChange={(e)=>setTitle(e.target.value)} className="control" /></Field><Field label="Milestone"><select value={milestone} onChange={(e)=>setMilestone(e.target.value)} className="control"><option value="">No milestone</option>{milestones.map((m)=><option key={m.id} value={m.id}>{m.title}</option>)}</select></Field><Field label="Assignee"><select value={assignee} onChange={(e)=>setAssignee(e.target.value)} className="control"><option value="">Unassigned</option>{members.map((m)=><option key={m.employee_id} value={m.employee_id}>{m.full_name}</option>)}</select></Field><Field label="Priority"><select value={priority} onChange={(e)=>setPriority(e.target.value)} className="control"><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option><option value="urgent">Urgent</option></select></Field><Field label="Planned start"><input type="date" value={start} onChange={(e)=>setStart(e.target.value)} className="control" /></Field><Field label="Due date"><input type="date" value={due} onChange={(e)=>setDue(e.target.value)} className="control" /></Field><Field label="Estimated hours"><input type="number" min="0" step="0.25" value={hours} onChange={(e)=>setHours(e.target.value)} className="control" /></Field><label className="sm:col-span-2 text-sm font-medium">Description<textarea value={description} onChange={(e)=>setDescription(e.target.value)} className="textarea" /></label></div><ModalActions saving={saving} disabled={!title.trim()} onClose={onClose} onSave={() => void onSave({title:title.trim(),description,milestone_id:milestone,priority,assignee_employee_id:assignee,planned_start_date:start,due_date:due,estimated_hours:hours})} /></Modal>; }
@@ -320,7 +359,49 @@ function CredentialModal({ error, saving, credential, onClose, onSave }: { error
   return <Modal title={credential ? "Edit encrypted credential" : "Add encrypted credential"} onClose={onClose}>{error ? <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><p className="font-semibold">Credential could not be saved</p><p className="mt-1 leading-5">{error}</p></div> : null}<div className="grid gap-4 sm:grid-cols-2"><Field label="Name"><input value={name} onChange={(e)=>setName(e.target.value)} className="control" /></Field><Field label="Type"><select value={type} onChange={(e)=>setType(e.target.value)} className="control"><option value="login">Login</option><option value="api_key">API Key</option><option value="database">Database</option><option value="ssh">SSH / Server</option><option value="hosting">Hosting</option><option value="domain">Domain</option><option value="other">Other</option></select></Field><Field label="Environment"><select value={env} onChange={(e)=>setEnv(e.target.value)} className="control"><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="other">Other</option></select></Field><Field label="Access"><select value={access} onChange={(e)=>setAccess(e.target.value)} className="control"><option value="manager_only">Project manager only</option><option value="team">Project team</option></select></Field><Field label="Username / Email"><input value={username} onChange={(e)=>setUsername(e.target.value)} className="control" /></Field><Field label={credential ? "New Secret / Password / Key (optional)" : "Secret / Password / Key"}><input type="password" autoComplete="new-password" value={secret} onChange={(e)=>setSecret(e.target.value)} placeholder={credential ? "Leave blank to keep current secret" : ""} className="control" /></Field><label className="sm:col-span-2 text-sm font-medium">URL<input value={url} onChange={(e)=>setUrl(e.target.value)} className="control" /></label><label className="sm:col-span-2 text-sm font-medium">Notes<textarea value={notes} onChange={(e)=>setNotes(e.target.value)} className="textarea" /></label></div><ModalActions saving={saving} disabled={!name.trim() || (!credential && !secret)} onClose={onClose} onSave={() => void onSave({name:name.trim(),credential_type:type,environment:env,username,secret,url,notes,access_level:access})} /></Modal>;
 }
 
-function TeamModal({ saving, project, employees, onClose, onSave }: { saving:boolean; project:ProjectDetail; employees:EmployeeOption[]; onClose:()=>void; onSave:(manager:string,members:string[])=>Promise<void> }) { const [manager,setManager]=useState(project.members.find((m)=>m.role_label==="Project Manager")?.employee_id || ""); const [selected,setSelected]=useState(project.members.map((m)=>m.employee_id)); return <Modal title="Manage project team" onClose={onClose}><Field label="Project manager"><select value={manager} onChange={(e)=>{const id=e.target.value;setManager(id);if(id&&!selected.includes(id))setSelected([...selected,id]);}} className="control"><option value="">Unassigned</option>{employees.map((e)=><option key={e.id} value={e.id}>{e.full_name} · {e.employee_code}</option>)}</select></Field><div className="mt-4 max-h-64 overflow-y-auto rounded-xl border">{employees.map((e)=><label key={e.id} className="flex items-center gap-3 border-b px-4 py-3 last:border-0"><input type="checkbox" checked={selected.includes(e.id)||manager===e.id} disabled={manager===e.id} onChange={(event)=>setSelected(event.target.checked?[...new Set([...selected,e.id])]:selected.filter((id)=>id!==e.id))}/><span className="flex-1 text-sm">{e.full_name}</span><span className="text-xs text-neutral-400">{e.employee_code}</span></label>)}</div><ModalActions saving={saving} disabled={false} onClose={onClose} onSave={() => void onSave(manager,selected)} /></Modal>; }
+function TeamModal({ saving, project, employees, onClose, onSave }: { saving:boolean; project:ProjectDetail; employees:EmployeeOption[]; onClose:()=>void; onSave:(manager:string,members:string[],permissions:Record<string,Tab[]>)=>Promise<void> }) {
+  const [manager,setManager]=useState(project.project_manager_employee_id || project.members.find((m)=>m.role_label==="Project Manager")?.employee_id || "");
+  const [selected,setSelected]=useState(project.members.map((m)=>m.employee_id));
+  const [permissions,setPermissions]=useState<Record<string,Tab[]>>(() => Object.fromEntries(project.members.map((member) => [member.employee_id, member.tab_permissions.length ? member.tab_permissions : [...defaultMemberTabs]])));
+
+  function selectEmployee(employeeId: string, checked: boolean) {
+    if (checked) {
+      setSelected((current) => [...new Set([...current, employeeId])]);
+      setPermissions((current) => current[employeeId] ? current : { ...current, [employeeId]: [...defaultMemberTabs] });
+    } else if (employeeId !== manager) {
+      setSelected((current) => current.filter((id) => id !== employeeId));
+    }
+  }
+
+  function togglePermission(employeeId: string, permission: Tab, checked: boolean) {
+    setPermissions((current) => {
+      const existing = current[employeeId] ?? [...defaultMemberTabs];
+      if (checked) return { ...current, [employeeId]: [...new Set([...existing, permission])] };
+      if (existing.length <= 1) return current;
+      return { ...current, [employeeId]: existing.filter((item) => item !== permission) };
+    });
+  }
+
+  function save() {
+    const memberPermissions: Record<string, Tab[]> = {};
+    selected.forEach((employeeId) => {
+      memberPermissions[employeeId] = employeeId === manager ? [...allTabIds] : permissions[employeeId] ?? [...defaultMemberTabs];
+    });
+    void onSave(manager, selected, memberPermissions);
+  }
+
+  return <Modal title="Manage project team & access" onClose={onClose}>
+    <Field label="Project manager"><select value={manager} onChange={(e)=>{const id=e.target.value;setManager(id);if(id){setSelected((current)=>[...new Set([...current,id])]);setPermissions((current)=>({...current,[id]:[...allTabIds]}));}}} className="control"><option value="">Unassigned</option>{employees.map((e)=><option key={e.id} value={e.id}>{e.full_name} · {e.employee_code}</option>)}</select></Field>
+    <div className="mt-5 rounded-xl border">
+      <div className="border-b bg-neutral-50 px-4 py-3"><p className="text-sm font-semibold">Team members & tab access</p><p className="mt-1 text-xs text-neutral-500">Select a member, then choose which Project tabs they can open. The project manager always has full Project access.</p></div>
+      <div className="max-h-[55vh] overflow-y-auto">{employees.map((employee)=>{
+        const isManager=manager===employee.id; const isSelected=selected.includes(employee.id)||isManager; const employeePermissions=isManager?allTabIds:(permissions[employee.id]??defaultMemberTabs);
+        return <div key={employee.id} className="border-b p-4 last:border-0"><label className="flex items-center gap-3"><input type="checkbox" checked={isSelected} disabled={isManager} onChange={(event)=>selectEmployee(employee.id,event.target.checked)}/><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{employee.full_name}</span><span className="text-xs text-neutral-400">{employee.employee_code}</span></span>{isManager?<span className="rounded-full bg-neutral-950 px-2.5 py-1 text-[10px] font-semibold text-white">Full access</span>:null}</label>{isSelected?<div className="mt-3 grid gap-2 pl-7 sm:grid-cols-2">{tabs.map((item)=><label key={item.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${isManager?"bg-neutral-50 text-neutral-400":"bg-white"}`}><input type="checkbox" checked={employeePermissions.includes(item.id)} disabled={isManager} onChange={(event)=>togglePermission(employee.id,item.id,event.target.checked)}/><span>{item.label}</span></label>)}</div>:null}</div>;
+      })}</div>
+    </div>
+    <ModalActions saving={saving} disabled={false} onClose={onClose} onSave={save} />
+  </Modal>;
+}
 function Card({ title, action, children }: { title:string; action?:React.ReactNode; children:React.ReactNode }) { return <section className="rounded-2xl border bg-white p-5 shadow-sm"><div className="mb-5 flex items-center justify-between gap-4"><h2 className="font-semibold">{title}</h2>{action}</div>{children}</section>; }
 function Metric({ label, value, danger=false }: { label:string; value:number; danger?:boolean }) { return <div className={`rounded-xl border p-3 ${danger ? "border-red-200 bg-red-50" : "bg-neutral-50"}`}><p className="text-xs text-neutral-500">{label}</p><p className={`mt-1 text-xl font-semibold ${danger ? "text-red-700" : ""}`}>{value}</p></div>; }
 function Info({ label, value }: { label:string; value:string }) { return <div className="rounded-xl bg-neutral-50 p-3"><p className="text-xs text-neutral-400">{label}</p><p className="mt-1 text-sm font-medium">{value}</p></div>; }

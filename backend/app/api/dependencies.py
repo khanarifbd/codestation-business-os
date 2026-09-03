@@ -60,9 +60,6 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Tokens issued before per-device sessions were introduced intentionally keep
-    # working until their normal access-token expiry. Their next refresh upgrades
-    # the browser to a server-side session without forcing a deployment logout.
     request.state.auth_session_id = None
     if claims.session_id:
         user_session = db.scalar(
@@ -154,23 +151,47 @@ def get_current_tenant_admin(tenant: CurrentTenant) -> TenantContext:
 CurrentTenantAdmin = Annotated[TenantContext, Depends(get_current_tenant_admin)]
 
 
+def _active_role(db: DbSession, tenant: TenantContext) -> OrganizationRole:
+    role = db.scalar(
+        select(OrganizationRole).where(
+            OrganizationRole.id == tenant.membership.role_id,
+            OrganizationRole.organization_id == tenant.organization_id,
+            OrganizationRole.is_active.is_(True),
+        )
+    )
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company role is inactive")
+    return role
+
+
 def require_tenant_permission(permission: str):
     """Return a FastAPI dependency enforcing an organization role permission."""
 
     def checker(db: DbSession, tenant: CurrentTenant) -> TenantContext:
-        role = db.scalar(
-            select(OrganizationRole).where(
-                OrganizationRole.id == tenant.membership.role_id,
-                OrganizationRole.organization_id == tenant.organization_id,
-                OrganizationRole.is_active.is_(True),
-            )
-        )
-        if role is None:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company role is inactive")
+        role = _active_role(db, tenant)
         if "*" not in role.permissions and permission not in role.permissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission required: {permission}",
+            )
+        return tenant
+
+    return checker
+
+
+def require_any_tenant_permission(*permissions: str):
+    """Require at least one organization permission without weakening tenant membership checks."""
+    required = tuple(dict.fromkeys(permission for permission in permissions if permission))
+    if not required:
+        raise ValueError("At least one permission is required")
+
+    def checker(db: DbSession, tenant: CurrentTenant) -> TenantContext:
+        role = _active_role(db, tenant)
+        granted = set(role.permissions or [])
+        if "*" not in granted and not any(permission in granted for permission in required):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"One of these permissions is required: {', '.join(required)}",
             )
         return tenant
 

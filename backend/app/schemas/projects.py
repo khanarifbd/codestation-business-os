@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 ProjectStatus = Literal["planned", "active", "on_hold", "completed", "cancelled"]
 ProjectPriority = Literal["low", "normal", "high", "urgent"]
+ProjectTab = Literal["overview", "milestones", "tasks", "work", "documents", "credentials", "team", "review_tips"]
 
 
 class ProjectCreateFromOrder(BaseModel):
@@ -32,6 +33,7 @@ class ProjectUpdate(BaseModel):
 class ProjectTeamUpdate(BaseModel):
     project_manager_employee_id: str | None = None
     member_employee_ids: list[str] = Field(default_factory=list, max_length=100)
+    member_tab_permissions: dict[str, list[ProjectTab]] = Field(default_factory=dict)
 
 
 class ProjectStatusChange(BaseModel):
@@ -46,6 +48,7 @@ class ProjectEmployeeOption(BaseModel):
 
 class ProjectMeta(BaseModel):
     employees: list[ProjectEmployeeOption]
+    can_manage_projects: bool = False
 
 
 class ProjectMemberRead(BaseModel):
@@ -54,8 +57,16 @@ class ProjectMemberRead(BaseModel):
     employee_code: str
     full_name: str
     role_label: str | None
+    tab_permissions: list[ProjectTab] = Field(default_factory=list)
     is_active: bool
     added_at: datetime
+
+
+class ProjectAccessRead(BaseModel):
+    allowed_tabs: list[ProjectTab]
+    can_manage_project: bool
+    is_project_manager: bool
+    current_employee_id: str | None
 
 
 class ProjectListItem(BaseModel):
@@ -111,6 +122,7 @@ class ProjectDetail(BaseModel):
     completed_at: datetime | None
     cancelled_at: datetime | None
     members: list[ProjectMemberRead]
+    access: ProjectAccessRead
     created_at: datetime
     updated_at: datetime
 
