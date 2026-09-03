@@ -65,6 +65,7 @@ from app.api.v1.platform_organization_detail import router as platform_organizat
 from app.api.v1.profile import router as profile_router
 from app.api.v1.profile_identity import router as profile_identity_router
 from app.api.v1.profile_sessions import router as profile_sessions_router
+from app.api.v1.project_client_sharing import router as project_client_sharing_router
 from app.api.v1.project_documents import router as project_documents_router
 from app.api.v1.project_execution import router as project_execution_router
 from app.api.v1.project_feedback import router as project_feedback_router
@@ -114,6 +115,7 @@ api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
+api_router.include_router(project_client_sharing_router)
 api_router.include_router(project_feedback_router)
 api_router.include_router(project_documents_router)
 api_router.include_router(inventory_router)
