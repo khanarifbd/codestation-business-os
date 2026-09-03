@@ -149,3 +149,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    from verify_client_portal import main as verify_client_portal
+
+    verify_client_portal()
