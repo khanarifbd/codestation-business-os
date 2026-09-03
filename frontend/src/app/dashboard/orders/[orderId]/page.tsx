@@ -312,6 +312,9 @@ export default function OrderDetailPage() {
 
   async function changeStatus(next: "in_progress" | "completed" | "cancelled", reason?: string) {
     if (!order) return false;
+    if (next === "completed" && !window.confirm("Complete this order? This marks execution as finished and may lock downstream actions until the order is reopened.")) return false;
+    const reopening = order.status === "completed" && next === "in_progress";
+    if (reopening && !window.confirm("Reopen this order? The order will return to In Progress so execution and project setup can continue.")) return false;
     setSavingStatus(true);
     setError(null);
     setMessage(null);
@@ -322,7 +325,7 @@ export default function OrderDetailPage() {
         body: JSON.stringify({ status: next, ...(next === "cancelled" ? { reason } : {}) }),
       }) as OrderDetail;
       setOrder(updated);
-      setMessage(`Order ${updated.order_number} marked ${statusLabel(updated.status).toLowerCase()}.`);
+      setMessage(reopening ? `Order ${updated.order_number} reopened and returned to In Progress.` : `Order ${updated.order_number} marked ${statusLabel(updated.status).toLowerCase()}.`);
       await loadRelated(updated);
       return true;
     } catch (reasonValue) {
@@ -472,7 +475,7 @@ export default function OrderDetailPage() {
               </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:justify-end">
-              {project ? <Link href={`/dashboard/projects/${encodeURIComponent(project.project_id)}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" />Open project</Link> : <Link href={`/dashboard/projects?order_id=${encodeURIComponent(order.id)}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" />Project workspace</Link>}
+              {project ? <Link href={`/dashboard/projects/${encodeURIComponent(project.project_id)}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" />Open project</Link> : ["confirmed", "in_progress"].includes(order.status) ? <Link href={`/dashboard/projects?order_id=${encodeURIComponent(order.id)}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" />Project workspace</Link> : null}
               {canSettle ? <button type="button" onClick={() => void openSettlement()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><CircleDollarSign className="size-4" />Create invoice & settle</button> : null}
             </div>
           </div>
@@ -491,9 +494,10 @@ export default function OrderDetailPage() {
                 <div className="flex flex-col gap-2 sm:flex-row">
                   {order.status === "confirmed" ? <><button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><PlayCircle className="size-4" />Start order</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
                   {order.status === "in_progress" ? <><button disabled={savingStatus || stockRemaining} onClick={() => void changeStatus("completed")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><CheckCircle2 className="size-4" />{stockRemaining ? "Fulfill stock first" : "Complete order"}</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
+                  {order.status === "completed" ? <button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold disabled:opacity-50"><PlayCircle className="size-4" />Reopen order</button> : null}
                 </div>
               </div>
-              {order.status === "completed" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>Order completed.</strong> Execution is final. {financeAccess && settlement?.eligible ? "You can now create the invoice and record settlement from this order." : null}</div> : null}
+              {order.status === "completed" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>Order completed.</strong> Reopen it if execution or project setup needs to continue. {financeAccess && settlement?.eligible ? "You can also create the invoice and record settlement from this completed order." : null}</div> : null}
               {order.status === "cancelled" ? <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><strong>Order cancelled.</strong><p className="mt-1 whitespace-pre-wrap">{order.cancellation_reason ? `Reason: ${order.cancellation_reason}` : "Cancellation reason is unavailable for this older record."}</p></div> : null}
               {hasPostedFulfillment && order.status !== "completed" ? <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Posted stock fulfillment cannot be cancelled directly. A stock return/reversal is required first.</div> : null}
             </section>

@@ -430,7 +430,7 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status == payload.status:
         return _detail(db, tenant.organization_id, order.id)
-    allowed = {"confirmed": {"in_progress", "cancelled"}, "in_progress": {"completed", "cancelled"}, "completed": set(), "cancelled": set()}
+    allowed = {"confirmed": {"in_progress", "cancelled"}, "in_progress": {"completed", "cancelled"}, "completed": {"in_progress"}, "cancelled": set()}
     if payload.status not in allowed.get(order.status, set()):
         raise HTTPException(status_code=409, detail=f"Order cannot move from {order.status} to {payload.status}")
     cancellation_reason: str | None = None
@@ -450,18 +450,22 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
     now = datetime.now(timezone.utc)
     order.status = payload.status
     if payload.status == "in_progress":
-        order.started_at = now
+        if previous == "completed":
+            order.completed_at = None
+        else:
+            order.started_at = now
     elif payload.status == "completed":
         order.completed_at = now
     elif payload.status == "cancelled":
         order.cancelled_at = now
     db.flush()
+    is_reopen = previous == "completed" and order.status == "in_progress"
     after = {"status": order.status}
     if cancellation_reason:
         after["cancellation_reason"] = cancellation_reason
     record_activity(
         db,
-        action="sales.order.status_changed",
+        action="sales.order.reopened" if is_reopen else "sales.order.status_changed",
         scope="tenant",
         actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id,
@@ -473,6 +477,8 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
         message=(
             f"Order {order.order_number} cancelled from {previous}: {cancellation_reason[:350]}"
             if cancellation_reason
+            else f"Order {order.order_number} reopened from completed to in_progress"
+            if is_reopen
             else f"Order {order.order_number} status changed from {previous} to {order.status}"
         ),
         request=request,
