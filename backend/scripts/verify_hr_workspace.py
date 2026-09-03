@@ -1,15 +1,19 @@
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from types import SimpleNamespace
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from starlette.requests import Request
 
+from app.api.v1.hr_self import cancel_self_leave, self_attendance_monthly, self_home, self_leave_balance
 from app.api.v1.hr_workspace import JobStatusUpdate, hr_access, hr_people, hr_workspace_summary, update_job_status
 from app.db.session import SessionLocal
-from app.models.hr import JobOpening
+from app.models.hr import JobOpening, LeaveRequest, LeaveType
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.models.team import Employee
 from app.models.user import User
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes
 from app.services.team_role_grants import delegated_role_is_grantable
@@ -133,6 +137,64 @@ def main() -> None:
         if scheduled_presence_minutes(weekly_off, expected_today) != 0:
             raise AssertionError("weekly off must have zero scheduled attendance minutes")
 
+        employee = db.scalar(
+            select(Employee).where(
+                Employee.organization_id == organization.id,
+                Employee.membership_id == membership.id,
+            )
+        )
+        if employee is None:
+            raise AssertionError("fixture employee profile missing")
+
+        leave_balance = self_leave_balance(db, tenant, expected_today.year)
+        annual = next((item for item in leave_balance["items"] if item["code"] == "ANNUAL"), None)
+        if annual is None or Decimal(annual["allowance_days"]) < Decimal("0"):
+            raise AssertionError("annual leave balance was not returned")
+
+        monthly = self_attendance_monthly(db, tenant, expected_today.strftime("%Y-%m"))
+        if monthly["month"] != expected_today.strftime("%Y-%m") or not monthly["days"]:
+            raise AssertionError("monthly attendance calendar was not returned")
+        for key in ("present", "late", "absent", "leave", "missing", "work_minutes", "overtime_minutes"):
+            if key not in monthly["summary"]:
+                raise AssertionError(f"monthly attendance summary missing {key}")
+
+        home = self_home(db, tenant)
+        if home["today"] != expected_today or home["annual_leave"] is None:
+            raise AssertionError("employee home summary missing local day or annual leave")
+
+        annual_type = db.scalar(
+            select(LeaveType).where(
+                LeaveType.organization_id == organization.id,
+                LeaveType.code == "ANNUAL",
+            )
+        )
+        if annual_type is None:
+            raise AssertionError("annual leave type fixture missing")
+        pending = LeaveRequest(
+            id=str(uuid4()),
+            organization_id=organization.id,
+            employee_id=employee.id,
+            leave_type_id=annual_type.id,
+            start_date=expected_today,
+            end_date=expected_today,
+            days=Decimal("1"),
+            reason="CI employee cancellation",
+            status="pending",
+        )
+        db.add(pending)
+        db.commit()
+        cancelled = cancel_self_leave(
+            pending.id,
+            request("POST", f"/hr/self/leave-requests/{pending.id}/cancel"),
+            db,
+            tenant,
+        )
+        if cancelled["status"] != "cancelled":
+            raise AssertionError("employee could not cancel own pending leave")
+        db.refresh(pending)
+        if pending.status != "cancelled":
+            raise AssertionError("employee leave cancellation was not persisted")
+
         job = db.scalar(
             select(JobOpening)
             .where(JobOpening.organization_id == organization.id)
@@ -162,7 +224,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("HR workspace verification passed: People RBAC -> role safety -> local day -> shift rules -> recruitment lifecycle")
+    print("HR workspace verification passed: People RBAC -> role safety -> local day -> shift rules -> employee self service -> recruitment lifecycle")
 
 
 if __name__ == "__main__":
