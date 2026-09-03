@@ -8,7 +8,10 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.hr import AttendanceRecord, LeaveType, PerformanceReview
+from app.models.membership import Membership
+from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun
 from app.models.team import Employee
+from app.models.user import User
 from app.services.activity_log import record_activity
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes, shift_for_date
 from app.tenancy.context import TenantContext
@@ -81,6 +84,67 @@ def self_meta(db: DbSession, tenant: HRSelf):
                 .order_by(LeaveType.name)
             ).all()
         ]
+    }
+
+
+@router.get("/self/payslips/{entry_id}")
+def self_payslip(entry_id: str, db: DbSession, tenant: HRSelf):
+    """Return one approved/paid payslip belonging only to the authenticated employee."""
+
+    employee = _employee(db, tenant)
+    row = db.execute(
+        select(PayrollEntry, PayrollRun, PayrollPeriod, User.full_name)
+        .join(PayrollRun, PayrollRun.id == PayrollEntry.run_id)
+        .join(PayrollPeriod, PayrollPeriod.id == PayrollRun.period_id)
+        .join(Employee, Employee.id == PayrollEntry.employee_id)
+        .join(Membership, Membership.id == Employee.membership_id)
+        .join(User, User.id == Membership.user_id)
+        .where(
+            PayrollEntry.id == entry_id,
+            PayrollEntry.organization_id == tenant.organization_id,
+            PayrollEntry.employee_id == employee.id,
+            PayrollRun.organization_id == tenant.organization_id,
+            PayrollRun.status.in_(["approved", "paid"]),
+            PayrollPeriod.organization_id == tenant.organization_id,
+            Employee.organization_id == tenant.organization_id,
+            Membership.organization_id == tenant.organization_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Payslip not found")
+
+    entry, run, period, employee_name = row
+    return {
+        "organization": {
+            "name": tenant.organization.name,
+            "country_code": tenant.organization.country_code,
+            "currency": tenant.organization.currency,
+            "timezone": tenant.organization.timezone,
+        },
+        "run": {
+            "id": run.id,
+            "run_number": run.run_number,
+            "period_name": period.name,
+            "period_start": period.period_start,
+            "period_end": period.period_end,
+            "pay_date": period.pay_date,
+            "status": run.status,
+        },
+        "entry": {
+            "id": entry.id,
+            "employee_code": employee.employee_code,
+            "employee_name": employee_name,
+            "currency": entry.currency,
+            "base_salary": str(entry.base_salary),
+            "allowances": entry.allowances,
+            "deductions": entry.deductions,
+            "allowance_total": str(entry.allowance_total),
+            "deduction_total": str(entry.deduction_total),
+            "tax_amount": str(entry.tax_amount),
+            "gross_pay": str(entry.gross_pay),
+            "net_pay": str(entry.net_pay),
+            "notes": entry.notes,
+        },
     }
 
 
