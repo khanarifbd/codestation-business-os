@@ -43,6 +43,13 @@ const employeeNavigation: NavigationItem[] = [
   { label: "Notifications", icon: Bell, href: "/dashboard/notifications", permissions: ["projects.work"] },
 ];
 
+const clientNavigation: NavigationItem[] = [
+  { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard/client" },
+  { label: "Projects", icon: FolderKanban, href: "/dashboard/client/projects" },
+  { label: "Invoices", icon: ReceiptText, href: "/dashboard/client/invoices" },
+  { label: "Quotations", icon: FileText, href: "/dashboard/client/quotations" },
+];
+
 const employeeExpandedWorkspacePermissions = [
   "crm.view",
   "clients.view",
@@ -78,7 +85,6 @@ const financeNavigation: NavigationItem[] = [
   { label: "Advanced", icon: BookOpenText, href: "/dashboard/accounting/advanced", permissions: ["finance.view"] },
 ];
 
-const clientDashboardItem: NavigationItem = { label: "Dashboard", icon: LayoutDashboard, href: "/dashboard/client" };
 const clientPortalItem: NavigationItem = { label: "Client Portal", icon: Building2, href: "/dashboard/client" };
 
 function hasAnyPermission(granted: string[], required?: string[]) {
@@ -101,7 +107,7 @@ function isFinanceArea(pathname: string) {
 
 function isActive(pathname: string, href: string) {
   if (href === "/dashboard") return pathname === "/dashboard";
-  if (href === "/dashboard/client") return pathname === href || pathname === "/dashboard/client-portal" || pathname.startsWith(`${href}/`);
+  if (href === "/dashboard/client") return pathname === href || pathname === "/dashboard/client-portal";
   if (href === "/dashboard/accounting/invoices") return pathname.startsWith("/dashboard/accounting/invoices");
   if (href === "/dashboard/accounting") return isFinanceArea(pathname);
   return pathname === href || pathname.startsWith(`${href}/`);
@@ -168,10 +174,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   useEffect(()=>{if(!mobileOpen)return;const previous=document.body.style.overflow;document.body.style.overflow="hidden";return()=>{document.body.style.overflow=previous;};},[mobileOpen]);
   useEffect(()=>{let active=true;async function loadProfile(){const response=await fetch("/api/profile",{cache:"no-store"}).catch(()=>null);if(!response?.ok)return;const payload=await response.json().catch(()=>null);if(active&&payload?.full_name&&payload?.email)setProfile({full_name:payload.full_name,email:payload.email,has_avatar:Boolean(payload.has_avatar),avatar_version:Number(payload.avatar_version??0)});}const refresh=()=>{void loadProfile();};void loadProfile();window.addEventListener("business-os-profile-updated",refresh);return()=>{active=false;window.removeEventListener("business-os-profile-updated",refresh);};},[]);
   const relationships=workspaceContext?.relationships??[]; const clientOnly=workspaceContext?.primary_relationship==="client"; const employeeSelfService=isEmployeeSelfServiceContext(workspaceContext); const hasClientRelationship=relationships.includes("client"); const permissions=workspaceContext?.permissions??[];
-  const clientLanding="/dashboard/client"; const employeeLanding="/dashboard/employee";
-  useEffect(()=>{if(clientOnly&&pathname!==clientLanding&&pathname!=="/dashboard/client-portal"&&!pathname.startsWith("/dashboard/profile")){router.replace(clientLanding);return;}if(employeeSelfService&&pathname==="/dashboard"){router.replace(employeeLanding);}},[clientLanding,clientOnly,employeeLanding,employeeSelfService,pathname,router]);
-  const navigation=useMemo(()=>{if(clientOnly)return[clientDashboardItem];if(employeeSelfService)return employeeNavigation;const items=[...staffNavigation];if(hasClientRelationship)items.splice(1,0,clientPortalItem);return items;},[clientOnly,employeeSelfService,hasClientRelationship]);
-  const mobilePrimaryNavigation=useMemo<NavigationItem[]>(()=>{if(clientOnly)return[{label:"Dashboard",icon:LayoutDashboard,href:"/dashboard/client"},{label:"Profile",icon:UserRound,href:"/dashboard/profile"}];if(employeeSelfService)return employeeNavigation.filter(item=>hasAnyPermission(permissions,item.permissions)).slice(0,3);const items:NavigationItem[]=[];const add=(item:NavigationItem|null)=>{if(!item||!hasAnyPermission(permissions,item.permissions)||items.some((existing)=>existing.href===item.href))return;items.push(item);};add({label:"Home",icon:LayoutDashboard,href:"/dashboard",permissions:["dashboard.view"]});if(hasAnyPermission(permissions,["projects.work"]))add({label:"Work",icon:BriefcaseBusiness,href:"/dashboard/my-work",permissions:["projects.work"]});else add({label:"Projects",icon:FolderKanban,href:"/dashboard/projects",permissions:["projects.view"]});if(hasAnyPermission(permissions,["clients.view"]))add({label:"Clients",icon:Users,href:"/dashboard/clients",permissions:["clients.view"]});else if(hasAnyPermission(permissions,["crm.view"]))add({label:"CRM",icon:ClipboardList,href:"/dashboard/crm",permissions:["crm.view"]});else add({label:"Orders",icon:ReceiptText,href:"/dashboard/orders",permissions:["orders.view"]});if(hasAnyPermission(permissions,["finance.view","capital.view"]))add({label:"Finance",icon:WalletCards,href:"/dashboard/accounting",permissions:["finance.view","capital.view"]});else add({label:"Reports",icon:BarChart3,href:"/dashboard/reports",permissions:["reports.view"]});return items.slice(0,4);},[clientOnly,employeeSelfService,permissions]);
+  const clientLanding="/dashboard/client"; const employeeLanding="/dashboard/employee"; const clientArea=pathname===clientLanding||pathname.startsWith(`${clientLanding}/`)||pathname==="/dashboard/client-portal";
+  useEffect(()=>{if(clientOnly&&!clientArea&&!pathname.startsWith("/dashboard/profile")){router.replace(clientLanding);return;}if(employeeSelfService&&pathname==="/dashboard"){router.replace(employeeLanding);}},[clientArea,clientLanding,clientOnly,employeeLanding,employeeSelfService,pathname,router]);
+  const navigation=useMemo(()=>{if(clientOnly)return clientNavigation;if(employeeSelfService)return employeeNavigation;const items=[...staffNavigation];if(hasClientRelationship)items.splice(1,0,clientPortalItem);return items;},[clientOnly,employeeSelfService,hasClientRelationship]);
+  const mobilePrimaryNavigation=useMemo<NavigationItem[]>(()=>{if(clientOnly)return clientNavigation;if(employeeSelfService)return employeeNavigation.filter(item=>hasAnyPermission(permissions,item.permissions)).slice(0,3);const items:NavigationItem[]=[];const add=(item:NavigationItem|null)=>{if(!item||!hasAnyPermission(permissions,item.permissions)||items.some((existing)=>existing.href===item.href))return;items.push(item);};add({label:"Home",icon:LayoutDashboard,href:"/dashboard",permissions:["dashboard.view"]});if(hasAnyPermission(permissions,["projects.work"]))add({label:"Work",icon:BriefcaseBusiness,href:"/dashboard/my-work",permissions:["projects.work"]});else add({label:"Projects",icon:FolderKanban,href:"/dashboard/projects",permissions:["projects.view"]});if(hasAnyPermission(permissions,["clients.view"]))add({label:"Clients",icon:Users,href:"/dashboard/clients",permissions:["clients.view"]});else if(hasAnyPermission(permissions,["crm.view"]))add({label:"CRM",icon:ClipboardList,href:"/dashboard/crm",permissions:["crm.view"]});else add({label:"Orders",icon:ReceiptText,href:"/dashboard/orders",permissions:["orders.view"]});if(hasAnyPermission(permissions,["finance.view","capital.view"]))add({label:"Finance",icon:WalletCards,href:"/dashboard/accounting",permissions:["finance.view","capital.view"]});else add({label:"Reports",icon:BarChart3,href:"/dashboard/reports",permissions:["reports.view"]});return items.slice(0,4);},[clientOnly,employeeSelfService,permissions]);
   async function logout(){await fetch("/api/auth/logout",{method:"POST"});router.replace("/login");router.refresh();}
   if(pathname.endsWith("/print"))return <>{children}</>;
   const profileActive=pathname.startsWith("/dashboard/profile");
