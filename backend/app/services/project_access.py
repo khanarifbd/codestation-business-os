@@ -22,7 +22,8 @@ PROJECT_TABS = (
     "review_tips",
 )
 ALL_PROJECT_TABS = frozenset(PROJECT_TABS)
-DEFAULT_MEMBER_TABS = frozenset(("overview", "milestones", "tasks", "work", "documents", "team"))
+DEFAULT_MEMBER_TABS = ("overview", "milestones", "tasks", "work", "documents", "team")
+DEFAULT_MEMBER_TAB_SET = frozenset(DEFAULT_MEMBER_TABS)
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,11 @@ def member_for_employee(db: Session, project: Project, employee_id: str | None) 
 
 def normalize_tabs(values: list[str] | tuple[str, ...] | set[str] | None) -> frozenset[str]:
     return frozenset(value for value in (values or []) if value in ALL_PROJECT_TABS)
+
+
+def ordered_tabs(values: list[str] | tuple[str, ...] | set[str] | frozenset[str] | None) -> list[str]:
+    normalized = normalize_tabs(values)
+    return [tab for tab in PROJECT_TABS if tab in normalized]
 
 
 def project_access(db: Session, tenant: TenantContext, project: Project) -> ProjectAccess:
