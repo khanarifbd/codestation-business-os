@@ -1,6 +1,6 @@
 """add per-member project tab permissions
 
-Revision ID: 0068_project_member_tab_permissions
+Revision ID: 0068_project_member_tabs
 Revises: 0067_employee_project_scope
 Create Date: 2026-09-03
 """
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0068_project_member_tab_permissions"
+revision: str = "0068_project_member_tabs"
 down_revision: str | None = "0067_employee_project_scope"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
