@@ -10,7 +10,6 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
-  FolderKanban,
   ListChecks,
   Loader2,
   RefreshCw,
