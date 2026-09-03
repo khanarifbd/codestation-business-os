@@ -49,6 +49,17 @@ export function GoogleReauthButton({
     void callbackRef.current(response.credential);
   }, []);
 
+  const handleScriptReady = useCallback(() => {
+    const google = (window as GoogleWindow).google?.accounts.id;
+    if (!google) {
+      setScriptReady(false);
+      setError("Google verification loaded but could not be initialized. Please refresh and try again.");
+      return;
+    }
+    setError(null);
+    setScriptReady(true);
+  }, []);
+
   const renderButton = useCallback(() => {
     const google = (window as GoogleWindow).google?.accounts.id;
     const element = buttonRef.current;
@@ -87,8 +98,12 @@ export function GoogleReauthButton({
       <Script
         src="https://accounts.google.com/gsi/client"
         strategy="afterInteractive"
-        onLoad={() => setScriptReady(true)}
-        onError={() => setError("Google verification could not be loaded. Please try again.")}
+        onLoad={handleScriptReady}
+        onReady={handleScriptReady}
+        onError={() => {
+          setScriptReady(false);
+          setError("Google verification could not be loaded. Please refresh and try again.");
+        }}
       />
       <div className="relative min-h-11 w-full max-w-md">
         <div ref={buttonRef} className="flex min-h-11 w-full justify-start" aria-label="Verify with Google" />
