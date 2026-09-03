@@ -20,10 +20,26 @@ class FixtureOrganization:
 
 
 @dataclass(frozen=True)
+class FixtureMembership:
+    id: str
+    role_id: str
+    role: str
+
+
+@dataclass(frozen=True)
 class FixtureTenant:
     organization_id: str
     user_id: str
     organization: FixtureOrganization
+    membership: FixtureMembership
+
+    @property
+    def membership_id(self) -> str:
+        return self.membership.id
+
+    @property
+    def role(self) -> str:
+        return self.membership.role
 
 
 def make_request(method: str, path: str) -> Request:
@@ -110,8 +126,22 @@ def main() -> None:
         fixture = connection.execute(
             text(
                 """
-                SELECT o.id AS organization_id, o.created_by_user_id AS user_id, o.timezone AS timezone
+                SELECT
+                    o.id AS organization_id,
+                    o.created_by_user_id AS user_id,
+                    o.timezone AS timezone,
+                    m.id AS membership_id,
+                    m.role_id AS role_id,
+                    m.role AS membership_role
                 FROM organizations o
+                JOIN memberships m
+                  ON m.organization_id = o.id
+                 AND m.user_id = o.created_by_user_id
+                 AND m.status = 'active'
+                JOIN organization_roles r
+                  ON r.id = m.role_id
+                 AND r.organization_id = o.id
+                 AND r.slug = 'owner'
                 WHERE o.name = 'Existing Tenant Fixture'
                 ORDER BY o.created_at DESC
                 LIMIT 1
@@ -160,6 +190,11 @@ def main() -> None:
         organization_id=str(fixture["organization_id"]),
         user_id=str(fixture["user_id"]),
         organization=FixtureOrganization(timezone=str(fixture["timezone"] or "UTC")),
+        membership=FixtureMembership(
+            id=str(fixture["membership_id"]),
+            role_id=str(fixture["role_id"]),
+            role=str(fixture["membership_role"]),
+        ),
     )
     db = SessionLocal()
     try:
