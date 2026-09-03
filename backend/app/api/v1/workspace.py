@@ -75,16 +75,18 @@ def _open_task_filters(tenant: TenantContext, employee: Employee) -> tuple:
 
 @router.get("/me")
 def personal_workspace(db: DbSession, tenant: ProjectWorker) -> dict:
+    today = _local_today(tenant)
     employee = _employee(db, tenant)
     if employee is None:
         return {
+            "today": today,
+            "timezone": tenant.organization.timezone,
             "employee": None,
             "summary": {"assigned_tasks": 0, "overdue_tasks": 0, "active_projects": 0, "due_soon": 0},
             "tasks": [],
             "projects": [],
         }
 
-    today = _local_today(tenant)
     task_filters = _open_task_filters(tenant, employee)
     task_rows = db.execute(
         select(ProjectTask, Project.project_number, Project.name, ProjectMilestone.title)
@@ -144,6 +146,8 @@ def personal_workspace(db: DbSession, tenant: ProjectWorker) -> dict:
     ).all()
 
     return {
+        "today": today,
+        "timezone": tenant.organization.timezone,
         "employee": {"id": employee.id, "employee_code": employee.employee_code},
         "summary": {
             "assigned_tasks": assigned_tasks,
