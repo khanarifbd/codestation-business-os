@@ -94,6 +94,21 @@ def main() -> None:
             raise AssertionError(f"expected fresh organization expense defaults, got {expense_category_count} categories")
         if (db.scalar(select(func.count(OrganizationRole.id)).where(OrganizationRole.organization_id == organization_id)) or 0) < 1:
             raise AssertionError("organization roles were not created")
+
+        employee_roles = db.scalars(
+            select(OrganizationRole).where(
+                OrganizationRole.slug == "user",
+                OrganizationRole.is_system.is_(True),
+            )
+        ).all()
+        if not employee_roles:
+            raise AssertionError("system employee role was not created")
+        for role in employee_roles:
+            if "projects.view" in role.permissions:
+                raise AssertionError("system employee role still has broad projects.view access")
+            if "projects.work" not in role.permissions:
+                raise AssertionError("system employee role is missing projects.work access")
+
         if (db.scalar(select(func.count(Employee.id)).where(Employee.organization_id == organization_id)) or 0) != 1:
             raise AssertionError("owner employee profile was not created")
         if (db.scalar(select(func.count(Subscription.id)).where(Subscription.organization_id == organization_id)) or 0) != 1:
