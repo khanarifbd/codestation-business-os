@@ -1,5 +1,5 @@
 import { ClientPortalDashboard } from "@/components/client-portal-dashboard";
 
-export default function ClientPortalPage() {
+export default function ClientDashboardPage() {
   return <ClientPortalDashboard />;
 }
