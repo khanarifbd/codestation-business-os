@@ -14,7 +14,6 @@ class MilestoneCreate(BaseModel):
     description: str | None = None
     due_date: date | None = None
     sort_order: int = Field(default=0, ge=0, le=10000)
-    client_visible: bool = False
 
 
 class MilestoneUpdate(BaseModel):
@@ -23,7 +22,6 @@ class MilestoneUpdate(BaseModel):
     due_date: date | None = None
     sort_order: int | None = Field(default=None, ge=0, le=10000)
     status: MilestoneStatus | None = None
-    client_visible: bool | None = None
 
 
 class MilestoneRead(BaseModel):
