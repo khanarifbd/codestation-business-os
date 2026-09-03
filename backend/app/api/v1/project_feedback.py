@@ -22,6 +22,7 @@ from app.schemas.project_feedback import (
     ProjectTipRead,
 )
 from app.services.activity_log import record_activity
+from app.services.project_access import require_project_tab
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Project Feedback"])
@@ -193,6 +194,7 @@ def get_project_feedback(
     tenant: ProjectWorker,
 ) -> ProjectFeedbackWorkspace:
     project = _project(db, tenant, project_id)
+    require_project_tab(db, tenant, project, "review_tips")
     employee = _employee_for_user(db, tenant)
     permissions = _permissions(db, tenant)
     _require_participant(db, tenant, project, permissions, employee)
@@ -203,6 +205,8 @@ def get_project_feedback(
             ProjectReview.project_id == project.id,
         )
     )
+    # Project-tab access controls whether the section is available. Financial
+    # permissions remain a separate boundary and are never granted by the tab.
     can_view_tips = _has_permission(permissions, "finance.view") or _has_permission(
         permissions, "finance.manage"
     )
@@ -232,6 +236,7 @@ def upsert_project_review(
     tenant: ProjectWorker,
 ) -> ProjectReviewRead:
     project = _project(db, tenant, project_id, lock=True)
+    require_project_tab(db, tenant, project, "review_tips")
     employee = _employee_for_user(db, tenant)
     permissions = _permissions(db, tenant)
     _require_participant(db, tenant, project, permissions, employee)
