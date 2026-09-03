@@ -33,6 +33,7 @@ from app.schemas.projects import (
 )
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.project_completion import complete_project_execution
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -620,14 +621,20 @@ def change_project_status(
 
     previous = project.status
     now = datetime.now(timezone.utc)
+    completion_summary: dict[str, int] | None = None
     project.status = payload.status
     if payload.status == "active" and project.actual_started_at is None:
         project.actual_started_at = now
     elif payload.status == "completed":
         project.completed_at = now
+        completion_summary = complete_project_execution(db, project, now)
     elif payload.status == "cancelled":
         project.cancelled_at = now
     db.flush()
+
+    after = {"status": project.status, "progress_percent": project.progress_percent}
+    if completion_summary is not None:
+        after.update(completion_summary)
 
     record_activity(
         db,
@@ -638,7 +645,8 @@ def change_project_status(
         entity_type="project",
         entity_id=project.id,
         before={"status": previous},
-        after={"status": project.status},
+        after=after,
+        metadata={"completion_cascade": completion_summary} if completion_summary is not None else None,
         message=f"Project {project.project_number} status changed from {previous} to {project.status}",
         request=request,
     )
