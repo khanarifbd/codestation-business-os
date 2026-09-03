@@ -15,6 +15,7 @@ from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.team import Employee
 from app.models.user import User
+from app.services.activity_log import record_activity
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes
 from app.services.team_role_grants import delegated_role_is_grantable
 from app.tenancy.context import TenantContext
@@ -182,6 +183,19 @@ def main() -> None:
             status="pending",
         )
         db.add(pending)
+        db.flush()
+        record_activity(
+            db,
+            action="hr.leave.verification_fixture_created",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="leave_request",
+            entity_id=pending.id,
+            after={"employee_id": employee.id, "status": pending.status, "source": "verify_hr_workspace"},
+            message="Created audited leave request fixture for employee self-service verification",
+            request=request("POST", "/hr/self/leave-requests"),
+        )
         db.commit()
         cancelled = cancel_self_leave(
             pending.id,
