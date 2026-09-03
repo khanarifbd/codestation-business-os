@@ -18,7 +18,7 @@ const journey = [
 
 test("Login → Company → Client → Quote → Order → Project → Invoice → Payment → Accounting → Report", async ({ page, context }) => {
   await page.goto("/login");
-  await page.locator('input[name="email"]').fill(email);
+  await page.getByLabel(/email or username/i).fill(email);
   await page.locator('input[name="password"]').fill(password);
   await page.getByRole("button", { name: /sign in securely/i }).click();
   await expect(page).toHaveURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
