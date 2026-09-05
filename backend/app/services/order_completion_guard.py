@@ -21,20 +21,20 @@ def assert_order_can_complete(db, order: Order) -> None:
     if not staged_billing_enabled(db, order.organization_id, order.id):
         return
 
-    pending_change_count = db.scalar(
+    unresolved_change_count = db.scalar(
         select(func.count(OrderChange.id)).where(
             OrderChange.organization_id == order.organization_id,
             OrderChange.order_id == order.id,
-            OrderChange.status == "pending",
+            OrderChange.status.in_(["draft", "pending"]),
         )
     ) or 0
-    if pending_change_count:
+    if unresolved_change_count:
         raise HTTPException(
             status_code=409,
             detail=(
                 f"Cannot complete staged-billing order {order.order_number}: "
-                f"{pending_change_count} order change(s) are still pending approval. "
-                "Approve or reject them before completion."
+                f"{unresolved_change_count} order change(s) are still unresolved. "
+                "Submit and approve, reject, or otherwise resolve them before completion."
             ),
         )
 
