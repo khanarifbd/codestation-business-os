@@ -38,6 +38,8 @@ export type ClientPortalOrder = {
   order_date: string;
   currency: string;
   total: string | number;
+  approved_change_value: string | number;
+  revised_contract_value: string | number;
   confirmed_at: string;
   started_at: string | null;
   completed_at: string | null;

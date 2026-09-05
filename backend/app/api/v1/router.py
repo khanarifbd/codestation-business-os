@@ -54,6 +54,7 @@ from app.api.v1.inventory_fulfillment import router as inventory_fulfillment_rou
 from app.api.v1.inventory_management import router as inventory_management_router
 from app.api.v1.inventory_workflows import router as inventory_workflows_router
 from app.api.v1.manual_orders import router as manual_orders_router
+from app.api.v1.order_commercial import router as order_commercial_router
 from app.api.v1.order_links import router as order_links_router
 from app.api.v1.order_settlements import router as order_settlements_router
 from app.api.v1.orders import router as orders_router
@@ -111,6 +112,7 @@ api_router.include_router(sales_router)
 api_router.include_router(services_router)
 api_router.include_router(manual_orders_router)
 api_router.include_router(orders_router)
+api_router.include_router(order_commercial_router)
 api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
 api_router.include_router(projects_router)

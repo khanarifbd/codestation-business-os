@@ -15,6 +15,7 @@ from app.models.orders import Order, OrderItem
 from app.models.projects import Project, ProjectMilestone
 from app.models.sales import Quotation, QuotationItem
 from app.schemas.sales import QuotationStatusChange
+from app.services.order_commercial import commercial_values
 
 router = APIRouter(prefix="/client-portal", tags=["Client Portal"])
 
@@ -88,6 +89,8 @@ class ClientPortalOrder(BaseModel):
     order_date: date
     currency: str
     total: Decimal
+    approved_change_value: Decimal
+    revised_contract_value: Decimal
     confirmed_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
@@ -273,7 +276,8 @@ def _project_response(project: Project) -> ClientPortalProject:
     )
 
 
-def _order_response(order: Order) -> ClientPortalOrder:
+def _order_response(db: DbSession, order: Order) -> ClientPortalOrder:
+    values = commercial_values(db, order)
     return ClientPortalOrder(
         id=order.id,
         order_number=order.order_number,
@@ -284,6 +288,8 @@ def _order_response(order: Order) -> ClientPortalOrder:
         order_date=order.order_date,
         currency=order.currency,
         total=order.total,
+        approved_change_value=values["approved_delta"],
+        revised_contract_value=values["revised"],
         confirmed_at=order.confirmed_at,
         started_at=order.started_at,
         completed_at=order.completed_at,
@@ -409,16 +415,10 @@ def get_client_portal_context(db: DbSession, tenant: CurrentTenant) -> ClientPor
     ]
 
     project_count = db.scalar(
-        select(func.count(Project.id)).where(
-            Project.organization_id == tenant.organization_id,
-            Project.client_id.in_(client_ids),
-        )
+        select(func.count(Project.id)).where(Project.organization_id == tenant.organization_id, Project.client_id.in_(client_ids))
     ) or 0
     order_count = db.scalar(
-        select(func.count(Order.id)).where(
-            Order.organization_id == tenant.organization_id,
-            Order.client_id.in_(client_ids),
-        )
+        select(func.count(Order.id)).where(Order.organization_id == tenant.organization_id, Order.client_id.in_(client_ids))
     ) or 0
     quotation_count = db.scalar(
         select(func.count(Quotation.id)).where(
@@ -444,12 +444,7 @@ def get_client_portal_context(db: DbSession, tenant: CurrentTenant) -> ClientPor
 def list_client_portal_projects(db: DbSession, tenant: CurrentTenant) -> list[ClientPortalProject]:
     client_ids = _client_portal_client_ids(db, tenant)
     projects = db.scalars(
-        select(Project)
-        .where(
-            Project.organization_id == tenant.organization_id,
-            Project.client_id.in_(client_ids),
-        )
-        .order_by(Project.created_at.desc())
+        select(Project).where(Project.organization_id == tenant.organization_id, Project.client_id.in_(client_ids)).order_by(Project.created_at.desc())
     ).all()
     return [_project_response(project) for project in projects]
 
@@ -496,14 +491,9 @@ def get_client_portal_project(project_id: str, db: DbSession, tenant: CurrentTen
 def list_client_portal_orders(db: DbSession, tenant: CurrentTenant) -> list[ClientPortalOrder]:
     client_ids = _client_portal_client_ids(db, tenant)
     orders = db.scalars(
-        select(Order)
-        .where(
-            Order.organization_id == tenant.organization_id,
-            Order.client_id.in_(client_ids),
-        )
-        .order_by(Order.order_date.desc(), Order.created_at.desc())
+        select(Order).where(Order.organization_id == tenant.organization_id, Order.client_id.in_(client_ids)).order_by(Order.order_date.desc(), Order.created_at.desc())
     ).all()
-    return [_order_response(order) for order in orders]
+    return [_order_response(db, order) for order in orders]
 
 
 @router.get("/orders/{order_id}", response_model=ClientPortalOrderDetail)
@@ -519,15 +509,10 @@ def get_client_portal_order(order_id: str, db: DbSession, tenant: CurrentTenant)
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     items = db.scalars(
-        select(OrderItem)
-        .where(
-            OrderItem.organization_id == tenant.organization_id,
-            OrderItem.order_id == order.id,
-        )
-        .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
+        select(OrderItem).where(OrderItem.organization_id == tenant.organization_id, OrderItem.order_id == order.id).order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
     ).all()
     return ClientPortalOrderDetail(
-        **_order_response(order).model_dump(),
+        **_order_response(db, order).model_dump(),
         seller_name=order.seller_name_snapshot,
         seller_email=order.seller_email_snapshot,
         seller_address=order.seller_address_snapshot,
@@ -588,25 +573,14 @@ def get_client_portal_invoice(invoice_id: str, db: DbSession, tenant: CurrentTen
     )
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
-
     items = db.scalars(
-        select(InvoiceItem)
-        .where(
-            InvoiceItem.organization_id == tenant.organization_id,
-            InvoiceItem.invoice_id == invoice.id,
-        )
-        .order_by(InvoiceItem.sort_order.asc(), InvoiceItem.created_at.asc())
+        select(InvoiceItem).where(InvoiceItem.organization_id == tenant.organization_id, InvoiceItem.invoice_id == invoice.id).order_by(InvoiceItem.sort_order.asc(), InvoiceItem.created_at.asc())
     ).all()
     payments = db.scalars(
         select(Payment)
-        .where(
-            Payment.organization_id == tenant.organization_id,
-            Payment.invoice_id == invoice.id,
-            Payment.status == "confirmed",
-        )
+        .where(Payment.organization_id == tenant.organization_id, Payment.invoice_id == invoice.id, Payment.status == "confirmed")
         .order_by(Payment.payment_date.desc(), Payment.created_at.desc())
     ).all()
-
     return ClientPortalInvoiceDetail(
         **_invoice_response(invoice).model_dump(),
         seller_name=invoice.seller_name_snapshot,
@@ -673,11 +647,7 @@ def list_client_portal_quotations(db: DbSession, tenant: CurrentTenant) -> list[
 
 
 @router.get("/quotations/{quotation_id}", response_model=ClientPortalQuotationDetail)
-def get_client_portal_quotation(
-    quotation_id: str,
-    db: DbSession,
-    tenant: CurrentTenant,
-) -> ClientPortalQuotationDetail:
+def get_client_portal_quotation(quotation_id: str, db: DbSession, tenant: CurrentTenant) -> ClientPortalQuotationDetail:
     client_ids = _client_portal_client_ids(db, tenant)
     quotation = db.scalar(
         select(Quotation).where(
@@ -713,9 +683,6 @@ def decide_client_portal_quotation(
         raise HTTPException(status_code=404, detail="Quotation not found")
     if quotation.status != "sent":
         raise HTTPException(status_code=409, detail="Only sent quotations can be accepted or rejected")
-
-    # Relationship authorization is enforced above. Reuse the established quotation
-    # transition + audit workflow so staff and client actions follow identical rules.
     change_quotation_status(
         quotation_id,
         QuotationStatusChange(status=payload.status, reason=payload.reason),

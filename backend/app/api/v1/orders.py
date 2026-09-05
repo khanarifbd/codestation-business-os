@@ -24,6 +24,7 @@ from app.models.user import User
 from app.schemas.orders import OrderDetail, OrderItemRead, OrderListItem, OrderPage, OrderStatusChange, OrderSummary
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.order_completion_guard import assert_order_can_complete
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/sales", tags=["Orders"])
@@ -436,6 +437,7 @@ def change_order_status(order_id: str, payload: OrderStatusChange, request: Requ
     cancellation_reason: str | None = None
     if payload.status == "completed":
         _assert_stock_fulfilled(db, tenant.organization_id, order)
+        assert_order_can_complete(db, order)
     if payload.status == "cancelled":
         cancellation_reason = (payload.reason or "").strip()
         if len(cancellation_reason) < 3:
