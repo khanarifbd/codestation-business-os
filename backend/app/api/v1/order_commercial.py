@@ -23,7 +23,7 @@ from app.services.order_commercial import (
 )
 from app.tenancy.context import TenantContext
 
-router = APIRouter(prefix="/orders", tags=["Order Commercial"])
+router = APIRouter(prefix="/sales/orders", tags=["Order Commercial"])
 OrderViewer = Annotated[TenantContext, Depends(require_tenant_permission("orders.view"))]
 OrderManager = Annotated[TenantContext, Depends(require_tenant_permission("orders.manage"))]
 FinanceManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
