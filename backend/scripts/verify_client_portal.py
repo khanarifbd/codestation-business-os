@@ -1,14 +1,16 @@
-"""Verify Client Portal reads enforce client relationship and explicit sharing boundaries."""
+"""Verify Client Portal relationship isolation, sharing boundaries and quotation decisions."""
 
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from sqlalchemy import select
 
 from app.api.v1.client_portal import (
+    ClientPortalQuotationDecision,
+    decide_client_portal_quotation,
     get_client_portal_context,
     get_client_portal_invoice,
     get_client_portal_order,
@@ -46,6 +48,36 @@ class Tenant:
     @property
     def user_id(self) -> str:
         return self.membership.user_id
+
+
+class NoCommitSession:
+    """Delegate to a real Session while keeping verifier mutations rollback-safe."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def commit(self) -> None:
+        self._session.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
+def request_for(path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+        }
+    )
 
 
 def expect_not_found(fn) -> None:
@@ -122,6 +154,19 @@ def main() -> None:
             client_name_snapshot=linked_client.display_name,
             total=Decimal("1200.00"),
         )
+        reject_quotation = Quotation(
+            organization_id=organization.id,
+            quotation_number=f"Q-REJECT-{token}",
+            client_id=linked_client.id,
+            created_by_user_id=membership.user_id,
+            status="sent",
+            subject="Rejectable quotation",
+            issue_date=date.today(),
+            currency="USD",
+            seller_name_snapshot="CodeStation AI",
+            client_name_snapshot=linked_client.display_name,
+            total=Decimal("300.00"),
+        )
         draft_quotation = Quotation(
             organization_id=organization.id,
             quotation_number=f"Q-DRAFT-{token}",
@@ -148,7 +193,7 @@ def main() -> None:
             client_name_snapshot=other_client.display_name,
             total=Decimal("500.00"),
         )
-        db.add_all([visible_quotation, draft_quotation, other_quotation])
+        db.add_all([visible_quotation, reject_quotation, draft_quotation, other_quotation])
         db.flush()
 
         linked_order = Order(
@@ -330,13 +375,46 @@ def main() -> None:
 
         quotations = list_client_portal_quotations(db, tenant)  # type: ignore[arg-type]
         quotation_ids = {quotation.id for quotation in quotations}
-        if visible_quotation.id not in quotation_ids or draft_quotation.id in quotation_ids or other_quotation.id in quotation_ids:
-            raise AssertionError("Quotation visibility/isolation failed")
+        if visible_quotation.id not in quotation_ids or reject_quotation.id not in quotation_ids:
+            raise AssertionError("Linked sent quotation missing from Client Portal")
+        if draft_quotation.id in quotation_ids or other_quotation.id in quotation_ids:
+            raise AssertionError("Draft or unrelated quotation leaked into Client Portal")
         get_client_portal_quotation(visible_quotation.id, db, tenant)  # type: ignore[arg-type]
         expect_not_found(lambda: get_client_portal_quotation(draft_quotation.id, db, tenant))  # type: ignore[arg-type]
         expect_not_found(lambda: get_client_portal_quotation(other_quotation.id, db, tenant))  # type: ignore[arg-type]
 
-        print("Client Portal relationship and sharing isolation verification passed")
+        safe_db = NoCommitSession(db)
+        accepted = decide_client_portal_quotation(
+            visible_quotation.id,
+            ClientPortalQuotationDecision(status="accepted"),
+            request_for(f"/client-portal/quotations/{visible_quotation.id}/decision"),
+            safe_db,  # type: ignore[arg-type]
+            tenant,  # type: ignore[arg-type]
+        )
+        if accepted.status != "accepted" or accepted.accepted_at is None:
+            raise AssertionError("Client quotation acceptance did not use the established status transition")
+
+        rejected = decide_client_portal_quotation(
+            reject_quotation.id,
+            ClientPortalQuotationDecision(status="rejected"),
+            request_for(f"/client-portal/quotations/{reject_quotation.id}/decision"),
+            safe_db,  # type: ignore[arg-type]
+            tenant,  # type: ignore[arg-type]
+        )
+        if rejected.status != "rejected" or rejected.rejected_at is None:
+            raise AssertionError("Client quotation rejection did not use the established status transition")
+
+        expect_not_found(
+            lambda: decide_client_portal_quotation(
+                other_quotation.id,
+                ClientPortalQuotationDecision(status="accepted"),
+                request_for(f"/client-portal/quotations/{other_quotation.id}/decision"),
+                safe_db,  # type: ignore[arg-type]
+                tenant,  # type: ignore[arg-type]
+            )
+        )
+
+        print("Client Portal relationship, sharing and quotation-decision verification passed")
     finally:
         db.rollback()
         db.close()
