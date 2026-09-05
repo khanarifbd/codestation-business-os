@@ -1,15 +1,20 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from starlette.requests import Request
 
+from app.api.v1.finance import change_invoice_status
 from app.api.v1.orders import create_order_from_quotation, change_order_status
 from app.db.session import SessionLocal, engine
 from app.models.orders import Order, OrderItem
+from app.schemas.finance import InvoiceStatusAction
+from app.schemas.order_commercial import BillingMilestoneCreate, CommercialLineInput
 from app.schemas.orders import OrderStatusChange
+from app.services.order_commercial import act_on_billing_milestone, create_billing_milestone, create_milestone_invoice
 
 
 @dataclass(frozen=True)
@@ -40,14 +45,35 @@ def make_request(method: str, path: str) -> Request:
     )
 
 
-def expect_http_error(expected_status: int, fn) -> None:
+def expect_http_error(expected_status: int, fn, detail_contains: str | None = None) -> None:
     try:
         fn()
     except HTTPException as exc:
         if exc.status_code != expected_status:
             raise AssertionError(f"Expected HTTP {expected_status}, got {exc.status_code}: {exc.detail}") from exc
+        if detail_contains and detail_contains.lower() not in str(exc.detail).lower():
+            raise AssertionError(f"Expected error containing {detail_contains!r}, got: {exc.detail}") from exc
         return
     raise AssertionError(f"Expected HTTP {expected_status}, but request succeeded")
+
+
+def milestone_payload(title: str, amount: str) -> BillingMilestoneCreate:
+    return BillingMilestoneCreate(
+        title=title,
+        description=f"CI staged billing milestone {title}",
+        items=[
+            CommercialLineInput(
+                item_name=title,
+                item_type="service",
+                unit="unit",
+                description=title,
+                quantity=Decimal("1"),
+                unit_price=Decimal(amount),
+                discount_percent=Decimal("0"),
+                tax_rate=Decimal("0"),
+            )
+        ],
+    )
 
 
 def main() -> None:
@@ -226,7 +252,134 @@ def main() -> None:
             tenant,  # type: ignore[arg-type]
         )
         if completed.status != "completed" or completed.completed_at is None:
-            raise AssertionError("In-progress order did not complete correctly")
+            raise AssertionError("Legacy non-staged order did not complete correctly")
+
+        reopened = change_order_status(
+            created.id,
+            OrderStatusChange(status="in_progress"),
+            make_request("PATCH", f"/api/v1/sales/orders/{created.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if reopened.status != "in_progress" or reopened.completed_at is not None:
+            raise AssertionError("Completed order did not reopen correctly for staged billing verification")
+
+        order = db.scalar(select(Order).where(Order.id == created.id))
+        if order is None:
+            raise AssertionError("Reopened order not found")
+
+        milestone_one = create_billing_milestone(
+            db,
+            order,
+            milestone_payload("CI Deposit", "100.00"),
+            tenant.user_id,
+            make_request("POST", f"/api/v1/sales/orders/{created.id}/billing-milestones"),
+        )
+        order = db.scalar(select(Order).where(Order.id == created.id))
+        if order is None:
+            raise AssertionError("Order not found after first billing milestone")
+        milestone_two = create_billing_milestone(
+            db,
+            order,
+            milestone_payload("CI Final", "107.00"),
+            tenant.user_id,
+            make_request("POST", f"/api/v1/sales/orders/{created.id}/billing-milestones"),
+        )
+
+        order = db.scalar(select(Order).where(Order.id == created.id))
+        if order is None:
+            raise AssertionError("Order not found before milestone invoicing")
+        act_on_billing_milestone(
+            db,
+            order,
+            milestone_one.id,
+            "mark_billable",
+            tenant.user_id,
+            make_request("POST", f"/api/v1/sales/orders/{created.id}/billing-milestones/{milestone_one.id}/action"),
+        )
+        order = db.scalar(select(Order).where(Order.id == created.id))
+        if order is None:
+            raise AssertionError("Order not found after first milestone action")
+        act_on_billing_milestone(
+            db,
+            order,
+            milestone_two.id,
+            "mark_billable",
+            tenant.user_id,
+            make_request("POST", f"/api/v1/sales/orders/{created.id}/billing-milestones/{milestone_two.id}/action"),
+        )
+
+        order = db.scalar(select(Order).where(Order.id == created.id))
+        if order is None:
+            raise AssertionError("Order not found before first milestone invoice")
+        first_invoice = create_milestone_invoice(
+            db,
+            order,
+            milestone_one.id,
+            tenant.user_id,
+            make_request("POST", f"/api/v1/sales/orders/{created.id}/billing-milestones/{milestone_one.id}/invoice"),
+        )
+        change_invoice_status(
+            first_invoice.id,
+            InvoiceStatusAction(action="send"),
+            make_request("PATCH", f"/api/v1/finance/invoices/{first_invoice.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+
+        expect_http_error(
+            409,
+            lambda: change_order_status(
+                created.id,
+                OrderStatusChange(status="completed"),
+                make_request("PATCH", f"/api/v1/sales/orders/{created.id}/status"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+            "107.00 USD remains unbilled",
+        )
+        db.rollback()
+
+        order = db.scalar(select(Order).where(Order.id == created.id))
+        if order is None:
+            raise AssertionError("Order not found before final milestone invoice")
+        final_invoice = create_milestone_invoice(
+            db,
+            order,
+            milestone_two.id,
+            tenant.user_id,
+            make_request("POST", f"/api/v1/sales/orders/{created.id}/billing-milestones/{milestone_two.id}/invoice"),
+        )
+
+        expect_http_error(
+            409,
+            lambda: change_order_status(
+                created.id,
+                OrderStatusChange(status="completed"),
+                make_request("PATCH", f"/api/v1/sales/orders/{created.id}/status"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+            "107.00 USD is still in draft invoice",
+        )
+        db.rollback()
+
+        change_invoice_status(
+            final_invoice.id,
+            InvoiceStatusAction(action="send"),
+            make_request("PATCH", f"/api/v1/finance/invoices/{final_invoice.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        completed_staged = change_order_status(
+            created.id,
+            OrderStatusChange(status="completed"),
+            make_request("PATCH", f"/api/v1/sales/orders/{created.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if completed_staged.status != "completed":
+            raise AssertionError("Fully invoiced staged-billing order did not complete")
 
         expect_http_error(
             409,
@@ -242,7 +395,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("accepted quotation order-flow verification passed")
+    print("accepted quotation order-flow and staged completion guard verification passed")
 
 
 if __name__ == "__main__":
