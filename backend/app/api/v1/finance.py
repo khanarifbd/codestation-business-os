@@ -38,6 +38,7 @@ from app.schemas.finance import (
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.journal_reversal import reverse_source_journal
+from app.services.order_commercial import staged_billing_enabled
 from app.services.sales import calculate_line, calculate_totals
 from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
@@ -387,6 +388,11 @@ def _existing_source_invoice(db: DbSession, organization_id: str, *, order_id: s
 def _create_invoice_from_order(order: Order, project_id: str | None, request: Request, db: DbSession, tenant: TenantContext) -> InvoiceDetail:
     if order.status == "cancelled":
         raise HTTPException(status_code=409, detail="Cancelled orders cannot be invoiced")
+    if staged_billing_enabled(db, tenant.organization_id, order.id):
+        raise HTTPException(
+            status_code=409,
+            detail="This order uses staged billing. Create invoices from its Billing Schedule instead of the legacy full-order invoice workflow.",
+        )
     if project_id:
         existing_project = _existing_source_invoice(db, tenant.organization_id, project_id=project_id)
         if existing_project:
@@ -572,7 +578,7 @@ def create_account(payload: FinancialAccountCreate, request: Request, db: DbSess
         account_reference=_clean(payload.account_reference),
         currency=payload.currency.upper(),
         opening_balance=_money(payload.opening_balance),
-        notes=_clean(payload.notes),
+        notes=payload.notes,
         created_by_user_id=tenant.user_id,
     )
     db.add(account)
