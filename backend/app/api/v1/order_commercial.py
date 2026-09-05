@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.schemas.order_commercial import (
@@ -29,6 +29,16 @@ OrderManager = Annotated[TenantContext, Depends(require_tenant_permission("order
 FinanceManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
 
 
+def _assert_commercial_mutation_allowed(order) -> None:
+    if order.status == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="Reopen the completed order before changing scope or billing schedule.",
+        )
+    if order.status == "cancelled":
+        raise HTTPException(status_code=409, detail="Cancelled orders cannot be changed")
+
+
 @router.get("/{order_id}/commercial", response_model=OrderCommercialSummary)
 def get_commercial(order_id: str, db: DbSession, tenant: OrderViewer):
     return commercial_summary(db, tenant.organization_id, order_id)
@@ -37,29 +47,34 @@ def get_commercial(order_id: str, db: DbSession, tenant: OrderViewer):
 @router.post("/{order_id}/changes", response_model=OrderChangeRead, status_code=status.HTTP_201_CREATED)
 def add_change(order_id: str, payload: OrderChangeCreate, request: Request, db: DbSession, tenant: OrderManager):
     order = get_order(db, tenant.organization_id, order_id, lock=True)
+    _assert_commercial_mutation_allowed(order)
     return create_change(db, order, payload, tenant.user_id, request)
 
 
 @router.post("/{order_id}/changes/{change_id}/action", response_model=OrderChangeRead)
 def change_action(order_id: str, change_id: str, payload: OrderChangeAction, request: Request, db: DbSession, tenant: OrderManager):
     order = get_order(db, tenant.organization_id, order_id, lock=True)
+    _assert_commercial_mutation_allowed(order)
     return act_on_change(db, order, change_id, payload.action, tenant.user_id, request)
 
 
 @router.post("/{order_id}/billing-milestones", response_model=BillingMilestoneRead, status_code=status.HTTP_201_CREATED)
 def add_billing_milestone(order_id: str, payload: BillingMilestoneCreate, request: Request, db: DbSession, tenant: OrderManager):
     order = get_order(db, tenant.organization_id, order_id, lock=True)
+    _assert_commercial_mutation_allowed(order)
     return create_billing_milestone(db, order, payload, tenant.user_id, request)
 
 
 @router.post("/{order_id}/billing-milestones/{milestone_id}/action", response_model=BillingMilestoneRead)
 def billing_action(order_id: str, milestone_id: str, payload: BillingMilestoneAction, request: Request, db: DbSession, tenant: OrderManager):
     order = get_order(db, tenant.organization_id, order_id, lock=True)
+    _assert_commercial_mutation_allowed(order)
     return act_on_billing_milestone(db, order, milestone_id, payload.action, tenant.user_id, request)
 
 
 @router.post("/{order_id}/billing-milestones/{milestone_id}/invoice", status_code=status.HTTP_201_CREATED)
 def create_billing_invoice(order_id: str, milestone_id: str, request: Request, db: DbSession, tenant: FinanceManager):
     order = get_order(db, tenant.organization_id, order_id, lock=True)
+    _assert_commercial_mutation_allowed(order)
     invoice = create_milestone_invoice(db, order, milestone_id, tenant.user_id, request)
     return {"invoice_id": invoice.id, "invoice_number": invoice.invoice_number, "status": invoice.status, "currency": invoice.currency, "total": str(invoice.total)}
