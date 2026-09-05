@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowRight, Building2, CircleDollarSign, FileText, FolderKanban, Loader2, ReceiptText, UserRound } from "lucide-react";
+import { ArrowRight, Building2, CircleDollarSign, FileText, FolderKanban, Loader2, ReceiptText, ShoppingBag, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { ClientWorkspaceMetricCard } from "@/components/client-workspace-metric-card";
@@ -32,6 +32,7 @@ type PortalContext = {
   membership_id: string;
   clients: PortalClient[];
   project_count: number;
+  order_count: number;
   quotation_count: number;
   financials: PortalFinancial[];
 };
@@ -83,21 +84,23 @@ export function ClientPortalDashboard() {
     <header>
       <p className="text-sm font-medium text-neutral-500">Client portal</p>
       <h1 className="mt-1 text-3xl font-semibold tracking-tight">Dashboard</h1>
-      <p className="mt-2 max-w-2xl text-sm text-neutral-500">Your secure workspace with {data.organization_name}. Track projects, quotations and billing without exposing internal company data.</p>
+      <p className="mt-2 max-w-2xl text-sm text-neutral-500">Your secure workspace with {data.organization_name}. Track projects, orders, quotations and billing without exposing internal company data.</p>
     </header>
     {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-    <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
       <ClientWorkspaceMetricCard label="Client profiles" value={data.clients.length} icon={UserRound} variant="large" />
       <Link href="/dashboard/client/projects" className="block"><ClientWorkspaceMetricCard label="Projects" value={data.project_count} icon={FolderKanban} variant="large" /></Link>
-      <Link href="/dashboard/client/invoices" className="block"><ClientWorkspaceMetricCard label="Invoices" value={totalInvoices} icon={ReceiptText} variant="large" /></Link>
+      <Link href="/dashboard/client/orders" className="block"><ClientWorkspaceMetricCard label="Orders" value={data.order_count} icon={ShoppingBag} variant="large" /></Link>
       <Link href="/dashboard/client/quotations" className="block"><ClientWorkspaceMetricCard label="Quotations" value={data.quotation_count} icon={FileText} variant="large" /></Link>
+      <Link href="/dashboard/client/invoices" className="block"><ClientWorkspaceMetricCard label="Invoices" value={totalInvoices} icon={ReceiptText} variant="large" /></Link>
     </div>
 
-    <section className="mt-5 grid gap-3 md:grid-cols-3">
+    <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <Link href="/dashboard/client/projects" className="flex items-center justify-between rounded-2xl border bg-white p-4 text-sm font-medium transition hover:border-neutral-300 hover:shadow-sm"><span className="flex items-center gap-2"><FolderKanban className="size-4 text-neutral-400" />Open projects</span><ArrowRight className="size-4 text-neutral-300" /></Link>
-      <Link href="/dashboard/client/invoices" className="flex items-center justify-between rounded-2xl border bg-white p-4 text-sm font-medium transition hover:border-neutral-300 hover:shadow-sm"><span className="flex items-center gap-2"><ReceiptText className="size-4 text-neutral-400" />View invoices</span><ArrowRight className="size-4 text-neutral-300" /></Link>
+      <Link href="/dashboard/client/orders" className="flex items-center justify-between rounded-2xl border bg-white p-4 text-sm font-medium transition hover:border-neutral-300 hover:shadow-sm"><span className="flex items-center gap-2"><ShoppingBag className="size-4 text-neutral-400" />View orders</span><ArrowRight className="size-4 text-neutral-300" /></Link>
       <Link href="/dashboard/client/quotations" className="flex items-center justify-between rounded-2xl border bg-white p-4 text-sm font-medium transition hover:border-neutral-300 hover:shadow-sm"><span className="flex items-center gap-2"><FileText className="size-4 text-neutral-400" />View quotations</span><ArrowRight className="size-4 text-neutral-300" /></Link>
+      <Link href="/dashboard/client/invoices" className="flex items-center justify-between rounded-2xl border bg-white p-4 text-sm font-medium transition hover:border-neutral-300 hover:shadow-sm"><span className="flex items-center gap-2"><ReceiptText className="size-4 text-neutral-400" />View invoices</span><ArrowRight className="size-4 text-neutral-300" /></Link>
     </section>
 
     <div className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">

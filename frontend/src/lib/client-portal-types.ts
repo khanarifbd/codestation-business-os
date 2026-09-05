@@ -1,3 +1,13 @@
+export type ClientPortalMilestone = {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  progress_percent: number;
+  due_date: string | null;
+  completed_at: string | null;
+};
+
 export type ClientPortalProject = {
   id: string;
   project_number: string;
@@ -12,6 +22,55 @@ export type ClientPortalProject = {
   description: string | null;
   actual_started_at: string | null;
   completed_at: string | null;
+};
+
+export type ClientPortalProjectDetail = ClientPortalProject & {
+  milestones: ClientPortalMilestone[];
+};
+
+export type ClientPortalOrder = {
+  id: string;
+  order_number: string;
+  client_id: string;
+  quotation_id: string | null;
+  status: string;
+  subject: string | null;
+  order_date: string;
+  currency: string;
+  total: string | number;
+  confirmed_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  cancelled_at: string | null;
+};
+
+export type ClientPortalOrderDetail = ClientPortalOrder & {
+  seller_name: string;
+  seller_email: string | null;
+  seller_address: string | null;
+  client_name: string;
+  client_contact: string | null;
+  client_email: string | null;
+  client_address: string | null;
+  subtotal: string | number;
+  discount_total: string | number;
+  tax_total: string | number;
+  notes: string | null;
+  terms_conditions: string | null;
+  items: Array<{
+    id: string;
+    item_name: string;
+    description: string;
+    quantity: string | number;
+    unit: string;
+    unit_price: string | number;
+    discount_percent: string | number;
+    tax_rate: string | number;
+    line_total: string | number;
+    service_duration_months: number | null;
+    service_start_date: string | null;
+    service_end_date: string | null;
+  }>;
 };
 
 export type ClientPortalInvoice = {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FileText } from "lucide-react";
+import { Check, FileText, Loader2, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ClientPortalError, ClientPortalLoading, ClientPortalPageHeader, ClientPortalStatusBadge, formatPortalDate, formatPortalMoney, portalStatusLabel } from "@/components/client-portal-ui";
@@ -12,7 +12,9 @@ export default function ClientQuotationDetailPage() {
   const router = useRouter();
   const [quotation, setQuotation] = useState<ClientPortalQuotationDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -32,12 +34,39 @@ export default function ClientQuotationDetailPage() {
     return () => { active = false; };
   }, [params.quotationId, router]);
 
+  async function decide(status: "accepted" | "rejected") {
+    if (!quotation || saving) return;
+    if (status === "accepted" && !window.confirm(`Accept quotation ${quotation.quotation_number}? This action cannot be undone.`)) return;
+    if (status === "rejected" && !window.confirm(`Reject quotation ${quotation.quotation_number}? This action cannot be undone.`)) return;
+    setSaving(true); setError(null); setMessage(null);
+    try {
+      const response = await fetch(`/api/client-portal/quotations/${encodeURIComponent(quotation.id)}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (response.status === 401) { router.replace("/login"); return; }
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Unable to update quotation");
+      setQuotation(payload as ClientPortalQuotationDetail);
+      setMessage(status === "accepted" ? "Quotation accepted successfully." : "Quotation rejected successfully.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to update quotation");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <ClientPortalLoading />;
   if (!quotation) return <ClientPortalError message={error ?? "Quotation not found"} />;
 
   return <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1150px]">
     <ClientPortalPageHeader title={quotation.subject || quotation.quotation_number} description="Quotation details that have been shared with your client account." backHref="/dashboard/client/quotations" />
     <div className="mt-5 flex flex-wrap items-center gap-2"><span className="text-sm font-medium text-neutral-400">{quotation.quotation_number}</span><ClientPortalStatusBadge status={quotation.status} /></div>
+    {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+    {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
+
+    {quotation.status === "sent" ? <section className="mt-5 rounded-2xl border bg-white p-5 sm:p-6"><h2 className="font-semibold">Your decision</h2><p className="mt-1 text-sm text-neutral-500">Review the quotation below, then accept it or reject it. Your decision is recorded in the business audit trail.</p><div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={saving} onClick={() => void decide("accepted")} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}Accept quotation</button><button type="button" disabled={saving} onClick={() => void decide("rejected")} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 disabled:opacity-50"><X className="size-4" />Reject quotation</button></div></section> : null}
 
     <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <div className="rounded-2xl border bg-white p-5"><p className="text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">Total</p><p className="mt-2 text-xl font-semibold">{formatPortalMoney(quotation.total, quotation.currency)}</p></div>
