@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -129,5 +129,80 @@ class QuotationItem(TenantOwnedMixin, Base):
     taxable_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class QuotationSection(TenantOwnedMixin, Base):
+    __tablename__ = "quotation_sections"
+    __table_args__ = (
+        Index("ix_quotation_sections_org_quotation_sort", "organization_id", "quotation_id", "sort_order"),
+        Index("ix_quotation_sections_org_quotation_type", "organization_id", "quotation_id", "section_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    section_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(220), nullable=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class QuotationMilestone(TenantOwnedMixin, Base):
+    __tablename__ = "quotation_milestones"
+    __table_args__ = (
+        CheckConstraint(
+            "estimated_start_date IS NULL OR estimated_end_date IS NULL OR estimated_end_date >= estimated_start_date",
+            name="ck_quotation_milestones_estimated_schedule",
+        ),
+        Index("ix_quotation_milestones_org_quotation_sort", "organization_id", "quotation_id", "sort_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    estimated_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estimated_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estimated_duration: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    acceptance_criteria: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class QuotationPaymentMilestone(TenantOwnedMixin, Base):
+    __tablename__ = "quotation_payment_milestones"
+    __table_args__ = (
+        CheckConstraint("amount >= 0", name="ck_quotation_payment_amount_nonnegative"),
+        CheckConstraint(
+            "percentage IS NULL OR (percentage > 0 AND percentage <= 100)",
+            name="ck_quotation_payment_percentage_range",
+        ),
+        CheckConstraint(
+            "(payment_type = 'percentage' AND percentage IS NOT NULL) OR "
+            "(payment_type = 'fixed' AND percentage IS NULL)",
+            name="ck_quotation_payment_type_shape",
+        ),
+        Index("ix_quotation_payment_org_quotation_sort", "organization_id", "quotation_id", "sort_order"),
+        Index("ix_quotation_payment_org_milestone", "organization_id", "quotation_milestone_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="CASCADE"), nullable=False)
+    quotation_milestone_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("quotation_milestones.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    percentage: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
+    due_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
