@@ -28,6 +28,51 @@ COMMERCIAL_COLUMNS = {
     "prepared_by_designation_snapshot",
 }
 
+STRUCTURED_TABLE_COLUMNS = {
+    "quotation_sections": {
+        "organization_id",
+        "id",
+        "quotation_id",
+        "section_type",
+        "title",
+        "content",
+        "sort_order",
+        "is_visible",
+        "created_at",
+        "updated_at",
+    },
+    "quotation_milestones": {
+        "organization_id",
+        "id",
+        "quotation_id",
+        "title",
+        "description",
+        "estimated_start_date",
+        "estimated_end_date",
+        "estimated_duration",
+        "acceptance_criteria",
+        "sort_order",
+        "created_at",
+        "updated_at",
+    },
+    "quotation_payment_milestones": {
+        "organization_id",
+        "id",
+        "quotation_id",
+        "quotation_milestone_id",
+        "title",
+        "description",
+        "payment_type",
+        "percentage",
+        "amount",
+        "due_condition",
+        "due_date",
+        "sort_order",
+        "created_at",
+        "updated_at",
+    },
+}
+
 
 def main() -> None:
     with engine.begin() as connection:
@@ -44,7 +89,7 @@ def main() -> None:
         if sequence != "QUO":
             raise AssertionError(f"quotation sequence prefix mismatch: {sequence}")
 
-        for table_name in ("quotations", "quotation_items"):
+        for table_name in ("quotations", "quotation_items", *STRUCTURED_TABLE_COLUMNS):
             exists = connection.execute(
                 text("SELECT to_regclass(:table_name)"),
                 {"table_name": f"public.{table_name}"},
@@ -65,13 +110,29 @@ def main() -> None:
         if missing_columns:
             raise AssertionError(f"quotation V2 columns missing: {sorted(missing_columns)}")
 
+        for table_name, expected_table_columns in STRUCTURED_TABLE_COLUMNS.items():
+            table_columns = set(
+                connection.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema='public' AND table_name=:table_name"
+                    ),
+                    {"table_name": table_name},
+                ).scalars()
+            )
+            missing_table_columns = expected_table_columns - table_columns
+            if missing_table_columns:
+                raise AssertionError(
+                    f"{table_name} columns missing: {sorted(missing_table_columns)}"
+                )
+
         revision_family_index = connection.execute(
             text("SELECT to_regclass('public.uq_quotations_org_revision_family')")
         ).scalar_one()
         if not revision_family_index:
             raise AssertionError("quotation revision-family unique index is missing")
 
-        constraint_names = set(
+        quotation_constraint_names = set(
             connection.execute(
                 text(
                     "SELECT conname FROM pg_constraint "
@@ -79,7 +140,7 @@ def main() -> None:
                 )
             ).scalars()
         )
-        required_constraints = {
+        required_quotation_constraints = {
             "ck_quotations_revision_shape",
             "ck_quotations_revision_positive",
             "ck_quotations_revision_not_self",
@@ -87,9 +148,39 @@ def main() -> None:
             "fk_quotations_root_quotation",
             "fk_quotations_supersedes_quotation",
         }
-        missing_constraints = required_constraints - constraint_names
+        missing_constraints = required_quotation_constraints - quotation_constraint_names
         if missing_constraints:
             raise AssertionError(f"quotation V2 constraints missing: {sorted(missing_constraints)}")
+
+        milestone_constraint_names = set(
+            connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conrelid = 'public.quotation_milestones'::regclass"
+                )
+            ).scalars()
+        )
+        if "ck_quotation_milestones_estimated_schedule" not in milestone_constraint_names:
+            raise AssertionError("quotation milestone schedule constraint is missing")
+
+        payment_constraint_names = set(
+            connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conrelid = 'public.quotation_payment_milestones'::regclass"
+                )
+            ).scalars()
+        )
+        required_payment_constraints = {
+            "ck_quotation_payment_amount_nonnegative",
+            "ck_quotation_payment_percentage_range",
+            "ck_quotation_payment_type_shape",
+        }
+        missing_payment_constraints = required_payment_constraints - payment_constraint_names
+        if missing_payment_constraints:
+            raise AssertionError(
+                f"quotation payment milestone constraints missing: {sorted(missing_payment_constraints)}"
+            )
 
         invalid_legacy_revision_rows = connection.execute(
             text(
@@ -110,6 +201,38 @@ def main() -> None:
         ).scalar_one()
         if project_backfill_mismatch:
             raise AssertionError("legacy quotation project-title backfill mismatch")
+
+        notes_backfill_mismatch = connection.execute(
+            text(
+                "SELECT count(*) FROM quotations q "
+                "WHERE q.notes IS NOT NULL AND btrim(q.notes) <> '' "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM quotation_sections s "
+                "  WHERE s.organization_id = q.organization_id "
+                "    AND s.quotation_id = q.id "
+                "    AND s.section_type = 'additional_notes' "
+                "    AND s.content = q.notes"
+                ")"
+            )
+        ).scalar_one()
+        if notes_backfill_mismatch:
+            raise AssertionError("legacy quotation notes were not backfilled into structured sections")
+
+        terms_backfill_mismatch = connection.execute(
+            text(
+                "SELECT count(*) FROM quotations q "
+                "WHERE q.terms_conditions IS NOT NULL AND btrim(q.terms_conditions) <> '' "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM quotation_sections s "
+                "  WHERE s.organization_id = q.organization_id "
+                "    AND s.quotation_id = q.id "
+                "    AND s.section_type = 'terms_conditions' "
+                "    AND s.content = q.terms_conditions"
+                ")"
+            )
+        ).scalar_one()
+        if terms_backfill_mismatch:
+            raise AssertionError("legacy quotation terms were not backfilled into structured sections")
 
     client_option_parameters = app.openapi()["paths"]["/api/v1/sales/client-options"]["get"]["parameters"]
     client_option_limit = next(item for item in client_option_parameters if item["name"] == "limit")
@@ -146,7 +269,7 @@ def main() -> None:
     if totals.total != Decimal("322.00"):
         raise AssertionError(totals)
 
-    print("quotation V2 revision/commercial model and calculation invariants verified")
+    print("quotation V2 revision/commercial/structured model and calculation invariants verified")
 
 
 if __name__ == "__main__":
