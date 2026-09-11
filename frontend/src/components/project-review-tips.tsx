@@ -71,6 +71,9 @@ type TipForm = {
   financial_account_id: string;
   category_ledger_account_id: string;
   amount: string;
+  fee_mode: "none" | "percentage" | "fixed";
+  fee_value: string;
+  fee_category_ledger_account_id: string;
   reference: string;
   notes: string;
 };
@@ -79,6 +82,10 @@ const REVIEW_SOURCES = ["Fiverr", "Upwork", "Google", "Website", "Email", "Direc
 
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 function money(value: string | number, currency: string) {
@@ -116,6 +123,9 @@ function blankTip(): TipForm {
     financial_account_id: "",
     category_ledger_account_id: "",
     amount: "",
+    fee_mode: "none",
+    fee_value: "",
+    fee_category_ledger_account_id: "",
     reference: "",
     notes: "",
   };
@@ -135,6 +145,7 @@ export function ProjectReviewTips({
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [categories, setCategories] = useState<LedgerAccount[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<LedgerAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [reviewEditing, setReviewEditing] = useState(false);
@@ -182,7 +193,7 @@ export function ProjectReviewTips({
           coaResponse.json().catch(() => null),
         ]);
         if (!metaResponse.ok) throw new Error(errorDetail(metaPayload, "Unable to load financial accounts."));
-        if (!coaResponse.ok) throw new Error(errorDetail(coaPayload, "Unable to load income categories."));
+        if (!coaResponse.ok) throw new Error(errorDetail(coaPayload, "Unable to load accounting categories."));
         if (!active) return;
         const meta = metaPayload as FinanceMeta;
         const matchingAccounts = (meta.accounts ?? []).filter(
@@ -194,8 +205,12 @@ export function ProjectReviewTips({
         const incomeCategories = (Array.isArray(coaPayload) ? coaPayload : []).filter(
           (account: LedgerAccount) => account.category === "income" && account.is_active,
         ) as LedgerAccount[];
+        const feeCategories = (Array.isArray(coaPayload) ? coaPayload : []).filter(
+          (account: LedgerAccount) => account.category === "expense" && account.is_active,
+        ) as LedgerAccount[];
         setAccounts(matchingAccounts);
         setCategories(incomeCategories);
+        setExpenseCategories(feeCategories);
         setTipForm((current) => ({
           ...current,
           financial_account_id:
@@ -207,6 +222,10 @@ export function ProjectReviewTips({
           category_ledger_account_id:
             current.category_ledger_account_id && incomeCategories.some((item) => item.id === current.category_ledger_account_id)
               ? current.category_ledger_account_id
+              : "",
+          fee_category_ledger_account_id:
+            current.fee_category_ledger_account_id && feeCategories.some((item) => item.id === current.fee_category_ledger_account_id)
+              ? current.fee_category_ledger_account_id
               : "",
         }));
       } catch (reason) {
@@ -222,23 +241,46 @@ export function ProjectReviewTips({
 
   const selectedAccount = accounts.find((item) => item.id === tipForm.financial_account_id) ?? null;
   const selectedCategory = categories.find((item) => item.id === tipForm.category_ledger_account_id) ?? null;
+  const selectedFeeCategory = expenseCategories.find((item) => item.id === tipForm.fee_category_ledger_account_id) ?? null;
+  const grossAmount = Number(tipForm.amount || 0);
+  const feeValue = Number(tipForm.fee_value || 0);
+  const feeAmount = roundMoney(
+    tipForm.fee_mode === "percentage"
+      ? grossAmount * feeValue / 100
+      : tipForm.fee_mode === "fixed"
+        ? feeValue
+        : 0,
+  );
+  const netAmount = roundMoney(grossAmount - feeAmount);
+  const feeEnabled = tipForm.fee_mode !== "none";
+  const validFee = !feeEnabled || Boolean(
+    Number.isFinite(feeValue) &&
+      feeValue > 0 &&
+      feeAmount > 0 &&
+      feeAmount <= grossAmount &&
+      selectedFeeCategory,
+  );
   const validTip = Boolean(
-    Number(tipForm.amount) > 0 &&
+    grossAmount > 0 &&
       selectedAccount &&
       selectedAccount.currency === projectCurrency &&
-      selectedCategory,
+      selectedCategory &&
+      validFee,
   );
 
   const confirmationDetails = useMemo(
     () => [
       { label: "Project", value: projectNumber },
-      { label: "Tip amount", value: money(tipForm.amount || 0, projectCurrency), emphasis: true },
+      { label: "Gross income", value: money(grossAmount || 0, projectCurrency) },
+      { label: "Processing / platform fee", value: feeAmount > 0 ? money(feeAmount, projectCurrency) : "No fee" },
+      { label: "Net received", value: money(Math.max(netAmount, 0), projectCurrency), emphasis: true },
       { label: "Received into", value: selectedAccount?.name ?? "—" },
       { label: "Income category", value: selectedCategory?.name ?? "—" },
+      ...(feeAmount > 0 ? [{ label: "Fee expense category", value: selectedFeeCategory?.name ?? "—" }] : []),
       { label: "Date", value: tipForm.entry_date || "—" },
       { label: "Reference", value: tipForm.reference || "—" },
     ],
-    [projectNumber, projectCurrency, selectedAccount, selectedCategory, tipForm],
+    [projectNumber, projectCurrency, grossAmount, feeAmount, netAmount, selectedAccount, selectedCategory, selectedFeeCategory, tipForm.entry_date, tipForm.reference],
   );
 
   function startReviewEdit() {
@@ -286,8 +328,20 @@ export function ProjectReviewTips({
     event.preventDefault();
     setError(null);
     setMessage(null);
-    if (!validTip) {
-      setError(`Choose a ${projectCurrency} financial account, income category and valid tip amount.`);
+    if (!(grossAmount > 0 && selectedAccount && selectedAccount.currency === projectCurrency && selectedCategory)) {
+      setError(`Choose a ${projectCurrency} financial account, income category and valid gross amount.`);
+      return;
+    }
+    if (feeEnabled && (!Number.isFinite(feeValue) || feeValue <= 0)) {
+      setError("Enter a valid processing or platform fee.");
+      return;
+    }
+    if (feeEnabled && feeAmount > grossAmount) {
+      setError("Processing or platform fee cannot exceed gross income.");
+      return;
+    }
+    if (feeEnabled && !selectedFeeCategory) {
+      setError("Choose an expense category for the processing or platform fee.");
       return;
     }
     setTipConfirmOpen(true);
@@ -299,16 +353,18 @@ export function ProjectReviewTips({
     setError(null);
     setMessage(null);
     try {
-      const response = await fetch("/api/accounting/money", {
+      const response = await fetch("/api/accounting/money/income-with-fee", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          kind: "income",
           entry_date: tipForm.entry_date,
           financial_account_id: selectedAccount.id,
-          category_ledger_account_id: selectedCategory.id,
-          amount: Number(tipForm.amount),
-          description: `Project tip · ${projectNumber}`,
+          income_category_ledger_account_id: selectedCategory.id,
+          gross_amount: grossAmount,
+          fee_amount: feeAmount,
+          fee_category_ledger_account_id: feeAmount > 0 ? selectedFeeCategory?.id ?? null : null,
+          description: `Project tip / additional income · ${projectNumber}`,
+          fee_description: feeAmount > 0 ? `Processing / platform fee · ${projectNumber}` : null,
           reference: tipForm.reference.trim() || null,
           notes: tipForm.notes.trim() || null,
           source_type: "project",
@@ -316,13 +372,17 @@ export function ProjectReviewTips({
         }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(errorDetail(payload, "Unable to record project tip."));
+      if (!response.ok) throw new Error(errorDetail(payload, "Unable to record project income."));
       setTipConfirmOpen(false);
       setTipForm(blankTip());
-      setMessage("Tip recorded. Financial account and accounting ledger were updated.");
+      setMessage(
+        feeAmount > 0
+          ? "Income and fee recorded together. Gross income, fee expense, financial account and ledger are updated."
+          : "Income recorded. Financial account and accounting ledger were updated.",
+      );
       await loadFeedback();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to record project tip.");
+      setError(reason instanceof Error ? reason.message : "Unable to record project income.");
       setTipConfirmOpen(false);
     } finally {
       setTipSaving(false);
@@ -482,8 +542,8 @@ export function ProjectReviewTips({
               <form onSubmit={reviewTip} className="mt-5 rounded-2xl border bg-neutral-50 p-4 sm:p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold">Record a tip</p>
-                    <p className="mt-1 text-xs leading-5 text-neutral-500">Posts real income to the selected financial account and accounting ledger.</p>
+                    <p className="text-sm font-semibold">Record tip or additional income</p>
+                    <p className="mt-1 text-xs leading-5 text-neutral-500">Post gross income and an optional processing or platform fee together, so revenue, expense and the net account balance stay aligned.</p>
                   </div>
                   {optionsLoading ? <Loader2 className="size-4 animate-spin text-neutral-400" /> : null}
                 </div>
@@ -493,7 +553,7 @@ export function ProjectReviewTips({
                     <input type="date" value={tipForm.entry_date} onChange={(event) => setTipForm((current) => ({ ...current, entry_date: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" required />
                   </label>
                   <label className="text-sm font-medium">
-                    Amount ({projectCurrency})
+                    Gross amount ({projectCurrency})
                     <input type="number" min="0.01" step="0.01" value={tipForm.amount} onChange={(event) => setTipForm((current) => ({ ...current, amount: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" placeholder="0.00" required />
                   </label>
                   <label className="text-sm font-medium">
@@ -511,26 +571,90 @@ export function ProjectReviewTips({
                     </select>
                   </label>
                   <label className="text-sm font-medium">
+                    Fee treatment
+                    <select
+                      value={tipForm.fee_mode}
+                      onChange={(event) => setTipForm((current) => ({
+                        ...current,
+                        fee_mode: event.target.value as TipForm["fee_mode"],
+                        fee_value: event.target.value === "none" ? "" : current.fee_value,
+                        fee_category_ledger_account_id: event.target.value === "none" ? "" : current.fee_category_ledger_account_id,
+                      }))}
+                      className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none"
+                    >
+                      <option value="none">No fee</option>
+                      <option value="percentage">Percentage</option>
+                      <option value="fixed">Fixed amount</option>
+                    </select>
+                  </label>
+                  {feeEnabled ? (
+                    <>
+                      <label className="text-sm font-medium">
+                        {tipForm.fee_mode === "percentage" ? "Fee percentage" : `Fee amount (${projectCurrency})`}
+                        <div className="relative mt-2">
+                          <input
+                            type="number"
+                            min="0.01"
+                            max={tipForm.fee_mode === "percentage" ? "100" : undefined}
+                            step="0.01"
+                            value={tipForm.fee_value}
+                            onChange={(event) => setTipForm((current) => ({ ...current, fee_value: event.target.value }))}
+                            className="h-11 w-full rounded-xl border bg-white px-3 pr-10 text-sm outline-none"
+                            placeholder="0.00"
+                            required
+                          />
+                          {tipForm.fee_mode === "percentage" ? <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-neutral-400">%</span> : null}
+                        </div>
+                      </label>
+                      <label className="text-sm font-medium">
+                        Fee expense category
+                        <select value={tipForm.fee_category_ledger_account_id} onChange={(event) => setTipForm((current) => ({ ...current, fee_category_ledger_account_id: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" required>
+                          <option value="">Select expense category</option>
+                          {expenseCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                        </select>
+                      </label>
+                    </>
+                  ) : null}
+                  <label className="text-sm font-medium">
                     Reference
-                    <input value={tipForm.reference} maxLength={180} onChange={(event) => setTipForm((current) => ({ ...current, reference: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" placeholder="Fiverr / bank / transaction reference" />
+                    <input value={tipForm.reference} maxLength={180} onChange={(event) => setTipForm((current) => ({ ...current, reference: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" placeholder="Marketplace / bank / transaction reference" />
                   </label>
                   <label className="text-sm font-medium md:col-span-2 xl:col-span-3">
                     Notes
-                    <textarea value={tipForm.notes} onChange={(event) => setTipForm((current) => ({ ...current, notes: event.target.value }))} className="mt-2 min-h-20 w-full rounded-xl border bg-white p-3 text-sm outline-none" placeholder="Optional context about this tip" />
+                    <textarea value={tipForm.notes} onChange={(event) => setTipForm((current) => ({ ...current, notes: event.target.value }))} className="mt-2 min-h-20 w-full rounded-xl border bg-white p-3 text-sm outline-none" placeholder="Optional context about this income or fee" />
                   </label>
                 </div>
+
+                <div className="mt-4 grid gap-2 rounded-xl border bg-white p-4 text-sm sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs text-neutral-400">Gross income</p>
+                    <p className="mt-1 font-semibold tabular-nums">{money(grossAmount || 0, projectCurrency)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-neutral-400">Fee expense</p>
+                    <p className="mt-1 font-semibold tabular-nums">{money(feeAmount || 0, projectCurrency)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-neutral-400">Net received</p>
+                    <p className={`mt-1 font-semibold tabular-nums ${netAmount < 0 ? "text-red-600" : "text-neutral-950"}`}>{money(netAmount, projectCurrency)}</p>
+                  </div>
+                </div>
+
                 {!optionsLoading && !accounts.length ? (
                   <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">No active {projectCurrency} receiving account is available. Add a matching financial account first; cross-currency conversion is not performed silently here.</p>
+                ) : null}
+                {feeEnabled && !optionsLoading && !expenseCategories.length ? (
+                  <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">No active expense category is available for the fee. Add an expense ledger category such as Bank & Processing Fees first.</p>
                 ) : null}
                 <div className="mt-5 flex justify-end">
                   <button type="submit" disabled={!validTip || tipSaving || optionsLoading} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">
                     <Plus className="size-4" />
-                    Review tip posting
+                    Review income & fee
                   </button>
                 </div>
               </form>
             ) : completed ? (
-              <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">Finance Manage permission is required to record a new tip.</div>
+              <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">Finance Manage permission is required to record new project income.</div>
             ) : null}
 
             <div className="mt-5 overflow-x-auto">
@@ -538,7 +662,7 @@ export function ProjectReviewTips({
                 <thead className="text-xs uppercase tracking-wide text-neutral-400">
                   <tr>
                     <th className="pb-3 font-medium">Date</th>
-                    <th className="pb-3 font-medium">Amount</th>
+                    <th className="pb-3 font-medium">Gross amount</th>
                     <th className="pb-3 font-medium">Received into</th>
                     <th className="pb-3 font-medium">Income category</th>
                     <th className="pb-3 font-medium">Reference</th>
@@ -560,19 +684,19 @@ export function ProjectReviewTips({
               </table>
               {!tips.length ? <div className="py-10 text-center text-sm text-neutral-400">No tips or additional project income recorded.</div> : null}
             </div>
-            {tips.length ? <p className="mt-3 text-xs leading-5 text-neutral-400">These are posted financial records. Edit/delete is intentionally unavailable here; financial corrections must use the accounting correction workflow.</p> : null}
+            {tips.length ? <p className="mt-3 text-xs leading-5 text-neutral-400">Gross income is shown here. Any processing/platform fee posted with it is recorded separately as an expense and linked to the same project. Financial corrections must use the accounting correction workflow.</p> : null}
           </>
         )}
       </section>
 
       <FinancialConfirmationDialog
         open={tipConfirmOpen}
-        title="Record project tip"
-        description="This will post income to the selected account and general ledger, linked to this project."
+        title="Record project income & fee"
+        description="This posts gross income and the optional fee together in one atomic accounting operation, linked to this project."
         details={confirmationDetails}
-        confirmLabel="Post tip"
+        confirmLabel="Post income & fee"
         loading={tipSaving}
-        warning={`This action creates an accounting record in ${projectCurrency}. It is not an invoice payment and cannot be edited from the project page.`}
+        warning={`This action creates posted accounting records in ${projectCurrency}. It is not an invoice payment and cannot be edited from the project page.`}
         onCancel={() => setTipConfirmOpen(false)}
         onConfirm={postTip}
       />
