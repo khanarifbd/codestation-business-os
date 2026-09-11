@@ -18,13 +18,14 @@ from app.models.finance import InvoiceItem
 from app.models.inventory import StockMovement
 from app.models.crm import Lead
 from app.models.orders import OrderItem
-from app.models.sales import QuotationItem
+from app.models.sales import Quotation, QuotationItem
 from app.schemas.crm import LeadInterestInput, LeadInterestReplace
 from app.schemas.finance import InvoiceStatusAction
 from app.schemas.orders import OrderStatusChange
 from app.schemas.sales import QuotationCreate, QuotationItemInput, QuotationStatusChange, QuotationUpdate
 from app.services.accounting_posting import ensure_default_chart
 from app.services.activity_log import record_activity
+from app.services.quotation_v2 import clone_revision
 
 
 @dataclass(frozen=True)
@@ -205,29 +206,61 @@ def main() -> None:
             tenant,  # type: ignore[arg-type]
         )
         revision_sent = change_quotation_status(revision_quote.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{revision_quote.id}/status"), db, tenant)  # type: ignore[arg-type]
+        sent_model = db.scalar(select(Quotation).where(Quotation.id == revision_sent.id, Quotation.organization_id == tenant.organization_id))
+        if sent_model is None:
+            raise AssertionError("sent quotation model missing before revision")
+        revision_two = clone_revision(
+            db,
+            sent_model,
+            user_id=tenant.user_id,
+            revision_reason="Client negotiated a lower price",
+            issue_date=date.today(),
+            valid_until=sent_model.valid_until,
+        )
+        if revision_two.quotation_number != sent_model.quotation_number or revision_two.revision_number != 2:
+            raise AssertionError("quotation revision family identity was not preserved")
+        if revision_two.root_quotation_id != sent_model.id or revision_two.supersedes_quotation_id != sent_model.id:
+            raise AssertionError("quotation revision lineage is incorrect")
         revised = update_quotation(
-            revision_sent.id,
+            revision_two.id,
             QuotationUpdate(
                 subject="Negotiated price",
                 items=[QuotationItemInput(item_name="Negotiation service", item_type="service", unit="project", description="Negotiation service", quantity=Decimal("1"), unit_price=Decimal("80"))],
             ),
-            req("PATCH", f"/sales/quotations/{revision_sent.id}"),
+            req("PATCH", f"/sales/quotations/{revision_two.id}"),
             db,
             tenant,  # type: ignore[arg-type]
         )
-        if revised.status != "draft" or revised.total != Decimal("80.00") or revised.sent_at is not None:
-            raise AssertionError(f"sent quotation revision did not return to draft safely: {revised}")
+        db.refresh(sent_model)
+        if sent_model.status != "sent" or revised.status != "draft" or revised.total != Decimal("80.00"):
+            raise AssertionError("sent quotation was mutated instead of creating a draft revision")
+
         revision_resent = change_quotation_status(revised.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{revised.id}/status"), db, tenant)  # type: ignore[arg-type]
         revision_rejected = change_quotation_status(revision_resent.id, QuotationStatusChange(status="rejected"), req("PATCH", f"/sales/quotations/{revision_resent.id}/status"), db, tenant)  # type: ignore[arg-type]
+        rejected_model = db.scalar(select(Quotation).where(Quotation.id == revision_rejected.id, Quotation.organization_id == tenant.organization_id))
+        if rejected_model is None:
+            raise AssertionError("rejected quotation model missing before revision")
+        revision_three = clone_revision(
+            db,
+            rejected_model,
+            user_id=tenant.user_id,
+            revision_reason="Second negotiation round",
+            issue_date=date.today(),
+            valid_until=rejected_model.valid_until,
+        )
+        if revision_three.revision_number != 3 or revision_three.supersedes_quotation_id != rejected_model.id:
+            raise AssertionError("second quotation revision lineage is incorrect")
         reopened = update_quotation(
-            revision_rejected.id,
+            revision_three.id,
             QuotationUpdate(subject="Second revision"),
-            req("PATCH", f"/sales/quotations/{revision_rejected.id}"),
+            req("PATCH", f"/sales/quotations/{revision_three.id}"),
             db,
             tenant,  # type: ignore[arg-type]
         )
-        if reopened.status != "draft" or reopened.sent_at is not None or reopened.rejected_at is not None:
-            raise AssertionError(f"rejected quotation revision did not return to draft safely: {reopened}")
+        db.refresh(rejected_model)
+        if rejected_model.status != "rejected" or reopened.status != "draft" or reopened.rejected_at is not None:
+            raise AssertionError("rejected quotation was mutated instead of creating a new draft revision")
+
         revision_final_sent = change_quotation_status(reopened.id, QuotationStatusChange(status="sent"), req("PATCH", f"/sales/quotations/{reopened.id}/status"), db, tenant)  # type: ignore[arg-type]
         revision_accepted = change_quotation_status(revision_final_sent.id, QuotationStatusChange(status="accepted"), req("PATCH", f"/sales/quotations/{revision_final_sent.id}/status"), db, tenant)  # type: ignore[arg-type]
         expect(409, lambda: update_quotation(
@@ -362,7 +395,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("sales catalog verification passed: lead -> quotation -> order -> invoice -> revenue split -> invoice reversal -> order cancellation")
+    print("sales catalog verification passed: lead -> immutable quotation revisions -> order -> invoice -> revenue split -> invoice reversal -> order cancellation")
 
 
 if __name__ == "__main__":

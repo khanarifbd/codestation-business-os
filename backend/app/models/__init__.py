@@ -70,7 +70,13 @@ from app.models.projects import (
     ProjectWorkLog,
 )
 from app.models.reconciliation import BankReconciliation, BankReconciliationItem
-from app.models.sales import Quotation, QuotationItem
+from app.models.sales import (
+    Quotation,
+    QuotationItem,
+    QuotationMilestone,
+    QuotationPaymentMilestone,
+    QuotationSection,
+)
 from app.models.subscription import Subscription
 from app.models.tax import TaxCode
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
@@ -90,9 +96,10 @@ __all__ = [
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
-    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectNote", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem", "StockMovement",
-    "Subscription", "TaxCode", "User", "UserSession", "Vendor", "Warehouse",
+    "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectNote", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
+    "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "User", "UserSession", "Vendor", "Warehouse",
 ]
 
-# Register service-duration snapshot listeners after all mapped classes above are loaded.
+# Register snapshot listeners after all mapped classes above are loaded.
+from app.services import quotation_snapshots as _quotation_snapshots  # noqa: E402,F401
 from app.services import service_duration_snapshots as _service_duration_snapshots  # noqa: E402,F401

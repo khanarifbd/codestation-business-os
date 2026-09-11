@@ -72,6 +72,7 @@ from app.api.v1.project_execution import router as project_execution_router
 from app.api.v1.project_feedback import router as project_feedback_router
 from app.api.v1.project_notes import router as project_notes_router
 from app.api.v1.projects import router as projects_router
+from app.api.v1.quotation_v2 import router as quotation_v2_router
 from app.api.v1.reports_fast import router as reports_fast_router
 from app.api.v1.reports import router as reports_router
 from app.api.v1.sales import router as sales_router
@@ -110,6 +111,7 @@ api_router.include_router(client_external_profiles_router)
 api_router.include_router(client_resources_router)
 api_router.include_router(crm_router)
 api_router.include_router(sales_router)
+api_router.include_router(quotation_v2_router)
 api_router.include_router(services_router)
 api_router.include_router(manual_orders_router)
 api_router.include_router(orders_router)

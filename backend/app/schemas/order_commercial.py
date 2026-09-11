@@ -75,6 +75,7 @@ class BillingMilestoneCreate(BaseModel):
     project_id: str | None = None
     project_milestone_id: str | None = None
     order_change_id: str | None = None
+    due_condition: str | None = Field(default=None, max_length=5000)
     due_date: date | None = None
     items: list[CommercialLineInput] = Field(min_length=1, max_length=100)
 
@@ -90,6 +91,11 @@ class BillingMilestoneRead(BaseModel):
     project_id: str | None
     project_milestone_id: str | None
     order_change_id: str | None
+    source_quotation_payment_milestone_id: str | None = None
+    source_quotation_milestone_id: str | None = None
+    source_payment_type: str | None = None
+    source_percentage: Decimal | None = None
+    due_condition: str | None = None
     currency: str
     amount: Decimal
     due_date: date | None

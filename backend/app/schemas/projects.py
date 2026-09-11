@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 ProjectStatus = Literal["planned", "active", "on_hold", "completed", "cancelled"]
 ProjectPriority = Literal["low", "normal", "high", "urgent"]
-ProjectTab = Literal["overview", "milestones", "tasks", "work", "documents", "credentials", "team", "review_tips"]
+ProjectTab = Literal["overview", "milestones", "tasks", "work", "documents", "notes", "credentials", "team", "review_tips"]
 
 
 class ProjectCreateFromOrder(BaseModel):
