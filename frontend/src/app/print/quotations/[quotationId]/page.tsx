@@ -1,7 +1,6 @@
 "use client";
 
 import { ArrowLeft, Loader2, Printer } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -140,8 +139,26 @@ function formatDate(value: string | null | undefined) {
   }).format(new Date(year, month - 1, day));
 }
 
+function humanize(value: string | null | undefined) {
+  if (!value) return "-";
+  return value
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 function statusLabel(value: string) {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : "Draft";
+  return humanize(value || "draft");
+}
+
+function sellerMonogram(name: string) {
+  const letters = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("");
+  return letters || "Q";
 }
 
 export default function QuotationPrintPage() {
@@ -189,6 +206,16 @@ export default function QuotationPrintPage() {
     };
   }, [params.quotationId, router]);
 
+  useEffect(() => {
+    if (!detail) return;
+    const previousTitle = document.title;
+    const safeNumber = detail.quotation_number.replace(/[^a-zA-Z0-9._-]+/g, "-");
+    document.title = `${safeNumber}-R${detail.revision_number}`;
+    return () => {
+      document.title = previousTitle;
+    };
+  }, [detail]);
+
   const visibleSections = useMemo(
     () =>
       (detail?.sections ?? [])
@@ -229,6 +256,7 @@ export default function QuotationPrintPage() {
   }
 
   const title = detail.project_title || detail.subject || "Commercial proposal";
+  const monogram = sellerMonogram(detail.seller_name_snapshot);
   const hasSchedule = Boolean(
     detail.estimated_start_date ||
       detail.estimated_end_date ||
@@ -240,6 +268,9 @@ export default function QuotationPrintPage() {
       detail.prepared_by_email_snapshot ||
       detail.prepared_by_designation_snapshot,
   );
+  const sellerContact = [detail.seller_email_snapshot, detail.seller_phone_snapshot]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <main className="min-h-screen bg-neutral-100 px-4 py-8 text-neutral-950 print:bg-white print:p-0">
@@ -306,28 +337,27 @@ export default function QuotationPrintPage() {
         >
           <ArrowLeft className="size-4" /> Back
         </Link>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"
-        >
-          <Printer className="size-4" /> Print / Save PDF
-        </button>
+        <div className="flex items-center gap-3">
+          <p className="hidden text-xs text-neutral-500 sm:block">Choose “Save as PDF” in the print dialog to download.</p>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"
+          >
+            <Printer className="size-4" /> Print / Save PDF
+          </button>
+        </div>
       </div>
 
       <article className="print-sheet mx-auto min-h-[297mm] w-full max-w-[210mm] bg-white p-8 shadow-xl ring-1 ring-neutral-200 print:min-h-0">
         <header className="avoid-break border-b border-neutral-200 pb-7">
           <div className="flex items-start justify-between gap-8">
             <div className="flex min-w-0 items-start gap-4">
-              <div className="flex size-14 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-white p-2">
-                <Image
-                  src="/brand/codestationai-mark.svg"
-                  alt="CodeStation AI"
-                  width={44}
-                  height={44}
-                  priority
-                  className="size-11 object-contain"
-                />
+              <div
+                aria-label={`${detail.seller_name_snapshot} document mark`}
+                className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-neutral-950 text-lg font-semibold tracking-tight text-white"
+              >
+                {monogram}
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-neutral-400">
@@ -551,7 +581,7 @@ export default function QuotationPrintPage() {
                     </span>
                     <div className="min-w-0">
                       <h3 className="font-semibold">
-                        {section.title || SECTION_FALLBACK_TITLES[section.section_type] || section.section_type}
+                        {section.title || SECTION_FALLBACK_TITLES[section.section_type] || humanize(section.section_type)}
                       </h3>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">
                         {section.content}
@@ -639,7 +669,7 @@ export default function QuotationPrintPage() {
                         </p>
                       ) : null}
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-400">
-                        {payment.due_condition ? <span>Due: {payment.due_condition}</span> : null}
+                        {payment.due_condition ? <span>Due: {humanize(payment.due_condition)}</span> : null}
                         {payment.due_date ? <span>Date: {formatDate(payment.due_date)}</span> : null}
                         {linkedMilestone ? <span>Linked to: {linkedMilestone.title}</span> : null}
                       </div>
@@ -692,13 +722,11 @@ export default function QuotationPrintPage() {
           <div className="flex items-end justify-between gap-6 text-xs text-neutral-400">
             <div>
               <p className="font-semibold text-neutral-500">{detail.seller_name_snapshot}</p>
-              <p className="mt-1">
-                {[detail.seller_email_snapshot, detail.seller_phone_snapshot].filter(Boolean).join(" · ")}
-              </p>
+              {sellerContact ? <p className="mt-1">{sellerContact}</p> : null}
             </div>
             <div className="text-right">
               <p>{detail.quotation_number} · Revision R{detail.revision_number}</p>
-              <p className="mt-1">Generated by CodeStation AI Business OS</p>
+              <p className="mt-1">Commercial quotation</p>
             </div>
           </div>
         </footer>
