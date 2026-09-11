@@ -1,6 +1,6 @@
 """classify accounting money expenses with business expense metadata
 
-Revision ID: 0072_money_entry_expense_classification
+Revision ID: 0072_money_expense_classify
 Revises: 0071_order_billing_invoice_links
 Create Date: 2026-09-11
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0072_money_entry_expense_classification"
+revision: str = "0072_money_expense_classify"
 down_revision: str | None = "0071_order_billing_invoice_links"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
