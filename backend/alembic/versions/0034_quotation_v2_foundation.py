@@ -249,8 +249,9 @@ def upgrade() -> None:
                 },
             )
 
-    op.alter_column("quotations", "revision_number", server_default=None)
-    op.alter_column("quotation_items", "unit", server_default=None)
+    # Keep DB defaults for backward compatibility with legacy/raw SQL insert paths.
+    # Application writes still set explicit values, but older integrations can omit
+    # these newly introduced required columns safely.
 
 
 def downgrade() -> None:
