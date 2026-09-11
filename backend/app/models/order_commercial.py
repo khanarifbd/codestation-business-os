@@ -66,8 +66,19 @@ class OrderChangeItem(TenantOwnedMixin, Base):
 class OrderBillingMilestone(TenantOwnedMixin, Base):
     __tablename__ = "order_billing_milestones"
     __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "order_id",
+            "source_quotation_payment_milestone_id",
+            name="uq_order_billing_source_quotation_payment",
+        ),
         Index("ix_order_billing_org_order_sort", "organization_id", "order_id", "sort_order"),
         Index("ix_order_billing_org_order_status", "organization_id", "order_id", "status"),
+        Index(
+            "ix_order_billing_org_source_quotation_milestone",
+            "organization_id",
+            "source_quotation_milestone_id",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -75,8 +86,17 @@ class OrderBillingMilestone(TenantOwnedMixin, Base):
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     project_milestone_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("project_milestones.id", ondelete="SET NULL"), nullable=True)
     order_change_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("order_changes.id", ondelete="SET NULL"), nullable=True)
+    source_quotation_payment_milestone_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("quotation_payment_milestones.id", ondelete="SET NULL"), nullable=True
+    )
+    source_quotation_milestone_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("quotation_milestones.id", ondelete="SET NULL"), nullable=True
+    )
+    source_payment_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    source_percentage: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
     title: Mapped[str] = mapped_column(String(220), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    due_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(16, 2), nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
