@@ -14,7 +14,10 @@ from app.services.project_access import require_project_tab
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
-ProjectAccessor = Annotated[TenantContext, Depends(require_any_tenant_permission("projects.view", "projects.work"))]
+ProjectAccessor = Annotated[
+    TenantContext,
+    Depends(require_any_tenant_permission("projects.view", "projects.work", "projects.manage")),
+]
 
 
 class ProjectNoteCreate(BaseModel):
