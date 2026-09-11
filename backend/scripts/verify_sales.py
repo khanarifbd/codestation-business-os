@@ -3,7 +3,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from app.db.session import engine
-from app.services.sales import calculate_line, calculate_totals
+from app.services.sales import calculate_line, calculate_payment_amount, calculate_totals
 
 
 def main() -> None:
@@ -21,13 +21,43 @@ def main() -> None:
         if sequence != "QUO":
             raise AssertionError(f"quotation sequence prefix mismatch: {sequence}")
 
-        for table_name in ("quotations", "quotation_items"):
+        for table_name in (
+            "quotations",
+            "quotation_items",
+            "quotation_sections",
+            "quotation_milestones",
+            "quotation_payment_schedules",
+        ):
             exists = connection.execute(
                 text("SELECT to_regclass(:table_name)"),
                 {"table_name": f"public.{table_name}"},
             ).scalar_one()
             if not exists:
                 raise AssertionError(f"missing table: {table_name}")
+
+        revision_column = connection.execute(
+            text(
+                """
+                SELECT is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='quotations' AND column_name='revision_number'
+                """
+            )
+        ).mappings().one()
+        if revision_column["is_nullable"] != "NO":
+            raise AssertionError("quotations.revision_number must be NOT NULL")
+
+        item_unit_column = connection.execute(
+            text(
+                """
+                SELECT is_nullable
+                FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='quotation_items' AND column_name='unit'
+                """
+            )
+        ).scalar_one()
+        if item_unit_column != "NO":
+            raise AssertionError("quotation_items.unit must be NOT NULL")
 
     exclusive = calculate_line(
         quantity=Decimal("2"),
@@ -59,7 +89,25 @@ def main() -> None:
     if totals.total != Decimal("322.00"):
         raise AssertionError(totals)
 
-    print("quotation migration and calculation invariants verified")
+    deposit = calculate_payment_amount(
+        quotation_total=totals.total,
+        payment_type="percentage",
+        percentage=Decimal("30"),
+        amount=None,
+    )
+    if deposit != Decimal("96.60"):
+        raise AssertionError(f"percentage payment calculation mismatch: {deposit}")
+
+    fixed = calculate_payment_amount(
+        quotation_total=totals.total,
+        payment_type="fixed",
+        percentage=None,
+        amount=Decimal("100"),
+    )
+    if fixed != Decimal("100.00"):
+        raise AssertionError(f"fixed payment calculation mismatch: {fixed}")
+
+    print("quotation V2 migration and calculation invariants verified")
 
 
 if __name__ == "__main__":
