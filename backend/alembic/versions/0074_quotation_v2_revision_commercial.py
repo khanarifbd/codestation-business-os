@@ -1,6 +1,6 @@
 """add quotation revision and commercial data model
 
-Revision ID: 0074_quotation_v2_revision_commercial
+Revision ID: 0074_quotation_v2_commercial
 Revises: 0073_project_notes
 Create Date: 2026-09-11
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0074_quotation_v2_revision_commercial"
+revision: str = "0074_quotation_v2_commercial"
 down_revision: str | None = "0073_project_notes"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
