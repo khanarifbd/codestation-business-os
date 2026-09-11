@@ -7,6 +7,28 @@ from app.main import app
 from app.services.sales import calculate_line, calculate_totals
 
 
+REVISION_COLUMNS = {
+    "root_quotation_id",
+    "supersedes_quotation_id",
+    "revision_number",
+    "revision_reason",
+}
+
+COMMERCIAL_COLUMNS = {
+    "project_title",
+    "executive_summary",
+    "estimated_start_date",
+    "estimated_end_date",
+    "estimated_duration",
+    "start_condition",
+    "seller_phone_snapshot",
+    "client_phone_snapshot",
+    "prepared_by_name_snapshot",
+    "prepared_by_email_snapshot",
+    "prepared_by_designation_snapshot",
+}
+
+
 def main() -> None:
     with engine.begin() as connection:
         organization_id = connection.execute(
@@ -29,6 +51,65 @@ def main() -> None:
             ).scalar_one()
             if not exists:
                 raise AssertionError(f"missing table: {table_name}")
+
+        quotation_columns = set(
+            connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='quotations'"
+                )
+            ).scalars()
+        )
+        expected_columns = REVISION_COLUMNS | COMMERCIAL_COLUMNS
+        missing_columns = expected_columns - quotation_columns
+        if missing_columns:
+            raise AssertionError(f"quotation V2 columns missing: {sorted(missing_columns)}")
+
+        revision_family_index = connection.execute(
+            text("SELECT to_regclass('public.uq_quotations_org_revision_family')")
+        ).scalar_one()
+        if not revision_family_index:
+            raise AssertionError("quotation revision-family unique index is missing")
+
+        constraint_names = set(
+            connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE conrelid = 'public.quotations'::regclass"
+                )
+            ).scalars()
+        )
+        required_constraints = {
+            "ck_quotations_revision_shape",
+            "ck_quotations_revision_positive",
+            "ck_quotations_revision_not_self",
+            "ck_quotations_estimated_schedule",
+            "fk_quotations_root_quotation",
+            "fk_quotations_supersedes_quotation",
+        }
+        missing_constraints = required_constraints - constraint_names
+        if missing_constraints:
+            raise AssertionError(f"quotation V2 constraints missing: {sorted(missing_constraints)}")
+
+        invalid_legacy_revision_rows = connection.execute(
+            text(
+                "SELECT count(*) FROM quotations "
+                "WHERE revision_number <> 1 "
+                "OR root_quotation_id IS NOT NULL "
+                "OR supersedes_quotation_id IS NOT NULL"
+            )
+        ).scalar_one()
+        if invalid_legacy_revision_rows:
+            raise AssertionError("legacy quotations were not initialized as root revision 1")
+
+        project_backfill_mismatch = connection.execute(
+            text(
+                "SELECT count(*) FROM quotations "
+                "WHERE subject IS NOT NULL AND project_title IS DISTINCT FROM subject"
+            )
+        ).scalar_one()
+        if project_backfill_mismatch:
+            raise AssertionError("legacy quotation project-title backfill mismatch")
 
     client_option_parameters = app.openapi()["paths"]["/api/v1/sales/client-options"]["get"]["parameters"]
     client_option_limit = next(item for item in client_option_parameters if item["name"] == "limit")
@@ -65,7 +146,7 @@ def main() -> None:
     if totals.total != Decimal("322.00"):
         raise AssertionError(totals)
 
-    print("quotation migration, API contract and calculation invariants verified")
+    print("quotation V2 revision/commercial model and calculation invariants verified")
 
 
 if __name__ == "__main__":
