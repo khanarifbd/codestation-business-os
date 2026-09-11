@@ -1,5 +1,5 @@
-import { QuotationPageShell } from "./quotation-page-shell";
+import { QuotationV2Workspace } from "./quotation-v2-workspace";
 
 export default function QuotationsPage() {
-  return <QuotationPageShell />;
+  return <QuotationV2Workspace />;
 }
