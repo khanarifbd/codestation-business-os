@@ -118,6 +118,32 @@ test("Invoice print page renders a tenant-safe professional client document", as
   await expect(page.getByText(/CodeStation AI Business OS/i)).toHaveCount(0);
 
   await expect(page.locator(".print-actions").first()).toBeVisible();
+  await page.setViewportSize({ width: 735, height: 1050 });
   await page.emulateMedia({ media: "print" });
   await expect(page.locator(".print-actions").first()).toBeHidden();
+
+  const printMetrics = await page.evaluate(() => {
+    const sheet = document.querySelector(".print-sheet");
+    const qr = document.querySelector('svg[aria-label="QR code for invoice payment link"]');
+    const summary = document.querySelector(".invoice-summary-card");
+    const paymentCard = document.querySelector(".payment-card");
+    if (!sheet || !qr || !summary || !paymentCard) {
+      throw new Error("Expected compact invoice print blocks were not found");
+    }
+
+    return {
+      sheetHeight: sheet.getBoundingClientRect().height,
+      sheetFontSize: Number.parseFloat(getComputedStyle(sheet).fontSize),
+      qrWidth: qr.getBoundingClientRect().width,
+      summaryMarginTop: Number.parseFloat(getComputedStyle(summary).marginTop),
+      paymentPaddingTop: Number.parseFloat(getComputedStyle(paymentCard).paddingTop),
+    };
+  });
+
+  // A representative one-item invoice with payment instructions, QR, notes and terms should fit one A4 content page.
+  expect(printMetrics.sheetHeight).toBeLessThanOrEqual(1050);
+  expect(printMetrics.sheetFontSize).toBeLessThanOrEqual(11);
+  expect(printMetrics.qrWidth).toBeLessThanOrEqual(90);
+  expect(printMetrics.summaryMarginTop).toBeLessThan(14);
+  expect(printMetrics.paymentPaddingTop).toBeLessThan(16);
 });
