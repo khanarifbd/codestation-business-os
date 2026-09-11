@@ -128,7 +128,7 @@ test("Quotation V2 print page renders the client-safe commercial revision", asyn
   await expect(page.getByRole("heading", { name: "International SaaS Platform" })).toBeVisible();
   await expect(page.getByText("USD 5,500.00").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Scope of work" })).toBeVisible();
-  await expect(page.getByText("Production-ready release")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Production-ready release" })).toBeVisible();
   await expect(page.getByText("Final delivery payment")).toBeVisible();
   await expect(page.getByText("Due: On Milestone Acceptance")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Quotation acceptance" })).toBeVisible();
