@@ -12,7 +12,7 @@ from app.tenancy.models import TenantOwnedMixin
 class Quotation(TenantOwnedMixin, Base):
     __tablename__ = "quotations"
     __table_args__ = (
-        UniqueConstraint("organization_id", "quotation_number", name="uq_quotations_org_number"),
+        UniqueConstraint("organization_id", "quotation_number", "revision_number", name="uq_quotations_org_number_revision"),
         CheckConstraint("revision_number >= 1", name="ck_quotations_revision_positive"),
         CheckConstraint(
             "(revision_number = 1 AND root_quotation_id IS NULL AND supersedes_quotation_id IS NULL) OR "
