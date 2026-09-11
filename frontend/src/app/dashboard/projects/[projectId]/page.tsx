@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Copy, Download, Eye, EyeOff, FileText, KeyRound, Loader2, LockKeyhole, Pencil, Plus, ShieldCheck, Trash2, UsersRound, X } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
+import { ProjectNotesSection } from "@/components/project-notes-section";
 import { ProjectReviewTips } from "@/components/project-review-tips";
 
-type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "credentials" | "team" | "review_tips";
+type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "notes" | "credentials" | "team" | "review_tips";
 type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null; tab_permissions: Tab[] };
 type ProjectAccess = { allowed_tabs: Tab[]; can_manage_project: boolean; is_project_manager: boolean; current_employee_id: string | null };
 type ProjectDetail = { id: string; project_number: string; order_number: string; quotation_number: string | null; client_name: string; name: string; status: string; priority: string; planned_start_date: string | null; due_date: string | null; currency: string; contract_value: string | number; project_manager_employee_id: string | null; project_manager_name: string | null; description: string | null; notes: string | null; members: ProjectMember[]; access: ProjectAccess };
@@ -23,11 +24,11 @@ type CredentialValues = { name: string; credential_type: string; environment: st
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" }, { id: "milestones", label: "Milestones" }, { id: "tasks", label: "Tasks" },
-  { id: "work", label: "Work Log" }, { id: "documents", label: "Documents" }, { id: "credentials", label: "Credentials" }, { id: "team", label: "Team" },
+  { id: "work", label: "Work Log" }, { id: "documents", label: "Documents" }, { id: "notes", label: "Notes" }, { id: "credentials", label: "Credentials" }, { id: "team", label: "Team" },
   { id: "review_tips", label: "Review & Tips" },
 ];
 const allTabIds = tabs.map((item) => item.id);
-const defaultMemberTabs: Tab[] = ["overview", "milestones", "tasks", "work", "documents", "team"];
+const defaultMemberTabs: Tab[] = ["overview", "milestones", "tasks", "work", "documents", "notes", "team"];
 const previewTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "text/plain"]);
 
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
@@ -260,6 +261,7 @@ export default function ProjectWorkspacePage() {
       {tab === "tasks" && project.access.allowed_tabs.includes("tasks") ? <Tasks rows={workspace.tasks} currentEmployeeId={project.access.current_employee_id} canManage={canManageExecution} onAdd={canManageExecution ? () => setModal("task") : undefined} onProgress={(task) => { setSelectedTask(task); setModal("progress"); }} /> : null}
       {tab === "work" && project.access.allowed_tabs.includes("work") ? <WorkLogs rows={workspace.recent_work} /> : null}
       {tab === "documents" && project.access.allowed_tabs.includes("documents") ? <Documents projectId={projectId} rows={workspace.documents} canManage={canManageExecution} onAdd={() => setModal("document")} onChanged={() => void refreshWorkspace()} /> : null}
+      {tab === "notes" && project.access.allowed_tabs.includes("notes") ? <ProjectNotesSection projectId={projectId} canManage={canManageExecution} /> : null}
       {tab === "credentials" && project.access.allowed_tabs.includes("credentials") ? <Credentials rows={workspace.credentials} revealed={revealed} canManage={workspace.can_manage_credentials} copiedKey={copiedKey} onAdd={() => { setSelectedCredential(null); setCredentialError(null); setModal("credential"); }} onReveal={(id) => void revealCredential(id)} onHide={hideCredential} onCopySecret={(item) => void copySecret(item)} onCopy={(value,key,label) => void copyValue(value,key,label)} onEdit={(item) => { setSelectedCredential(item); setCredentialError(null); setModal("credential_edit"); }} onDelete={(item) => void deleteCredential(item)} /> : null}
       {tab === "team" && project.access.allowed_tabs.includes("team") ? <Team project={project} canManage={canManageTeam} onManage={() => setModal("team")} /> : null}
       {tab === "review_tips" && project.access.allowed_tabs.includes("review_tips") ? <ProjectReviewTips projectId={projectId} projectNumber={project.project_number} projectStatus={project.status} projectCurrency={project.currency} /> : null}
