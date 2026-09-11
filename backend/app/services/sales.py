@@ -6,7 +6,7 @@ MONEY = Decimal("0.01")
 HUNDRED = Decimal("100")
 
 
-def _money(value: Decimal) -> Decimal:
+def money(value: Decimal) -> Decimal:
     return value.quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
@@ -35,20 +35,20 @@ def calculate_line(
     tax_rate: Decimal,
     tax_calculation_mode: str,
 ) -> CalculatedLine:
-    subtotal = _money(quantity * unit_price)
-    discount = _money(subtotal * discount_percent / HUNDRED)
-    taxable = _money(subtotal - discount)
+    subtotal = money(quantity * unit_price)
+    discount = money(subtotal * discount_percent / HUNDRED)
+    taxable = money(subtotal - discount)
 
     if tax_calculation_mode == "inclusive":
         if tax_rate > 0:
-            net_without_tax = _money(taxable / (Decimal("1") + tax_rate / HUNDRED))
-            tax = _money(taxable - net_without_tax)
+            net_without_tax = money(taxable / (Decimal("1") + tax_rate / HUNDRED))
+            tax = money(taxable - net_without_tax)
         else:
             tax = Decimal("0.00")
         line_total = taxable
     else:
-        tax = _money(taxable * tax_rate / HUNDRED)
-        line_total = _money(taxable + tax)
+        tax = money(taxable * tax_rate / HUNDRED)
+        line_total = money(taxable + tax)
 
     return CalculatedLine(
         line_subtotal=subtotal,
@@ -61,8 +61,26 @@ def calculate_line(
 
 def calculate_totals(lines: list[CalculatedLine]) -> QuotationTotals:
     return QuotationTotals(
-        subtotal=_money(sum((line.line_subtotal for line in lines), Decimal("0"))),
-        discount_total=_money(sum((line.discount_amount for line in lines), Decimal("0"))),
-        tax_total=_money(sum((line.tax_amount for line in lines), Decimal("0"))),
-        total=_money(sum((line.line_total for line in lines), Decimal("0"))),
+        subtotal=money(sum((line.line_subtotal for line in lines), Decimal("0"))),
+        discount_total=money(sum((line.discount_amount for line in lines), Decimal("0"))),
+        tax_total=money(sum((line.tax_amount for line in lines), Decimal("0"))),
+        total=money(sum((line.line_total for line in lines), Decimal("0"))),
     )
+
+
+def calculate_payment_amount(
+    *,
+    quotation_total: Decimal,
+    payment_type: str,
+    percentage: Decimal | None,
+    amount: Decimal | None,
+) -> Decimal:
+    if payment_type == "percentage":
+        if percentage is None:
+            raise ValueError("Percentage is required for percentage payment schedule entries")
+        return money(quotation_total * percentage / HUNDRED)
+    if payment_type == "fixed":
+        if amount is None:
+            raise ValueError("Amount is required for fixed payment schedule entries")
+        return money(amount)
+    raise ValueError(f"Unsupported payment schedule type: {payment_type}")
