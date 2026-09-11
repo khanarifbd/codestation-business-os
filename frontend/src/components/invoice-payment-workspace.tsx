@@ -272,7 +272,8 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
   }
 
   function printInvoice() {
-    window.print();
+    if (!invoice) return;
+    window.open(`/print/invoices/${encodeURIComponent(invoice.id)}`, "_blank", "noopener,noreferrer");
   }
 
   if (loading && !invoice) return <div className="mx-auto max-w-7xl px-4 pb-8 text-sm text-neutral-400 sm:px-6 lg:px-8">Loading payment instructions…</div>;
@@ -324,7 +325,7 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
     </section>
 
     <section id="invoice-client-preview" className="rounded-3xl border bg-white p-5 shadow-sm sm:p-8 lg:p-10">
-      <div className="no-print mb-7 flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Client-facing preview</p><h2 className="mt-1 text-xl font-semibold">Professional invoice</h2><p className="mt-1 text-sm text-neutral-500">Print this view or save it as PDF from your browser.</p></div><button type="button" onClick={printInvoice} className="inline-flex items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Printer className="size-4" />Print / Save PDF</button></div>
+      <div className="no-print mb-7 flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Client-facing preview</p><h2 className="mt-1 text-xl font-semibold">Professional invoice</h2><p className="mt-1 text-sm text-neutral-500">Open the dedicated A4 document to print or save as PDF.</p></div><button type="button" onClick={printInvoice} className="inline-flex items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Printer className="size-4" />Open Print / PDF</button></div>
 
       <div className="flex flex-col gap-8 border-b pb-8 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-md"><p className="text-2xl font-semibold tracking-tight">{invoice.seller_name_snapshot}</p>{invoice.seller_address_snapshot ? <p className="mt-3 whitespace-pre-line text-sm leading-6 text-neutral-500">{invoice.seller_address_snapshot}</p> : null}{invoice.seller_email_snapshot ? <p className="mt-1 text-sm text-neutral-500">{invoice.seller_email_snapshot}</p> : null}{invoice.seller_tax_identifier_snapshot ? <p className="mt-1 text-sm text-neutral-500">Tax ID: {invoice.seller_tax_identifier_snapshot}</p> : null}</div>
