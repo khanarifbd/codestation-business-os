@@ -70,9 +70,15 @@ def main() -> None:
         fixture = connection.execute(
             text(
                 """
-                SELECT o.id organization_id, o.created_by_user_id user_id, o.currency, o.timezone, m.id membership_id
+                SELECT o.id organization_id, o.created_by_user_id user_id, o.currency, o.timezone,
+                       (
+                           SELECT m.id
+                           FROM memberships m
+                           WHERE m.organization_id = o.id
+                           ORDER BY m.created_at ASC
+                           LIMIT 1
+                       ) membership_id
                 FROM organizations o
-                JOIN memberships m ON m.organization_id = o.id AND m.user_id = o.created_by_user_id
                 WHERE o.name = 'Existing Tenant Fixture'
                 ORDER BY o.created_at DESC
                 LIMIT 1
@@ -102,7 +108,7 @@ def main() -> None:
     tenant = Tenant(
         organization_id=str(fixture["organization_id"]),
         user_id=str(fixture["user_id"]),
-        membership_id=str(fixture["membership_id"]),
+        membership_id=str(fixture["membership_id"] or uuid4()),
         organization=Org(
             id=str(fixture["organization_id"]),
             currency=currency,
