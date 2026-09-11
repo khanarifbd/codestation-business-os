@@ -48,7 +48,13 @@ from app.models.projects import (
     ProjectTask,
     ProjectWorkLog,
 )
-from app.models.sales import Quotation, QuotationItem
+from app.models.sales import (
+    Quotation,
+    QuotationItem,
+    QuotationMilestone,
+    QuotationPaymentSchedule,
+    QuotationSection,
+)
 from app.models.subscription import Subscription
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
@@ -62,5 +68,5 @@ __all__ = [
     "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectTask", "ProjectWorkLog", "RecurringExpense",
-    "Quotation", "QuotationItem", "Subscription", "User", "Vendor",
+    "Quotation", "QuotationItem", "QuotationMilestone", "QuotationPaymentSchedule", "QuotationSection", "Subscription", "User", "Vendor",
 ]
