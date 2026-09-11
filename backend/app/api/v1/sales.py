@@ -20,15 +20,24 @@ from app.models.company_settings import (
 )
 from app.models.crm import Client, Lead
 from app.models.membership import Membership
-from app.models.sales import Quotation, QuotationItem
-from app.models.team import Employee
+from app.models.sales import (
+    Quotation,
+    QuotationItem,
+    QuotationMilestone,
+    QuotationPaymentSchedule,
+    QuotationSection,
+)
+from app.models.team import Designation, Employee
 from app.models.user import User
 from app.schemas.sales import (
     QuotationCreate,
     QuotationDetail,
     QuotationItemRead,
     QuotationListItem,
+    QuotationMilestoneRead,
     QuotationPage,
+    QuotationPaymentScheduleRead,
+    QuotationSectionRead,
     QuotationStatusChange,
     QuotationSummary,
     QuotationUpdate,
@@ -38,13 +47,18 @@ from app.schemas.sales import (
 )
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
-from app.services.sales import calculate_line, calculate_totals
+from app.services.sales import calculate_line, calculate_payment_amount, calculate_totals
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
 
 QuotationViewer = Annotated[TenantContext, Depends(require_tenant_permission("quotations.view"))]
 QuotationManager = Annotated[TenantContext, Depends(require_tenant_permission("quotations.manage"))]
+
+LEGACY_SECTION_META = {
+    "terms_conditions": ("Terms & Conditions", 900),
+    "additional_notes": ("Additional Notes", 910),
+}
 
 
 def _clean(value: str | None) -> str | None:
@@ -131,6 +145,29 @@ def _employee_options(db: DbSession, organization_id: str) -> list[SalesEmployee
     return [SalesEmployeeOption(id=row.id, employee_code=row.employee_code, full_name=row.full_name) for row in rows]
 
 
+def _prepared_by_snapshot(
+    db: DbSession,
+    organization_id: str,
+    assigned_employee_id: str | None,
+    creator_user_id: str,
+) -> tuple[str | None, str | None, str | None]:
+    if assigned_employee_id:
+        row = db.execute(
+            select(User.full_name, Employee.work_email, User.email, Designation.name)
+            .select_from(Employee)
+            .join(Membership, Membership.id == Employee.membership_id)
+            .join(User, User.id == Membership.user_id)
+            .outerjoin(Designation, Designation.id == Employee.designation_id)
+            .where(Employee.id == assigned_employee_id, Employee.organization_id == organization_id)
+        ).first()
+        if row:
+            return row.full_name, row.work_email or row.email, row.name
+    user = db.scalar(select(User).where(User.id == creator_user_id))
+    if user is None:
+        return None, None, None
+    return user.full_name, user.email, None
+
+
 def _quotation_query(organization_id: str):
     employee_alias = aliased(Employee)
     membership_alias = aliased(Membership)
@@ -150,10 +187,12 @@ def _list_item(row) -> QuotationListItem:
     return QuotationListItem(
         id=quotation.id,
         quotation_number=quotation.quotation_number,
+        revision_number=quotation.revision_number,
         client_id=quotation.client_id,
         client_name=client_name,
         status=quotation.status,
         subject=quotation.subject,
+        project_title=quotation.project_title,
         issue_date=quotation.issue_date,
         valid_until=quotation.valid_until,
         currency=quotation.currency,
@@ -170,7 +209,10 @@ def _item_read(item: QuotationItem) -> QuotationItemRead:
     return QuotationItemRead(
         id=item.id,
         sort_order=item.sort_order,
+        group_name=item.group_name,
+        title=item.title,
         description=item.description,
+        unit=item.unit,
         quantity=item.quantity,
         unit_price=item.unit_price,
         discount_percent=item.discount_percent,
@@ -183,6 +225,44 @@ def _item_read(item: QuotationItem) -> QuotationItemRead:
     )
 
 
+def _section_read(item: QuotationSection) -> QuotationSectionRead:
+    return QuotationSectionRead(
+        id=item.id,
+        sort_order=item.sort_order,
+        section_type=item.section_type,
+        title=item.title,
+        content=item.content,
+        is_visible=item.is_visible,
+    )
+
+
+def _milestone_read(item: QuotationMilestone) -> QuotationMilestoneRead:
+    return QuotationMilestoneRead(
+        id=item.id,
+        sort_order=item.sort_order,
+        title=item.title,
+        description=item.description,
+        start_date=item.start_date,
+        due_date=item.due_date,
+        duration_text=item.duration_text,
+        acceptance_criteria=item.acceptance_criteria,
+    )
+
+
+def _payment_read(item: QuotationPaymentSchedule) -> QuotationPaymentScheduleRead:
+    return QuotationPaymentScheduleRead(
+        id=item.id,
+        sort_order=item.sort_order,
+        label=item.label,
+        description=item.description,
+        payment_type=item.payment_type,
+        percentage=item.percentage,
+        amount=item.amount,
+        calculated_amount=item.calculated_amount,
+        due_condition=item.due_condition,
+    )
+
+
 def _detail(db: DbSession, organization_id: str, quotation_id: str) -> QuotationDetail:
     row = db.execute(_quotation_query(organization_id).where(Quotation.id == quotation_id)).first()
     if row is None:
@@ -190,34 +270,63 @@ def _detail(db: DbSession, organization_id: str, quotation_id: str) -> Quotation
     quotation, _client_name, assigned_name = row
     items = db.scalars(
         select(QuotationItem)
-        .where(
-            QuotationItem.organization_id == organization_id,
-            QuotationItem.quotation_id == quotation.id,
-        )
+        .where(QuotationItem.organization_id == organization_id, QuotationItem.quotation_id == quotation.id)
         .order_by(QuotationItem.sort_order.asc(), QuotationItem.created_at.asc())
+    ).all()
+    sections = db.scalars(
+        select(QuotationSection)
+        .where(QuotationSection.organization_id == organization_id, QuotationSection.quotation_id == quotation.id)
+        .order_by(QuotationSection.sort_order.asc(), QuotationSection.created_at.asc())
+    ).all()
+    milestones = db.scalars(
+        select(QuotationMilestone)
+        .where(QuotationMilestone.organization_id == organization_id, QuotationMilestone.quotation_id == quotation.id)
+        .order_by(QuotationMilestone.sort_order.asc(), QuotationMilestone.created_at.asc())
+    ).all()
+    payment_schedule = db.scalars(
+        select(QuotationPaymentSchedule)
+        .where(
+            QuotationPaymentSchedule.organization_id == organization_id,
+            QuotationPaymentSchedule.quotation_id == quotation.id,
+        )
+        .order_by(QuotationPaymentSchedule.sort_order.asc(), QuotationPaymentSchedule.created_at.asc())
     ).all()
     return QuotationDetail(
         id=quotation.id,
         quotation_number=quotation.quotation_number,
+        root_quotation_id=quotation.root_quotation_id,
+        supersedes_quotation_id=quotation.supersedes_quotation_id,
+        revision_number=quotation.revision_number,
         client_id=quotation.client_id,
         source_lead_id=quotation.source_lead_id,
         assigned_employee_id=quotation.assigned_employee_id,
         assigned_employee_name=assigned_name,
         status=quotation.status,
         subject=quotation.subject,
+        project_title=quotation.project_title,
+        executive_summary=quotation.executive_summary,
         issue_date=quotation.issue_date,
         valid_until=quotation.valid_until,
+        estimated_start_date=quotation.estimated_start_date,
+        estimated_end_date=quotation.estimated_end_date,
+        estimated_duration=quotation.estimated_duration,
+        start_condition=quotation.start_condition,
         currency=quotation.currency,
         tax_calculation_mode=quotation.tax_calculation_mode,
         seller_name_snapshot=quotation.seller_name_snapshot,
         seller_email_snapshot=quotation.seller_email_snapshot,
+        seller_phone_snapshot=quotation.seller_phone_snapshot,
         seller_address_snapshot=quotation.seller_address_snapshot,
         seller_tax_identifier_snapshot=quotation.seller_tax_identifier_snapshot,
         client_name_snapshot=quotation.client_name_snapshot,
         client_contact_snapshot=quotation.client_contact_snapshot,
         client_email_snapshot=quotation.client_email_snapshot,
+        client_phone_snapshot=quotation.client_phone_snapshot,
         client_address_snapshot=quotation.client_address_snapshot,
         client_tax_identifier_snapshot=quotation.client_tax_identifier_snapshot,
+        prepared_by_name_snapshot=quotation.prepared_by_name_snapshot,
+        prepared_by_email_snapshot=quotation.prepared_by_email_snapshot,
+        prepared_by_designation_snapshot=quotation.prepared_by_designation_snapshot,
         subtotal=quotation.subtotal,
         discount_total=quotation.discount_total,
         tax_total=quotation.tax_total,
@@ -231,6 +340,9 @@ def _detail(db: DbSession, organization_id: str, quotation_id: str) -> Quotation
         cancelled_at=quotation.cancelled_at,
         is_expired=_is_expired(quotation),
         items=[_item_read(item) for item in items],
+        sections=[_section_read(item) for item in sections],
+        milestones=[_milestone_read(item) for item in milestones],
+        payment_schedule=[_payment_read(item) for item in payment_schedule],
         created_at=quotation.created_at,
         updated_at=quotation.updated_at,
     )
@@ -262,7 +374,10 @@ def _replace_items(db: DbSession, quotation: Quotation, payload_items) -> None:
                 organization_id=quotation.organization_id,
                 quotation_id=quotation.id,
                 sort_order=index,
+                group_name=_clean(getattr(payload, "group_name", None)),
+                title=_clean(getattr(payload, "title", None)),
                 description=payload.description.strip(),
+                unit=(getattr(payload, "unit", None) or "item").strip().lower(),
                 quantity=payload.quantity,
                 unit_price=payload.unit_price,
                 discount_percent=payload.discount_percent,
@@ -279,6 +394,176 @@ def _replace_items(db: DbSession, quotation: Quotation, payload_items) -> None:
     quotation.discount_total = totals.discount_total
     quotation.tax_total = totals.tax_total
     quotation.total = totals.total
+
+
+def _replace_sections(db: DbSession, quotation: Quotation, payload_sections) -> None:
+    existing = db.scalars(
+        select(QuotationSection).where(
+            QuotationSection.organization_id == quotation.organization_id,
+            QuotationSection.quotation_id == quotation.id,
+        )
+    ).all()
+    for item in existing:
+        db.delete(item)
+    db.flush()
+
+    quotation.notes = None
+    quotation.terms_conditions = None
+    for index, payload in enumerate(payload_sections):
+        content = payload.content.strip()
+        title = payload.title.strip()
+        db.add(
+            QuotationSection(
+                organization_id=quotation.organization_id,
+                quotation_id=quotation.id,
+                section_type=payload.section_type,
+                title=title,
+                content=content,
+                sort_order=index,
+                is_visible=payload.is_visible,
+            )
+        )
+        if payload.section_type == "additional_notes":
+            quotation.notes = content
+        elif payload.section_type == "terms_conditions":
+            quotation.terms_conditions = content
+
+
+def _upsert_legacy_section(
+    db: DbSession,
+    quotation: Quotation,
+    section_type: str,
+    content: str | None,
+) -> None:
+    title, sort_order = LEGACY_SECTION_META[section_type]
+    existing = db.scalar(
+        select(QuotationSection).where(
+            QuotationSection.organization_id == quotation.organization_id,
+            QuotationSection.quotation_id == quotation.id,
+            QuotationSection.section_type == section_type,
+        )
+    )
+    cleaned = _clean(content)
+    if cleaned is None:
+        if existing is not None:
+            db.delete(existing)
+        return
+    if existing is None:
+        db.add(
+            QuotationSection(
+                organization_id=quotation.organization_id,
+                quotation_id=quotation.id,
+                section_type=section_type,
+                title=title,
+                content=cleaned,
+                sort_order=sort_order,
+                is_visible=True,
+            )
+        )
+    else:
+        existing.title = title
+        existing.content = cleaned
+        existing.is_visible = True
+
+
+def _replace_milestones(db: DbSession, quotation: Quotation, payload_milestones) -> None:
+    existing = db.scalars(
+        select(QuotationMilestone).where(
+            QuotationMilestone.organization_id == quotation.organization_id,
+            QuotationMilestone.quotation_id == quotation.id,
+        )
+    ).all()
+    for item in existing:
+        db.delete(item)
+    db.flush()
+    for index, payload in enumerate(payload_milestones):
+        db.add(
+            QuotationMilestone(
+                organization_id=quotation.organization_id,
+                quotation_id=quotation.id,
+                title=payload.title.strip(),
+                description=_clean(payload.description),
+                start_date=payload.start_date,
+                due_date=payload.due_date,
+                duration_text=_clean(payload.duration_text),
+                acceptance_criteria=_clean(payload.acceptance_criteria),
+                sort_order=index,
+            )
+        )
+
+
+def _validate_payment_total(quotation: Quotation, amounts: list[Decimal]) -> None:
+    scheduled = sum(amounts, Decimal("0"))
+    if scheduled > quotation.total + Decimal("0.01"):
+        raise HTTPException(
+            status_code=400,
+            detail="Payment schedule total cannot exceed quotation total",
+        )
+
+
+def _replace_payment_schedule(db: DbSession, quotation: Quotation, payload_entries) -> None:
+    calculated_entries: list[tuple[object, Decimal]] = []
+    for payload in payload_entries:
+        try:
+            calculated = calculate_payment_amount(
+                quotation_total=quotation.total,
+                payment_type=payload.payment_type,
+                percentage=payload.percentage,
+                amount=payload.amount,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        calculated_entries.append((payload, calculated))
+    _validate_payment_total(quotation, [amount for _, amount in calculated_entries])
+
+    existing = db.scalars(
+        select(QuotationPaymentSchedule).where(
+            QuotationPaymentSchedule.organization_id == quotation.organization_id,
+            QuotationPaymentSchedule.quotation_id == quotation.id,
+        )
+    ).all()
+    for item in existing:
+        db.delete(item)
+    db.flush()
+    for index, (payload, calculated) in enumerate(calculated_entries):
+        db.add(
+            QuotationPaymentSchedule(
+                organization_id=quotation.organization_id,
+                quotation_id=quotation.id,
+                label=payload.label.strip(),
+                description=_clean(payload.description),
+                payment_type=payload.payment_type,
+                percentage=payload.percentage,
+                amount=payload.amount,
+                calculated_amount=calculated,
+                due_condition=_clean(payload.due_condition),
+                sort_order=index,
+            )
+        )
+
+
+def _recalculate_payment_schedule(db: DbSession, quotation: Quotation) -> None:
+    entries = db.scalars(
+        select(QuotationPaymentSchedule)
+        .where(
+            QuotationPaymentSchedule.organization_id == quotation.organization_id,
+            QuotationPaymentSchedule.quotation_id == quotation.id,
+        )
+        .order_by(QuotationPaymentSchedule.sort_order.asc())
+    ).all()
+    amounts: list[Decimal] = []
+    for entry in entries:
+        try:
+            entry.calculated_amount = calculate_payment_amount(
+                quotation_total=quotation.total,
+                payment_type=entry.payment_type,
+                percentage=entry.percentage,
+                amount=entry.amount,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        amounts.append(entry.calculated_amount)
+    _validate_payment_total(quotation, amounts)
 
 
 @router.get("/meta", response_model=SalesMeta)
@@ -310,10 +595,7 @@ def get_client_options(
     client_id: str | None = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> list[SalesClientOption]:
-    query = select(Client).where(
-        Client.organization_id == tenant.organization_id,
-        Client.status == "active",
-    )
+    query = select(Client).where(Client.organization_id == tenant.organization_id, Client.status == "active")
     if client_id:
         query = query.where(Client.id == client_id)
     elif search:
@@ -379,6 +661,7 @@ def list_quotations(
             or_(
                 Quotation.quotation_number.ilike(needle),
                 Quotation.subject.ilike(needle),
+                Quotation.project_title.ilike(needle),
                 Client.display_name.ilike(needle),
             )
         )
@@ -421,6 +704,8 @@ def create_quotation(
         raise HTTPException(status_code=400, detail="Active client not found in this company")
     if payload.valid_until and payload.valid_until < payload.issue_date:
         raise HTTPException(status_code=400, detail="Valid until date cannot be before issue date")
+    if payload.estimated_start_date and payload.estimated_end_date and payload.estimated_end_date < payload.estimated_start_date:
+        raise HTTPException(status_code=400, detail="Estimated end date cannot be before estimated start date")
     _active_employee(db, tenant.organization_id, payload.assigned_employee_id)
 
     financial = db.scalar(
@@ -428,9 +713,7 @@ def create_quotation(
             OrganizationFinancialSettings.organization_id == tenant.organization_id
         )
     )
-    profile = db.scalar(
-        select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id)
-    )
+    profile = db.scalar(select(OrganizationProfile).where(OrganizationProfile.organization_id == tenant.organization_id))
     address = db.scalar(
         select(OrganizationAddress)
         .where(
@@ -453,6 +736,9 @@ def create_quotation(
         .order_by(Lead.converted_at.desc().nullslast())
         .limit(1)
     )
+    prepared_name, prepared_email, prepared_designation = _prepared_by_snapshot(
+        db, tenant.organization_id, payload.assigned_employee_id, tenant.user_id
+    )
 
     quotation = Quotation(
         organization_id=tenant.organization_id,
@@ -461,30 +747,39 @@ def create_quotation(
         source_lead_id=source_lead_id,
         assigned_employee_id=payload.assigned_employee_id,
         created_by_user_id=tenant.user_id,
+        revision_number=1,
         status="draft",
         subject=_clean(payload.subject),
+        project_title=_clean(payload.project_title) or _clean(payload.subject),
+        executive_summary=_clean(payload.executive_summary),
         issue_date=payload.issue_date,
         valid_until=payload.valid_until,
+        estimated_start_date=payload.estimated_start_date,
+        estimated_end_date=payload.estimated_end_date,
+        estimated_duration=_clean(payload.estimated_duration),
+        start_condition=_clean(payload.start_condition),
         currency=(
             payload.currency
             or client.currency
             or (financial.accounting_currency if financial else tenant.organization.currency)
         ).upper(),
         tax_calculation_mode=(
-            payload.tax_calculation_mode
-            or (financial.tax_calculation_mode if financial else "exclusive")
+            payload.tax_calculation_mode or (financial.tax_calculation_mode if financial else "exclusive")
         ),
-        seller_name_snapshot=(
-            profile.legal_name if profile and profile.legal_name else tenant.organization.name
-        ),
+        seller_name_snapshot=(profile.legal_name if profile and profile.legal_name else tenant.organization.name),
         seller_email_snapshot=((profile.billing_email or profile.primary_email) if profile else None),
+        seller_phone_snapshot=(profile.phone if profile else None),
         seller_address_snapshot=_address_text(address),
         seller_tax_identifier_snapshot=(identifier.value if identifier else None),
         client_name_snapshot=client.legal_name or client.display_name,
         client_contact_snapshot=client.contact_name,
         client_email_snapshot=client.billing_email or client.email,
+        client_phone_snapshot=client.phone,
         client_address_snapshot=_client_address_text(client),
         client_tax_identifier_snapshot=client.tax_identifier,
+        prepared_by_name_snapshot=prepared_name,
+        prepared_by_email_snapshot=prepared_email,
+        prepared_by_designation_snapshot=prepared_designation,
         notes=_clean(payload.notes),
         terms_conditions=_clean(payload.terms_conditions),
         internal_notes=_clean(payload.internal_notes),
@@ -492,6 +787,15 @@ def create_quotation(
     db.add(quotation)
     db.flush()
     _replace_items(db, quotation, payload.items)
+    if payload.sections is not None:
+        _replace_sections(db, quotation, payload.sections)
+    else:
+        _upsert_legacy_section(db, quotation, "terms_conditions", quotation.terms_conditions)
+        _upsert_legacy_section(db, quotation, "additional_notes", quotation.notes)
+    if payload.milestones is not None:
+        _replace_milestones(db, quotation, payload.milestones)
+    if payload.payment_schedule is not None:
+        _replace_payment_schedule(db, quotation, payload.payment_schedule)
     db.flush()
 
     record_activity(
@@ -504,13 +808,18 @@ def create_quotation(
         entity_id=quotation.id,
         after={
             "quotation_number": quotation.quotation_number,
+            "revision_number": quotation.revision_number,
             "client_id": quotation.client_id,
+            "project_title": quotation.project_title,
             "status": quotation.status,
             "currency": quotation.currency,
             "subtotal": str(quotation.subtotal),
             "tax_total": str(quotation.tax_total),
             "total": str(quotation.total),
             "item_count": len(payload.items),
+            "section_count": len(payload.sections or []),
+            "milestone_count": len(payload.milestones or []),
+            "payment_schedule_count": len(payload.payment_schedule or []),
         },
         message=f"Quotation created: {quotation.quotation_number}",
         request=request,
@@ -537,8 +846,10 @@ def update_quotation(
     if quotation.status != "draft":
         raise HTTPException(status_code=409, detail="Only draft quotations can be edited")
 
+    before_subject = quotation.subject
     before = {
         "subject": quotation.subject,
+        "project_title": quotation.project_title,
         "issue_date": quotation.issue_date.isoformat(),
         "valid_until": quotation.valid_until.isoformat() if quotation.valid_until else None,
         "currency": quotation.currency,
@@ -548,7 +859,10 @@ def update_quotation(
         "tax_total": str(quotation.tax_total),
         "total": str(quotation.total),
     }
-    changes = payload.model_dump(exclude_unset=True, exclude={"items"})
+    changes = payload.model_dump(
+        exclude_unset=True,
+        exclude={"items", "sections", "milestones", "payment_schedule"},
+    )
     if "assigned_employee_id" in changes:
         _active_employee(db, tenant.organization_id, changes["assigned_employee_id"])
     for field, value in changes.items():
@@ -557,8 +871,15 @@ def update_quotation(
         elif isinstance(value, str):
             value = value.strip() or None
         setattr(quotation, field, value)
+    if "subject" in changes and "project_title" not in changes:
+        if quotation.project_title is None or quotation.project_title == before_subject:
+            quotation.project_title = quotation.subject
     if quotation.valid_until and quotation.valid_until < quotation.issue_date:
         raise HTTPException(status_code=400, detail="Valid until date cannot be before issue date")
+    if quotation.estimated_start_date and quotation.estimated_end_date and quotation.estimated_end_date < quotation.estimated_start_date:
+        raise HTTPException(status_code=400, detail="Estimated end date cannot be before estimated start date")
+
+    pricing_changed = payload.items is not None or "tax_calculation_mode" in changes
     if payload.items is not None:
         _replace_items(db, quotation, payload.items)
     elif "tax_calculation_mode" in changes:
@@ -573,16 +894,43 @@ def update_quotation(
 
         class ExistingPayload:
             def __init__(self, item):
+                self.group_name = item.group_name
+                self.title = item.title
                 self.description = item.description
+                self.unit = item.unit
                 self.quantity = item.quantity
                 self.unit_price = item.unit_price
                 self.discount_percent = item.discount_percent
                 self.tax_rate = item.tax_rate
 
         _replace_items(db, quotation, [ExistingPayload(item) for item in existing_items])
+
+    if payload.sections is not None:
+        _replace_sections(db, quotation, payload.sections)
+    else:
+        if "notes" in changes:
+            _upsert_legacy_section(db, quotation, "additional_notes", quotation.notes)
+        if "terms_conditions" in changes:
+            _upsert_legacy_section(db, quotation, "terms_conditions", quotation.terms_conditions)
+    if payload.milestones is not None:
+        _replace_milestones(db, quotation, payload.milestones)
+    if payload.payment_schedule is not None:
+        _replace_payment_schedule(db, quotation, payload.payment_schedule)
+    elif pricing_changed:
+        _recalculate_payment_schedule(db, quotation)
+
+    if "assigned_employee_id" in changes:
+        prepared_name, prepared_email, prepared_designation = _prepared_by_snapshot(
+            db, tenant.organization_id, quotation.assigned_employee_id, quotation.created_by_user_id
+        )
+        quotation.prepared_by_name_snapshot = prepared_name
+        quotation.prepared_by_email_snapshot = prepared_email
+        quotation.prepared_by_designation_snapshot = prepared_designation
+
     db.flush()
     after = {
         "subject": quotation.subject,
+        "project_title": quotation.project_title,
         "issue_date": quotation.issue_date.isoformat(),
         "valid_until": quotation.valid_until.isoformat() if quotation.valid_until else None,
         "currency": quotation.currency,
