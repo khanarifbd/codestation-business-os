@@ -25,6 +25,7 @@ from app.schemas.orders import OrderDetail, OrderItemRead, OrderListItem, OrderP
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.order_completion_guard import assert_order_can_complete
+from app.services.quotation_order_conversion import seed_order_billing_from_quotation
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/sales", tags=["Orders"])
@@ -395,6 +396,7 @@ def create_order_from_quotation(quotation_id: str, request: Request, db: DbSessi
             sku_snapshot=item.sku_snapshot,
             item_type_snapshot=item.item_type_snapshot,
             unit_snapshot=item.unit_snapshot,
+            service_duration_months_snapshot=item.service_duration_months_snapshot,
             description=item.description,
             quantity=item.quantity,
             unit_price=item.unit_price,
@@ -407,6 +409,12 @@ def create_order_from_quotation(quotation_id: str, request: Request, db: DbSessi
             line_total=item.line_total,
         ))
     db.flush()
+    billing_milestones = seed_order_billing_from_quotation(
+        db,
+        quotation=quotation,
+        order=order,
+        user_id=tenant.user_id,
+    )
     record_activity(
         db,
         action="sales.order.created_from_quotation",
@@ -415,9 +423,23 @@ def create_order_from_quotation(quotation_id: str, request: Request, db: DbSessi
         organization_id=tenant.organization_id,
         entity_type="order",
         entity_id=order.id,
-        after={"order_number": order.order_number, "quotation_id": quotation.id, "quotation_number": quotation.quotation_number, "client_id": order.client_id, "status": order.status, "currency": order.currency, "total": str(order.total), "item_count": len(quotation_items)},
-        metadata={"source_quotation_id": quotation.id},
-        message=f"Order {order.order_number} created from accepted quotation {quotation.quotation_number}",
+        after={
+            "order_number": order.order_number,
+            "quotation_id": quotation.id,
+            "quotation_number": quotation.quotation_number,
+            "quotation_revision_number": quotation.revision_number,
+            "client_id": order.client_id,
+            "status": order.status,
+            "currency": order.currency,
+            "total": str(order.total),
+            "item_count": len(quotation_items),
+            "billing_milestone_count": len(billing_milestones),
+        },
+        metadata={
+            "source_quotation_id": quotation.id,
+            "source_quotation_payment_milestone_ids": [item.source_quotation_payment_milestone_id for item in billing_milestones],
+        },
+        message=f"Order {order.order_number} created from accepted quotation {quotation.quotation_number} R{quotation.revision_number}",
         request=request,
     )
     db.commit()
