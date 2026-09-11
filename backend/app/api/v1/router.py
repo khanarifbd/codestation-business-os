@@ -70,6 +70,7 @@ from app.api.v1.project_client_sharing import router as project_client_sharing_r
 from app.api.v1.project_documents import router as project_documents_router
 from app.api.v1.project_execution import router as project_execution_router
 from app.api.v1.project_feedback import router as project_feedback_router
+from app.api.v1.project_notes import router as project_notes_router
 from app.api.v1.projects import router as projects_router
 from app.api.v1.reports_fast import router as reports_fast_router
 from app.api.v1.reports import router as reports_router
@@ -120,6 +121,7 @@ api_router.include_router(project_execution_router)
 api_router.include_router(project_client_sharing_router)
 api_router.include_router(project_feedback_router)
 api_router.include_router(project_documents_router)
+api_router.include_router(project_notes_router)
 api_router.include_router(inventory_router)
 api_router.include_router(inventory_management_router)
 api_router.include_router(inventory_workflows_router)
