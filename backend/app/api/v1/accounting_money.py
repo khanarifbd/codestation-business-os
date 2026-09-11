@@ -10,6 +10,7 @@ from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.crm import Client
+from app.models.expenses import ExpenseCategory, Vendor
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.orders import Order
 from app.models.projects import Project
@@ -19,7 +20,7 @@ from app.schemas.accounting_money import (
     AccountingMoneyEntryCreate,
     AccountingMoneyEntryRead,
 )
-from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal
+from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
@@ -90,6 +91,8 @@ def _read(db: DbSession, organization_id: str, item: AccountingMoneyEntry) -> Ac
         client_id=item.client_id,
         order_id=item.order_id,
         project_id=item.project_id,
+        expense_category_id=item.expense_category_id,
+        vendor_id=item.vendor_id,
         source_label=_source_label(db, organization_id, item),
         currency=item.currency,
         amount=item.amount,
@@ -300,19 +303,46 @@ def create_income_with_fee(
     if fee_amount > gross_amount:
         raise HTTPException(status_code=400, detail="Processing fee cannot exceed gross income")
 
-    fee_category = None
+    fee_category: LedgerAccount | None = None
+    fee_expense_category: ExpenseCategory | None = None
+    fee_vendor: Vendor | None = None
     if fee_amount > 0:
-        fee_category = db.scalar(
-            select(LedgerAccount).where(
-                LedgerAccount.id == payload.fee_category_ledger_account_id,
-                LedgerAccount.organization_id == tenant.organization_id,
-                LedgerAccount.is_active.is_(True),
+        if payload.fee_expense_category_id:
+            fee_expense_category = db.scalar(
+                select(ExpenseCategory).where(
+                    ExpenseCategory.id == payload.fee_expense_category_id,
+                    ExpenseCategory.organization_id == tenant.organization_id,
+                    ExpenseCategory.is_active.is_(True),
+                )
             )
-        )
-        if fee_category is None:
-            raise HTTPException(status_code=404, detail="Fee expense category not found")
-        if fee_category.category != "expense":
-            raise HTTPException(status_code=400, detail="Processing fee must use an expense category")
+            if fee_expense_category is None:
+                raise HTTPException(status_code=404, detail="Active expense category not found")
+
+        if payload.fee_vendor_id:
+            fee_vendor = db.scalar(
+                select(Vendor).where(
+                    Vendor.id == payload.fee_vendor_id,
+                    Vendor.organization_id == tenant.organization_id,
+                    Vendor.is_active.is_(True),
+                )
+            )
+            if fee_vendor is None:
+                raise HTTPException(status_code=404, detail="Active vendor not found")
+
+        if payload.fee_category_ledger_account_id:
+            fee_category = db.scalar(
+                select(LedgerAccount).where(
+                    LedgerAccount.id == payload.fee_category_ledger_account_id,
+                    LedgerAccount.organization_id == tenant.organization_id,
+                    LedgerAccount.is_active.is_(True),
+                )
+            )
+            if fee_category is None:
+                raise HTTPException(status_code=404, detail="Fee ledger account not found")
+            if fee_category.category != "expense":
+                raise HTTPException(status_code=400, detail="Processing fee must use an expense ledger account")
+        else:
+            fee_category = system_account(db, tenant.organization_id, "bank_fees")
 
     source_type, source_id, client_id, order_id, project_id = _resolve_source(
         db,
@@ -433,6 +463,8 @@ def create_income_with_fee(
             client_id=client_id,
             order_id=order_id,
             project_id=project_id,
+            expense_category_id=fee_expense_category.id if fee_expense_category else None,
+            vendor_id=fee_vendor.id if fee_vendor else None,
             currency=financial.currency,
             amount=fee_amount,
             description=fee_description,
@@ -492,6 +524,8 @@ def create_income_with_fee(
         "fee_amount": str(fee_amount),
         "net_amount": str(_money(gross_amount - fee_amount)),
         "linked_fee_entry_id": fee_item.id if fee_item else None,
+        "fee_expense_category_id": fee_expense_category.id if fee_expense_category else None,
+        "fee_vendor_id": fee_vendor.id if fee_vendor else None,
     }
     record_activity(
         db,
@@ -527,6 +561,8 @@ def create_income_with_fee(
                 "currency": financial.currency,
                 "financial_account_id": financial.id,
                 "category_ledger_account_id": fee_category.id,
+                "expense_category_id": fee_item.expense_category_id,
+                "vendor_id": fee_item.vendor_id,
                 "source_type": source_type,
                 "source_id": source_id,
                 "client_id": client_id,
