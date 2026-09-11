@@ -117,10 +117,8 @@ def _validate_source_lead(
 
 
 def _manual_edit_blocker(db: DbSession, organization_id: str, order: Order) -> str | None:
-    if order.quotation_id is not None:
-        return "Quotation-backed orders inherit their commercial terms from the accepted quotation and cannot be edited here."
     if order.status != "confirmed":
-        return "Only confirmed manual orders can be edited. Once execution starts, the commercial order is locked."
+        return "Only confirmed orders can be edited. Once execution starts, the commercial order is locked."
     if db.scalar(
         select(Project.id).where(
             Project.organization_id == organization_id,
@@ -517,8 +515,13 @@ def update_manual_order(
         entity_id=order.id,
         before=before,
         after=after,
-        metadata={"order_number": order.order_number, "commercial_edit": True},
-        message=f"Manual order {order.order_number} updated",
+        metadata={
+            "order_number": order.order_number,
+            "commercial_edit": True,
+            "source": "quotation" if order.quotation_id else "manual",
+            "source_quotation_id": order.quotation_id,
+        },
+        message=f"Order {order.order_number} updated",
         request=request,
     )
     db.commit()
