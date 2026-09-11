@@ -105,7 +105,7 @@ test("Invoice print page renders a tenant-safe professional client document", as
   await expect(page.getByText("Acme Client LLC").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "International SaaS implementation" })).toBeVisible();
   await expect(page.getByText("USD 4,000.00").first()).toBeVisible();
-  await expect(page.getByText("SaaS implementation")).toBeVisible();
+  await expect(page.getByText("SaaS implementation", { exact: true })).toBeVisible();
   await expect(page.getByText("SAAS-001")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Payment instructions" })).toBeVisible();
   await expect(page.getByText("Example Bank")).toBeVisible();
