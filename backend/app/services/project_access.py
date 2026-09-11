@@ -17,12 +17,13 @@ PROJECT_TABS = (
     "tasks",
     "work",
     "documents",
+    "notes",
     "credentials",
     "team",
     "review_tips",
 )
 ALL_PROJECT_TABS = frozenset(PROJECT_TABS)
-DEFAULT_MEMBER_TABS = ("overview", "milestones", "tasks", "work", "documents", "team")
+DEFAULT_MEMBER_TABS = ("overview", "milestones", "tasks", "work", "documents", "notes", "team")
 DEFAULT_MEMBER_TAB_SET = frozenset(DEFAULT_MEMBER_TABS)
 
 
