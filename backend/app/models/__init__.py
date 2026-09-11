@@ -100,5 +100,6 @@ __all__ = [
     "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "User", "UserSession", "Vendor", "Warehouse",
 ]
 
-# Register service-duration snapshot listeners after all mapped classes above are loaded.
+# Register snapshot listeners after all mapped classes above are loaded.
+from app.services import quotation_snapshots as _quotation_snapshots  # noqa: E402,F401
 from app.services import service_duration_snapshots as _service_duration_snapshots  # noqa: E402,F401
