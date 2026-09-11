@@ -13,7 +13,12 @@ from app.models.crm import Client
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.orders import Order
 from app.models.projects import Project
-from app.schemas.accounting_money import AccountingMoneyEntryCreate, AccountingMoneyEntryRead
+from app.schemas.accounting_money import (
+    AccountingIncomeWithFeeCreate,
+    AccountingIncomeWithFeeRead,
+    AccountingMoneyEntryCreate,
+    AccountingMoneyEntryRead,
+)
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
@@ -257,3 +262,292 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
     db.commit()
     db.refresh(item)
     return _read(db, tenant.organization_id, item)
+
+
+@router.post(
+    "/income-with-fee",
+    response_model=AccountingIncomeWithFeeRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_income_with_fee(
+    payload: AccountingIncomeWithFeeCreate,
+    request: Request,
+    db: DbSession,
+    tenant: AccountingManager,
+) -> AccountingIncomeWithFeeRead:
+    financial, financial_ledger = financial_ledger_account(
+        db,
+        tenant.organization_id,
+        payload.financial_account_id,
+    )
+    if financial.account_type == "credit_card":
+        raise HTTPException(status_code=400, detail="Money received cannot be deposited into a credit card account")
+
+    income_category = db.scalar(
+        select(LedgerAccount).where(
+            LedgerAccount.id == payload.income_category_ledger_account_id,
+            LedgerAccount.organization_id == tenant.organization_id,
+            LedgerAccount.is_active.is_(True),
+        )
+    )
+    if income_category is None:
+        raise HTTPException(status_code=404, detail="Income category not found")
+    if income_category.category != "income":
+        raise HTTPException(status_code=400, detail="Income must use an income category")
+
+    gross_amount = _money(payload.gross_amount)
+    fee_amount = _money(payload.fee_amount)
+    if fee_amount > gross_amount:
+        raise HTTPException(status_code=400, detail="Processing fee cannot exceed gross income")
+
+    fee_category = None
+    if fee_amount > 0:
+        fee_category = db.scalar(
+            select(LedgerAccount).where(
+                LedgerAccount.id == payload.fee_category_ledger_account_id,
+                LedgerAccount.organization_id == tenant.organization_id,
+                LedgerAccount.is_active.is_(True),
+            )
+        )
+        if fee_category is None:
+            raise HTTPException(status_code=404, detail="Fee expense category not found")
+        if fee_category.category != "expense":
+            raise HTTPException(status_code=400, detail="Processing fee must use an expense category")
+
+    source_type, source_id, client_id, order_id, project_id = _resolve_source(
+        db,
+        tenant.organization_id,
+        payload.source_type,
+        payload.source_id,
+    )
+
+    source_currency: str | None = None
+    if project_id:
+        source_currency = db.scalar(
+            select(Project.currency).where(
+                Project.id == project_id,
+                Project.organization_id == tenant.organization_id,
+            )
+        )
+    elif order_id:
+        source_currency = db.scalar(
+            select(Order.currency).where(
+                Order.id == order_id,
+                Order.organization_id == tenant.organization_id,
+            )
+        )
+    if source_currency and financial.currency != source_currency:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This income is denominated in {source_currency}. Select a {source_currency} financial account; "
+                "cross-currency conversion is not performed silently."
+            ),
+        )
+
+    if fee_amount > _money(_financial_balance(db, financial) + gross_amount):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Selected account would not have enough balance to post the {financial.currency} {fee_amount} fee",
+        )
+
+    reference = _clean(payload.reference)
+    notes = _clean(payload.notes)
+    income_description = payload.description.strip()
+    fee_description = (
+        _clean(payload.fee_description)
+        or f"Processing fee · {income_description}"
+    )[:500]
+
+    income_item = AccountingMoneyEntry(
+        organization_id=tenant.organization_id,
+        kind="income",
+        entry_date=payload.entry_date,
+        financial_account_id=financial.id,
+        category_ledger_account_id=income_category.id,
+        source_type=source_type,
+        source_id=source_id,
+        client_id=client_id,
+        order_id=order_id,
+        project_id=project_id,
+        currency=financial.currency,
+        amount=gross_amount,
+        description=income_description,
+        reference=reference,
+        notes=notes,
+        created_by_user_id=tenant.user_id,
+    )
+    db.add(income_item)
+    db.flush()
+
+    post_journal(
+        db,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        entry_date=income_item.entry_date,
+        source_type="accounting_money_entry",
+        source_id=income_item.id,
+        lines=[
+            PostingLine(
+                ledger_account_id=financial_ledger.id,
+                debit=gross_amount,
+                currency=financial.currency,
+                description=income_description,
+            ),
+            PostingLine(
+                ledger_account_id=income_category.id,
+                credit=gross_amount,
+                currency=financial.currency,
+                description=income_description,
+            ),
+        ],
+        reference=reference,
+        memo=income_description,
+    )
+    db.add(
+        FinancialTransaction(
+            organization_id=tenant.organization_id,
+            account_id=financial.id,
+            transaction_date=payload.entry_date,
+            direction="credit",
+            amount=gross_amount,
+            currency=financial.currency,
+            source_type="accounting_money_entry",
+            source_id=income_item.id,
+            reference=reference,
+            description=income_description,
+            created_by_user_id=tenant.user_id,
+        )
+    )
+
+    fee_item: AccountingMoneyEntry | None = None
+    if fee_amount > 0 and fee_category is not None:
+        fee_item = AccountingMoneyEntry(
+            organization_id=tenant.organization_id,
+            kind="expense",
+            entry_date=payload.entry_date,
+            financial_account_id=financial.id,
+            category_ledger_account_id=fee_category.id,
+            source_type=source_type,
+            source_id=source_id,
+            client_id=client_id,
+            order_id=order_id,
+            project_id=project_id,
+            currency=financial.currency,
+            amount=fee_amount,
+            description=fee_description,
+            reference=reference,
+            notes=notes,
+            created_by_user_id=tenant.user_id,
+        )
+        db.add(fee_item)
+        db.flush()
+        post_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            entry_date=fee_item.entry_date,
+            source_type="accounting_money_entry",
+            source_id=fee_item.id,
+            lines=[
+                PostingLine(
+                    ledger_account_id=fee_category.id,
+                    debit=fee_amount,
+                    currency=financial.currency,
+                    description=fee_description,
+                ),
+                PostingLine(
+                    ledger_account_id=financial_ledger.id,
+                    credit=fee_amount,
+                    currency=financial.currency,
+                    description=fee_description,
+                ),
+            ],
+            reference=reference,
+            memo=fee_description,
+        )
+        db.add(
+            FinancialTransaction(
+                organization_id=tenant.organization_id,
+                account_id=financial.id,
+                transaction_date=payload.entry_date,
+                direction="debit",
+                amount=fee_amount,
+                currency=financial.currency,
+                source_type="accounting_money_entry",
+                source_id=fee_item.id,
+                reference=reference,
+                description=fee_description,
+                created_by_user_id=tenant.user_id,
+            )
+        )
+
+    linked_metadata = {
+        "source_type": source_type,
+        "source_id": source_id,
+        "client_id": client_id,
+        "order_id": order_id,
+        "project_id": project_id,
+        "gross_amount": str(gross_amount),
+        "fee_amount": str(fee_amount),
+        "net_amount": str(_money(gross_amount - fee_amount)),
+        "linked_fee_entry_id": fee_item.id if fee_item else None,
+    }
+    record_activity(
+        db,
+        action="accounting.money.income.created",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="accounting_money_entry",
+        entity_id=income_item.id,
+        after={
+            "kind": "income",
+            "amount": str(gross_amount),
+            "currency": financial.currency,
+            "financial_account_id": financial.id,
+            "category_ledger_account_id": income_category.id,
+            **linked_metadata,
+        },
+        message=f"Income recorded: {financial.currency} {gross_amount} — {income_description}",
+        request=request,
+    )
+    if fee_item is not None and fee_category is not None:
+        record_activity(
+            db,
+            action="accounting.money.expense.created",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="accounting_money_entry",
+            entity_id=fee_item.id,
+            after={
+                "kind": "expense",
+                "amount": str(fee_amount),
+                "currency": financial.currency,
+                "financial_account_id": financial.id,
+                "category_ledger_account_id": fee_category.id,
+                "source_type": source_type,
+                "source_id": source_id,
+                "client_id": client_id,
+                "order_id": order_id,
+                "project_id": project_id,
+                "linked_income_entry_id": income_item.id,
+            },
+            message=f"Expense recorded: {financial.currency} {fee_amount} — {fee_description}",
+            request=request,
+        )
+
+    db.commit()
+    db.refresh(income_item)
+    if fee_item is not None:
+        db.refresh(fee_item)
+
+    return AccountingIncomeWithFeeRead(
+        income_entry=_read(db, tenant.organization_id, income_item),
+        fee_entry=_read(db, tenant.organization_id, fee_item) if fee_item else None,
+        currency=financial.currency,
+        gross_amount=gross_amount,
+        fee_amount=fee_amount,
+        net_amount=_money(gross_amount - fee_amount),
+    )
