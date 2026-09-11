@@ -60,7 +60,7 @@ class ProjectMember(TenantOwnedMixin, Base):
     role_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
     tab_permissions: Mapped[list[str]] = mapped_column(
         JSON,
-        default=lambda: ["overview", "milestones", "tasks", "work", "documents", "team"],
+        default=lambda: ["overview", "milestones", "tasks", "work", "documents", "notes", "team"],
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -158,6 +158,21 @@ class ProjectReview(TenantOwnedMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     updated_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class ProjectNote(TenantOwnedMixin, Base):
+    __tablename__ = "project_notes"
+    __table_args__ = (
+        Index("ix_project_notes_org_project_created", "organization_id", "project_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
