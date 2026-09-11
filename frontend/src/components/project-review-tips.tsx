@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Gift, Loader2, MessageSquareText, Pencil, Plus, Star } from "lucide-react";
 
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
+import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
 
 type ReviewRow = {
   id: string;
@@ -55,7 +56,10 @@ type FinancialAccount = {
 };
 
 type FinanceMeta = { accounts: FinancialAccount[] };
-type LedgerAccount = { id: string; name: string; category: string; is_active: boolean };
+type LedgerAccount = { id: string; code: string; name: string; category: string; is_active: boolean };
+type ExpenseCategory = { id: string; name: string; slug: string; cost_type: string; is_active: boolean };
+type Vendor = { id: string; vendor_code: string; name: string; currency: string | null; is_active: boolean };
+type ExpenseMeta = { categories: ExpenseCategory[]; vendors: Vendor[] };
 
 type ReviewForm = {
   rating: number;
@@ -73,7 +77,8 @@ type TipForm = {
   amount: string;
   fee_mode: "none" | "percentage" | "fixed";
   fee_value: string;
-  fee_category_ledger_account_id: string;
+  fee_expense_category_id: string;
+  fee_vendor_id: string;
   reference: string;
   notes: string;
 };
@@ -125,7 +130,8 @@ function blankTip(): TipForm {
     amount: "",
     fee_mode: "none",
     fee_value: "",
-    fee_category_ledger_account_id: "",
+    fee_expense_category_id: "",
+    fee_vendor_id: "",
     reference: "",
     notes: "",
   };
@@ -145,7 +151,8 @@ export function ProjectReviewTips({
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [categories, setCategories] = useState<LedgerAccount[]>([]);
-  const [expenseCategories, setExpenseCategories] = useState<LedgerAccount[]>([]);
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([]);
+  const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [reviewEditing, setReviewEditing] = useState(false);
@@ -184,18 +191,22 @@ export function ProjectReviewTips({
     void (async () => {
       setOptionsLoading(true);
       try {
-        const [metaResponse, coaResponse] = await Promise.all([
+        const [metaResponse, expenseMetaResponse, coaResponse] = await Promise.all([
           fetch("/api/finance/meta", { cache: "no-store" }),
+          fetch("/api/finance/expense-meta", { cache: "no-store" }),
           fetch("/api/accounting/chart-of-accounts", { cache: "no-store" }),
         ]);
-        const [metaPayload, coaPayload] = await Promise.all([
+        const [metaPayload, expenseMetaPayload, coaPayload] = await Promise.all([
           metaResponse.json().catch(() => null),
+          expenseMetaResponse.json().catch(() => null),
           coaResponse.json().catch(() => null),
         ]);
         if (!metaResponse.ok) throw new Error(errorDetail(metaPayload, "Unable to load financial accounts."));
+        if (!expenseMetaResponse.ok) throw new Error(errorDetail(expenseMetaPayload, "Unable to load expense categories and vendors."));
         if (!coaResponse.ok) throw new Error(errorDetail(coaPayload, "Unable to load accounting categories."));
         if (!active) return;
         const meta = metaPayload as FinanceMeta;
+        const expenseMeta = expenseMetaPayload as ExpenseMeta;
         const matchingAccounts = (meta.accounts ?? []).filter(
           (account) =>
             account.is_active &&
@@ -205,12 +216,12 @@ export function ProjectReviewTips({
         const incomeCategories = (Array.isArray(coaPayload) ? coaPayload : []).filter(
           (account: LedgerAccount) => account.category === "income" && account.is_active,
         ) as LedgerAccount[];
-        const feeCategories = (Array.isArray(coaPayload) ? coaPayload : []).filter(
-          (account: LedgerAccount) => account.category === "expense" && account.is_active,
-        ) as LedgerAccount[];
+        const feeCategories = (expenseMeta.categories ?? []).filter((category) => category.is_active);
+        const activeVendors = (expenseMeta.vendors ?? []).filter((vendor) => vendor.is_active);
         setAccounts(matchingAccounts);
         setCategories(incomeCategories);
         setExpenseCategories(feeCategories);
+        setVendors(activeVendors);
         setTipForm((current) => ({
           ...current,
           financial_account_id:
@@ -223,9 +234,13 @@ export function ProjectReviewTips({
             current.category_ledger_account_id && incomeCategories.some((item) => item.id === current.category_ledger_account_id)
               ? current.category_ledger_account_id
               : "",
-          fee_category_ledger_account_id:
-            current.fee_category_ledger_account_id && feeCategories.some((item) => item.id === current.fee_category_ledger_account_id)
-              ? current.fee_category_ledger_account_id
+          fee_expense_category_id:
+            current.fee_expense_category_id && feeCategories.some((item) => item.id === current.fee_expense_category_id)
+              ? current.fee_expense_category_id
+              : "",
+          fee_vendor_id:
+            current.fee_vendor_id && activeVendors.some((item) => item.id === current.fee_vendor_id)
+              ? current.fee_vendor_id
               : "",
         }));
       } catch (reason) {
@@ -241,7 +256,8 @@ export function ProjectReviewTips({
 
   const selectedAccount = accounts.find((item) => item.id === tipForm.financial_account_id) ?? null;
   const selectedCategory = categories.find((item) => item.id === tipForm.category_ledger_account_id) ?? null;
-  const selectedFeeCategory = expenseCategories.find((item) => item.id === tipForm.fee_category_ledger_account_id) ?? null;
+  const selectedFeeCategory = expenseCategories.find((item) => item.id === tipForm.fee_expense_category_id) ?? null;
+  const selectedVendor = vendors.find((item) => item.id === tipForm.fee_vendor_id) ?? null;
   const grossAmount = Number(tipForm.amount || 0);
   const feeValue = Number(tipForm.fee_value || 0);
   const feeAmount = roundMoney(
@@ -268,6 +284,43 @@ export function ProjectReviewTips({
       validFee,
   );
 
+  const accountOptions = useMemo<SearchOption[]>(
+    () => accounts.map((account) => ({
+      value: account.id,
+      label: account.name,
+      description: `${money(account.current_balance, account.currency)} · ${account.account_type.replaceAll("_", " ")}`,
+      keywords: `${account.currency} ${account.account_type}`,
+    })),
+    [accounts],
+  );
+  const incomeCategoryOptions = useMemo<SearchOption[]>(
+    () => categories.map((category) => ({
+      value: category.id,
+      label: category.name,
+      description: `${category.code} · Chart of Accounts`,
+      keywords: `${category.code} ${category.category}`,
+    })),
+    [categories],
+  );
+  const expenseCategoryOptions = useMemo<SearchOption[]>(
+    () => expenseCategories.map((category) => ({
+      value: category.id,
+      label: category.name,
+      description: category.cost_type.replaceAll("_", " "),
+      keywords: `${category.slug} ${category.cost_type}`,
+    })),
+    [expenseCategories],
+  );
+  const vendorOptions = useMemo<SearchOption[]>(
+    () => vendors.map((vendor) => ({
+      value: vendor.id,
+      label: vendor.name,
+      description: [vendor.vendor_code, vendor.currency].filter(Boolean).join(" · "),
+      keywords: `${vendor.vendor_code} ${vendor.currency ?? ""}`,
+    })),
+    [vendors],
+  );
+
   const confirmationDetails = useMemo(
     () => [
       { label: "Project", value: projectNumber },
@@ -276,11 +329,14 @@ export function ProjectReviewTips({
       { label: "Net received", value: money(Math.max(netAmount, 0), projectCurrency), emphasis: true },
       { label: "Received into", value: selectedAccount?.name ?? "—" },
       { label: "Income category", value: selectedCategory?.name ?? "—" },
-      ...(feeAmount > 0 ? [{ label: "Fee expense category", value: selectedFeeCategory?.name ?? "—" }] : []),
+      ...(feeAmount > 0 ? [
+        { label: "Expense category", value: selectedFeeCategory?.name ?? "—" },
+        { label: "Vendor", value: selectedVendor?.name ?? "Not specified" },
+      ] : []),
       { label: "Date", value: tipForm.entry_date || "—" },
       { label: "Reference", value: tipForm.reference || "—" },
     ],
-    [projectNumber, projectCurrency, grossAmount, feeAmount, netAmount, selectedAccount, selectedCategory, selectedFeeCategory, tipForm.entry_date, tipForm.reference],
+    [projectNumber, projectCurrency, grossAmount, feeAmount, netAmount, selectedAccount, selectedCategory, selectedFeeCategory, selectedVendor, tipForm.entry_date, tipForm.reference],
   );
 
   function startReviewEdit() {
@@ -362,7 +418,8 @@ export function ProjectReviewTips({
           income_category_ledger_account_id: selectedCategory.id,
           gross_amount: grossAmount,
           fee_amount: feeAmount,
-          fee_category_ledger_account_id: feeAmount > 0 ? selectedFeeCategory?.id ?? null : null,
+          fee_expense_category_id: feeAmount > 0 ? selectedFeeCategory?.id ?? null : null,
+          fee_vendor_id: feeAmount > 0 ? selectedVendor?.id ?? null : null,
           description: `Project tip / additional income · ${projectNumber}`,
           fee_description: feeAmount > 0 ? `Processing / platform fee · ${projectNumber}` : null,
           reference: tipForm.reference.trim() || null,
@@ -377,7 +434,7 @@ export function ProjectReviewTips({
       setTipForm(blankTip());
       setMessage(
         feeAmount > 0
-          ? "Income and fee recorded together. Gross income, fee expense, financial account and ledger are updated."
+          ? "Income and fee recorded together. The selected expense category and vendor are saved with the fee."
           : "Income recorded. Financial account and accounting ledger were updated.",
       );
       await loadFeedback();
@@ -556,20 +613,28 @@ export function ProjectReviewTips({
                     Gross amount ({projectCurrency})
                     <input type="number" min="0.01" step="0.01" value={tipForm.amount} onChange={(event) => setTipForm((current) => ({ ...current, amount: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" placeholder="0.00" required />
                   </label>
-                  <label className="text-sm font-medium">
-                    Received into
-                    <select value={tipForm.financial_account_id} onChange={(event) => setTipForm((current) => ({ ...current, financial_account_id: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" required>
-                      <option value="">Select {projectCurrency} account</option>
-                      {accounts.map((account) => <option key={account.id} value={account.id}>{account.name} · {money(account.current_balance, account.currency)}</option>)}
-                    </select>
-                  </label>
-                  <label className="text-sm font-medium">
-                    Income category
-                    <select value={tipForm.category_ledger_account_id} onChange={(event) => setTipForm((current) => ({ ...current, category_ledger_account_id: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" required>
-                      <option value="">Select income category</option>
-                      {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                    </select>
-                  </label>
+                  <SearchableSelect
+                    label="Received into"
+                    value={tipForm.financial_account_id}
+                    onValueChange={(value) => setTipForm((current) => ({ ...current, financial_account_id: value }))}
+                    options={accountOptions}
+                    placeholder={`Select ${projectCurrency} account`}
+                    searchPlaceholder="Search financial account..."
+                    required
+                    clearable={false}
+                    disabled={optionsLoading}
+                  />
+                  <SearchableSelect
+                    label="Income category"
+                    value={tipForm.category_ledger_account_id}
+                    onValueChange={(value) => setTipForm((current) => ({ ...current, category_ledger_account_id: value }))}
+                    options={incomeCategoryOptions}
+                    placeholder="Select income category"
+                    searchPlaceholder="Search Chart of Accounts..."
+                    required
+                    clearable={false}
+                    disabled={optionsLoading}
+                  />
                   <label className="text-sm font-medium">
                     Fee treatment
                     <select
@@ -578,7 +643,8 @@ export function ProjectReviewTips({
                         ...current,
                         fee_mode: event.target.value as TipForm["fee_mode"],
                         fee_value: event.target.value === "none" ? "" : current.fee_value,
-                        fee_category_ledger_account_id: event.target.value === "none" ? "" : current.fee_category_ledger_account_id,
+                        fee_expense_category_id: event.target.value === "none" ? "" : current.fee_expense_category_id,
+                        fee_vendor_id: event.target.value === "none" ? "" : current.fee_vendor_id,
                       }))}
                       className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none"
                     >
@@ -606,13 +672,26 @@ export function ProjectReviewTips({
                           {tipForm.fee_mode === "percentage" ? <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-neutral-400">%</span> : null}
                         </div>
                       </label>
-                      <label className="text-sm font-medium">
-                        Fee expense category
-                        <select value={tipForm.fee_category_ledger_account_id} onChange={(event) => setTipForm((current) => ({ ...current, fee_category_ledger_account_id: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" required>
-                          <option value="">Select expense category</option>
-                          {expenseCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                        </select>
-                      </label>
+                      <SearchableSelect
+                        label="Expense category"
+                        value={tipForm.fee_expense_category_id}
+                        onValueChange={(value) => setTipForm((current) => ({ ...current, fee_expense_category_id: value }))}
+                        options={expenseCategoryOptions}
+                        placeholder="Select expense category"
+                        searchPlaceholder="Search expense categories..."
+                        required
+                        clearable={false}
+                        disabled={optionsLoading}
+                      />
+                      <SearchableSelect
+                        label="Vendor (optional)"
+                        value={tipForm.fee_vendor_id}
+                        onValueChange={(value) => setTipForm((current) => ({ ...current, fee_vendor_id: value }))}
+                        options={vendorOptions}
+                        placeholder="Select vendor"
+                        searchPlaceholder="Search vendors..."
+                        disabled={optionsLoading}
+                      />
                     </>
                   ) : null}
                   <label className="text-sm font-medium">
@@ -644,7 +723,7 @@ export function ProjectReviewTips({
                   <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">No active {projectCurrency} receiving account is available. Add a matching financial account first; cross-currency conversion is not performed silently here.</p>
                 ) : null}
                 {feeEnabled && !optionsLoading && !expenseCategories.length ? (
-                  <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">No active expense category is available for the fee. Add an expense ledger category such as Bank & Processing Fees first.</p>
+                  <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">No active expense category is available. Add or activate a category in the Expenses section first.</p>
                 ) : null}
                 <div className="mt-5 flex justify-end">
                   <button type="submit" disabled={!validTip || tipSaving || optionsLoading} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">
