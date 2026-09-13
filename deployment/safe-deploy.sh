@@ -5,8 +5,10 @@ umask 077
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env.staging"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.staging.yml"
+SCHEDULER_COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
 PROJECT_NAME="codestation-business-os"
 NETWORK_NAME="${PROJECT_NAME}_default"
+UPLOADS_VOLUME="${PROJECT_NAME}_business_os_uploads"
 STATE_DIR="/var/lib/codestation-business-os"
 STATE_FILE="${STATE_DIR}/active-slot"
 NGINX_SITE="/etc/nginx/sites-available/codestation-business-os"
@@ -205,6 +207,7 @@ start_candidate() {
     --env-file "${ENV_FILE}" \
     -e ENVIRONMENT=production \
     -e DATABASE_URL="${database_url}" \
+    -v "${UPLOADS_VOLUME}:/data/uploads" \
     -p "127.0.0.1:${backend_port}:8000" \
     "${backend_image}" >/dev/null
 
@@ -228,8 +231,18 @@ start_candidate() {
   fi
 }
 
+restore_previous_scheduler() {
+  local previous_image="$1"
+  [[ -n "${previous_image}" ]] || return 1
+
+  log "Restoring previous finance scheduler image"
+  docker image tag "${previous_image}" "${PROJECT_NAME}-backend:latest" >/dev/null
+  "${SCHEDULER_COMPOSE[@]}" up -d --no-deps --force-recreate finance-scheduler >/dev/null
+}
+
 [[ -f "${ENV_FILE}" ]] || fail "Missing ${ENV_FILE}"
 [[ -f "${COMPOSE_FILE}" ]] || fail "Missing ${COMPOSE_FILE}"
+[[ -f "${SCHEDULER_COMPOSE_FILE}" ]] || fail "Missing ${SCHEDULER_COMPOSE_FILE}"
 for command_name in docker git curl nginx systemctl flock; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "${command_name} is required"
 done
@@ -240,7 +253,13 @@ flock -n 9 || fail "Another Business OS deployment is already running"
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
 
+if ! docker volume inspect "${UPLOADS_VOLUME}" >/dev/null 2>&1; then
+  log "Creating persistent upload volume ${UPLOADS_VOLUME}"
+  docker volume create "${UPLOADS_VOLUME}" >/dev/null
+fi
+
 COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+SCHEDULER_COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${SCHEDULER_COMPOSE_FILE}")
 
 active_slot="blue"
 if [[ -f "${STATE_FILE}" ]]; then
@@ -262,7 +281,9 @@ if [[ "$(git branch --show-current)" != "${branch}" ]]; then
 fi
 git pull --ff-only origin "${branch}"
 
+BUSINESS_OS_ENV_FILE="${ENV_FILE}" bash "${ROOT_DIR}/deployment/verify-production.sh" --config-only
 "${COMPOSE[@]}" config -q
+"${SCHEDULER_COMPOSE[@]}" config -q
 
 log "Ensuring PostgreSQL is available"
 "${COMPOSE[@]}" up -d postgres
@@ -278,6 +299,12 @@ done
 # remove only after green is the recorded active release.
 remove_legacy_blue_if_inactive "${active_slot}"
 remove_manual_slot "${candidate_slot}"
+
+previous_scheduler_id="$("${SCHEDULER_COMPOSE[@]}" ps -q finance-scheduler 2>/dev/null || true)"
+previous_scheduler_image=""
+if [[ -n "${previous_scheduler_id}" ]]; then
+  previous_scheduler_image="$(docker inspect -f '{{.Image}}' "${previous_scheduler_id}" 2>/dev/null || true)"
+fi
 
 log "Building candidate images while active release stays online"
 "${COMPOSE[@]}" build backend frontend
@@ -309,6 +336,32 @@ ensure_nginx_named_upstreams
 log "Running candidate smoke checks before traffic switch"
 wait_url "http://127.0.0.1:$(slot_backend_port "${candidate_slot}")/api/v1/health" "candidate API smoke check"
 wait_url "http://127.0.0.1:$(slot_frontend_port "${candidate_slot}")/login" "candidate frontend smoke check"
+
+# Finance automation is a singleton rather than a blue/green HTTP service. Move
+# it to the candidate image only after migrations and candidate smoke checks pass.
+log "Refreshing singleton finance scheduler from candidate backend image"
+if ! "${SCHEDULER_COMPOSE[@]}" up -d --no-deps --force-recreate finance-scheduler; then
+  restore_previous_scheduler "${previous_scheduler_image}" || true
+  remove_manual_slot "${candidate_slot}"
+  fail "Finance scheduler could not be refreshed; active ${active_slot} release was not switched"
+fi
+
+scheduler_id=""
+for attempt in $(seq 1 10); do
+  scheduler_id="$("${SCHEDULER_COMPOSE[@]}" ps -q finance-scheduler 2>/dev/null || true)"
+  if [[ -n "${scheduler_id}" ]] \
+    && [[ "$(docker inspect -f '{{.State.Running}}' "${scheduler_id}" 2>/dev/null || true)" == "true" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ -z "${scheduler_id}" ]] \
+  || [[ "$(docker inspect -f '{{.State.Running}}' "${scheduler_id}" 2>/dev/null || true)" != "true" ]]; then
+  [[ -z "${scheduler_id}" ]] || docker logs --tail=120 "${scheduler_id}" || true
+  restore_previous_scheduler "${previous_scheduler_image}" || true
+  remove_manual_slot "${candidate_slot}"
+  fail "Finance scheduler did not stay running; active ${active_slot} release was not switched"
+fi
 
 log "Switching Nginx traffic atomically to ${candidate_slot}"
 if ! write_upstreams "${candidate_slot}"; then
