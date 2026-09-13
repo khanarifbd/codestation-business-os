@@ -4,19 +4,20 @@ from pathlib import Path
 
 from fastapi.routing import APIRoute
 
-from app.api.v1.router import api_router
 from app.main import _request_id, app
 
 
 ROOT = Path(__file__).resolve().parents[2]
+API_PREFIX = "/api/v1"
 
 
 def main() -> None:
+    public_overview_path = f"{API_PREFIX}/reports/overview"
     overview_routes = [
         route
-        for route in api_router.routes
+        for route in app.routes
         if isinstance(route, APIRoute)
-        and route.path == "/reports/overview"
+        and route.path == public_overview_path
         and "GET" in (route.methods or set())
     ]
     if len(overview_routes) != 1:
@@ -24,7 +25,7 @@ def main() -> None:
     if overview_routes[0].name != "reports_overview_fast":
         raise AssertionError(f"reports overview is not owned by fast handler: {overview_routes[0].name}")
 
-    operation = app.openapi()["paths"]["/api/v1/reports/overview"]["get"]
+    operation = app.openapi()["paths"][public_overview_path]["get"]
     operation_id = str(operation.get("operationId") or "")
     if "reports_overview_fast" not in operation_id:
         raise AssertionError(f"OpenAPI reports overview owner regression: {operation_id}")
