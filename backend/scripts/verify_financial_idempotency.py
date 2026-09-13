@@ -6,7 +6,13 @@ from uuid import uuid4
 from sqlalchemy import func, select, text
 from starlette.requests import Request
 
-from app.api.v1.accounting_loans import AccountingLoanCreate, LoanAccountingRepaymentCreate, LoanDisbursementCreate, create_accounting_loan
+from app.api.v1.accounting_loans import (
+    AccountingLoanCreate,
+    LoanAccountingRepaymentCreate,
+    LoanDisbursementCreate,
+    approve_loan,
+    create_accounting_loan,
+)
 from app.api.v1.finance import change_invoice_status, create_account, create_invoice_from_order
 from app.api.v1.financial_safety import safe_disburse_loan, safe_pay_payable_bill, safe_record_payment, safe_repay_loan
 from app.api.v1.payables import create_payable_bill
@@ -19,6 +25,8 @@ from app.models.orders import Order
 from app.models.payables import PayableBill, PayablePayment
 from app.schemas.finance import FinancialAccountCreate, InvoiceStatusAction, PaymentCreate
 from app.schemas.payables import PayableBillCreate, PayablePaymentCreate
+from verify_accounting_api_hardening import main as verify_accounting_api_hardening
+from verify_atomic_financial_flow import main as verify_atomic_financial_flow
 
 
 @dataclass(frozen=True)
@@ -96,11 +104,6 @@ def main() -> None:
             make_request("POST", "/api/v1/finance/accounts"), db, tenant,  # type: ignore[arg-type]
         )
 
-        # This fixture intentionally exercises foreign-currency flows. Runtime
-        # accounting now requires effective-dated FX, so the fixture must seed both
-        # the current/reference pair and dated accounting snapshots. Raw SQL is
-        # intentional test setup, matching the migration-fixture pattern and avoiding
-        # application audit-guard noise for synthetic CI data.
         account_currency = account.currency.upper()
         base_currency = tenant.organization.currency.upper()
         if account_currency != base_currency:
@@ -110,19 +113,11 @@ def main() -> None:
                         SELECT id, base_currency, quote_currency, effective_rate
                         FROM organization_exchange_rates
                         WHERE organization_id = :organization_id
-                          AND (
-                              (base_currency = :account_currency AND quote_currency = :base_currency)
-                              OR
-                              (base_currency = :base_currency AND quote_currency = :account_currency)
-                          )
-                        ORDER BY updated_at DESC
-                        LIMIT 1
+                          AND ((base_currency = :account_currency AND quote_currency = :base_currency)
+                            OR (base_currency = :base_currency AND quote_currency = :account_currency))
+                        ORDER BY updated_at DESC LIMIT 1
                     """),
-                    {
-                        "organization_id": tenant.organization_id,
-                        "account_currency": account_currency,
-                        "base_currency": base_currency,
-                    },
+                    {"organization_id": tenant.organization_id, "account_currency": account_currency, "base_currency": base_currency},
                 ).mappings().first()
                 if pair is None:
                     fixture_rate = Decimal("120.00000000")
@@ -138,31 +133,11 @@ def main() -> None:
                                  :rate, :rate, :rate, 'ci_financial_idempotency',
                                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """),
-                        {
-                            "id": pair_id,
-                            "organization_id": tenant.organization_id,
-                            "account_currency": account_currency,
-                            "base_currency": base_currency,
-                            "rate": fixture_rate,
-                        },
+                        {"id": pair_id, "organization_id": tenant.organization_id, "account_currency": account_currency, "base_currency": base_currency, "rate": fixture_rate},
                     )
-                    pair = {
-                        "id": pair_id,
-                        "base_currency": account_currency,
-                        "quote_currency": base_currency,
-                        "effective_rate": fixture_rate,
-                    }
+                    pair = {"id": pair_id, "base_currency": account_currency, "quote_currency": base_currency, "effective_rate": fixture_rate}
 
-                # A baseline snapshot covers the seeded order/invoice date. Exact
-                # future snapshots make payable and loan dates deterministic even if
-                # another verifier has added later history to this shared fixture.
-                snapshot_dates = (
-                    date(1900, 1, 1),
-                    date(2098, 1, 5),
-                    date(2098, 1, 10),
-                    date(2098, 2, 2),
-                    date(2098, 2, 15),
-                )
+                snapshot_dates = (date(1900, 1, 1), date(2098, 1, 5), date(2098, 1, 10), date(2098, 2, 2), date(2098, 2, 15))
                 for effective_date in snapshot_dates:
                     connection.execute(
                         text("""
@@ -175,62 +150,23 @@ def main() -> None:
                                  :rate, :rate, 'ci_financial_idempotency', NULL,
                                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                             ON CONFLICT (organization_id, base_currency, quote_currency, effective_date)
-                            DO UPDATE SET
-                                reference_rate = EXCLUDED.reference_rate,
-                                effective_rate = EXCLUDED.effective_rate,
-                                source = EXCLUDED.source,
+                            DO UPDATE SET reference_rate = EXCLUDED.reference_rate,
+                                effective_rate = EXCLUDED.effective_rate, source = EXCLUDED.source,
                                 updated_at = CURRENT_TIMESTAMP
                         """),
-                        {
-                            "id": str(uuid4()),
-                            "organization_id": tenant.organization_id,
-                            "pair_base": str(pair["base_currency"]),
-                            "pair_quote": str(pair["quote_currency"]),
-                            "effective_date": effective_date,
-                            "rate": Decimal(pair["effective_rate"]),
-                        },
+                        {"id": str(uuid4()), "organization_id": tenant.organization_id, "pair_base": str(pair["base_currency"]), "pair_quote": str(pair["quote_currency"]), "effective_date": effective_date, "rate": Decimal(pair["effective_rate"])},
                     )
 
-        invoice = create_invoice_from_order(
-            order.id, make_request("POST", f"/api/v1/finance/invoices/from-order/{order.id}"), db, tenant,  # type: ignore[arg-type]
-        )
-        sent = change_invoice_status(
-            invoice.id,
-            InvoiceStatusAction(action="send"),
-            make_request("PATCH", f"/api/v1/finance/invoices/{invoice.id}/status"),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
+        invoice = create_invoice_from_order(order.id, make_request("POST", f"/api/v1/finance/invoices/from-order/{order.id}"), db, tenant)  # type: ignore[arg-type]
+        sent = change_invoice_status(invoice.id, InvoiceStatusAction(action="send"), make_request("PATCH", f"/api/v1/finance/invoices/{invoice.id}/status"), db, tenant)  # type: ignore[arg-type]
         payment_amount = min(Decimal("1.00"), Decimal(sent.balance_due))
-        payment_payload = PaymentCreate(
-            invoice_id=sent.id,
-            account_id=account.id,
-            invoice_amount=payment_amount,
-            method="bank_transfer",
-            reference=f"CI-IDEM-{suffix}",
-        )
+        payment_payload = PaymentCreate(invoice_id=sent.id, account_id=account.id, invoice_amount=payment_amount, method="bank_transfer", reference=f"CI-IDEM-{suffix}")
         payment_key = f"ci-payment-{suffix}"
-        first_payment = safe_record_payment(
-            payment_payload,
-            make_request("POST", "/api/v1/finance/payments", payment_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
-        second_payment = safe_record_payment(
-            payment_payload,
-            make_request("POST", "/api/v1/finance/payments", payment_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
+        first_payment = safe_record_payment(payment_payload, make_request("POST", "/api/v1/finance/payments", payment_key), db, tenant)  # type: ignore[arg-type]
+        second_payment = safe_record_payment(payment_payload, make_request("POST", "/api/v1/finance/payments", payment_key), db, tenant)  # type: ignore[arg-type]
         if first_payment.id != second_payment.id:
             raise AssertionError("replayed invoice payment created a second resource")
-        payment_count = db.scalar(
-            select(func.count(Payment.id)).where(
-                Payment.organization_id == tenant.organization_id,
-                Payment.invoice_id == sent.id,
-                Payment.reference == payment_payload.reference,
-            )
-        )
+        payment_count = db.scalar(select(func.count(Payment.id)).where(Payment.organization_id == tenant.organization_id, Payment.invoice_id == sent.id, Payment.reference == payment_payload.reference))
         if payment_count != 1:
             raise AssertionError(f"expected one idempotent invoice payment, found {payment_count}")
         db.expire_all()
@@ -238,61 +174,21 @@ def main() -> None:
         if persisted_invoice is None or Decimal(persisted_invoice.amount_paid) != payment_amount:
             raise AssertionError("replayed invoice payment changed invoice balance twice")
 
-        expense_account = db.scalar(
-            select(LedgerAccount).where(
-                LedgerAccount.organization_id == tenant.organization_id,
-                LedgerAccount.category == "expense",
-                LedgerAccount.is_active.is_(True),
-            ).order_by(LedgerAccount.created_at.asc())
-        )
+        expense_account = db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id == tenant.organization_id, LedgerAccount.category == "expense", LedgerAccount.is_active.is_(True)).order_by(LedgerAccount.created_at.asc()))
         if expense_account is None:
             raise AssertionError("idempotency verification requires an active expense ledger account")
 
         bill = create_payable_bill(
-            PayableBillCreate(
-                supplier_name=f"CI Supplier {suffix}",
-                bill_date=date(2098, 1, 5),
-                due_date=date(2098, 1, 31),
-                currency=account.currency,
-                amount=Decimal("25"),
-                expense_ledger_account_id=expense_account.id,
-                description="CI idempotent payable bill",
-                reference=f"CI-BILL-{suffix}",
-            ),
-            make_request("POST", "/api/v1/accounting/payables"),
-            db,
-            tenant,  # type: ignore[arg-type]
+            PayableBillCreate(supplier_name=f"CI Supplier {suffix}", bill_date=date(2098, 1, 5), due_date=date(2098, 1, 31), currency=account.currency, amount=Decimal("25"), expense_ledger_account_id=expense_account.id, description="CI idempotent payable bill", reference=f"CI-BILL-{suffix}"),
+            make_request("POST", "/api/v1/accounting/payables"), db, tenant,  # type: ignore[arg-type]
         )
-        payable_payload = PayablePaymentCreate(
-            financial_account_id=account.id,
-            payment_date=date(2098, 1, 10),
-            amount=Decimal("10"),
-            reference=f"CI-PAYABLE-{suffix}",
-        )
+        payable_payload = PayablePaymentCreate(financial_account_id=account.id, payment_date=date(2098, 1, 10), amount=Decimal("10"), reference=f"CI-PAYABLE-{suffix}")
         payable_key = f"ci-payable-{suffix}"
-        first_payable = safe_pay_payable_bill(
-            bill.id,
-            payable_payload,
-            make_request("POST", f"/api/v1/accounting/payables/{bill.id}/payments", payable_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
-        second_payable = safe_pay_payable_bill(
-            bill.id,
-            payable_payload,
-            make_request("POST", f"/api/v1/accounting/payables/{bill.id}/payments", payable_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
+        first_payable = safe_pay_payable_bill(bill.id, payable_payload, make_request("POST", f"/api/v1/accounting/payables/{bill.id}/payments", payable_key), db, tenant)  # type: ignore[arg-type]
+        second_payable = safe_pay_payable_bill(bill.id, payable_payload, make_request("POST", f"/api/v1/accounting/payables/{bill.id}/payments", payable_key), db, tenant)  # type: ignore[arg-type]
         if first_payable.id != second_payable.id:
             raise AssertionError("replayed payable payment created a second resource")
-        payable_count = db.scalar(
-            select(func.count(PayablePayment.id)).where(
-                PayablePayment.organization_id == tenant.organization_id,
-                PayablePayment.bill_id == bill.id,
-                PayablePayment.reference == payable_payload.reference,
-            )
-        )
+        payable_count = db.scalar(select(func.count(PayablePayment.id)).where(PayablePayment.organization_id == tenant.organization_id, PayablePayment.bill_id == bill.id, PayablePayment.reference == payable_payload.reference))
         if payable_count != 1:
             raise AssertionError(f"expected one idempotent payable payment, found {payable_count}")
         db.expire_all()
@@ -301,50 +197,20 @@ def main() -> None:
             raise AssertionError("replayed payable payment changed supplier balance twice")
 
         loan = create_accounting_loan(
-            AccountingLoanCreate(
-                lender_name=f"CI Lender {suffix}",
-                lender_type="bank",
-                currency=account.currency,
-                approved_amount=Decimal("100"),
-                annual_interest_rate=Decimal("5"),
-                approval_date=date(2098, 2, 1),
-                reference=f"CI-LOAN-{suffix}",
-            ),
-            make_request("POST", "/api/v1/accounting/loans"),
-            db,
-            tenant,  # type: ignore[arg-type]
+            AccountingLoanCreate(lender_name=f"CI Lender {suffix}", lender_type="bank", currency=account.currency, approved_amount=Decimal("100"), annual_interest_rate=Decimal("5"), approval_date=date(2098, 2, 1), reference=f"CI-LOAN-{suffix}"),
+            make_request("POST", "/api/v1/accounting/loans"), db, tenant,  # type: ignore[arg-type]
         )
-        disbursement_payload = LoanDisbursementCreate(
-            account_id=account.id,
-            disbursement_date=date(2098, 2, 2),
-            principal_amount=Decimal("100"),
-            fee_withheld_amount=Decimal("2"),
-            reference=f"CI-DISB-{suffix}",
-        )
+        approved = approve_loan(loan["id"], make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/approve"), db, tenant)  # type: ignore[arg-type]
+        if approved["status"] != "approved":
+            raise AssertionError("loan idempotency fixture did not complete the required approval transition")
+
+        disbursement_payload = LoanDisbursementCreate(account_id=account.id, disbursement_date=date(2098, 2, 2), principal_amount=Decimal("100"), fee_withheld_amount=Decimal("2"), reference=f"CI-DISB-{suffix}")
         disbursement_key = f"ci-disburse-{suffix}"
-        first_disbursement = safe_disburse_loan(
-            loan["id"],
-            disbursement_payload,
-            make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/disburse", disbursement_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
-        second_disbursement = safe_disburse_loan(
-            loan["id"],
-            disbursement_payload,
-            make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/disburse", disbursement_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
+        first_disbursement = safe_disburse_loan(loan["id"], disbursement_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/disburse", disbursement_key), db, tenant)  # type: ignore[arg-type]
+        second_disbursement = safe_disburse_loan(loan["id"], disbursement_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/disburse", disbursement_key), db, tenant)  # type: ignore[arg-type]
         if first_disbursement["id"] != second_disbursement["id"]:
             raise AssertionError("replayed loan disbursement created a second resource")
-        disbursement_count = db.scalar(
-            select(func.count(LoanDisbursement.id)).where(
-                LoanDisbursement.organization_id == tenant.organization_id,
-                LoanDisbursement.loan_id == loan["id"],
-                LoanDisbursement.reference == disbursement_payload.reference,
-            )
-        )
+        disbursement_count = db.scalar(select(func.count(LoanDisbursement.id)).where(LoanDisbursement.organization_id == tenant.organization_id, LoanDisbursement.loan_id == loan["id"], LoanDisbursement.reference == disbursement_payload.reference))
         if disbursement_count != 1:
             raise AssertionError(f"expected one idempotent loan disbursement, found {disbursement_count}")
         db.expire_all()
@@ -352,39 +218,13 @@ def main() -> None:
         if persisted_loan is None or Decimal(persisted_loan.outstanding_principal) != Decimal("100.00"):
             raise AssertionError("replayed loan disbursement increased principal twice")
 
-        repayment_payload = LoanAccountingRepaymentCreate(
-            account_id=account.id,
-            payment_date=date(2098, 2, 15),
-            principal_amount=Decimal("10"),
-            interest_amount=Decimal("1"),
-            fee_amount=Decimal("0.50"),
-            fee_type="processing_fee",
-            reference=f"CI-REPAY-{suffix}",
-        )
+        repayment_payload = LoanAccountingRepaymentCreate(account_id=account.id, payment_date=date(2098, 2, 15), principal_amount=Decimal("10"), interest_amount=Decimal("1"), fee_amount=Decimal("0.50"), fee_type="processing_fee", reference=f"CI-REPAY-{suffix}")
         repayment_key = f"ci-repay-{suffix}"
-        first_repayment = safe_repay_loan(
-            loan["id"],
-            repayment_payload,
-            make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/repay", repayment_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
-        second_repayment = safe_repay_loan(
-            loan["id"],
-            repayment_payload,
-            make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/repay", repayment_key),
-            db,
-            tenant,  # type: ignore[arg-type]
-        )
+        first_repayment = safe_repay_loan(loan["id"], repayment_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/repay", repayment_key), db, tenant)  # type: ignore[arg-type]
+        second_repayment = safe_repay_loan(loan["id"], repayment_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/repay", repayment_key), db, tenant)  # type: ignore[arg-type]
         if first_repayment["id"] != second_repayment["id"]:
             raise AssertionError("replayed loan repayment created a second resource")
-        repayment_count = db.scalar(
-            select(func.count(LoanRepayment.id)).where(
-                LoanRepayment.organization_id == tenant.organization_id,
-                LoanRepayment.loan_id == loan["id"],
-                LoanRepayment.reference == repayment_payload.reference,
-            )
-        )
+        repayment_count = db.scalar(select(func.count(LoanRepayment.id)).where(LoanRepayment.organization_id == tenant.organization_id, LoanRepayment.loan_id == loan["id"], LoanRepayment.reference == repayment_payload.reference))
         if repayment_count != 1:
             raise AssertionError(f"expected one idempotent loan repayment, found {repayment_count}")
         db.expire_all()
@@ -395,6 +235,8 @@ def main() -> None:
         db.close()
 
     print("financial idempotency verification passed: invoice payment, payable payment, loan disbursement, loan repayment")
+    verify_accounting_api_hardening()
+    verify_atomic_financial_flow()
 
 
 if __name__ == "__main__":
