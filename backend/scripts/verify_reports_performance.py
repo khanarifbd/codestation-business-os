@@ -9,7 +9,13 @@ from app.api.v1.dashboard_pulse import (
     people_pulse,
     project_pulse,
 )
-from app.api.v1.reports_fast import _client_rows_fast, _project_rows_fast
+from app.api.v1.reports import _financials, _operations, _trend
+from app.api.v1.reports_fast import (
+    _client_rows_fast,
+    _financials_and_trend_fast,
+    _operations_fast,
+    _project_rows_fast,
+)
 from app.db.session import SessionLocal, engine
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -34,6 +40,10 @@ def count_selects(fn):
     return result, count
 
 
+def _dump_rows(rows):
+    return [row.model_dump() for row in rows]
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -41,17 +51,46 @@ def main() -> None:
         if organization is None:
             raise AssertionError("existing tenant fixture missing")
 
+        start = date(2020, 1, 1)
+        end = date(2035, 12, 31)
+
         _, project_queries = count_selects(
-            lambda: _project_rows_fast(db, organization.id, date(2020, 1, 1), date(2035, 12, 31), None, None, None)
+            lambda: _project_rows_fast(db, organization.id, start, end, None, None, None)
         )
         _, client_queries = count_selects(
-            lambda: _client_rows_fast(db, organization.id, date(2020, 1, 1), date(2035, 12, 31), None, None)
+            lambda: _client_rows_fast(db, organization.id, start, end, None, None)
         )
 
         if project_queries > 4:
             raise AssertionError(f"project report query regression: expected <=4 SELECTs, got {project_queries}")
         if client_queries > 4:
             raise AssertionError(f"client report query regression: expected <=4 SELECTs, got {client_queries}")
+
+        legacy_financials = _financials(db, organization.id, start, end, None, None, None)
+        legacy_trend = _trend(db, organization.id, start, end, None, None, None)
+        (fast_financials, fast_trend), overview_aggregate_queries = count_selects(
+            lambda: _financials_and_trend_fast(db, organization.id, start, end, None, None, None)
+        )
+        if overview_aggregate_queries > 5:
+            raise AssertionError(
+                "overview financial/trend query regression: "
+                f"expected <=5 SELECTs, got {overview_aggregate_queries}"
+            )
+        if _dump_rows(fast_financials) != _dump_rows(legacy_financials):
+            raise AssertionError("fast overview financial totals diverged from canonical report totals")
+        if _dump_rows(fast_trend) != _dump_rows(legacy_trend):
+            raise AssertionError("fast overview trend totals diverged from canonical report trend")
+
+        legacy_operations = _operations(db, organization.id, organization.timezone)
+        fast_operations, operations_queries = count_selects(
+            lambda: _operations_fast(db, organization.id, organization.timezone)
+        )
+        if operations_queries != 1:
+            raise AssertionError(
+                f"overview operations query regression: expected 1 SELECT, got {operations_queries}"
+            )
+        if fast_operations.model_dump() != legacy_operations.model_dump():
+            raise AssertionError("fast overview operational totals diverged from canonical report totals")
 
         membership = db.scalar(
             select(Membership).where(
@@ -95,7 +134,9 @@ def main() -> None:
 
     print(
         "reports performance verification passed: "
-        f"projects={project_queries}, clients={client_queries}, pulses={pulse_query_counts}"
+        f"projects={project_queries}, clients={client_queries}, "
+        f"overview_financial_trend={overview_aggregate_queries}, operations={operations_queries}, "
+        f"pulses={pulse_query_counts}"
     )
 
 
