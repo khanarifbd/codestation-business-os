@@ -1,4 +1,5 @@
 import logging
+import re
 from contextlib import asynccontextmanager
 from time import perf_counter
 from uuid import uuid4
@@ -22,6 +23,13 @@ CLOSED_PERIOD_MARKER = "Accounting period is closed for date"
 CLOSED_PERIOD_USER_MESSAGE = "This accounting period is closed. Reopen it with an audit reason before changing financial records."
 SLOW_REQUEST_MS = 750.0
 HIGH_QUERY_COUNT = 50
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+def _request_id(header_value: str | None) -> str:
+    if header_value and REQUEST_ID_PATTERN.fullmatch(header_value):
+        return header_value
+    return str(uuid4())
 
 
 @asynccontextmanager
@@ -70,7 +78,7 @@ async def safe_database_exception_handler(request: Request, exc: DBAPIError) -> 
 
 @app.middleware("http")
 async def request_observability(request: Request, call_next):
-    request_id = request.headers.get("x-request-id") or str(uuid4())
+    request_id = _request_id(request.headers.get("x-request-id"))
     request.state.request_id = request_id
     metrics, metrics_token = start_request_metrics()
     started_at = perf_counter()
