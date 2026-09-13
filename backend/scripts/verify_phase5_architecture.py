@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.routing import APIRoute
-
 from app.main import _request_id, app
 
 
@@ -11,24 +9,34 @@ ROOT = Path(__file__).resolve().parents[2]
 API_PREFIX = "/api/v1"
 
 
-def main() -> None:
-    public_overview_path = f"{API_PREFIX}/reports/overview"
-    overview_routes = [
-        route
-        for route in app.routes
-        if isinstance(route, APIRoute)
-        and route.path == public_overview_path
-        and "GET" in (route.methods or set())
-    ]
-    if len(overview_routes) != 1:
-        raise AssertionError(f"reports overview must have exactly one public owner, got {len(overview_routes)}")
-    if overview_routes[0].name != "reports_overview_fast":
-        raise AssertionError(f"reports overview is not owned by fast handler: {overview_routes[0].name}")
+def _require_fragment(source: str, fragment: str, message: str) -> None:
+    if fragment not in source:
+        raise AssertionError(message)
 
-    operation = app.openapi()["paths"][public_overview_path]["get"]
+
+def main() -> None:
+    # Public ownership is verified through the actual application contract. The
+    # router module also runs _assert_unique_operations(api_router) at import
+    # time, so duplicate method/path registrations fail before the app starts.
+    public_overview_path = f"{API_PREFIX}/reports/overview"
+    operation = app.openapi().get("paths", {}).get(public_overview_path, {}).get("get")
+    if operation is None:
+        raise AssertionError("public reports overview operation is missing")
     operation_id = str(operation.get("operationId") or "")
     if "reports_overview_fast" not in operation_id:
         raise AssertionError(f"OpenAPI reports overview owner regression: {operation_id}")
+
+    router_source = (ROOT / "backend/app/api/v1/router.py").read_text()
+    for fragment in (
+        '("GET", "/reports/overview")',
+        "_remove_shadowed_report_read_routes(reports_router)",
+        "_assert_unique_operations(api_router)",
+    ):
+        _require_fragment(
+            router_source,
+            fragment,
+            f"reports overview ownership/uniqueness contract is missing: {fragment}",
+        )
 
     valid_request_id = "trace-ABC_123:xyz"
     if _request_id(valid_request_id) != valid_request_id:
@@ -63,10 +71,18 @@ def main() -> None:
         'verify-production.sh" --config-only',
         'Refreshing singleton finance scheduler from candidate backend image',
         'restore_previous_scheduler',
+        'sync_active_uploads_to_volume() {',
+        'docker cp "${source_container}:/data/uploads/." "${helper_name}:/data/uploads/"',
+        'sync_active_uploads_to_volume "${active_slot}"',
     )
     for fragment in required_safe_deploy_fragments:
         if fragment not in safe_deploy:
             raise AssertionError(f"safe deployment hardening missing: {fragment}")
+
+    sync_call = safe_deploy.index('sync_active_uploads_to_volume "${active_slot}"')
+    inactive_removal = safe_deploy.index('remove_legacy_blue_if_inactive "${active_slot}"')
+    if sync_call >= inactive_removal:
+        raise AssertionError("active uploads must be preserved before any legacy active data can be removed")
 
     nginx = (ROOT / "deployment/nginx/codestation-business-os.conf").read_text()
     if "map $http_upgrade $business_os_connection_upgrade" not in nginx:
@@ -82,7 +98,7 @@ def main() -> None:
 
     print(
         "Phase 5 architecture verification passed: route ownership, request IDs, "
-        "migration ownership, persistent uploads, scheduler rollout, Nginx keepalive"
+        "migration ownership, persistent/legacy uploads, scheduler rollout, Nginx keepalive"
     )
 
 
