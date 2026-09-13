@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlalchemy import func, select, text
 from starlette.responses import FileResponse, Response
 
-from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.dependencies import DbSession, require_any_tenant_permission, require_tenant_permission
 from app.core.config import settings
 from app.models.activity_log import ActivityLog
 from app.models.membership import Membership
@@ -46,9 +46,11 @@ from app.schemas.project_execution import (
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.document_storage import storage
+from app.services.project_access import require_project_access, require_project_tab
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/projects", tags=["Project Execution"])
+ProjectReader = Annotated[TenantContext, Depends(require_any_tenant_permission("projects.view", "projects.work"))]
 ProjectWorker = Annotated[TenantContext, Depends(require_tenant_permission("projects.work"))]
 logger = logging.getLogger(__name__)
 
@@ -123,10 +125,8 @@ def _can_manage_project(db: DbSession, tenant: TenantContext, project: Project, 
 
 
 def _require_participant(db: DbSession, tenant: TenantContext, project: Project) -> Employee | None:
-    employee = _employee_for_user(db, tenant)
-    if _can_manage_project(db, tenant, project, employee) or _is_project_member(db, project, employee):
-        return employee
-    raise HTTPException(status_code=403, detail="You are not assigned to this project")
+    access = require_project_access(db, tenant, project)
+    return db.get(Employee, access.current_employee_id) if access.current_employee_id else None
 
 
 def _require_manager(db: DbSession, tenant: TenantContext, project: Project) -> Employee | None:
@@ -295,31 +295,38 @@ def _recalculate_progress(db: DbSession, project: Project) -> None:
             milestone.completed_at = None
 
 
-def _summary(db: DbSession, project: Project) -> ProjectExecutionSummary:
+def _summary(db: DbSession, project: Project, allowed_tabs: frozenset[str]) -> ProjectExecutionSummary:
     today = datetime.now(timezone.utc).date()
-    task_count = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id)) or 0
-    open_count = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id, ProjectTask.status.not_in(["completed", "cancelled"]))) or 0
-    overdue = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id, ProjectTask.due_date < today, ProjectTask.status.not_in(["completed", "cancelled"]))) or 0
-    blocked = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id, ProjectTask.status == "blocked")) or 0
-    milestones = db.scalar(select(func.count(ProjectMilestone.id)).where(ProjectMilestone.project_id == project.id)) or 0
-    documents = db.scalar(select(func.count(ProjectDocument.id)).where(ProjectDocument.project_id == project.id)) or 0
-    credentials = db.scalar(select(func.count(ProjectCredential.id)).where(ProjectCredential.project_id == project.id)) or 0
+    can_see_tasks = "tasks" in allowed_tabs or "overview" in allowed_tabs
+    can_see_milestones = "milestones" in allowed_tabs or "overview" in allowed_tabs
+    task_count = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id)) or 0 if can_see_tasks else 0
+    open_count = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id, ProjectTask.status.not_in(["completed", "cancelled"]))) or 0 if can_see_tasks else 0
+    overdue = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id, ProjectTask.due_date < today, ProjectTask.status.not_in(["completed", "cancelled"]))) or 0 if can_see_tasks else 0
+    blocked = db.scalar(select(func.count(ProjectTask.id)).where(ProjectTask.project_id == project.id, ProjectTask.status == "blocked")) or 0 if can_see_tasks else 0
+    milestones = db.scalar(select(func.count(ProjectMilestone.id)).where(ProjectMilestone.project_id == project.id)) or 0 if can_see_milestones else 0
+    documents = (db.scalar(select(func.count(ProjectDocument.id)).where(ProjectDocument.project_id == project.id)) or 0) if "documents" in allowed_tabs else 0
+    credentials = (db.scalar(select(func.count(ProjectCredential.id)).where(ProjectCredential.project_id == project.id)) or 0) if "credentials" in allowed_tabs else 0
     return ProjectExecutionSummary(
-        progress_percent=project.progress_percent, milestone_count=milestones, task_count=task_count,
-        open_task_count=open_count, overdue_task_count=overdue, blocked_task_count=blocked,
-        document_count=documents, credential_count=credentials,
+        progress_percent=project.progress_percent, milestone_count=int(milestones), task_count=int(task_count),
+        open_task_count=int(open_count), overdue_task_count=int(overdue), blocked_task_count=int(blocked),
+        document_count=int(documents), credential_count=int(credentials),
     )
 
 
 @router.get("/{project_id}/workspace", response_model=ProjectWorkspace)
-def get_workspace(project_id: str, db: DbSession, tenant: ProjectWorker) -> ProjectWorkspace:
+def get_workspace(project_id: str, db: DbSession, tenant: ProjectReader) -> ProjectWorkspace:
     project = _project(db, tenant, project_id)
-    employee = _require_participant(db, tenant, project)
+    access = require_project_access(db, tenant, project)
+    employee = _employee_for_user(db, tenant)
+    allowed = access.allowed_tabs
     return ProjectWorkspace(
-        summary=_summary(db, project), milestones=_milestone_reads(db, project), tasks=_task_reads(db, project),
-        recent_work=_work_log_reads(db, project), documents=_document_reads(db, project),
-        credentials=_credential_reads(db, tenant, project, employee),
-        can_manage_credentials=_can_manage_project(db, tenant, project, employee),
+        summary=_summary(db, project, allowed),
+        milestones=_milestone_reads(db, project) if "milestones" in allowed or "overview" in allowed else [],
+        tasks=_task_reads(db, project) if "tasks" in allowed else [],
+        recent_work=_work_log_reads(db, project) if "work" in allowed or "overview" in allowed else [],
+        documents=_document_reads(db, project) if "documents" in allowed else [],
+        credentials=_credential_reads(db, tenant, project, employee) if "credentials" in allowed else [],
+        can_manage_credentials="credentials" in allowed and _can_manage_project(db, tenant, project, employee),
     )
 
 
@@ -419,6 +426,7 @@ def update_task(project_id: str, task_id: str, payload: TaskUpdate, request: Req
 @router.post("/{project_id}/tasks/{task_id}/progress", response_model=TaskRead)
 def update_task_progress(project_id: str, task_id: str, payload: TaskProgressUpdate, request: Request, db: DbSession, tenant: ProjectWorker) -> TaskRead:
     project = _project(db, tenant, project_id, lock=True); _ensure_open(project)
+    require_project_tab(db, tenant, project, "tasks")
     employee = _employee_for_user(db, tenant)
     if employee is None: raise HTTPException(status_code=403, detail="An active employee profile is required")
     item = db.scalar(select(ProjectTask).where(ProjectTask.id == task_id, ProjectTask.project_id == project.id).with_for_update())
@@ -502,8 +510,8 @@ def _document_file(db: DbSession, project: Project, document_id: str) -> tuple[P
 
 
 @router.get("/{project_id}/documents/{document_id}/preview")
-def preview_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectWorker) -> FileResponse:
-    project = _project(db, tenant, project_id); _require_participant(db, tenant, project)
+def preview_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectReader) -> FileResponse:
+    project = _project(db, tenant, project_id); require_project_tab(db, tenant, project, "documents")
     _, path, filename, media_type = _document_file(db, project, document_id)
     if media_type not in PREVIEW_MEDIA_TYPES:
         raise HTTPException(status_code=415, detail="Preview is not available for this file type. Please download the document.")
@@ -519,8 +527,8 @@ def preview_project_document(project_id: str, document_id: str, db: DbSession, t
 
 
 @router.get("/{project_id}/documents/{document_id}/file")
-def download_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectWorker) -> FileResponse:
-    project = _project(db, tenant, project_id); _require_participant(db, tenant, project)
+def download_project_document(project_id: str, document_id: str, db: DbSession, tenant: ProjectReader) -> FileResponse:
+    project = _project(db, tenant, project_id); require_project_tab(db, tenant, project, "documents")
     _, path, filename, media_type = _document_file(db, project, document_id)
     return FileResponse(path, media_type=media_type, filename=filename)
 
@@ -617,6 +625,7 @@ def update_credential(project_id: str, credential_id: str, payload: CredentialUp
 @router.post("/{project_id}/credentials/{credential_id}/reveal", response_model=CredentialReveal)
 def reveal_credential(project_id: str, credential_id: str, request: Request, db: DbSession, tenant: ProjectWorker) -> CredentialReveal:
     project = _project(db, tenant, project_id)
+    require_project_tab(db, tenant, project, "credentials")
     employee = _require_participant(db, tenant, project)
     item = db.scalar(select(ProjectCredential).where(ProjectCredential.id == credential_id, ProjectCredential.project_id == project.id))
     if item is None: raise HTTPException(status_code=404, detail="Credential not found")

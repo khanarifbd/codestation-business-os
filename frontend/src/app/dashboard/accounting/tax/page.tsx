@@ -1,0 +1,30 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import { AccountingNav } from "@/components/accounting-nav";
+
+type TaxCode = { id:string; code:string; name:string; tax_kind:"sales"|"purchase"|"withholding"; rate:string; recoverable_percent:string; country_code?:string|null; jurisdiction?:string|null; is_active:boolean };
+type ReportRow = { currency:string; output_tax:string; input_tax:string; recoverable_input_tax:string; withholding_tax:string; net_indirect_tax_payable:string };
+
+export default function TaxPage(){
+  const [codes,setCodes]=useState<TaxCode[]>([]); const [rows,setRows]=useState<ReportRow[]>([]); const [error,setError]=useState("");
+  const today=new Date().toISOString().slice(0,10); const yearStart=`${new Date().getFullYear()}-01-01`;
+  const [from,setFrom]=useState(yearStart); const [to,setTo]=useState(today);
+  const [form,setForm]=useState({code:"",name:"",tax_kind:"sales",rate:"0",recoverable_percent:"100",country_code:"",jurisdiction:""});
+  async function load(){ const [c,r]=await Promise.all([fetch("/api/accounting/tax/codes"),fetch(`/api/accounting/tax/report?date_from=${from}&date_to=${to}`)]); if(c.ok)setCodes(await c.json()); if(r.ok)setRows((await r.json()).rows??[]); }
+  useEffect(()=>{void load()},[from,to]);
+  async function submit(e:FormEvent){e.preventDefault();setError(""); const res=await fetch("/api/accounting/tax/codes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,rate:Number(form.rate),recoverable_percent:Number(form.recoverable_percent),country_code:form.country_code||null,jurisdiction:form.jurisdiction||null})}); if(!res.ok){const p=await res.json().catch(()=>({}));setError(p.detail??"Could not create tax code");return;} setForm({code:"",name:"",tax_kind:"sales",rate:"0",recoverable_percent:"100",country_code:"",jurisdiction:""}); await load();}
+  return <div className="space-y-6"><AccountingNav/><div><h1 className="text-2xl font-semibold">Tax Center</h1><p className="text-sm text-neutral-500">Country-agnostic VAT, GST, sales-tax and withholding controls.</p></div>
+    <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+      <form onSubmit={submit} className="space-y-3 rounded-2xl border bg-white p-5"><h2 className="font-semibold">Add tax code</h2>{error&&<p className="text-sm text-red-600">{error}</p>}
+        <div className="grid grid-cols-2 gap-3"><input className="rounded-xl border px-3 py-2" placeholder="Code e.g. VAT15" value={form.code} onChange={e=>setForm({...form,code:e.target.value})} required/><input className="rounded-xl border px-3 py-2" placeholder="Name" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></div>
+        <div className="grid grid-cols-2 gap-3"><select className="rounded-xl border px-3 py-2" value={form.tax_kind} onChange={e=>setForm({...form,tax_kind:e.target.value})}><option value="sales">Sales / Output</option><option value="purchase">Purchase / Input</option><option value="withholding">Withholding</option></select><input className="rounded-xl border px-3 py-2" type="number" step="0.0001" min="0" placeholder="Rate %" value={form.rate} onChange={e=>setForm({...form,rate:e.target.value})}/></div>
+        {form.tax_kind==="purchase"&&<input className="w-full rounded-xl border px-3 py-2" type="number" step="0.01" min="0" max="100" placeholder="Recoverable %" value={form.recoverable_percent} onChange={e=>setForm({...form,recoverable_percent:e.target.value})}/>}<div className="grid grid-cols-2 gap-3"><input className="rounded-xl border px-3 py-2" placeholder="Country code (BD)" maxLength={2} value={form.country_code} onChange={e=>setForm({...form,country_code:e.target.value.toUpperCase()})}/><input className="rounded-xl border px-3 py-2" placeholder="Jurisdiction" value={form.jurisdiction} onChange={e=>setForm({...form,jurisdiction:e.target.value})}/></div><button className="rounded-xl bg-neutral-950 px-4 py-2 text-sm font-medium text-white">Create tax code</button>
+      </form>
+      <div className="rounded-2xl border bg-white p-5"><h2 className="mb-3 font-semibold">Configured codes</h2><div className="space-y-2">{codes.length===0?<p className="text-sm text-neutral-500">No tax codes yet.</p>:codes.map(c=><div key={c.id} className="flex items-center justify-between rounded-xl border p-3"><div><div className="font-medium">{c.code} · {c.name}</div><div className="text-xs text-neutral-500">{c.tax_kind} · {c.country_code||"Global"}{c.jurisdiction?` · ${c.jurisdiction}`:""}</div></div><div className="text-right"><div className="font-semibold">{Number(c.rate).toFixed(2)}%</div>{c.tax_kind==="purchase"&&<div className="text-xs text-neutral-500">{Number(c.recoverable_percent).toFixed(0)}% recoverable</div>}</div></div>)}</div></div>
+    </div>
+    <div className="rounded-2xl border bg-white p-5"><div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Tax position</h2><p className="text-sm text-neutral-500">Output tax from issued invoices; input and withholding tax from vendor bills.</p></div><div className="flex gap-2"><input type="date" className="rounded-xl border px-3 py-2 text-sm" value={from} onChange={e=>setFrom(e.target.value)}/><input type="date" className="rounded-xl border px-3 py-2 text-sm" value={to} onChange={e=>setTo(e.target.value)}/></div></div>
+      <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left text-neutral-500"><th className="py-2">Currency</th><th>Output tax</th><th>Input tax</th><th>Recoverable</th><th>Withholding</th><th>Net indirect tax</th></tr></thead><tbody>{rows.map(r=><tr key={r.currency} className="border-b last:border-0"><td className="py-3 font-medium">{r.currency}</td><td>{Number(r.output_tax).toFixed(2)}</td><td>{Number(r.input_tax).toFixed(2)}</td><td>{Number(r.recoverable_input_tax).toFixed(2)}</td><td>{Number(r.withholding_tax).toFixed(2)}</td><td className="font-semibold">{Number(r.net_indirect_tax_payable).toFixed(2)}</td></tr>)}</tbody></table></div>
+    </div>
+  </div>;
+}

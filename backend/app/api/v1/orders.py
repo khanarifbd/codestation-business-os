@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -11,7 +12,10 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.activity_log import ActivityLog
 from app.models.crm import Client
+from app.models.finance import Invoice
+from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.sales import Quotation, QuotationItem
@@ -20,10 +24,11 @@ from app.models.user import User
 from app.schemas.orders import OrderDetail, OrderItemRead, OrderListItem, OrderPage, OrderStatusChange, OrderSummary
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.order_completion_guard import assert_order_can_complete
+from app.services.quotation_order_conversion import seed_order_billing_from_quotation
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/sales", tags=["Orders"])
-
 OrderViewer = Annotated[TenantContext, Depends(require_tenant_permission("orders.view"))]
 OrderManager = Annotated[TenantContext, Depends(require_tenant_permission("orders.manage"))]
 
@@ -68,7 +73,7 @@ def _order_query(organization_id: str):
     return (
         select(Order, Client.display_name, Quotation.quotation_number, user_alias.full_name)
         .join(Client, Client.id == Order.client_id)
-        .join(Quotation, Quotation.id == Order.quotation_id)
+        .outerjoin(Quotation, Quotation.id == Order.quotation_id)
         .outerjoin(employee_alias, employee_alias.id == Order.assigned_employee_id)
         .outerjoin(membership_alias, membership_alias.id == employee_alias.membership_id)
         .outerjoin(user_alias, user_alias.id == membership_alias.user_id)
@@ -85,6 +90,8 @@ def _list_item(row) -> OrderListItem:
         quotation_number=quotation_number,
         client_id=order.client_id,
         client_name=client_name,
+        source=order.source,
+        external_order_id=order.external_order_id,
         status=order.status,
         subject=order.subject,
         order_date=order.order_date,
@@ -97,6 +104,102 @@ def _list_item(row) -> OrderListItem:
     )
 
 
+def _fulfilled_quantities(db: DbSession, organization_id: str, order_item_ids: list[str]) -> dict[str, Decimal]:
+    if not order_item_ids:
+        return {}
+    rows = db.execute(
+        select(OrderFulfillmentItem.order_item_id, func.coalesce(func.sum(OrderFulfillmentItem.quantity), 0))
+        .join(
+            OrderFulfillment,
+            (OrderFulfillment.id == OrderFulfillmentItem.fulfillment_id)
+            & (OrderFulfillment.organization_id == organization_id),
+        )
+        .where(
+            OrderFulfillmentItem.organization_id == organization_id,
+            OrderFulfillmentItem.order_item_id.in_(order_item_ids),
+            OrderFulfillment.status == "posted",
+        )
+        .group_by(OrderFulfillmentItem.order_item_id)
+    ).all()
+    return {str(order_item_id): Decimal(quantity or 0) for order_item_id, quantity in rows}
+
+
+def _stock_items(db: DbSession, organization_id: str, order_id: str) -> list[OrderItem]:
+    return db.scalars(
+        select(OrderItem)
+        .where(
+            OrderItem.organization_id == organization_id,
+            OrderItem.order_id == order_id,
+            OrderItem.item_type_snapshot == "stock_item",
+            OrderItem.product_id.is_not(None),
+        )
+        .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
+    ).all()
+
+
+def _assert_stock_fulfilled(db: DbSession, organization_id: str, order: Order) -> None:
+    items = _stock_items(db, organization_id, order.id)
+    if not items:
+        return
+    fulfilled = _fulfilled_quantities(db, organization_id, [item.id for item in items])
+    remaining = []
+    for item in items:
+        balance = Decimal(item.quantity) - fulfilled.get(item.id, Decimal("0"))
+        if balance > 0:
+            remaining.append(f"{item.item_name_snapshot}: {balance.normalize()} {item.unit_snapshot}")
+    if remaining:
+        preview = ", ".join(remaining[:3])
+        if len(remaining) > 3:
+            preview += f" and {len(remaining) - 3} more"
+        raise HTTPException(status_code=409, detail=f"Fulfill all stock items before completing this order. Remaining: {preview}")
+
+
+def _has_posted_fulfillment(db: DbSession, organization_id: str, order_id: str) -> bool:
+    return bool(
+        db.scalar(
+            select(OrderFulfillment.id).where(
+                OrderFulfillment.organization_id == organization_id,
+                OrderFulfillment.order_id == order_id,
+                OrderFulfillment.status == "posted",
+            ).limit(1)
+        )
+    )
+
+
+def _active_invoice_number(db: DbSession, organization_id: str, order_id: str) -> str | None:
+    return db.scalar(
+        select(Invoice.invoice_number)
+        .where(
+            Invoice.organization_id == organization_id,
+            Invoice.order_id == order_id,
+            Invoice.status != "cancelled",
+        )
+        .order_by(Invoice.created_at.desc())
+        .limit(1)
+    )
+
+
+def _cancellation_reason(db: DbSession, organization_id: str, order_id: str) -> str | None:
+    logs = db.scalars(
+        select(ActivityLog)
+        .where(
+            ActivityLog.organization_id == organization_id,
+            ActivityLog.entity_type == "order",
+            ActivityLog.entity_id == order_id,
+            ActivityLog.action == "sales.order.status_changed",
+        )
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .limit(20)
+    ).all()
+    for log in logs:
+        after = log.after_data if isinstance(log.after_data, dict) else {}
+        if after.get("status") != "cancelled":
+            continue
+        reason = after.get("cancellation_reason")
+        return str(reason).strip() if reason else None
+    return None
+
+
 def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
     row = db.execute(_order_query(organization_id).where(Order.id == order_id)).first()
     if row is None:
@@ -107,6 +210,7 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
         .where(OrderItem.organization_id == organization_id, OrderItem.order_id == order.id)
         .order_by(OrderItem.sort_order.asc(), OrderItem.created_at.asc())
     ).all()
+    fulfilled = _fulfilled_quantities(db, organization_id, [item.id for item in items])
     return OrderDetail(
         id=order.id,
         order_number=order.order_number,
@@ -116,6 +220,8 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
         source_lead_id=order.source_lead_id,
         assigned_employee_id=order.assigned_employee_id,
         assigned_employee_name=assigned_name,
+        source=order.source,
+        external_order_id=order.external_order_id,
         status=order.status,
         subject=order.subject,
         order_date=order.order_date,
@@ -141,13 +247,21 @@ def _detail(db: DbSession, organization_id: str, order_id: str) -> OrderDetail:
         started_at=order.started_at,
         completed_at=order.completed_at,
         cancelled_at=order.cancelled_at,
+        cancellation_reason=_cancellation_reason(db, organization_id, order.id) if order.status == "cancelled" else None,
         items=[
             OrderItemRead(
                 id=item.id,
                 quotation_item_id=item.quotation_item_id,
+                product_id=item.product_id,
                 sort_order=item.sort_order,
+                item_name_snapshot=item.item_name_snapshot,
+                sku_snapshot=item.sku_snapshot,
+                item_type_snapshot=item.item_type_snapshot,
+                unit_snapshot=item.unit_snapshot,
                 description=item.description,
                 quantity=item.quantity,
+                fulfilled_quantity=fulfilled.get(item.id, Decimal("0")) if item.item_type_snapshot == "stock_item" and item.product_id else Decimal("0"),
+                remaining_quantity=max(Decimal(item.quantity) - fulfilled.get(item.id, Decimal("0")), Decimal("0")) if item.item_type_snapshot == "stock_item" and item.product_id else Decimal("0"),
                 unit_price=item.unit_price,
                 discount_percent=item.discount_percent,
                 tax_rate=item.tax_rate,
@@ -192,7 +306,14 @@ def list_orders(
     if search:
         needle = f"%{search.strip()}%"
         query = query.where(
-            or_(Order.order_number.ilike(needle), Order.subject.ilike(needle), Client.display_name.ilike(needle), Quotation.quotation_number.ilike(needle))
+            or_(
+                Order.order_number.ilike(needle),
+                Order.subject.ilike(needle),
+                Order.source.ilike(needle),
+                Order.external_order_id.ilike(needle),
+                Client.display_name.ilike(needle),
+                Quotation.quotation_number.ilike(needle),
+            )
         )
     if order_status:
         query = query.where(Order.status == order_status)
@@ -204,10 +325,7 @@ def list_orders(
     rows = db.execute(query.order_by(Order.created_at.desc(), Order.id.desc()).limit(limit + 1)).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
-    return OrderPage(
-        items=[_list_item(row) for row in rows],
-        next_cursor=_encode_cursor(rows[-1][0].created_at, rows[-1][0].id) if has_more and rows else None,
-    )
+    return OrderPage(items=[_list_item(row) for row in rows], next_cursor=_encode_cursor(rows[-1][0].created_at, rows[-1][0].id) if has_more and rows else None)
 
 
 @router.get("/orders/{order_id}", response_model=OrderDetail)
@@ -216,28 +334,15 @@ def get_order(order_id: str, db: DbSession, tenant: OrderViewer) -> OrderDetail:
 
 
 @router.post("/orders/from-quotation/{quotation_id}", response_model=OrderDetail, status_code=status.HTTP_201_CREATED)
-def create_order_from_quotation(
-    quotation_id: str,
-    request: Request,
-    db: DbSession,
-    tenant: OrderManager,
-) -> OrderDetail:
-    quotation = db.scalar(
-        select(Quotation)
-        .where(Quotation.id == quotation_id, Quotation.organization_id == tenant.organization_id)
-        .with_for_update()
-    )
+def create_order_from_quotation(quotation_id: str, request: Request, db: DbSession, tenant: OrderManager) -> OrderDetail:
+    quotation = db.scalar(select(Quotation).where(Quotation.id == quotation_id, Quotation.organization_id == tenant.organization_id).with_for_update())
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
     if quotation.status != "accepted":
         raise HTTPException(status_code=409, detail="Only accepted quotations can be converted to an order")
-
-    existing = db.scalar(
-        select(Order).where(Order.organization_id == tenant.organization_id, Order.quotation_id == quotation.id)
-    )
+    existing = db.scalar(select(Order).where(Order.organization_id == tenant.organization_id, Order.quotation_id == quotation.id))
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Quotation already has order {existing.order_number}")
-
     quotation_items = db.scalars(
         select(QuotationItem)
         .where(QuotationItem.organization_id == tenant.organization_id, QuotationItem.quotation_id == quotation.id)
@@ -280,28 +385,36 @@ def create_order_from_quotation(
     )
     db.add(order)
     db.flush()
-
     for item in quotation_items:
-        db.add(
-            OrderItem(
-                organization_id=tenant.organization_id,
-                order_id=order.id,
-                quotation_item_id=item.id,
-                sort_order=item.sort_order,
-                description=item.description,
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                discount_percent=item.discount_percent,
-                tax_rate=item.tax_rate,
-                line_subtotal=item.line_subtotal,
-                discount_amount=item.discount_amount,
-                taxable_amount=item.taxable_amount,
-                tax_amount=item.tax_amount,
-                line_total=item.line_total,
-            )
-        )
+        db.add(OrderItem(
+            organization_id=tenant.organization_id,
+            order_id=order.id,
+            quotation_item_id=item.id,
+            product_id=item.product_id,
+            sort_order=item.sort_order,
+            item_name_snapshot=item.item_name_snapshot,
+            sku_snapshot=item.sku_snapshot,
+            item_type_snapshot=item.item_type_snapshot,
+            unit_snapshot=item.unit_snapshot,
+            service_duration_months_snapshot=item.service_duration_months_snapshot,
+            description=item.description,
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            discount_percent=item.discount_percent,
+            tax_rate=item.tax_rate,
+            line_subtotal=item.line_subtotal,
+            discount_amount=item.discount_amount,
+            taxable_amount=item.taxable_amount,
+            tax_amount=item.tax_amount,
+            line_total=item.line_total,
+        ))
     db.flush()
-
+    billing_milestones = seed_order_billing_from_quotation(
+        db,
+        quotation=quotation,
+        order=order,
+        user_id=tenant.user_id,
+    )
     record_activity(
         db,
         action="sales.order.created_from_quotation",
@@ -314,14 +427,19 @@ def create_order_from_quotation(
             "order_number": order.order_number,
             "quotation_id": quotation.id,
             "quotation_number": quotation.quotation_number,
+            "quotation_revision_number": quotation.revision_number,
             "client_id": order.client_id,
             "status": order.status,
             "currency": order.currency,
             "total": str(order.total),
             "item_count": len(quotation_items),
+            "billing_milestone_count": len(billing_milestones),
         },
-        metadata={"source_quotation_id": quotation.id},
-        message=f"Order {order.order_number} created from accepted quotation {quotation.quotation_number}",
+        metadata={
+            "source_quotation_id": quotation.id,
+            "source_quotation_payment_milestone_ids": [item.source_quotation_payment_milestone_id for item in billing_milestones],
+        },
+        message=f"Order {order.order_number} created from accepted quotation {quotation.quotation_number} R{quotation.revision_number}",
         request=request,
     )
     db.commit()
@@ -329,31 +447,28 @@ def create_order_from_quotation(
 
 
 @router.patch("/orders/{order_id}/status", response_model=OrderDetail)
-def change_order_status(
-    order_id: str,
-    payload: OrderStatusChange,
-    request: Request,
-    db: DbSession,
-    tenant: OrderManager,
-) -> OrderDetail:
-    order = db.scalar(
-        select(Order)
-        .where(Order.id == order_id, Order.organization_id == tenant.organization_id)
-        .with_for_update()
-    )
+def change_order_status(order_id: str, payload: OrderStatusChange, request: Request, db: DbSession, tenant: OrderManager) -> OrderDetail:
+    order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == tenant.organization_id).with_for_update())
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
     if order.status == payload.status:
         return _detail(db, tenant.organization_id, order.id)
-
-    allowed = {
-        "confirmed": {"in_progress", "cancelled"},
-        "in_progress": {"completed", "cancelled"},
-        "completed": {"in_progress"},
-        "cancelled": set(),
-    }
+    allowed = {"confirmed": {"in_progress", "cancelled"}, "in_progress": {"completed", "cancelled"}, "completed": {"in_progress"}, "cancelled": set()}
     if payload.status not in allowed.get(order.status, set()):
         raise HTTPException(status_code=409, detail=f"Order cannot move from {order.status} to {payload.status}")
+    cancellation_reason: str | None = None
+    if payload.status == "completed":
+        _assert_stock_fulfilled(db, tenant.organization_id, order)
+        assert_order_can_complete(db, order)
+    if payload.status == "cancelled":
+        cancellation_reason = (payload.reason or "").strip()
+        if len(cancellation_reason) < 3:
+            raise HTTPException(status_code=400, detail="Cancellation reason is required and must be at least 3 characters")
+        if _has_posted_fulfillment(db, tenant.organization_id, order.id):
+            raise HTTPException(status_code=409, detail="This order has posted stock fulfillment and cannot be cancelled directly. Reverse the fulfillment before cancelling the order.")
+        invoice_number = _active_invoice_number(db, tenant.organization_id, order.id)
+        if invoice_number:
+            raise HTTPException(status_code=409, detail=f"Order has active invoice {invoice_number}. Cancel or reverse the invoice before cancelling the order.")
 
     previous = order.status
     now = datetime.now(timezone.utc)
@@ -368,8 +483,10 @@ def change_order_status(
     elif payload.status == "cancelled":
         order.cancelled_at = now
     db.flush()
-
     is_reopen = previous == "completed" and order.status == "in_progress"
+    after = {"status": order.status}
+    if cancellation_reason:
+        after["cancellation_reason"] = cancellation_reason
     record_activity(
         db,
         action="sales.order.reopened" if is_reopen else "sales.order.status_changed",
@@ -379,9 +496,12 @@ def change_order_status(
         entity_type="order",
         entity_id=order.id,
         before={"status": previous},
-        after={"status": order.status},
+        after=after,
+        metadata={"cancellation_reason": cancellation_reason} if cancellation_reason else None,
         message=(
-            f"Order {order.order_number} reopened from completed to in_progress"
+            f"Order {order.order_number} cancelled from {previous}: {cancellation_reason[:350]}"
+            if cancellation_reason
+            else f"Order {order.order_number} reopened from completed to in_progress"
             if is_reopen
             else f"Order {order.order_number} status changed from {previous} to {order.status}"
         ),

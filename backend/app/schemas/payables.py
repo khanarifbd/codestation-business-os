@@ -9,7 +9,9 @@ class PayableBillCreate(BaseModel):
     bill_date: date
     due_date: date | None = None
     currency: str = Field(min_length=3, max_length=3)
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(gt=0, description="Vendor bill subtotal before tax")
+    tax_code_id: str | None = None
+    withholding_tax_code_id: str | None = None
     expense_ledger_account_id: str
     description: str = Field(min_length=1, max_length=500)
     reference: str | None = Field(default=None, max_length=180)
@@ -23,7 +25,16 @@ class PayableBillRead(BaseModel):
     bill_date: date
     due_date: date | None
     currency: str
+    subtotal_amount: Decimal
+    tax_code_id: str | None
+    tax_rate_snapshot: Decimal | None
+    input_tax_amount: Decimal
+    recoverable_tax_amount: Decimal
+    withholding_tax_code_id: str | None
+    withholding_rate_snapshot: Decimal | None
+    withholding_tax_amount: Decimal
     original_amount: Decimal
+    net_payable_amount: Decimal
     amount_paid: Decimal
     balance_due: Decimal
     expense_ledger_account_id: str

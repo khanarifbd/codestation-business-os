@@ -17,7 +17,8 @@ from starlette.responses import FileResponse, Response
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.crm import Client
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
-from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
+from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, Payment
+from app.models.orders import Order
 from app.models.projects import Project
 from app.schemas.expenses import (
     ClientProfitabilityRow,
@@ -32,6 +33,9 @@ from app.schemas.expenses import (
     ExpenseMeta,
     ExpenseMetaAccount,
     ExpenseMetaClient,
+    ExpenseMetaInvoice,
+    ExpenseMetaOrder,
+    ExpenseMetaPayment,
     ExpenseMetaProject,
     ExpensePage,
     ExpenseSummary,
@@ -200,13 +204,19 @@ def _expense_row_query(organization_id: str):
             Client.display_name.label("client_name"),
             Project.project_number.label("project_number"),
             Project.name.label("project_name"),
+            Order.order_number.label("order_number"),
+            Invoice.invoice_number.label("invoice_number"),
+            Payment.payment_number.label("payment_number"),
             func.coalesce(document_counts.c.document_count, 0).label("document_count"),
         )
-        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
-        .join(FinancialAccount, FinancialAccount.id == Expense.account_id)
-        .outerjoin(Vendor, Vendor.id == Expense.vendor_id)
-        .outerjoin(Client, Client.id == Expense.client_id)
-        .outerjoin(Project, Project.id == Expense.project_id)
+        .join(ExpenseCategory, and_(ExpenseCategory.id == Expense.category_id, ExpenseCategory.organization_id == organization_id))
+        .join(FinancialAccount, and_(FinancialAccount.id == Expense.account_id, FinancialAccount.organization_id == organization_id))
+        .outerjoin(Vendor, and_(Vendor.id == Expense.vendor_id, Vendor.organization_id == organization_id))
+        .outerjoin(Client, and_(Client.id == Expense.client_id, Client.organization_id == organization_id))
+        .outerjoin(Project, and_(Project.id == Expense.project_id, Project.organization_id == organization_id))
+        .outerjoin(Order, and_(Order.id == Expense.order_id, Order.organization_id == organization_id))
+        .outerjoin(Invoice, and_(Invoice.id == Expense.invoice_id, Invoice.organization_id == organization_id))
+        .outerjoin(Payment, and_(Payment.id == Expense.payment_id, Payment.organization_id == organization_id))
         .outerjoin(document_counts, document_counts.c.expense_id == Expense.id)
         .where(Expense.organization_id == organization_id)
     )
@@ -231,6 +241,12 @@ def _expense_list_item(row) -> ExpenseListItem:
         project_id=item.project_id,
         project_number=row.project_number,
         project_name=row.project_name,
+        order_id=item.order_id,
+        order_number=row.order_number,
+        invoice_id=item.invoice_id,
+        invoice_number=row.invoice_number,
+        payment_id=item.payment_id,
+        payment_number=row.payment_number,
         expense_currency=item.expense_currency,
         expense_amount=item.expense_amount,
         account_currency=item.account_currency,
@@ -260,6 +276,76 @@ def _expense_detail(db: DbSession, organization_id: str, expense_id: str) -> Exp
         voided_at=item.voided_at,
         documents=_document_reads(db, item.id),
     )
+
+
+def _resolve_expense_relationships(payload: ExpenseCreate, db: DbSession, organization_id: str):
+    client_id = payload.client_id
+    project_id = payload.project_id
+    order_id = payload.order_id
+    invoice_id = payload.invoice_id
+    payment_id = payload.payment_id
+
+    payment = None
+    invoice = None
+    project = None
+    order = None
+    client = None
+
+    if payment_id:
+        payment = db.scalar(
+            select(Payment).where(
+                Payment.id == payment_id,
+                Payment.organization_id == organization_id,
+                Payment.status == "confirmed",
+            )
+        )
+        if payment is None:
+            raise HTTPException(status_code=404, detail="Confirmed payment not found in this organization")
+        if invoice_id and invoice_id != payment.invoice_id:
+            raise HTTPException(status_code=400, detail="Selected payment does not belong to the selected invoice")
+        invoice_id = payment.invoice_id
+
+    if invoice_id:
+        invoice = db.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == organization_id))
+        if invoice is None:
+            raise HTTPException(status_code=404, detail="Invoice not found in this organization")
+        if client_id and client_id != invoice.client_id:
+            raise HTTPException(status_code=400, detail="Selected client does not match the invoice client")
+        client_id = invoice.client_id
+        if invoice.order_id:
+            if order_id and order_id != invoice.order_id:
+                raise HTTPException(status_code=400, detail="Selected order does not match the invoice order")
+            order_id = invoice.order_id
+        if invoice.project_id:
+            if project_id and project_id != invoice.project_id:
+                raise HTTPException(status_code=400, detail="Selected project does not match the invoice project")
+            project_id = invoice.project_id
+
+    if project_id:
+        project = db.scalar(select(Project).where(Project.id == project_id, Project.organization_id == organization_id))
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found in this organization")
+        if client_id and client_id != project.client_id:
+            raise HTTPException(status_code=400, detail="Selected client does not match the project client")
+        if order_id and order_id != project.order_id:
+            raise HTTPException(status_code=400, detail="Selected order does not match the project order")
+        client_id = project.client_id
+        order_id = project.order_id
+
+    if order_id:
+        order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == organization_id))
+        if order is None:
+            raise HTTPException(status_code=404, detail="Order not found in this organization")
+        if client_id and client_id != order.client_id:
+            raise HTTPException(status_code=400, detail="Selected client does not match the order client")
+        client_id = order.client_id
+
+    if client_id:
+        client = db.scalar(select(Client).where(Client.id == client_id, Client.organization_id == organization_id))
+        if client is None:
+            raise HTTPException(status_code=404, detail="Client not found in this organization")
+
+    return client, project, order, invoice, payment
 
 
 @router.get("/expense-summary", response_model=ExpenseSummary)
@@ -346,9 +432,28 @@ def expense_meta(db: DbSession, tenant: FinanceViewer) -> ExpenseMeta:
     ).all()
     project_rows = db.execute(
         select(Project, Client.display_name)
-        .join(Client, Client.id == Project.client_id)
-        .where(Project.organization_id == tenant.organization_id, Project.status != "cancelled")
+        .join(Client, and_(Client.id == Project.client_id, Client.organization_id == tenant.organization_id))
+        .where(Project.organization_id == tenant.organization_id)
         .order_by(Project.created_at.desc())
+        .limit(500)
+    ).all()
+    orders = db.scalars(
+        select(Order)
+        .where(Order.organization_id == tenant.organization_id)
+        .order_by(Order.created_at.desc())
+        .limit(500)
+    ).all()
+    invoices = db.scalars(
+        select(Invoice)
+        .where(Invoice.organization_id == tenant.organization_id)
+        .order_by(Invoice.created_at.desc())
+        .limit(500)
+    ).all()
+    payment_rows = db.execute(
+        select(Payment, Invoice.invoice_number, Invoice.client_id, Invoice.client_name_snapshot)
+        .join(Invoice, and_(Invoice.id == Payment.invoice_id, Invoice.organization_id == tenant.organization_id))
+        .where(Payment.organization_id == tenant.organization_id)
+        .order_by(Payment.payment_date.desc(), Payment.created_at.desc())
         .limit(500)
     ).all()
     return ExpenseMeta(
@@ -370,12 +475,54 @@ def expense_meta(db: DbSession, tenant: FinanceViewer) -> ExpenseMeta:
                 id=project.id,
                 number=project.project_number,
                 name=project.name,
+                order_id=project.order_id,
                 client_id=project.client_id,
                 client_name=client_name,
                 currency=project.currency,
                 status=project.status,
             )
             for project, client_name in project_rows
+        ],
+        orders=[
+            ExpenseMetaOrder(
+                id=item.id,
+                number=item.order_number,
+                client_id=item.client_id,
+                client_name=item.client_name_snapshot,
+                currency=item.currency,
+                total=item.total,
+                status=item.status,
+            )
+            for item in orders
+        ],
+        invoices=[
+            ExpenseMetaInvoice(
+                id=item.id,
+                number=item.invoice_number,
+                client_id=item.client_id,
+                client_name=item.client_name_snapshot,
+                order_id=item.order_id,
+                project_id=item.project_id,
+                currency=item.currency,
+                total=item.total,
+                status=item.status,
+            )
+            for item in invoices
+        ],
+        payments=[
+            ExpenseMetaPayment(
+                id=payment.id,
+                number=payment.payment_number,
+                invoice_id=payment.invoice_id,
+                invoice_number=invoice_number,
+                client_id=client_id,
+                client_name=client_name,
+                invoice_currency=payment.invoice_currency,
+                invoice_amount=payment.invoice_amount,
+                payment_date=payment.payment_date,
+                status=payment.status,
+            )
+            for payment, invoice_number, client_id, client_name in payment_rows
         ],
     )
 
@@ -494,6 +641,9 @@ def list_expenses(
     vendor_id: str | None = None,
     project_id: str | None = None,
     client_id: str | None = None,
+    order_id: str | None = None,
+    invoice_id: str | None = None,
+    payment_id: str | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     cursor: str | None = None,
 ):
@@ -508,10 +658,23 @@ def list_expenses(
         query = query.where(Expense.project_id == project_id)
     if client_id:
         query = query.where(Expense.client_id == client_id)
+    if order_id:
+        query = query.where(Expense.order_id == order_id)
+    if invoice_id:
+        query = query.where(Expense.invoice_id == invoice_id)
+    if payment_id:
+        query = query.where(Expense.payment_id == payment_id)
     if search:
         needle = f"%{search.strip()}%"
         query = query.where(
-            or_(Expense.expense_number.ilike(needle), Expense.description.ilike(needle), Expense.reference.ilike(needle))
+            or_(
+                Expense.expense_number.ilike(needle),
+                Expense.description.ilike(needle),
+                Expense.reference.ilike(needle),
+                Order.order_number.ilike(needle),
+                Invoice.invoice_number.ilike(needle),
+                Payment.payment_number.ilike(needle),
+            )
         )
     clause = _expense_cursor_clause(_decode_expense_cursor(cursor))
     if clause is not None:
@@ -551,20 +714,7 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
         if vendor is None:
             raise HTTPException(status_code=404, detail="Active vendor not found")
 
-    project = None
-    client = None
-    client_id = payload.client_id
-    if payload.project_id:
-        project = db.scalar(select(Project).where(Project.id == payload.project_id, Project.organization_id == tenant.organization_id, Project.status != "cancelled"))
-        if project is None:
-            raise HTTPException(status_code=404, detail="Active project not found")
-        if client_id and client_id != project.client_id:
-            raise HTTPException(status_code=400, detail="Selected client does not match the project client")
-        client_id = project.client_id
-    if client_id:
-        client = db.scalar(select(Client).where(Client.id == client_id, Client.organization_id == tenant.organization_id, Client.status == "active"))
-        if client is None:
-            raise HTTPException(status_code=404, detail="Active client not found")
+    client, project, order, invoice, payment = _resolve_expense_relationships(payload, db, tenant.organization_id)
 
     expense_currency = payload.expense_currency.upper()
     expense_amount = _money(payload.expense_amount)
@@ -584,7 +734,13 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
     else:
         raise HTTPException(status_code=400, detail=f"Actual account amount or exchange rate is required for {expense_currency} to {account.currency}")
 
-    profitability_currency = project.currency if project else (client.currency if client and client.currency else expense_currency)
+    profitability_currency = (
+        project.currency if project else
+        order.currency if order else
+        invoice.currency if invoice else
+        client.currency if client and client.currency else
+        expense_currency
+    )
     profitability_currency = profitability_currency.upper()
     if profitability_currency == expense_currency:
         profitability_amount = expense_amount
@@ -611,6 +767,9 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
         account_id=account.id,
         client_id=client.id if client else None,
         project_id=project.id if project else None,
+        order_id=order.id if order else None,
+        invoice_id=invoice.id if invoice else None,
+        payment_id=payment.id if payment else None,
         description=payload.description.strip(),
         expense_date=expense_date,
         expense_currency=expense_currency,
@@ -648,6 +807,7 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
         after={
             "expense_number": item.expense_number, "category_id": item.category_id, "vendor_id": item.vendor_id,
             "account_id": item.account_id, "project_id": item.project_id, "client_id": item.client_id,
+            "order_id": item.order_id, "invoice_id": item.invoice_id, "payment_id": item.payment_id,
             "expense_amount": str(item.expense_amount), "expense_currency": item.expense_currency,
             "account_amount": str(item.account_amount), "account_currency": item.account_currency,
             "profitability_amount": str(item.profitability_amount), "profitability_currency": item.profitability_currency,

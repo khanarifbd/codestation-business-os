@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.models.crm import Client, Lead, LeadStatus
+from app.models.crm import Client, Lead, LeadSource, LeadStatus
 from app.models.membership import Membership
 from app.models.team import Employee
 from app.models.user import User
@@ -61,6 +61,14 @@ def get_client_detail(client_id: str, db: DbSession, tenant: ClientViewer) -> Cl
         .order_by(Lead.converted_at.desc().nullslast(), Lead.created_at.desc())
         .limit(1)
     ).first()
+    acquisition_source_name = None
+    if client.acquisition_source_id:
+        acquisition_source_name = db.scalar(
+            select(LeadSource.name).where(
+                LeadSource.id == client.acquisition_source_id,
+                LeadSource.organization_id == tenant.organization_id,
+            )
+        )
 
     return ClientDetailRead(
         id=client.id,
@@ -82,6 +90,8 @@ def get_client_detail(client_id: str, db: DbSession, tenant: ClientViewer) -> Cl
         address_line2=client.address_line2,
         tax_identifier=client.tax_identifier,
         currency=client.currency,
+        acquisition_source_id=client.acquisition_source_id,
+        acquisition_source_name=acquisition_source_name,
         assigned_employee_id=client.assigned_employee_id,
         assigned_employee_name=assigned_name,
         status=client.status,

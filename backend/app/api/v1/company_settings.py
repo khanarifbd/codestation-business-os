@@ -348,17 +348,22 @@ def update_localization(
         ),
         "localization",
     )
+    canonical_accounting_currency = tenant.organization.currency.upper()
+    if payload.currency.upper() != canonical_accounting_currency:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Currency roles are managed in Company Settings → Currencies & FX. Localization cannot change the accounting currency.",
+        )
     before = {
         "organization": {
             "country_code": tenant.organization.country_code,
             "timezone": tenant.organization.timezone,
-            "currency": tenant.organization.currency,
+            "currency": canonical_accounting_currency,
         },
         "settings": LocalizationRead.model_validate(item).model_dump(mode="json"),
     }
     tenant.organization.country_code = payload.country_code.upper()
     tenant.organization.timezone = payload.timezone.strip()
-    tenant.organization.currency = payload.currency.upper()
     for field in (
         "default_language", "date_format", "time_format", "number_format",
         "decimal_places", "currency_position", "first_day_of_week",
@@ -369,7 +374,7 @@ def update_localization(
         "organization": {
             "country_code": tenant.organization.country_code,
             "timezone": tenant.organization.timezone,
-            "currency": tenant.organization.currency,
+            "currency": canonical_accounting_currency,
         },
         "settings": LocalizationRead.model_validate(item).model_dump(mode="json"),
     }
@@ -402,12 +407,20 @@ def update_financial(
         ),
         "financial",
     )
+    canonical_accounting_currency = tenant.organization.currency.upper()
+    if payload.accounting_currency.upper() != canonical_accounting_currency:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Accounting currency is managed in Company Settings → Currencies & FX.",
+        )
     before = {
         "financial_year_start_month": tenant.organization.financial_year_start_month,
         "settings": FinancialRead.model_validate(item).model_dump(mode="json"),
     }
     tenant.organization.financial_year_start_month = payload.financial_year_start_month
-    item.accounting_currency = payload.accounting_currency.upper()
+    # Keep the duplicate compatibility field aligned with the canonical functional
+    # currency. Reporting currency is intentionally untouched by this endpoint.
+    item.accounting_currency = canonical_accounting_currency
     item.default_payment_terms_days = payload.default_payment_terms_days
     item.tax_calculation_mode = payload.tax_calculation_mode
     item.default_tax_rate = payload.default_tax_rate

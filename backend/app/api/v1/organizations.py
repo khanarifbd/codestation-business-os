@@ -5,7 +5,11 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
-from app.core.roles import MEMBERSHIP_ROLE_ADMIN, SUBSCRIPTION_STATUS_ACTIVE
+from app.core.roles import (
+    MEMBERSHIP_ROLE_ADMIN,
+    SUBSCRIPTION_STATUS_ACTIVE,
+    SYSTEM_ROLE_SUPER_ADMIN,
+)
 from app.models.common import new_uuid, utc_now
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -19,6 +23,13 @@ from app.schemas.organization import (
 from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
 from app.services.crm import ensure_crm_defaults
+from app.services.expense_defaults import ensure_expense_defaults
+from app.services.functional_currency import ensure_initial_functional_currency_period
+from app.services.membership_relationships import (
+    membership_relationships,
+    membership_role,
+    primary_relationship,
+)
 from app.services.team import ensure_system_roles, next_employee_code
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
@@ -42,11 +53,24 @@ def _unique_slug(db: DbSession, name: str) -> str:
             return candidate
 
 
-def _membership_response(organization: Organization, membership: Membership) -> OrganizationMembershipRead:
+def _membership_response(
+    db: DbSession,
+    organization: Organization,
+    membership: Membership,
+) -> OrganizationMembershipRead:
+    role = membership_role(db, membership)
+    relationships = membership_relationships(db, membership)
     return OrganizationMembershipRead(
         organization=OrganizationRead.model_validate(organization),
+        membership_id=membership.id,
+        role_id=membership.role_id,
         role=membership.role,
+        role_name=role.name if role else membership.role.title(),
+        role_slug=role.slug if role else membership.role,
         status=membership.status,
+        is_owner=membership.is_owner,
+        relationships=relationships,
+        primary_relationship=primary_relationship(relationships),
     )
 
 
@@ -57,6 +81,12 @@ def create_organization(
     db: DbSession,
     current_user: CurrentUser,
 ) -> OrganizationMembershipRead:
+    if current_user.system_role == SYSTEM_ROLE_SUPER_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform super admin accounts cannot create tenant workspaces through onboarding",
+        )
+
     organization = Organization(
         name=payload.name.strip(),
         slug=_unique_slug(db, payload.name),
@@ -72,6 +102,11 @@ def create_organization(
     db.add(organization)
     db.flush()
 
+    # The initial period intentionally starts before any normal imported/backdated
+    # business history. Future functional-currency changes create new effective-
+    # dated periods instead of relabeling this one.
+    ensure_initial_functional_currency_period(db, organization, current_user.id)
+
     roles = ensure_system_roles(db, organization)
     membership = Membership(
         organization_id=organization.id,
@@ -79,6 +114,7 @@ def create_organization(
         role_id=roles["admin"].id,
         role=MEMBERSHIP_ROLE_ADMIN,
         status="active",
+        is_owner=True,
     )
     db.add(membership)
     db.flush()
@@ -91,8 +127,16 @@ def create_organization(
         current_period_start=utc_now(),
     )
     db.add(subscription)
+
+    # The session intentionally uses autoflush=False. Company defaults create the
+    # document sequences (including `lead`), while CRM defaults verify those rows
+    # before adding CRM-specific defaults. Flush here so CRM setup can see the
+    # pending company defaults and does not enqueue a duplicate lead sequence.
     ensure_company_settings_defaults(db, organization)
+    db.flush()
     ensure_crm_defaults(db, organization)
+    db.flush()
+    expense_defaults_created = ensure_expense_defaults(db, organization)
     db.flush()
 
     employee = Employee(
@@ -114,7 +158,7 @@ def create_organization(
         organization_id=organization.id,
         entity_type="organization",
         entity_id=organization.id,
-        message="Company workspace, roles, settings, CRM defaults and owner employee profile created",
+        message="Company workspace, roles, settings, CRM defaults, expense defaults and owner employee profile created",
         after={
             "id": organization.id,
             "name": organization.name,
@@ -127,11 +171,16 @@ def create_organization(
             "status": organization.status,
             "membership_role": membership.role,
             "organization_role_id": membership.role_id,
+            "is_owner": membership.is_owner,
+            "relationships": ["owner", "employee"],
             "employee_code": employee.employee_code,
             "subscription_plan": subscription.plan_code,
             "subscription_status": subscription.status,
             "company_master_settings": "initialized",
             "crm_defaults": "initialized",
+            "expense_defaults": "initialized",
+            "expense_categories_created": expense_defaults_created,
+            "functional_currency_history": "initialized",
         },
         request=request,
     )
@@ -139,7 +188,7 @@ def create_organization(
     db.commit()
     db.refresh(organization)
     db.refresh(membership)
-    return _membership_response(organization, membership)
+    return _membership_response(db, organization, membership)
 
 
 @router.get("", response_model=list[OrganizationMembershipRead])
@@ -153,7 +202,7 @@ def list_organizations(
         .where(Membership.user_id == current_user.id, Membership.status == "active")
         .order_by(Organization.name.asc())
     ).all()
-    return [_membership_response(organization, membership) for membership, organization in rows]
+    return [_membership_response(db, organization, membership) for membership, organization in rows]
 
 
 @router.get("/{organization_id}", response_model=OrganizationMembershipRead)
@@ -175,4 +224,4 @@ def get_organization(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
 
     membership, organization = row
-    return _membership_response(organization, membership)
+    return _membership_response(db, organization, membership)

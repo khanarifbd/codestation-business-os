@@ -6,9 +6,15 @@ from pydantic import BaseModel, Field
 
 QuotationStatus = Literal["draft", "sent", "accepted", "rejected", "cancelled"]
 TaxCalculationMode = Literal["exclusive", "inclusive"]
+CustomSalesItemType = Literal["service", "non_stock_item"]
 
 
 class QuotationItemInput(BaseModel):
+    product_id: str | None = None
+    lead_interest_id: str | None = None
+    item_name: str | None = Field(default=None, max_length=220)
+    item_type: CustomSalesItemType = "service"
+    unit: str = Field(default="unit", min_length=1, max_length=40)
     description: str = Field(min_length=1, max_length=4000)
     quantity: Decimal = Field(gt=0, max_digits=14, decimal_places=4)
     unit_price: Decimal = Field(ge=0, max_digits=16, decimal_places=4)
@@ -18,7 +24,13 @@ class QuotationItemInput(BaseModel):
 
 class QuotationItemRead(BaseModel):
     id: str
+    product_id: str | None
+    lead_interest_id: str | None
     sort_order: int
+    item_name_snapshot: str
+    sku_snapshot: str | None
+    item_type_snapshot: str
+    unit_snapshot: str
     description: str
     quantity: Decimal
     unit_price: Decimal
@@ -33,6 +45,7 @@ class QuotationItemRead(BaseModel):
 
 class QuotationCreate(BaseModel):
     client_id: str
+    source_lead_id: str | None = None
     subject: str | None = Field(default=None, max_length=220)
     issue_date: date
     valid_until: date | None = None
@@ -145,6 +158,40 @@ class SalesEmployeeOption(BaseModel):
     id: str
     employee_code: str
     full_name: str
+
+
+class SalesCatalogOption(BaseModel):
+    id: str
+    sku: str
+    name: str
+    description: str | None
+    item_type: str
+    unit: str
+    currency: str
+    selling_price: Decimal
+    tax_rate: Decimal | None
+
+
+class LeadQuotationInterest(BaseModel):
+    id: str
+    product_id: str | None
+    item_name: str
+    description: str | None
+    item_type: str
+    unit: str
+    currency: str
+    quantity: Decimal
+    estimated_unit_price: Decimal | None
+
+
+class LeadQuotationSource(BaseModel):
+    lead_id: str
+    lead_code: str
+    client_id: str
+    client_name: str
+    currency: str
+    subject: str
+    interests: list[LeadQuotationInterest]
 
 
 class SalesMeta(BaseModel):

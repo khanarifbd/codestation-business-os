@@ -6,13 +6,22 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.models.capital import CompanyInvestment, CompanyLoan, InvestmentReturn, InvestorPayout, LoanRepayment, ProjectInvestor
+from app.models.capital import (
+    CompanyInvestment,
+    CompanyInvestor,
+    CompanyInvestorPayout,
+    CompanyLoan,
+    InvestmentReturn,
+    InvestorPayout,
+    LoanRepayment,
+    ProjectInvestor,
+)
 from app.models.expenses import Expense, ExpenseCategory
 from app.models.finance import Invoice
 from app.models.projects import Project
 from app.tenancy.context import TenantContext
 
-router = APIRouter(prefix="/capital", tags=["Capital & Funding"])
+router = APIRouter(prefix="/capital", tags=["Investments & Funding"])
 CapitalViewer = Annotated[TenantContext, Depends(require_tenant_permission("capital.view"))]
 MONEY = Decimal("0.01")
 
@@ -21,10 +30,16 @@ def money(value) -> Decimal:
     return Decimal(value or 0).quantize(MONEY, rounding=ROUND_HALF_UP)
 
 
-def entitlement(project_profit: Decimal, investor: ProjectInvestor) -> Decimal:
+def entitlement(project_profit: Decimal, project_revenue: Decimal, investor: ProjectInvestor) -> Decimal:
     if investor.share_type == "fixed_return":
         return money(investor.share_value)
-    return money(max(project_profit, Decimal("0")) * Decimal(investor.share_value) / Decimal("100"))
+    if investor.share_type == "revenue_share":
+        return money(max(project_revenue, Decimal("0")) * Decimal(investor.share_value) / Decimal("100"))
+    if investor.share_type == "profit_percent":
+        return money(max(project_profit, Decimal("0")) * Decimal(investor.share_value) / Decimal("100"))
+    # Convertible and custom agreements are intentionally not auto-accrued because
+    # their legal conversion/return terms require an explicit settlement event.
+    return Decimal("0.00")
 
 
 @router.get("/insights")
@@ -50,6 +65,7 @@ def insights(
     ) or 0
 
     data: dict[str, dict[str, Decimal]] = {}
+
     def bucket(code: str):
         return data.setdefault(code, {"investment_income": Decimal("0"), "loan_interest": Decimal("0"), "investor_profit_share": Decimal("0")})
 
@@ -59,7 +75,8 @@ def insights(
         .where(InvestmentReturn.organization_id == org, InvestmentReturn.return_date >= start, InvestmentReturn.return_date <= end)
         .group_by(CompanyInvestment.currency)
     ).all()
-    for code, amount in investment_rows: bucket(code)["investment_income"] += money(amount)
+    for code, amount in investment_rows:
+        bucket(code)["investment_income"] += money(amount)
 
     interest_rows = db.execute(
         select(CompanyLoan.currency, func.sum(LoanRepayment.interest_amount))
@@ -67,15 +84,26 @@ def insights(
         .where(LoanRepayment.organization_id == org, LoanRepayment.payment_date >= start, LoanRepayment.payment_date <= end)
         .group_by(CompanyLoan.currency)
     ).all()
-    for code, amount in interest_rows: bucket(code)["loan_interest"] += money(amount)
+    for code, amount in interest_rows:
+        bucket(code)["loan_interest"] += money(amount)
 
-    share_rows = db.execute(
+    project_share_rows = db.execute(
         select(ProjectInvestor.currency, func.sum(InvestorPayout.profit_share_amount))
         .join(ProjectInvestor, ProjectInvestor.id == InvestorPayout.investor_id)
         .where(InvestorPayout.organization_id == org, InvestorPayout.payout_date >= start, InvestorPayout.payout_date <= end)
         .group_by(ProjectInvestor.currency)
     ).all()
-    for code, amount in share_rows: bucket(code)["investor_profit_share"] += money(amount)
+    for code, amount in project_share_rows:
+        bucket(code)["investor_profit_share"] += money(amount)
+
+    company_share_rows = db.execute(
+        select(CompanyInvestor.currency, func.sum(CompanyInvestorPayout.profit_share_amount))
+        .join(CompanyInvestor, CompanyInvestor.id == CompanyInvestorPayout.investor_id)
+        .where(CompanyInvestorPayout.organization_id == org, CompanyInvestorPayout.payout_date >= start, CompanyInvestorPayout.payout_date <= end)
+        .group_by(CompanyInvestor.currency)
+    ).all()
+    for code, amount in company_share_rows:
+        bucket(code)["investor_profit_share"] += money(amount)
 
     pnl = []
     for code, values in sorted(data.items()):
@@ -99,7 +127,7 @@ def insights(
         total_entitlement = Decimal("0")
         total_paid_profit = Decimal("0")
         for investor in investors:
-            entitled = entitlement(project_profit, investor)
+            entitled = entitlement(project_profit, revenue, investor)
             principal_paid, profit_paid = db.execute(
                 select(func.coalesce(func.sum(InvestorPayout.principal_return_amount), 0), func.coalesce(func.sum(InvestorPayout.profit_share_amount), 0))
                 .where(InvestorPayout.organization_id == org, InvestorPayout.investor_id == investor.id)
@@ -111,9 +139,10 @@ def insights(
                 "investor_name": investor.investor_name,
                 "share_type": investor.share_type,
                 "share_value": investor.share_value,
-                "invested_amount": investor.invested_amount,
+                "committed_amount": investor.committed_amount,
+                "funded_amount": investor.funded_amount,
                 "principal_returned": principal_paid,
-                "principal_remaining": money(max(Decimal(investor.invested_amount) - principal_paid, Decimal("0"))),
+                "principal_remaining": money(max(Decimal(investor.funded_amount) - principal_paid, Decimal("0"))),
                 "profit_entitlement": entitled,
                 "profit_paid": profit_paid,
                 "profit_remaining": money(max(entitled - profit_paid, Decimal("0"))),

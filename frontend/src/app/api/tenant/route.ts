@@ -11,6 +11,13 @@ async function loadContext(request: NextRequest, organizationId: string) {
   });
 }
 
+async function switchContext(request: NextRequest, organizationId: string) {
+  return authenticatedBackendFetch(request, "/tenant/switch", {
+    method: "POST",
+    headers: { "X-Organization-ID": organizationId },
+  });
+}
+
 export async function GET(request: NextRequest) {
   const organizationId = request.cookies.get("organization_id")?.value;
   if (!organizationId) {
@@ -30,7 +37,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ detail: "organization_id is required" }, { status: 400 });
   }
 
-  const { upstream, rotatedTokens } = await loadContext(request, body.organization_id);
+  const { upstream, rotatedTokens } = await switchContext(request, body.organization_id);
   const payload = await upstream.json();
   const response = NextResponse.json(payload, { status: upstream.status });
   if (rotatedTokens) setAuthCookies(response, rotatedTokens);

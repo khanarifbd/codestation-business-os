@@ -32,6 +32,7 @@ class MilestoneRead(BaseModel):
     sort_order: int
     progress_percent: int
     due_date: date | None
+    client_visible: bool
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime

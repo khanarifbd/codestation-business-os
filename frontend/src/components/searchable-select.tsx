@@ -6,6 +6,7 @@ import { Check, ChevronDown, Search, X } from "lucide-react";
 export type SearchOption = {
   value: string;
   label: string;
+  description?: string;
   keywords?: string;
 };
 
@@ -22,6 +23,7 @@ export function SearchableSelect({
   required = false,
   allowCustom = false,
   clearable = true,
+  disabled = false,
 }: {
   label?: string;
   name?: string;
@@ -35,6 +37,7 @@ export function SearchableSelect({
   required?: boolean;
   allowCustom?: boolean;
   clearable?: boolean;
+  disabled?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -65,16 +68,24 @@ export function SearchableSelect({
     };
   }, []);
 
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+      setQuery("");
+    }
+  }, [disabled]);
+
   const selected = options.find((option) => option.value === value);
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return options;
     return options.filter((option) =>
-      `${option.label} ${option.value} ${option.keywords ?? ""}`.toLowerCase().includes(needle),
+      `${option.label} ${option.value} ${option.description ?? ""} ${option.keywords ?? ""}`.toLowerCase().includes(needle),
     );
   }, [options, query]);
 
   function choose(nextValue: string) {
+    if (disabled) return;
     if (!isControlled) setInternalValue(nextValue);
     onValueChange?.(nextValue);
     onChange?.(nextValue);
@@ -87,7 +98,7 @@ export function SearchableSelect({
     (option) => option.value.toLowerCase() === customValue.toLowerCase() || option.label.toLowerCase() === customValue.toLowerCase(),
   );
   const displayValue = selected?.label ?? (value || placeholder);
-  const canClear = clearable && !required && Boolean(value);
+  const canClear = !disabled && clearable && !required && Boolean(value);
   const accessibleLabel = label || placeholder;
 
   return (
@@ -97,8 +108,9 @@ export function SearchableSelect({
       <div className={label ? "relative mt-2" : "relative"}>
         <button
           type="button"
+          disabled={disabled}
           onClick={() => setOpen((current) => !current)}
-          className="flex h-11 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 pr-16 text-left text-sm outline-none transition hover:border-neutral-300 focus:border-neutral-500"
+          className="flex h-11 w-full items-center justify-between rounded-xl border border-neutral-200 bg-white px-3 pr-16 text-left text-sm outline-none transition hover:border-neutral-300 focus:border-neutral-500 disabled:cursor-not-allowed disabled:bg-neutral-50 disabled:text-neutral-500 disabled:hover:border-neutral-200"
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label={accessibleLabel}
@@ -121,7 +133,7 @@ export function SearchableSelect({
           </div>
           <div className="max-h-64 overflow-y-auto p-1.5" role="listbox">
             {showCustom ? <button type="button" onClick={() => choose(customValue)} className="flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50">Use “{customValue}”</button> : null}
-            {filtered.map((option) => <button key={`${option.value}-${option.label}`} type="button" onClick={() => choose(option.value)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"><span className="min-w-0"><span className="block truncate">{option.label}</span>{option.label !== option.value ? <span className="mt-0.5 block truncate text-xs text-neutral-400">{option.value}</span> : null}</span>{value === option.value ? <Check className="size-4 shrink-0 text-neutral-700" /> : null}</button>)}
+            {filtered.map((option) => <button key={`${option.value}-${option.label}`} type="button" onClick={() => choose(option.value)} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-neutral-50"><span className="min-w-0"><span className="block truncate">{option.label}</span>{option.description ? <span className="mt-0.5 block truncate text-xs text-neutral-400">{option.description}</span> : option.label !== option.value ? <span className="mt-0.5 block truncate text-xs text-neutral-400">{option.value}</span> : null}</span>{value === option.value ? <Check className="size-4 shrink-0 text-neutral-700" /> : null}</button>)}
             {filtered.length === 0 && !showCustom ? <p className="px-3 py-6 text-center text-sm text-neutral-400">No matches found</p> : null}
           </div>
         </div>

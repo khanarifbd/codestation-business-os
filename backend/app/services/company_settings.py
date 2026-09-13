@@ -44,7 +44,13 @@ def ensure_company_settings_defaults(db: Session, organization: Organization) ->
         db.add(OrganizationLocalizationSettings(organization_id=organization_id))
 
     if db.scalar(select(OrganizationFinancialSettings.id).where(OrganizationFinancialSettings.organization_id == organization_id)) is None:
-        db.add(OrganizationFinancialSettings(organization_id=organization_id, accounting_currency=organization.currency))
+        db.add(
+            OrganizationFinancialSettings(
+                organization_id=organization_id,
+                accounting_currency=organization.currency,
+                reporting_currency=organization.currency,
+            )
+        )
 
     if db.scalar(select(OrganizationSystemDefaults.id).where(OrganizationSystemDefaults.organization_id == organization_id)) is None:
         db.add(OrganizationSystemDefaults(organization_id=organization_id, default_client_country_code=organization.country_code, default_client_currency=organization.currency))

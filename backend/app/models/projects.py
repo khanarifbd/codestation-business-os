@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -23,7 +23,7 @@ class Project(TenantOwnedMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     project_number: Mapped[str] = mapped_column(String(40), nullable=False)
     order_id: Mapped[str] = mapped_column(String(36), ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False)
-    quotation_id: Mapped[str] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="RESTRICT"), nullable=False)
+    quotation_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("quotations.id", ondelete="RESTRICT"), nullable=True)
     client_id: Mapped[str] = mapped_column(String(36), ForeignKey("clients.id", ondelete="RESTRICT"), nullable=False)
     source_lead_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("leads.id", ondelete="SET NULL"), nullable=True)
     project_manager_employee_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
@@ -58,6 +58,11 @@ class ProjectMember(TenantOwnedMixin, Base):
     project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     employee_id: Mapped[str] = mapped_column(String(36), ForeignKey("employees.id", ondelete="RESTRICT"), nullable=False)
     role_label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    tab_permissions: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=lambda: ["overview", "milestones", "tasks", "work", "documents", "notes", "team"],
+        nullable=False,
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     added_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -80,6 +85,7 @@ class ProjectMilestone(TenantOwnedMixin, Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     progress_percent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    client_visible: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -132,6 +138,43 @@ class ProjectWorkLog(TenantOwnedMixin, Base):
     progress_percent: Mapped[int] = mapped_column(Integer, nullable=False)
     time_spent_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class ProjectReview(TenantOwnedMixin, Base):
+    __tablename__ = "project_reviews"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "project_id", name="uq_project_reviews_org_project"),
+        CheckConstraint("rating IS NULL OR (rating >= 1 AND rating <= 5)", name="ck_project_reviews_rating"),
+        Index("ix_project_reviews_org_received", "organization_id", "received_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    review_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewer_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    received_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    updated_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class ProjectNote(TenantOwnedMixin, Base):
+    __tablename__ = "project_notes"
+    __table_args__ = (
+        Index("ix_project_notes_org_project_created", "organization_id", "project_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    project_id: Mapped[str] = mapped_column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
 class ProjectDocument(TenantOwnedMixin, Base):

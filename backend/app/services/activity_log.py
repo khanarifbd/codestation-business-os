@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from app.core.client_ip import request_client_ip
 from app.models.activity_log import ActivityLog
 
 SENSITIVE_KEYS = {
@@ -58,17 +59,9 @@ def _request_fields(request: Request | None) -> dict[str, str | None]:
             "request_path": None,
         }
 
-    real_ip = request.headers.get("x-real-ip")
-    forwarded_for = request.headers.get("x-forwarded-for")
-    ip_address = real_ip
-    if not ip_address and forwarded_for:
-        ip_address = forwarded_for.split(",")[-1].strip()
-    if not ip_address and request.client:
-        ip_address = request.client.host
-
     return {
         "request_id": getattr(request.state, "request_id", None),
-        "ip_address": ip_address,
+        "ip_address": request_client_ip(request),
         "user_agent": request.headers.get("user-agent"),
         "http_method": request.method,
         "request_path": request.url.path,

@@ -23,6 +23,11 @@ SYSTEM_ROLES = {
         "description": "Standard company employee access",
         "permissions": USER_PERMISSIONS,
     },
+    "client": {
+        "name": "Client",
+        "description": "External client portal access only. Staff permissions are intentionally empty.",
+        "permissions": [],
+    },
 }
 
 

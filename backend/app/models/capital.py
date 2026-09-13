@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -75,6 +75,24 @@ class CompanyInvestment(TenantOwnedMixin, Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
 
+class CompanyInvestmentFunding(TenantOwnedMixin, Base):
+    __tablename__ = "company_investment_fundings"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "investment_id", "reference", name="uq_company_investment_funding_reference"),
+        Index("ix_company_investment_fundings_org_investment_date", "organization_id", "investment_id", "funding_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    investment_id: Mapped[str] = mapped_column(String(36), ForeignKey("company_investments.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=True)
+    funding_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class InvestmentReturn(TenantOwnedMixin, Base):
     __tablename__ = "investment_returns"
     __table_args__ = (Index("ix_investment_returns_org_investment_date", "organization_id", "investment_id", "return_date"),)
@@ -87,6 +105,71 @@ class InvestmentReturn(TenantOwnedMixin, Base):
     cash_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     principal_return_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     income_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CompanyInvestor(TenantOwnedMixin, Base):
+    __tablename__ = "company_investors"
+    __table_args__ = (
+        Index("ix_company_investors_org_status", "organization_id", "status"),
+        Index("ix_company_investors_org_email", "organization_id", "investor_email"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    investor_name: Mapped[str] = mapped_column(String(220), nullable=False)
+    investor_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    investor_type: Mapped[str] = mapped_column(String(24), default="individual", nullable=False)
+    instrument: Mapped[str] = mapped_column(String(32), default="equity", nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    committed_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    funded_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
+    ownership_percent: Mapped[Decimal | None] = mapped_column(Numeric(9, 4), nullable=True)
+    valuation_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
+    agreement_date: Mapped[date] = mapped_column(Date, nullable=False)
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expected_exit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    agreement_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="active", nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class CompanyInvestorFunding(TenantOwnedMixin, Base):
+    __tablename__ = "company_investor_fundings"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "investor_id", "reference", name="uq_company_investor_funding_reference"),
+        Index("ix_company_investor_fundings_org_investor_date", "organization_id", "investor_id", "funding_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    investor_id: Mapped[str] = mapped_column(String(36), ForeignKey("company_investors.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=False)
+    funding_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
+class CompanyInvestorPayout(TenantOwnedMixin, Base):
+    __tablename__ = "company_investor_payouts"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "investor_id", "reference", name="uq_company_investor_payout_reference"),
+        Index("ix_company_investor_payouts_org_investor_date", "organization_id", "investor_id", "payout_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    investor_id: Mapped[str] = mapped_column(String(36), ForeignKey("company_investors.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=False)
+    payout_date: Mapped[date] = mapped_column(Date, nullable=False)
+    principal_return_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
+    profit_share_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
@@ -106,6 +189,8 @@ class ProjectInvestor(TenantOwnedMixin, Base):
     investor_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     invested_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    committed_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    funded_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     investment_date: Mapped[date] = mapped_column(Date, nullable=False)
     share_type: Mapped[str] = mapped_column(String(24), default="profit_percent", nullable=False)
     share_value: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
@@ -116,6 +201,24 @@ class ProjectInvestor(TenantOwnedMixin, Base):
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class ProjectInvestorFunding(TenantOwnedMixin, Base):
+    __tablename__ = "project_investor_fundings"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "investor_id", "reference", name="uq_project_investor_funding_reference"),
+        Index("ix_project_investor_fundings_org_investor_date", "organization_id", "investor_id", "funding_date"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    investor_id: Mapped[str] = mapped_column(String(36), ForeignKey("project_investors.id", ondelete="CASCADE"), nullable=False)
+    account_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=True)
+    funding_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
 class InvestorPayout(TenantOwnedMixin, Base):

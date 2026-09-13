@@ -66,7 +66,14 @@ def create_advance(payload: CustomerAdvanceCreate, request: Request, db: DbSessi
     )
     db.add(advance); db.flush()
     liability = system_account(db, tenant.organization_id, "customer_advances")
-    base_amount, rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, amount, account.currency)
+    base_amount, rate = to_base_amount(
+        db,
+        tenant.organization_id,
+        tenant.organization.currency,
+        amount,
+        account.currency,
+        rate_date=advance.advance_date,
+    )
     post_journal(
         db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=advance.advance_date,
         source_type="customer_advance", source_id=advance.id,
@@ -108,7 +115,14 @@ def apply_advance(advance_id: str, payload: CustomerAdvanceApply, request: Reque
     db.add(application); db.flush()
     liability = system_account(db, tenant.organization_id, "customer_advances")
     ar = system_account(db, tenant.organization_id, "accounts_receivable")
-    base_amount, rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, amount, advance.currency)
+    base_amount, rate = to_base_amount(
+        db,
+        tenant.organization_id,
+        tenant.organization.currency,
+        amount,
+        advance.currency,
+        rate_date=payload.application_date,
+    )
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=payload.application_date, source_type="customer_advance_application", source_id=application.id, lines=[PostingLine(ledger_account_id=liability.id,debit=base_amount,currency=advance.currency,exchange_rate_to_base=rate,original_amount=amount,description=f"Apply advance to {invoice.invoice_number}"),PostingLine(ledger_account_id=ar.id,credit=base_amount,currency=invoice.currency,exchange_rate_to_base=rate,original_amount=amount,description=f"Apply advance to {invoice.invoice_number}")], reference=invoice.invoice_number, memo=f"Customer advance applied to {invoice.invoice_number}")
     advance.remaining_amount = _money(advance.remaining_amount - amount)
     invoice.amount_paid = _money(invoice.amount_paid + amount)

@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -26,6 +26,8 @@ class FinancialAccount(TenantOwnedMixin, Base):
     opening_balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payment_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    payment_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -68,6 +70,7 @@ class Invoice(TenantOwnedMixin, Base):
         Index("ix_invoices_org_due_date", "organization_id", "due_date"),
         Index("ix_invoices_org_order", "organization_id", "order_id"),
         Index("ix_invoices_org_project", "organization_id", "project_id"),
+        Index("ix_invoices_org_payment_account", "organization_id", "payment_account_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -97,6 +100,16 @@ class Invoice(TenantOwnedMixin, Base):
     client_address_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_tax_identifier_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
 
+    payment_method: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    payment_account_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="SET NULL"), nullable=True)
+    payment_account_name_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_provider_snapshot: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payment_account_holder_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_account_reference_snapshot: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    payment_currency_snapshot: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    payment_url_snapshot: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    payment_instructions_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     subtotal: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
     discount_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
     tax_total: Mapped[Decimal] = mapped_column(Numeric(16, 2), default=Decimal("0"), nullable=False)
@@ -116,12 +129,22 @@ class Invoice(TenantOwnedMixin, Base):
 
 class InvoiceItem(TenantOwnedMixin, Base):
     __tablename__ = "invoice_items"
-    __table_args__ = (Index("ix_invoice_items_org_invoice_sort", "organization_id", "invoice_id", "sort_order"),)
+    __table_args__ = (
+        Index("ix_invoice_items_org_invoice_sort", "organization_id", "invoice_id", "sort_order"),
+        Index("ix_invoice_items_org_product", "organization_id", "product_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     invoice_id: Mapped[str] = mapped_column(String(36), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
     source_order_item_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("order_items.id", ondelete="SET NULL"), nullable=True)
+    product_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     sort_order: Mapped[int] = mapped_column(default=0, nullable=False)
+    item_name_snapshot: Mapped[str] = mapped_column(String(220), nullable=False)
+    sku_snapshot: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    item_type_snapshot: Mapped[str] = mapped_column(String(24), default="service", nullable=False)
+    unit_snapshot: Mapped[str] = mapped_column(String(40), default="unit", nullable=False)
+    # NULL means one-time/not-applicable. Positive values preserve the service term billed on this invoice.
+    service_duration_months_snapshot: Mapped[int | None] = mapped_column(Integer, nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
     unit_price: Mapped[Decimal] = mapped_column(Numeric(16, 4), nullable=False)

@@ -29,6 +29,8 @@ ALLOWED_CONTENT_TYPES = {
     "application/zip",
 }
 
+UNRESTRICTED_DOCUMENT_NAMESPACE_ROOTS = {"projects", "clients"}
+
 
 class DocumentStorage(Protocol):
     def save(
@@ -62,15 +64,28 @@ class LocalDocumentStorage:
         content_type: str | None,
         namespace: str = "company-documents",
     ) -> tuple[str, int]:
-        suffix = Path(original_filename or "").suffix.lower()
-        if suffix not in ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document file type")
-        if content_type and content_type not in ALLOWED_CONTENT_TYPES:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document content type")
-
         namespace_path = Path(namespace.strip("/"))
         if namespace_path.is_absolute() or ".." in namespace_path.parts:
             raise HTTPException(status_code=400, detail="Invalid storage namespace")
+
+        # Project and client document areas are private tenant-scoped file vaults
+        # used for source files, certificates, JSON/configs, archives and other
+        # delivery/relationship artifacts. Keep the stricter allowlist for all
+        # other document areas. Only the explicit */<id>/documents namespaces are
+        # unrestricted; unrelated project/client storage namespaces stay strict.
+        parts = namespace_path.parts
+        allow_all_file_types = (
+            len(parts) >= 3
+            and parts[0] in UNRESTRICTED_DOCUMENT_NAMESPACE_ROOTS
+            and parts[2] == "documents"
+        )
+
+        suffix = Path(original_filename or "").suffix.lower()
+        if not allow_all_file_types:
+            if suffix not in ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document file type")
+            if content_type and content_type not in ALLOWED_CONTENT_TYPES:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported document content type")
 
         relative = Path("organizations") / organization_id / namespace_path / f"{uuid4().hex}{suffix}"
         destination = (self.root / relative).resolve()

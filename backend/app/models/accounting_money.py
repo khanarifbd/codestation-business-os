@@ -17,6 +17,8 @@ class AccountingMoneyEntry(TenantOwnedMixin, Base):
         Index("ix_accounting_money_entries_org_source", "organization_id", "source_type", "source_id"),
         Index("ix_accounting_money_entries_org_project_date", "organization_id", "project_id", "entry_date"),
         Index("ix_accounting_money_entries_org_order_date", "organization_id", "order_id", "entry_date"),
+        Index("ix_accounting_money_entries_org_expense_category", "organization_id", "expense_category_id"),
+        Index("ix_accounting_money_entries_org_vendor", "organization_id", "vendor_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
@@ -29,6 +31,8 @@ class AccountingMoneyEntry(TenantOwnedMixin, Base):
     client_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     order_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True)
     project_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    expense_category_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("expense_categories.id", ondelete="SET NULL"), nullable=True)
+    vendor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("vendors.id", ondelete="SET NULL"), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     description: Mapped[str] = mapped_column(String(500), nullable=False)

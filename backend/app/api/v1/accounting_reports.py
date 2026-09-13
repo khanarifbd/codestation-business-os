@@ -5,21 +5,29 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
+from app.models.company_defaults import OrganizationExchangeRate
+from app.models.company_settings import OrganizationFinancialSettings
+from app.services.functional_currency import functional_currency_period_for_date, organization_local_date
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/reports", tags=["Accounting Reports"])
 AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 MONEY = Decimal("0.01")
+RATE = Decimal("0.00000001")
 
 
 def _money(value) -> Decimal:
     return Decimal(value or 0).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _rate(value) -> Decimal:
+    return Decimal(value).quantize(RATE, rounding=ROUND_HALF_UP)
 
 
 class StatementRow(BaseModel):
@@ -36,7 +44,16 @@ class CashFlowRead(BaseModel):
 
 
 class FinancialStatementsRead(BaseModel):
+    # base_currency is kept for frontend/API compatibility and means the actual
+    # display currency used for the returned amounts.
     base_currency: str
+    accounting_currency: str
+    reporting_currency: str
+    reporting_rate: Decimal | None
+    reporting_rate_applied: bool
+    reporting_note: str | None
+    functional_period_start: date
+    functional_period_end: date | None
     date_from: date
     date_to: date
     income: list[StatementRow]
@@ -67,7 +84,13 @@ def _normal_amount(category: str, debit: Decimal, credit: Decimal) -> Decimal:
     return _money(credit - debit)
 
 
-def _rows(db: DbSession, organization_id: str, start: date | None, end: date):
+def _rows(
+    db: DbSession,
+    organization_id: str,
+    functional_currency: str,
+    start: date | None,
+    end: date,
+):
     query = (
         select(JournalEntry, JournalLine, LedgerAccount)
         .join(JournalLine, JournalLine.journal_entry_id == JournalEntry.id)
@@ -75,6 +98,7 @@ def _rows(db: DbSession, organization_id: str, start: date | None, end: date):
         .where(
             JournalEntry.organization_id == organization_id,
             JournalEntry.status == "posted",
+            JournalEntry.functional_currency == functional_currency,
             JournalEntry.entry_date <= end,
             JournalLine.organization_id == organization_id,
             LedgerAccount.organization_id == organization_id,
@@ -85,6 +109,92 @@ def _rows(db: DbSession, organization_id: str, start: date | None, end: date):
     return db.execute(query).all()
 
 
+def _cash_flow_bucket(source_type: str) -> str:
+    """Classify by economic substance, not by incidental route/module naming."""
+    source = (source_type or "").lower()
+    financing_prefixes = (
+        "loan_", "capital_", "owner_", "investor_", "company_investor_", "project_investor_",
+    )
+    investing_prefixes = (
+        "fixed_asset", "asset_purchase", "asset_sale", "company_investment_", "investment_return",
+    )
+    if source.startswith(investing_prefixes):
+        return "investing"
+    if source.startswith(financing_prefixes):
+        return "financing"
+    return "operating"
+
+
+def _reporting_context(
+    db: DbSession,
+    organization_id: str,
+    accounting_currency: str,
+) -> tuple[str, str, Decimal | None, bool, str | None]:
+    financial = db.scalar(
+        select(OrganizationFinancialSettings).where(
+            OrganizationFinancialSettings.organization_id == organization_id
+        )
+    )
+    reporting_currency = (
+        financial.reporting_currency.upper()
+        if financial is not None and financial.reporting_currency
+        else accounting_currency
+    )
+    if reporting_currency == accounting_currency:
+        return accounting_currency, reporting_currency, Decimal("1.00000000"), True, None
+
+    direct = db.scalar(
+        select(OrganizationExchangeRate).where(
+            OrganizationExchangeRate.organization_id == organization_id,
+            OrganizationExchangeRate.base_currency == accounting_currency,
+            OrganizationExchangeRate.quote_currency == reporting_currency,
+        )
+    )
+    if direct is not None:
+        resolved_rate = _rate(direct.effective_rate)
+        return (
+            reporting_currency,
+            reporting_currency,
+            resolved_rate,
+            True,
+            f"Display conversion uses the current configured {accounting_currency}/{reporting_currency} FX rate. Historical journal amounts remain unchanged.",
+        )
+
+    inverse = db.scalar(
+        select(OrganizationExchangeRate).where(
+            OrganizationExchangeRate.organization_id == organization_id,
+            OrganizationExchangeRate.base_currency == reporting_currency,
+            OrganizationExchangeRate.quote_currency == accounting_currency,
+        )
+    )
+    if inverse is not None:
+        inverse_rate = Decimal(inverse.effective_rate)
+        resolved_rate = _rate(Decimal("1") / inverse_rate)
+        return (
+            reporting_currency,
+            reporting_currency,
+            resolved_rate,
+            True,
+            f"Display conversion uses the inverse current configured {reporting_currency}/{accounting_currency} FX rate. Historical journal amounts remain unchanged.",
+        )
+
+    return (
+        accounting_currency,
+        reporting_currency,
+        None,
+        False,
+        f"Reporting currency {reporting_currency} is selected, but no {accounting_currency}/{reporting_currency} FX pair is configured. Amounts are shown in accounting currency {accounting_currency} to avoid mislabeling financial data.",
+    )
+
+
+def _convert(value: Decimal, conversion_rate: Decimal) -> Decimal:
+    return _money(Decimal(value) * conversion_rate)
+
+
+def _convert_rows(rows: list[StatementRow], conversion_rate: Decimal) -> list[StatementRow]:
+    return [StatementRow(code=row.code, name=row.name, amount=_convert(row.amount, conversion_rate)) for row in rows]
+
+
 @router.get("/financial-statements", response_model=FinancialStatementsRead)
 def financial_statements(
     db: DbSession,
@@ -92,27 +202,60 @@ def financial_statements(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
 ):
-    today = date.today()
+    today = organization_local_date(tenant.organization)
     end = date_to or today
-    start = date_from or _fiscal_start(end, tenant.organization.financial_year_start_month)
+    requested_start = date_from
+    start = requested_start or _fiscal_start(end, tenant.organization.financial_year_start_month)
     if start > end:
         start, end = end, start
+        requested_start = start if date_from is not None else None
+
+    functional_period = functional_currency_period_for_date(db, tenant.organization_id, end)
+    accounting_currency = functional_period.currency.upper()
+
+    # A single statement may never raw-sum journals whose debit/credit values are
+    # expressed in different functional currencies. The transition opening journal
+    # carries balance-sheet values into the new period; P&L starts fresh there.
+    if requested_start is not None and start < functional_period.effective_from:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"The requested report range crosses a functional-currency change. "
+                f"{accounting_currency} accounting starts on {functional_period.effective_from.isoformat()} "
+                "for this period. Run separate statements for each functional-currency period or use reporting currency for presentation."
+            ),
+        )
+    if functional_period.effective_to is not None and end > functional_period.effective_to:
+        raise HTTPException(status_code=409, detail="Report end date exceeds the selected functional-currency period")
+
+    start = max(start, functional_period.effective_from)
 
     period_values: dict[str, dict[str, Decimal | str]] = {}
-    for entry, line, account in _rows(db, tenant.organization_id, start, end):
+    for entry, line, account in _rows(db, tenant.organization_id, accounting_currency, start, end):
         item = period_values.setdefault(account.id, {"code": account.code, "name": account.name, "category": account.category, "debit": Decimal("0"), "credit": Decimal("0")})
         item["debit"] = Decimal(item["debit"]) + Decimal(line.debit)
         item["credit"] = Decimal(item["credit"]) + Decimal(line.credit)
 
     cumulative_values: dict[str, dict[str, Decimal | str]] = {}
-    cumulative_rows = _rows(db, tenant.organization_id, None, end)
+    cumulative_rows = _rows(
+        db,
+        tenant.organization_id,
+        accounting_currency,
+        functional_period.effective_from,
+        end,
+    )
     cash_by_entry: dict[str, Decimal] = defaultdict(Decimal)
     entry_source: dict[str, str] = {}
     for entry, line, account in cumulative_rows:
         item = cumulative_values.setdefault(account.id, {"code": account.code, "name": account.name, "category": account.category, "debit": Decimal("0"), "credit": Decimal("0")})
         item["debit"] = Decimal(item["debit"]) + Decimal(line.debit)
         item["credit"] = Decimal(item["credit"]) + Decimal(line.credit)
-        if start <= entry.entry_date <= end and account.category == "asset" and account.subtype in {"bank", "cash", "mobile_wallet", "payment_gateway", "petty_cash", "other"}:
+        if (
+            entry.source_type != "functional_currency_transition"
+            and start <= entry.entry_date <= end
+            and account.category == "asset"
+            and account.subtype in {"bank", "cash", "mobile_wallet", "payment_gateway", "petty_cash", "other"}
+        ):
             cash_by_entry[entry.id] += Decimal(line.debit) - Decimal(line.credit)
             entry_source[entry.id] = entry.source_type
 
@@ -146,22 +289,62 @@ def financial_statements(
     operating = Decimal("0")
     investing = Decimal("0")
     financing = Decimal("0")
-    financing_prefixes = ("loan_", "capital_", "investment", "investor", "owner_")
-    investing_prefixes = ("fixed_asset", "asset_purchase", "asset_sale")
     for entry_id, cash_delta in cash_by_entry.items():
-        source = entry_source.get(entry_id, "")
-        if source.startswith(financing_prefixes):
+        bucket = _cash_flow_bucket(entry_source.get(entry_id, ""))
+        if bucket == "financing":
             financing += cash_delta
-        elif source.startswith(investing_prefixes):
+        elif bucket == "investing":
             investing += cash_delta
-        elif source == "account_transfer":
-            operating += cash_delta
         else:
             operating += cash_delta
-    operating = _money(operating); investing = _money(investing); financing = _money(financing)
+    operating = _money(operating)
+    investing = _money(investing)
+    financing = _money(financing)
+
+    display_currency, reporting_currency, reporting_rate, reporting_rate_applied, reporting_note = _reporting_context(
+        db,
+        tenant.organization_id,
+        accounting_currency,
+    )
+
+    if reporting_rate_applied and reporting_rate is not None and reporting_rate != Decimal("1.00000000"):
+        income = _convert_rows(income, reporting_rate)
+        expenses = _convert_rows(expenses, reporting_rate)
+        assets = _convert_rows(assets, reporting_rate)
+        liabilities = _convert_rows(liabilities, reporting_rate)
+        equity = _convert_rows(equity, reporting_rate)
+
+        total_income = _money(sum((row.amount for row in income), Decimal("0")))
+        total_expenses = _money(sum((row.amount for row in expenses), Decimal("0")))
+        net_profit = _money(total_income - total_expenses)
+        total_assets = _money(sum((row.amount for row in assets), Decimal("0")))
+        total_liabilities = _money(sum((row.amount for row in liabilities), Decimal("0")))
+        recorded_equity = _money(sum((row.amount for row in equity), Decimal("0")))
+        current_earnings = _convert(current_earnings, reporting_rate)
+        total_equity = _money(recorded_equity + current_earnings)
+        operating = _convert(operating, reporting_rate)
+        investing = _convert(investing, reporting_rate)
+        financing = _convert(financing, reporting_rate)
+
+    period_note = None
+    fiscal_start = _fiscal_start(end, tenant.organization.financial_year_start_month)
+    if functional_period.effective_from > fiscal_start:
+        period_note = (
+            f"This statement begins at the {accounting_currency} functional-currency period on "
+            f"{functional_period.effective_from.isoformat()}; earlier functional-currency journals are not raw-summed into it."
+        )
+    if period_note:
+        reporting_note = f"{reporting_note} {period_note}" if reporting_note else period_note
 
     return FinancialStatementsRead(
-        base_currency=tenant.organization.currency,
+        base_currency=display_currency,
+        accounting_currency=accounting_currency,
+        reporting_currency=reporting_currency,
+        reporting_rate=reporting_rate,
+        reporting_rate_applied=reporting_rate_applied,
+        reporting_note=reporting_note,
+        functional_period_start=functional_period.effective_from,
+        functional_period_end=functional_period.effective_to,
         date_from=start,
         date_to=end,
         income=income,
@@ -178,5 +361,10 @@ def financial_statements(
         current_earnings=current_earnings,
         total_equity=total_equity,
         total_liabilities_and_equity=_money(total_liabilities + total_equity),
-        cash_flow=CashFlowRead(operating=operating, investing=investing, financing=financing, net_change=_money(operating + investing + financing)),
+        cash_flow=CashFlowRead(
+            operating=operating,
+            investing=investing,
+            financing=financing,
+            net_change=_money(operating + investing + financing),
+        ),
     )

@@ -20,10 +20,26 @@ class FixtureOrganization:
 
 
 @dataclass(frozen=True)
+class FixtureMembership:
+    id: str
+    role_id: str
+    role: str
+
+
+@dataclass(frozen=True)
 class FixtureTenant:
     organization_id: str
     user_id: str
     organization: FixtureOrganization
+    membership: FixtureMembership
+
+    @property
+    def membership_id(self) -> str:
+        return self.membership.id
+
+    @property
+    def role(self) -> str:
+        return self.membership.role
 
 
 def make_request(method: str, path: str) -> Request:
@@ -86,12 +102,14 @@ def seed_accepted_quotation(connection, *, organization_id: str, user_id: str, c
         text(
             """
             INSERT INTO quotation_items
-                (id, organization_id, quotation_id, sort_order, description,
+                (id, organization_id, quotation_id, sort_order,
+                 item_name_snapshot, item_type_snapshot, unit_snapshot, description,
                  quantity, unit_price, discount_percent, tax_rate,
                  line_subtotal, discount_amount, taxable_amount, tax_amount, line_total,
                  created_at, updated_at)
             VALUES
-                (:id, :organization_id, :quotation_id, 0, 'CI Project Service',
+                (:id, :organization_id, :quotation_id, 0,
+                 'CI Project Service', 'service', 'project', 'CI Project Service',
                  1.0000, 500.0000, 0.0000, 0.0000,
                  500.00, 0.00, 500.00, 0.00, 500.00,
                  :now, :now)
@@ -104,6 +122,9 @@ def seed_accepted_quotation(connection, *, organization_id: str, user_id: str, c
 
 def main() -> None:
     now = datetime.now(timezone.utc)
+    role_id = str(uuid4())
+    membership_id = str(uuid4())
+
     with engine.begin() as connection:
         fixture = connection.execute(
             text(
@@ -116,6 +137,45 @@ def main() -> None:
                 """
             )
         ).mappings().one()
+        organization_id = str(fixture["organization_id"])
+        user_id = str(fixture["user_id"])
+
+        connection.execute(
+            text(
+                """
+                INSERT INTO organization_roles
+                    (id, organization_id, name, slug, description, is_system, is_active,
+                     permissions, created_at, updated_at)
+                VALUES
+                    (:id, :organization_id, 'CI Project Admin', :slug, 'CI project verification only',
+                     false, true, '["*"]'::jsonb, :now, :now)
+                """
+            ),
+            {
+                "id": role_id,
+                "organization_id": organization_id,
+                "slug": f"ci-project-admin-{role_id[:8]}",
+                "now": now,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                INSERT INTO memberships
+                    (id, organization_id, user_id, role_id, role, status, created_at)
+                VALUES
+                    (:id, :organization_id, :user_id, :role_id, 'admin', 'active', :now)
+                """
+            ),
+            {
+                "id": membership_id,
+                "organization_id": organization_id,
+                "user_id": user_id,
+                "role_id": role_id,
+                "now": now,
+            },
+        )
+
         client_id = connection.execute(
             text(
                 """
@@ -124,14 +184,14 @@ def main() -> None:
                 ORDER BY created_at DESC LIMIT 1
                 """
             ),
-            {"organization_id": fixture["organization_id"]},
+            {"organization_id": organization_id},
         ).scalar_one()
         project_prefix = connection.execute(
             text(
                 "SELECT prefix FROM organization_document_sequences "
                 "WHERE organization_id = :organization_id AND document_type = 'project'"
             ),
-            {"organization_id": fixture["organization_id"]},
+            {"organization_id": organization_id},
         ).scalar_one()
         if project_prefix != "PRJ":
             raise AssertionError(f"project sequence prefix mismatch: {project_prefix}")
@@ -141,23 +201,24 @@ def main() -> None:
                 raise AssertionError(f"missing table: {table_name}")
         quotation_id = seed_accepted_quotation(
             connection,
-            organization_id=str(fixture["organization_id"]),
-            user_id=str(fixture["user_id"]),
+            organization_id=organization_id,
+            user_id=user_id,
             client_id=str(client_id),
             now=now,
         )
         second_quotation_id = seed_accepted_quotation(
             connection,
-            organization_id=str(fixture["organization_id"]),
-            user_id=str(fixture["user_id"]),
+            organization_id=organization_id,
+            user_id=user_id,
             client_id=str(client_id),
             now=now,
         )
 
     tenant = FixtureTenant(
-        organization_id=str(fixture["organization_id"]),
-        user_id=str(fixture["user_id"]),
+        organization_id=organization_id,
+        user_id=user_id,
         organization=FixtureOrganization(timezone=str(fixture["timezone"] or "UTC")),
+        membership=FixtureMembership(id=membership_id, role_id=role_id, role="admin"),
     )
     db = SessionLocal()
     try:
