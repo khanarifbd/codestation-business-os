@@ -1,0 +1,58 @@
+name: Phase 4 Finalize V2
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.head_commit.message == 'Run Phase 4 frontend finalizer v2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - name: Apply Phase 4 frontend patch
+        run: |
+          awk '/^          python - <<'\''PY'\''$/{flag=1;next}/^          PY$/{flag=0}flag{sub(/^          /,"");print}' .github/workflows/phase4-finalize.yml > /tmp/phase4_patch.py
+          test -s /tmp/phase4_patch.py
+          python /tmp/phase4_patch.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('frontend/src/app/dashboard/inventory/page.tsx')
+          text = path.read_text()
+          old = 'setModal(null); setEditingId(null); setMessage(editingId ? "Item updated." : "Item added to catalog."); await load();'
+          new = 'setModal(null); setEditingId(null); setMessage(editingId ? "Item updated." : "Item added to catalog."); setLoadedTabs(new Set(["overview", "suppliers", "warehouses"])); await loadCore(false); await loadTab("items", true);'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one remaining submitItem load() call, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Frontend checks
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm build
+      - name: Commit frontend changes
+        run: |
+          git config user.name "CodeStation AI CI"
+          git config user.email "ci@codestationai.com"
+          git add frontend/src/app/dashboard/expenses/page.tsx \
+                  frontend/src/app/dashboard/capital/page.tsx \
+                  frontend/src/app/dashboard/inventory/page.tsx \
+                  frontend/src/app/dashboard/projects/page.tsx \
+                  frontend/src/app/dashboard/hr/layout.tsx \
+                  frontend/src/app/dashboard/hr/page.tsx \
+                  frontend/src/components/hr-module-nav.tsx \
+                  frontend/src/components/hr-access-context.tsx
+          git diff --cached --check
+          git commit -m "Finish Phase 4 frontend lazy loading"
+          git push origin HEAD:develop
