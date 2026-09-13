@@ -4,50 +4,51 @@ from collections import Counter
 
 from fastapi.routing import APIRoute
 
+from app.api.v1.router import api_router
 from app.main import app
 
 
 CRITICAL_SINGLETON_OPERATIONS = {
-    ("POST", "/api/v1/finance/accounts"),
-    ("PATCH", "/api/v1/finance/invoices/{invoice_id}/status"),
-    ("POST", "/api/v1/finance/payments"),
-    ("POST", "/api/v1/finance/expenses"),
-    ("POST", "/api/v1/finance/expenses/{expense_id}/void"),
-    ("POST", "/api/v1/finance/transfers"),
-    ("POST", "/api/v1/accounting/payables/{bill_id}/payments"),
-    ("POST", "/api/v1/accounting/loans/{loan_id}/disburse"),
-    ("POST", "/api/v1/accounting/loans/{loan_id}/repay"),
+    ("POST", "/finance/accounts"),
+    ("PATCH", "/finance/invoices/{invoice_id}/status"),
+    ("POST", "/finance/payments"),
+    ("POST", "/finance/expenses"),
+    ("POST", "/finance/expenses/{expense_id}/void"),
+    ("POST", "/finance/transfers"),
+    ("POST", "/accounting/payables/{bill_id}/payments"),
+    ("POST", "/accounting/loans/{loan_id}/disburse"),
+    ("POST", "/accounting/loans/{loan_id}/repay"),
 }
 
 TYPED_OPERATIONS = {
-    ("GET", "/api/v1/accounting/loans"),
-    ("POST", "/api/v1/accounting/loans"),
-    ("POST", "/api/v1/accounting/loans/{loan_id}/approve"),
-    ("POST", "/api/v1/accounting/loans/{loan_id}/disburse"),
-    ("POST", "/api/v1/accounting/loans/{loan_id}/repay"),
-    ("POST", "/api/v1/accounting/loans/{loan_id}/close"),
-    ("GET", "/api/v1/accounting/loans/{loan_id}/schedule"),
-    ("PUT", "/api/v1/accounting/loans/{loan_id}/schedule"),
-    ("GET", "/api/v1/accounting/loans/{loan_id}/history"),
-    ("GET", "/api/v1/accounting/assets/meta"),
-    ("GET", "/api/v1/accounting/assets"),
-    ("GET", "/api/v1/accounting/assets/summary"),
-    ("POST", "/api/v1/accounting/assets"),
-    ("POST", "/api/v1/accounting/assets/depreciation"),
-    ("GET", "/api/v1/accounting/assets/{asset_id}/depreciation"),
-    ("GET", "/api/v1/accounting/reconciliations/meta"),
-    ("GET", "/api/v1/accounting/reconciliations"),
-    ("POST", "/api/v1/accounting/reconciliations"),
-    ("GET", "/api/v1/accounting/reconciliations/{reconciliation_id}"),
-    ("POST", "/api/v1/accounting/reconciliations/{reconciliation_id}/transactions/{transaction_id}"),
-    ("POST", "/api/v1/accounting/reconciliations/{reconciliation_id}/finalize"),
+    ("GET", "/accounting/loans"),
+    ("POST", "/accounting/loans"),
+    ("POST", "/accounting/loans/{loan_id}/approve"),
+    ("POST", "/accounting/loans/{loan_id}/disburse"),
+    ("POST", "/accounting/loans/{loan_id}/repay"),
+    ("POST", "/accounting/loans/{loan_id}/close"),
+    ("GET", "/accounting/loans/{loan_id}/schedule"),
+    ("PUT", "/accounting/loans/{loan_id}/schedule"),
+    ("GET", "/accounting/loans/{loan_id}/history"),
+    ("GET", "/accounting/assets/meta"),
+    ("GET", "/accounting/assets"),
+    ("GET", "/accounting/assets/summary"),
+    ("POST", "/accounting/assets"),
+    ("POST", "/accounting/assets/depreciation"),
+    ("GET", "/accounting/assets/{asset_id}/depreciation"),
+    ("GET", "/accounting/reconciliations/meta"),
+    ("GET", "/accounting/reconciliations"),
+    ("POST", "/accounting/reconciliations"),
+    ("GET", "/accounting/reconciliations/{reconciliation_id}"),
+    ("POST", "/accounting/reconciliations/{reconciliation_id}/transactions/{transaction_id}"),
+    ("POST", "/accounting/reconciliations/{reconciliation_id}/finalize"),
 }
 
 
-def main() -> None:
-    routes: dict[tuple[str, str], list[APIRoute]] = {}
+def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list[APIRoute]]]:
     counts: Counter[tuple[str, str]] = Counter()
-    for route in app.routes:
+    routes: dict[tuple[str, str], list[APIRoute]] = {}
+    for route in api_router.routes:
         if not isinstance(route, APIRoute):
             continue
         for method in route.methods or set():
@@ -56,10 +57,22 @@ def main() -> None:
             key = (method, route.path)
             counts[key] += 1
             routes.setdefault(key, []).append(route)
+    return counts, routes
+
+
+def main() -> None:
+    counts, routes = _route_index()
 
     for key in sorted(CRITICAL_SINGLETON_OPERATIONS):
         if counts[key] != 1:
-            raise AssertionError(f"critical financial operation must be registered exactly once: {key}, count={counts[key]}")
+            raise AssertionError(
+                f"critical financial operation must be registered exactly once in api_router: {key}, count={counts[key]}"
+            )
+        endpoint_module = routes[key][0].endpoint.__module__
+        if endpoint_module != "app.api.v1.financial_safety":
+            raise AssertionError(
+                f"critical financial operation bypasses financial safety wrapper: {key}, endpoint={endpoint_module}"
+            )
 
     missing = [key for key in sorted(TYPED_OPERATIONS) if counts[key] != 1]
     if missing:
@@ -69,6 +82,12 @@ def main() -> None:
         raise AssertionError(f"public accounting operations are missing response models: {untyped}")
 
     schema = app.openapi()
+    public_paths = schema.get("paths", {})
+    for method, path in sorted(CRITICAL_SINGLETON_OPERATIONS | TYPED_OPERATIONS):
+        public_path = f"/api/v1{path}"
+        if public_path not in public_paths or method.lower() not in public_paths[public_path]:
+            raise AssertionError(f"public OpenAPI operation is missing: {method} {public_path}")
+
     reconciliation_schema = schema.get("components", {}).get("schemas", {}).get("ReconciliationCreate")
     if not reconciliation_schema:
         raise AssertionError("ReconciliationCreate is missing from OpenAPI")
@@ -77,12 +96,14 @@ def main() -> None:
         definition = properties.get(field)
         if not definition:
             raise AssertionError(f"{field} missing from ReconciliationCreate OpenAPI schema")
-        # Optional dates may be represented as anyOf[date, null].
         candidates = definition.get("anyOf", [definition])
         if not any(item.get("type") == "string" and item.get("format") == "date" for item in candidates):
             raise AssertionError(f"{field} is not exposed as an OpenAPI date: {definition}")
 
-    print("accounting API hardening verification passed: unique financial routes, typed contracts, strict reconciliation dates")
+    print(
+        "accounting API hardening verification passed: singleton safety routes, "
+        "typed contracts, public OpenAPI coverage, strict reconciliation dates"
+    )
 
 
 if __name__ == "__main__":
