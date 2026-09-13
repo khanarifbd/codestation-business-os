@@ -4,8 +4,18 @@ from collections import Counter
 
 from fastapi.routing import APIRoute
 
-from app.api.v1.router import api_router
+# Import the canonical application first so source routers have already gone
+# through the same shadow-route removal and public assembly used by Uvicorn.
 from app.main import app
+from app.api.v1.accounting_assets import router as accounting_assets_router
+from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
+from app.api.v1.accounting_loans import router as accounting_loans_router
+from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
+from app.api.v1.finance import router as finance_router
+from app.api.v1.finance_expenses import router as finance_expenses_router
+from app.api.v1.finance_transfers import router as finance_transfers_router
+from app.api.v1.financial_safety import router as financial_safety_router
+from app.api.v1.payables import router as payables_router
 
 
 API_PREFIX = "/api/v1"
@@ -46,30 +56,43 @@ TYPED_OPERATIONS = {
     ("POST", "/accounting/reconciliations/{reconciliation_id}/finalize"),
 }
 
+LEGACY_FINANCIAL_ROUTERS = (
+    finance_router,
+    finance_expenses_router,
+    finance_transfers_router,
+    payables_router,
+    accounting_loans_router,
+)
 
-def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list[APIRoute]]]:
+ACCOUNTING_CONTRACT_ROUTERS = (
+    financial_safety_router,
+    accounting_loans_router,
+    accounting_loan_details_router,
+    accounting_assets_router,
+    accounting_reconciliation_router,
+)
+
+
+def _index_routers(routers) -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list[APIRoute]]]:
     counts: Counter[tuple[str, str]] = Counter()
-    routes: dict[tuple[str, str], list[APIRoute]] = {}
-    for route in api_router.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        for method in route.methods or set():
-            if method in {"HEAD", "OPTIONS"}:
+    indexed: dict[tuple[str, str], list[APIRoute]] = {}
+    for router in routers:
+        for route in router.routes:
+            if not isinstance(route, APIRoute):
                 continue
-            key = (method, route.path)
-            counts[key] += 1
-            routes.setdefault(key, []).append(route)
-    return counts, routes
+            for method in route.methods or set():
+                if method in {"HEAD", "OPTIONS"}:
+                    continue
+                key = (method, route.path)
+                counts[key] += 1
+                indexed.setdefault(key, []).append(route)
+    return counts, indexed
 
 
-def _diagnostic_routes() -> list[tuple[str, str, str]]:
+def _route_rows(router) -> list[tuple[str, str, str]]:
     rows: list[tuple[str, str, str]] = []
-    for route in api_router.routes:
-        if not isinstance(route, APIRoute) or not (
-            "/finance/" in route.path
-            or "/accounting/loans" in route.path
-            or "/accounting/payables" in route.path
-        ):
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
             continue
         for method in sorted(route.methods or set()):
             if method not in {"HEAD", "OPTIONS"}:
@@ -78,37 +101,45 @@ def _diagnostic_routes() -> list[tuple[str, str, str]]:
 
 
 def main() -> None:
-    counts, routes = _route_index()
+    safety_counts, safety_routes = _index_routers((financial_safety_router,))
+    legacy_counts, _ = _index_routers(LEGACY_FINANCIAL_ROUTERS)
 
-    # Verify the canonical API router before the public /api/v1 mount. This is
-    # where endpoint ownership and duplicate registration are authoritative.
+    # Critical financial mutations must live exactly once in the safety router,
+    # and the original business routers must no longer expose shadow copies.
     for key in sorted(CRITICAL_SINGLETON_OPERATIONS):
-        if counts[key] != 1:
+        if safety_counts[key] != 1:
             raise AssertionError(
-                f"critical financial operation must be registered exactly once: {key}, "
-                f"count={counts[key]}, diagnostics={_diagnostic_routes()}"
+                f"critical financial operation missing/duplicated in safety router: {key}, "
+                f"count={safety_counts[key]}, routes={_route_rows(financial_safety_router)}"
             )
-        endpoint_module = routes[key][0].endpoint.__module__
-        if endpoint_module != "app.api.v1.financial_safety":
+        route = safety_routes[key][0]
+        if route.endpoint.__module__ != "app.api.v1.financial_safety":
             raise AssertionError(
-                f"critical financial operation bypasses financial safety wrapper: {key}, endpoint={endpoint_module}"
+                f"critical financial operation bypasses financial safety wrapper: {key}, "
+                f"endpoint={route.endpoint.__module__}"
+            )
+        if legacy_counts[key] != 0:
+            raise AssertionError(
+                f"legacy financial router still exposes protected operation: {key}, "
+                f"legacy_count={legacy_counts[key]}"
             )
 
+    contract_counts, contract_routes = _index_routers(ACCOUNTING_CONTRACT_ROUTERS)
     missing = []
     untyped = []
     for key in sorted(TYPED_OPERATIONS):
-        if counts[key] != 1:
-            missing.append((key, counts[key]))
+        if contract_counts[key] != 1:
+            missing.append((key, contract_counts[key]))
             continue
-        if routes[key][0].response_model is None:
+        if contract_routes[key][0].response_model is None:
             untyped.append(key)
     if missing:
-        raise AssertionError(f"missing or duplicated typed accounting operations: {missing}, diagnostics={_diagnostic_routes()}")
+        raise AssertionError(f"missing or duplicated typed accounting operations: {missing}")
     if untyped:
         raise AssertionError(f"public accounting operations are missing response models: {untyped}")
 
-    # Separately verify that the mounted FastAPI application exposes every
-    # canonical route through the public /api/v1 OpenAPI surface.
+    # Public exposure is verified from FastAPI's generated contract rather than
+    # relying on the internal representation of nested include_router() routes.
     schema = app.openapi()
     public_paths = schema.get("paths", {})
     for method, path in sorted(CRITICAL_SINGLETON_OPERATIONS | TYPED_OPERATIONS):
@@ -129,7 +160,7 @@ def main() -> None:
             raise AssertionError(f"{field} is not exposed as an OpenAPI date: {definition}")
 
     print(
-        "accounting API hardening verification passed: singleton safety routes, "
+        "accounting API hardening verification passed: safety ownership, legacy shadow removal, "
         "typed contracts, public OpenAPI coverage, strict reconciliation dates"
     )
 
