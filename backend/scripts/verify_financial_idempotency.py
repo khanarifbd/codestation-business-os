@@ -6,6 +6,11 @@ from uuid import uuid4
 from sqlalchemy import func, select, text
 from starlette.requests import Request
 
+# Initialize the canonical FastAPI application before importing leaf financial
+# modules. This mirrors Uvicorn/browser-smoke startup and avoids a partially
+# initialized router graph during route-hardening introspection.
+from verify_accounting_api_hardening import main as verify_accounting_api_hardening
+
 from app.api.v1.accounting_loans import (
     AccountingLoanCreate,
     LoanAccountingRepaymentCreate,
@@ -25,7 +30,6 @@ from app.models.orders import Order
 from app.models.payables import PayableBill, PayablePayment
 from app.schemas.finance import FinancialAccountCreate, InvoiceStatusAction, PaymentCreate
 from app.schemas.payables import PayableBillCreate, PayablePaymentCreate
-from verify_accounting_api_hardening import main as verify_accounting_api_hardening
 from verify_atomic_financial_flow import main as verify_atomic_financial_flow
 
 
