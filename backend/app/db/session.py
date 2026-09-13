@@ -1,10 +1,12 @@
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
+from time import perf_counter
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.services.performance_metrics import record_db_query
 
 
 class BusinessSession(Session):
@@ -24,6 +26,25 @@ engine = create_engine(
     max_overflow=settings.database_max_overflow,
     pool_recycle=settings.database_pool_recycle_seconds,
 )
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _start_query_timer(conn, cursor, statement, parameters, context, executemany) -> None:
+    # Connection objects can be reused by the pool. A small stack keeps nested
+    # executions safe without storing SQL text or bind parameters.
+    conn.info.setdefault("business_os_query_started_at", []).append(perf_counter())
+
+
+@event.listens_for(engine, "after_cursor_execute")
+def _finish_query_timer(conn, cursor, statement, parameters, context, executemany) -> None:
+    stack = conn.info.get("business_os_query_started_at")
+    if not stack:
+        return
+    started_at = stack.pop()
+    if not stack:
+        conn.info.pop("business_os_query_started_at", None)
+    record_db_query((perf_counter() - started_at) * 1000)
+
 
 SessionLocal = sessionmaker(
     bind=engine,
