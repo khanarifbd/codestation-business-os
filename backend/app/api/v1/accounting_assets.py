@@ -10,6 +10,13 @@ from sqlalchemy import case, func, select
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
+from app.schemas.accounting_assets import (
+    AssetDepreciationHistoryRead,
+    AssetDepreciationRunRead,
+    AssetMetaRead,
+    AssetRead,
+    AssetSummaryRead,
+)
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
@@ -63,26 +70,26 @@ class DepreciationRun(BaseModel):
     period_date: date
 
 
-@router.get("/meta")
+@router.get("/meta", response_model=AssetMetaRead)
 def meta(db: DbSession, tenant: Viewer):
     accounts = db.scalars(select(FinancialAccount).where(FinancialAccount.organization_id==tenant.organization_id, FinancialAccount.is_active.is_(True)).order_by(FinancialAccount.currency,FinancialAccount.name)).all()
     return {"accounts":[{"id":a.id,"name":a.name,"currency":a.currency,"account_type":a.account_type,"balance":account_balance(db,a,tenant.organization_id)} for a in accounts],"base_currency":tenant.organization.currency}
 
 
-@router.get("")
+@router.get("", response_model=list[AssetRead])
 def list_assets(db: DbSession, tenant: Viewer):
     rows = db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id).order_by(FixedAsset.acquisition_date.desc(),FixedAsset.created_at.desc())).all()
     return [asset_json(row) for row in rows]
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=AssetSummaryRead)
 def summary(db: DbSession, tenant: Viewer):
     rows=db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id)).all()
     currencies=sorted({r.currency for r in rows})
     return {"rows":[{"currency":c,"cost":money(sum((r.acquisition_cost for r in rows if r.currency==c),Decimal("0"))),"accumulated_depreciation":money(sum((r.accumulated_depreciation for r in rows if r.currency==c),Decimal("0"))),"book_value":money(sum((r.acquisition_cost-r.accumulated_depreciation for r in rows if r.currency==c),Decimal("0")))} for c in currencies],"active_assets":sum(1 for r in rows if r.status=="active")}
 
 
-@router.post("",status_code=201)
+@router.post("", response_model=AssetRead, status_code=201)
 def create_asset(payload:AssetCreate,request:Request,db:DbSession,tenant:Manager):
     existing=db.scalar(select(FixedAsset.id).where(FixedAsset.organization_id==tenant.organization_id,func.lower(FixedAsset.asset_code)==payload.asset_code.strip().lower()))
     if existing: raise HTTPException(status_code=409,detail="Asset code already exists")
@@ -96,6 +103,7 @@ def create_asset(payload:AssetCreate,request:Request,db:DbSession,tenant:Manager
     db.add(row); db.flush(); description=f"Fixed asset acquisition: {row.asset_code} {row.name}"; fixed=system_account(db,tenant.organization_id,"fixed_assets")
     base,rate=to_base_amount(db,tenant.organization_id,tenant.organization.currency,cost,currency,rate_date=row.acquisition_date)
     if payload.record_mode=="purchase":
+        assert account is not None and cash_ledger is not None
         db.add(FinancialTransaction(organization_id=tenant.organization_id,account_id=account.id,transaction_date=row.acquisition_date,direction="debit",amount=cost,currency=currency,source_type="fixed_asset_acquisition",source_id=row.id,reference=row.reference,description=description,created_by_user_id=tenant.user_id))
         credit_ledger=cash_ledger
     else:
@@ -104,7 +112,7 @@ def create_asset(payload:AssetCreate,request:Request,db:DbSession,tenant:Manager
     record_activity(db,action="accounting.asset.create",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="fixed_asset",entity_id=row.id,after={**asset_json(row),"record_mode":payload.record_mode},request=request); db.commit(); return asset_json(row)
 
 
-@router.post("/depreciation",status_code=201)
+@router.post("/depreciation", response_model=AssetDepreciationRunRead, status_code=201)
 def run_depreciation(payload:DepreciationRun,request:Request,db:DbSession,tenant:Manager):
     period=date(payload.period_date.year,payload.period_date.month,1)
     rows=db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id,FixedAsset.status=="active",FixedAsset.in_service_date<=payload.period_date).order_by(FixedAsset.asset_code)).all()
@@ -124,7 +132,7 @@ def run_depreciation(payload:DepreciationRun,request:Request,db:DbSession,tenant
     record_activity(db,action="accounting.asset.depreciation_run",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="asset_depreciation_run",entity_id=period.isoformat(),after={"period_date":period,"posting_date":payload.period_date,"posted":posted,"skipped":skipped},request=request); db.commit(); return {"period_date":period,"posting_date":payload.period_date,"posted":posted,"skipped":skipped}
 
 
-@router.get("/{asset_id}/depreciation")
+@router.get("/{asset_id}/depreciation", response_model=AssetDepreciationHistoryRead)
 def depreciation_history(asset_id:str,db:DbSession,tenant:Viewer):
     asset=db.scalar(select(FixedAsset).where(FixedAsset.id==asset_id,FixedAsset.organization_id==tenant.organization_id))
     if asset is None: raise HTTPException(status_code=404,detail="Fixed asset not found")
