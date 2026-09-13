@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from sqlalchemy import event, select
 
 from app.api.v1.capital import meta as legacy_capital_meta
@@ -20,6 +22,7 @@ from app.api.v1.phase4_remaining_fast import expense_meta_lite, hr_workspace_sum
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models.client_access import ClientMembership
+from app.models.crm import Client
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.team import OrganizationRole
@@ -70,20 +73,44 @@ def privileged_tenant(db) -> TenantContext:
     raise AssertionError("no active tenant member with capital.view and hr.view found")
 
 
-def client_portal_tenant(db) -> TenantContext:
+def client_portal_tenant(db, fallback_membership: Membership) -> TenantContext:
     access_rows = db.scalars(select(ClientMembership).where(ClientMembership.status == "active")).all()
     for access in access_rows:
         membership = db.get(Membership, access.membership_id)
         if membership is not None and membership.status == "active" and membership.organization_id == access.organization_id:
             return tenant_context(db, membership)
-    raise AssertionError("no active client portal membership found")
+
+    # CI's general tenant fixture does not guarantee a client-portal relationship.
+    # Create a rollback-only relationship so this verifier is self-contained and
+    # never depends on production-like fixture ordering or persistent test data.
+    token = uuid4().hex[:10]
+    client = Client(
+        organization_id=fallback_membership.organization_id,
+        client_code=f"P4PORTAL-{token}",
+        display_name="Phase 4 Portal Verification Client",
+        currency="USD",
+    )
+    db.add(client)
+    db.flush()
+    db.add(
+        ClientMembership(
+            organization_id=fallback_membership.organization_id,
+            client_id=client.id,
+            membership_id=fallback_membership.id,
+            is_primary_contact=True,
+            status="active",
+            created_by_user_id=fallback_membership.user_id,
+        )
+    )
+    db.flush()
+    return tenant_context(db, fallback_membership)
 
 
 def main() -> None:
     db = SessionLocal()
     try:
         tenant = privileged_tenant(db)
-        portal_tenant = client_portal_tenant(db)
+        portal_tenant = client_portal_tenant(db, tenant.membership)
 
         legacy_orders = legacy_client_orders(db, portal_tenant)
         fast_orders, portal_queries = count_selects(lambda: list_client_portal_orders_fast(db, portal_tenant))
@@ -180,6 +207,7 @@ def main() -> None:
                     f"{method} {public_path} is not owned by the Phase 4 bounded handler: {operation_id}"
                 )
     finally:
+        db.rollback()
         db.close()
 
     print(
