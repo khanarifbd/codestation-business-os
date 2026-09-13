@@ -11,6 +11,7 @@ from app.api.v1.accounting_assets import router as accounting_assets_router
 from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
 from app.api.v1.accounting_loans import router as accounting_loans_router
 from app.api.v1.accounting_read_fast import router as accounting_read_fast_router
+from app.api.v1.accounting_read_fast_extra import router as accounting_read_fast_extra_router
 from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
 from app.api.v1.finance import router as finance_router
 from app.api.v1.finance_expenses import router as finance_expenses_router
@@ -71,6 +72,7 @@ ACCOUNTING_CONTRACT_ROUTERS = (
     accounting_loan_details_router,
     accounting_assets_router,
     accounting_read_fast_router,
+    accounting_read_fast_extra_router,
     accounting_reconciliation_router,
 )
 
