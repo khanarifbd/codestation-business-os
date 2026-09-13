@@ -4,8 +4,12 @@ from collections import Counter
 
 from fastapi.routing import APIRoute
 
-from app.api.v1.financial_safety import router as financial_safety_router
+# Build the application through the same import path used by Uvicorn/browser
+# smoke before introspecting individual routers. Importing a leaf router first
+# can create a partially initialized module graph that does not represent the
+# canonical production application surface.
 from app.main import app
+from app.api.v1.financial_safety import router as financial_safety_router
 
 
 API_PREFIX = "/api/v1"
