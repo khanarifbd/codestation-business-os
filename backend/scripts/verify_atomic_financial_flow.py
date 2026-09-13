@@ -9,14 +9,15 @@ from starlette.requests import Request
 
 from app.api.v1.accounting import trial_balance
 from app.api.v1.accounting_reports import financial_statements
+from app.api.v1.crm import create_client
 from app.api.v1.finance import create_invoice
 from app.api.v1.financial_safety import safe_change_invoice_status, safe_create_account, safe_record_payment
 from app.api.v1.organizations import create_organization
 from app.db.session import SessionLocal
 from app.models.accounting import JournalEntry, JournalLine
-from app.models.crm import Client
 from app.models.organization import Organization
 from app.models.user import User
+from app.schemas.crm import ClientCreate
 from app.schemas.finance import FinancialAccountCreate, InvoiceCreate, InvoiceItemInput, InvoiceStatusAction, PaymentCreate
 from app.schemas.organization import OrganizationCreate
 from app.services.accounting_posting import financial_ledger_account, money
@@ -102,17 +103,17 @@ def main() -> None:
             raise AssertionError("atomic accounting organization was not created")
         tenant = FixtureTenant(organization_id=organization.id, user_id=user.id, organization=organization)
 
-        client = Client(
-            organization_id=organization.id,
-            client_code=f"ATOMIC-{marker}",
-            client_type="company",
-            display_name="Atomic Flow Customer",
-            currency="BDT",
-            status="active",
+        client = create_client(
+            ClientCreate(
+                client_type="company",
+                display_name="Atomic Flow Customer",
+                country_code="BD",
+                currency="BDT",
+            ),
+            req("POST", "/crm/clients"),
+            db,
+            tenant,  # type: ignore[arg-type]
         )
-        db.add(client)
-        db.commit()
-        db.refresh(client)
 
         account = safe_create_account(
             FinancialAccountCreate(
