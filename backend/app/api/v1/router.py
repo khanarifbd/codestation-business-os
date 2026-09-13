@@ -64,6 +64,7 @@ from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
+from app.api.v1.phase4_read_fast import router as phase4_read_fast_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.platform_organization_detail import router as platform_organization_detail_router
 from app.api.v1.profile import router as profile_router
@@ -167,6 +168,37 @@ for _router in (
     _remove_shadowed_accounting_read_routes(_router)
 
 
+# Phase 4 keeps the mature write handlers in place while replacing only the
+# read paths that have data-size-dependent N+1 query growth.
+_SHADOWED_PHASE4_READ_OPERATIONS = {
+    ("GET", "/inventory/products"),
+    ("GET", "/inventory/suppliers"),
+    ("GET", "/projects/{project_id}/workspace"),
+}
+
+
+def _remove_shadowed_phase4_read_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_PHASE4_READ_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+for _router in (
+    inventory_router,
+    inventory_management_router,
+    project_execution_router,
+):
+    _remove_shadowed_phase4_read_routes(_router)
+
+
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
@@ -203,6 +235,7 @@ api_router.include_router(orders_router)
 api_router.include_router(order_commercial_router)
 api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
+api_router.include_router(phase4_read_fast_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
 api_router.include_router(project_client_sharing_router)
