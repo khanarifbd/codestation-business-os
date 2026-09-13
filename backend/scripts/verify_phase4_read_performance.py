@@ -16,11 +16,13 @@ from app.api.v1.phase4_read_fast import (
 )
 from app.api.v1.project_execution import get_workspace as legacy_workspace
 from app.db.session import SessionLocal, engine
+from app.models.inventory import Product
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.projects import Project
 from app.models.team import OrganizationRole
 from app.models.user import User
+from app.services.sales_catalog import resolve_sales_line
 from app.tenancy.context import TenantContext
 
 
@@ -132,6 +134,26 @@ def main() -> None:
                 f"client-access query regression: expected <=2 SELECTs, got {client_access_queries}"
             )
 
+        catalog_product = db.scalar(
+            select(Product).where(Product.is_active.is_(True)).order_by(Product.created_at.asc()).limit(1)
+        )
+        if catalog_product is None:
+            raise AssertionError("no active catalog product found for Phase 4 query verification")
+        _, catalog_queries = count_selects(
+            lambda: resolve_sales_line(
+                db,
+                organization_id=catalog_product.organization_id,
+                currency=catalog_product.currency,
+                product_id=catalog_product.id,
+                item_name=None,
+                item_type=None,
+                unit=None,
+                description=None,
+            )
+        )
+        if catalog_queries != 1:
+            raise AssertionError(f"sales catalog lookup regression: expected 1 SELECT, got {catalog_queries}")
+
         schema_paths = app.openapi().get("paths", {})
         for method, path, expected_name in (
             ("GET", "/inventory/products", "products_fast"),
@@ -151,7 +173,7 @@ def main() -> None:
     print(
         "Phase 4 read performance verification passed: "
         f"products={product_queries}, suppliers={supplier_queries}, workspace={workspace_queries}, "
-        f"client_access={client_access_queries}"
+        f"client_access={client_access_queries}, catalog={catalog_queries}"
     )
 
 
