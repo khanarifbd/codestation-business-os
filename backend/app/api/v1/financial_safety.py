@@ -32,6 +32,7 @@ from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialAccount, Invoice, Payment
 from app.models.loan_accounting import LoanDisbursement
 from app.models.payables import PayablePayment
+from app.schemas.accounting_loans import LoanDisbursementRead, LoanRepaymentRead
 from app.schemas.expenses import ExpenseCreate, ExpenseDetail
 from app.schemas.finance import (
     AccountTransferCreate,
@@ -71,11 +72,7 @@ def _journal_for_source(db: DbSession, organization_id: str, source_type: str, s
     return journal
 
 
-def _tenant_account(
-    db: DbSession,
-    organization_id: str,
-    account_id: str,
-) -> FinancialAccount:
+def _tenant_account(db: DbSession, organization_id: str, account_id: str) -> FinancialAccount:
     account = db.scalar(
         select(FinancialAccount).where(
             FinancialAccount.id == account_id,
@@ -88,20 +85,12 @@ def _tenant_account(
 
 
 @router.post("/finance/accounts", response_model=FinancialAccountRead, status_code=status.HTTP_201_CREATED)
-def safe_create_account(
-    payload: FinancialAccountCreate,
-    request: Request,
-    db: DbSession,
-    tenant: FinanceManager,
-):
+def safe_create_account(payload: FinancialAccountCreate, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
         result = create_account(payload, request, db, tenant)
         account = _tenant_account(db, tenant.organization_id, result.id)
         if account.account_type == "credit_card" and Decimal(account.opening_balance) < 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Credit card opening balance must be zero or a positive amount currently owed",
-            )
+            raise HTTPException(status_code=400, detail="Credit card opening balance must be zero or a positive amount currently owed")
         post_financial_account_opening(
             db,
             organization_id=tenant.organization_id,
@@ -147,10 +136,7 @@ def safe_record_payment(payload: PaymentCreate, request: Request, db: DbSession,
     with defer_commits(db):
         payment_account = _tenant_account(db, tenant.organization_id, payload.account_id)
         if payment_account.account_type == "credit_card":
-            raise HTTPException(
-                status_code=400,
-                detail="Customer payments cannot be received into a credit card account",
-            )
+            raise HTTPException(status_code=400, detail="Customer payments cannot be received into a credit card account")
         guard, reused = reserve_posting(
             db,
             request,
@@ -244,12 +230,7 @@ def safe_create_expense(payload: ExpenseCreate, request: Request, db: DbSession,
 
 
 @router.post("/finance/expenses/{expense_id}/void", response_model=ExpenseDetail)
-def safe_void_expense(
-    expense_id: str,
-    request: Request,
-    db: DbSession,
-    tenant: FinanceManager,
-):
+def safe_void_expense(expense_id: str, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
         expense = db.scalar(
             select(Expense).where(
@@ -259,7 +240,6 @@ def safe_void_expense(
         )
         if expense is None:
             raise HTTPException(status_code=404, detail="Expense not found")
-
         post_expense(
             db,
             organization_id=tenant.organization_id,
@@ -404,7 +384,11 @@ def safe_pay_payable_bill(
     return result
 
 
-@router.post("/accounting/loans/{loan_id}/disburse", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/accounting/loans/{loan_id}/disburse",
+    response_model=LoanDisbursementRead,
+    status_code=status.HTTP_201_CREATED,
+)
 def safe_disburse_loan(
     loan_id: str,
     payload: LoanDisbursementCreate,
@@ -454,7 +438,11 @@ def safe_disburse_loan(
     return result
 
 
-@router.post("/accounting/loans/{loan_id}/repay", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/accounting/loans/{loan_id}/repay",
+    response_model=LoanRepaymentRead,
+    status_code=status.HTTP_201_CREATED,
+)
 def safe_repay_loan(
     loan_id: str,
     payload: LoanAccountingRepaymentCreate,
