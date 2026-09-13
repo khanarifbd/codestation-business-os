@@ -15,6 +15,7 @@ from app.services.bootstrap import ensure_super_admin
 from app.services.performance_metrics import finish_request_metrics, start_request_metrics
 
 logger = logging.getLogger(__name__)
+performance_logger = logging.getLogger("uvicorn.error")
 VAULT_CONFIGURATION_ERROR = "Project credential encryption key is not configured"
 VAULT_USER_MESSAGE = "Credentials Vault is temporarily unavailable. Please contact your administrator."
 CLOSED_PERIOD_MARKER = "Accounting period is closed for date"
@@ -94,7 +95,7 @@ async def request_observability(request: Request, call_next):
                 response.headers["X-Performance-DB-Ms"] = f"{db_ms:.2f}"
                 response.headers["X-Performance-DB-Queries"] = str(query_count)
 
-        log = logger.warning if total_ms >= SLOW_REQUEST_MS or query_count >= HIGH_QUERY_COUNT else logger.info
+        log = performance_logger.warning if total_ms >= SLOW_REQUEST_MS or query_count >= HIGH_QUERY_COUNT else performance_logger.info
         log(
             "request.performance method=%s path=%s status=%s total_ms=%.2f db_ms=%.2f db_queries=%s request_id=%s",
             request.method,
