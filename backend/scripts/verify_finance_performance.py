@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 
-from sqlalchemy import event, select
+from sqlalchemy import event, select, text
 
 from app.api.v1.finance import finance_summary, list_accounts, list_invoices, list_payments
 from app.api.v1.finance_pagination import invoice_page, ledger_page, payment_page
 from app.db.session import SessionLocal, engine
 from app.models.organization import Organization
+from app.services.performance_metrics import finish_request_metrics, start_request_metrics
 
 
 @dataclass(frozen=True)
@@ -38,9 +39,27 @@ def count_selects(fn):
     return result, count
 
 
+def verify_request_metrics(db) -> None:
+    metrics, token = start_request_metrics()
+    try:
+        value = db.execute(text("SELECT 1")).scalar_one()
+    finally:
+        finish_request_metrics(token)
+    if value != 1:
+        raise AssertionError("performance telemetry fixture query failed")
+    if metrics.db_query_count != 1:
+        raise AssertionError(
+            f"request DB telemetry regression: expected one query, got {metrics.db_query_count}"
+        )
+    if metrics.db_total_ms < 0:
+        raise AssertionError("request DB telemetry returned a negative duration")
+
+
 def main() -> None:
     db = SessionLocal()
     try:
+        verify_request_metrics(db)
+
         organization = db.scalar(select(Organization).where(Organization.name == "Existing Tenant Fixture"))
         if organization is None:
             raise AssertionError("existing tenant fixture missing")
@@ -94,7 +113,7 @@ def main() -> None:
         db.close()
 
     print(
-        "finance performance verification passed: "
+        "finance performance verification passed: request telemetry=1 query, "
         f"summary={summary_queries}, accounts={account_queries}, invoices={invoice_queries}, payments={payment_queries}, "
         f"invoice_cursor={invoice_cursor_queries}, payment_cursor={payment_cursor_queries}, ledger_cursor={ledger_cursor_queries}"
     )
