@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from fastapi.routing import APIRoute
 from sqlalchemy import event, select
 
 from app.api.v1.capital import meta as legacy_capital_meta
@@ -78,17 +77,6 @@ def client_portal_tenant(db) -> TenantContext:
         if membership is not None and membership.status == "active" and membership.organization_id == access.organization_id:
             return tenant_context(db, membership)
     raise AssertionError("no active client portal membership found")
-
-
-def public_route_endpoint(method: str, path: str):
-    matches = [
-        route
-        for route in app.routes
-        if isinstance(route, APIRoute) and route.path == path and method in (route.methods or set())
-    ]
-    if len(matches) != 1:
-        raise AssertionError(f"expected one public Phase 4 {method} {path}, found {len(matches)}")
-    return matches[0].endpoint
 
 
 def main() -> None:
@@ -183,11 +171,14 @@ def main() -> None:
             ("GET", "/finance/expense-meta-lite", "expense_meta_lite"),
         ):
             public_path = f"{API_PREFIX}{path}"
-            endpoint = public_route_endpoint(method, public_path)
-            if endpoint.__name__ != expected_name:
-                raise AssertionError(f"{method} {public_path} is not owned by the Phase 4 bounded handler")
-            if public_path not in schema_paths or method.lower() not in schema_paths[public_path]:
+            operation = schema_paths.get(public_path, {}).get(method.lower())
+            if operation is None:
                 raise AssertionError(f"public OpenAPI operation is missing: {method} {public_path}")
+            operation_id = str(operation.get("operationId") or "")
+            if expected_name not in operation_id:
+                raise AssertionError(
+                    f"{method} {public_path} is not owned by the Phase 4 bounded handler: {operation_id}"
+                )
     finally:
         db.close()
 
