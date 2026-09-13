@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 from app.models.inventory import Product
 from app.models.tax import TaxCode
@@ -53,31 +53,32 @@ def resolve_sales_line(
     document_currency = currency.upper()
 
     if product_id:
-        product = db.scalar(
-            select(Product).where(
+        row = db.execute(
+            select(Product, TaxCode.rate)
+            .outerjoin(
+                TaxCode,
+                and_(
+                    TaxCode.id == Product.tax_code_id,
+                    TaxCode.organization_id == organization_id,
+                    TaxCode.tax_kind == "sales",
+                    TaxCode.is_active.is_(True),
+                ),
+            )
+            .where(
                 Product.id == product_id,
                 Product.organization_id == organization_id,
                 Product.is_active.is_(True),
             )
-        )
-        if product is None:
+        ).one_or_none()
+        if row is None:
             raise HTTPException(status_code=404, detail="Active catalog product or service not found")
+        product, tax_rate = row
         if product.currency.upper() != document_currency:
             raise HTTPException(
                 status_code=400,
                 detail=f"Catalog item {product.sku} uses {product.currency}; document uses {document_currency}",
             )
         clean_description = _clean(description) or _clean(product.description) or product.name
-        tax_rate = None
-        if product.tax_code_id:
-            tax_rate = db.scalar(
-                select(TaxCode.rate).where(
-                    TaxCode.id == product.tax_code_id,
-                    TaxCode.organization_id == organization_id,
-                    TaxCode.tax_kind == "sales",
-                    TaxCode.is_active.is_(True),
-                )
-            )
         return SalesLineSnapshot(
             product_id=product.id,
             item_name=product.name,
