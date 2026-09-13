@@ -1,20 +1,37 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.api.v1.reports import _account_balances, _currency_filter, _financials, _operations, _period, _trend
-from app.models.crm import Client
+from app.api.v1.reports import (
+    PLATFORM_FEE_SLUGS,
+    _account_balances,
+    _currency_filter,
+    _expense_scope,
+    _invoice_scope,
+    _period,
+    _tenant_today,
+)
+from app.models.crm import Client, Lead, LeadStatus
 from app.models.expenses import Expense, ExpenseCategory
-from app.models.finance import Invoice, Payment
-from app.models.projects import Project
-from app.schemas.reports import ReportClientRow, ReportProjectRow, ReportsOverview
+from app.models.finance import AccountTransfer, Invoice, Payment
+from app.models.orders import Order
+from app.models.payroll import PayrollPeriod, PayrollRun
+from app.models.projects import Project, ProjectTask
+from app.schemas.reports import (
+    ReportClientRow,
+    ReportFinancialRow,
+    ReportOperationalSummary,
+    ReportProjectRow,
+    ReportsOverview,
+    ReportTrendRow,
+)
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
@@ -24,6 +41,230 @@ MONEY = Decimal("0.01")
 
 def _money(value) -> Decimal:
     return Decimal(value or 0).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _financials_and_trend_fast(
+    db: DbSession,
+    org_id: str,
+    start: date,
+    end: date,
+    currency: str | None,
+    client_id: str | None,
+    project_id: str | None,
+) -> tuple[list[ReportFinancialRow], list[ReportTrendRow]]:
+    financial_data: dict[str, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    trend_data: dict[tuple[str, str], dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+
+    invoice_period = func.to_char(func.date_trunc("month", Invoice.issue_date), "YYYY-MM")
+    invoice_query = _invoice_scope(
+        select(
+            invoice_period,
+            Invoice.currency,
+            func.sum(Invoice.total),
+            func.sum(Invoice.balance_due),
+        ).group_by(invoice_period, Invoice.currency),
+        org_id,
+        start,
+        end,
+        currency,
+        client_id,
+        project_id,
+    )
+    for month, code, total, receivable in db.execute(invoice_query).all():
+        total_amount = _money(total)
+        receivable_amount = _money(receivable)
+        financial_data[code]["invoiced"] += total_amount
+        financial_data[code]["receivable"] += receivable_amount
+        trend_data[(month, code)]["invoiced"] += total_amount
+
+    payment_period = func.to_char(func.date_trunc("month", Payment.payment_date), "YYYY-MM")
+    payment_query = (
+        select(
+            payment_period,
+            Payment.invoice_currency,
+            func.sum(Payment.invoice_amount),
+        )
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .where(
+            Payment.organization_id == org_id,
+            Payment.payment_date >= start,
+            Payment.payment_date <= end,
+            Payment.status == "confirmed",
+        )
+        .group_by(payment_period, Payment.invoice_currency)
+    )
+    if currency:
+        payment_query = payment_query.where(Payment.invoice_currency == currency)
+    if client_id:
+        payment_query = payment_query.where(Invoice.client_id == client_id)
+    if project_id:
+        payment_query = payment_query.where(Invoice.project_id == project_id)
+    for month, code, amount in db.execute(payment_query).all():
+        collected = _money(amount)
+        financial_data[code]["collected"] += collected
+        trend_data[(month, code)]["collected"] += collected
+
+    expense_period = func.to_char(func.date_trunc("month", Expense.expense_date), "YYYY-MM")
+    expense_query = _expense_scope(
+        select(
+            expense_period,
+            Expense.expense_currency,
+            func.sum(Expense.expense_amount),
+            func.sum(case((ExpenseCategory.slug.in_(PLATFORM_FEE_SLUGS), Expense.expense_amount), else_=0)),
+        )
+        .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
+        .group_by(expense_period, Expense.expense_currency),
+        org_id,
+        start,
+        end,
+        currency,
+        client_id,
+        project_id,
+    )
+    for month, code, amount, platform in db.execute(expense_query).all():
+        expense_amount = _money(amount)
+        financial_data[code]["expenses"] += expense_amount
+        financial_data[code]["platform"] += _money(platform)
+        trend_data[(month, code)]["expenses"] += expense_amount
+
+    if not client_id and not project_id:
+        payroll_period = func.to_char(func.date_trunc("month", PayrollPeriod.period_end), "YYYY-MM")
+        payroll_query = (
+            select(
+                payroll_period,
+                PayrollRun.currency,
+                func.sum(PayrollRun.gross_total),
+            )
+            .join(PayrollPeriod, PayrollPeriod.id == PayrollRun.period_id)
+            .where(
+                PayrollRun.organization_id == org_id,
+                PayrollRun.status.in_(["approved", "paid"]),
+                PayrollPeriod.period_end >= start,
+                PayrollPeriod.period_end <= end,
+            )
+            .group_by(payroll_period, PayrollRun.currency)
+        )
+        if currency:
+            payroll_query = payroll_query.where(PayrollRun.currency == currency)
+        for month, code, amount in db.execute(payroll_query).all():
+            payroll_amount = _money(amount)
+            financial_data[code]["expenses"] += payroll_amount
+            trend_data[(month, code)]["expenses"] += payroll_amount
+
+        transfer_period = func.to_char(func.date_trunc("month", AccountTransfer.transfer_date), "YYYY-MM")
+        transfer_query = (
+            select(
+                transfer_period,
+                AccountTransfer.source_currency,
+                func.sum(AccountTransfer.fee_amount),
+            )
+            .where(
+                AccountTransfer.organization_id == org_id,
+                AccountTransfer.transfer_date >= start,
+                AccountTransfer.transfer_date <= end,
+                AccountTransfer.status == "confirmed",
+                AccountTransfer.fee_amount > 0,
+            )
+            .group_by(transfer_period, AccountTransfer.source_currency)
+        )
+        if currency:
+            transfer_query = transfer_query.where(AccountTransfer.source_currency == currency)
+        for month, code, amount in db.execute(transfer_query).all():
+            transfer_amount = _money(amount)
+            financial_data[code]["transfer"] += transfer_amount
+            trend_data[(month, code)]["transfer"] += transfer_amount
+
+    financials = [
+        ReportFinancialRow(
+            currency=code,
+            invoiced_revenue=_money(values["invoiced"]),
+            collected_revenue=_money(values["collected"]),
+            receivables=_money(values["receivable"]),
+            expenses=_money(values["expenses"]),
+            platform_fees=_money(values["platform"]),
+            transfer_fees=_money(values["transfer"]),
+            net_profit=_money(values["invoiced"] - values["expenses"] - values["transfer"]),
+        )
+        for code, values in sorted(financial_data.items())
+    ]
+    trend = [
+        ReportTrendRow(
+            period=month,
+            currency=code,
+            invoiced_revenue=_money(values["invoiced"]),
+            collected_revenue=_money(values["collected"]),
+            expenses=_money(values["expenses"]),
+            transfer_fees=_money(values["transfer"]),
+            net_profit=_money(values["invoiced"] - values["expenses"] - values["transfer"]),
+        )
+        for (month, code), values in sorted(trend_data.items())
+    ]
+    return financials, trend
+
+
+def _operations_fast(db: DbSession, org_id: str, timezone_name: str) -> ReportOperationalSummary:
+    today = _tenant_today(timezone_name)
+    now = datetime.now(timezone.utc)
+
+    active_clients = (
+        select(func.count(Client.id))
+        .where(Client.organization_id == org_id, Client.status == "active")
+        .scalar_subquery()
+    )
+    open_orders = (
+        select(func.count(Order.id))
+        .where(Order.organization_id == org_id, Order.status.not_in(["completed", "cancelled"]))
+        .scalar_subquery()
+    )
+    active_projects = (
+        select(func.count(Project.id))
+        .where(Project.organization_id == org_id, Project.status.in_(["planned", "active", "on_hold"]))
+        .scalar_subquery()
+    )
+    overdue_tasks = (
+        select(func.count(ProjectTask.id))
+        .where(
+            ProjectTask.organization_id == org_id,
+            ProjectTask.due_date < today,
+            ProjectTask.status.not_in(["completed", "cancelled"]),
+        )
+        .scalar_subquery()
+    )
+    due_followups = (
+        select(func.count(Lead.id))
+        .join(LeadStatus, LeadStatus.id == Lead.status_id)
+        .where(
+            Lead.organization_id == org_id,
+            Lead.next_follow_up_at.is_not(None),
+            Lead.next_follow_up_at <= now,
+            LeadStatus.category == "open",
+        )
+        .scalar_subquery()
+    )
+    open_invoices = (
+        select(func.count(Invoice.id))
+        .where(Invoice.organization_id == org_id, Invoice.status.not_in(["paid", "cancelled"]))
+        .scalar_subquery()
+    )
+
+    row = db.execute(
+        select(
+            active_clients.label("active_clients"),
+            open_orders.label("open_orders"),
+            active_projects.label("active_projects"),
+            overdue_tasks.label("overdue_tasks"),
+            due_followups.label("due_followups"),
+            open_invoices.label("open_invoices"),
+        )
+    ).one()
+    return ReportOperationalSummary(
+        active_clients=int(row.active_clients or 0),
+        open_orders=int(row.open_orders or 0),
+        active_projects=int(row.active_projects or 0),
+        overdue_tasks=int(row.overdue_tasks or 0),
+        due_followups=int(row.due_followups or 0),
+        open_invoices=int(row.open_invoices or 0),
+    )
 
 
 def _project_rows_fast(
@@ -230,13 +471,23 @@ def reports_overview_fast(
         raise HTTPException(status_code=404, detail="Client not found")
     if project_id and db.scalar(select(Project.id).where(Project.id == project_id, Project.organization_id == tenant.organization_id)) is None:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    financials, trend = _financials_and_trend_fast(
+        db,
+        tenant.organization_id,
+        start,
+        end,
+        code,
+        client_id,
+        project_id,
+    )
     return ReportsOverview(
         date_from=start,
         date_to=end,
-        financials=_financials(db, tenant.organization_id, start, end, code, client_id, project_id),
-        trend=_trend(db, tenant.organization_id, start, end, code, client_id, project_id),
+        financials=financials,
+        trend=trend,
         accounts=_account_balances(db, tenant.organization_id, code),
-        operations=_operations(db, tenant.organization_id, tenant.organization.timezone),
+        operations=_operations_fast(db, tenant.organization_id, tenant.organization.timezone),
         projects=_project_rows_fast(db, tenant.organization_id, start, end, code, client_id, project_id),
         clients=_client_rows_fast(db, tenant.organization_id, start, end, code, client_id),
     )
