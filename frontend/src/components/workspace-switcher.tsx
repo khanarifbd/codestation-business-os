@@ -1,43 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Building2, Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-export type WorkspaceContext = {
-  organization: {
-    id: string;
-    name: string;
-    slug: string;
-    status: string;
-    country_code: string;
-    timezone: string;
-    currency: string;
-  };
-  membership_id: string;
-  role_id: string;
-  role: string;
-  role_name: string;
-  role_slug: string;
-  status: string;
-  is_owner: boolean;
-  relationships: string[];
-  primary_relationship: string;
-  permissions: string[];
-};
+import {
+  useDashboardSession,
+  type WorkspaceContext,
+  type WorkspaceMembership,
+} from "@/components/dashboard-session-context";
 
-type WorkspaceMembership = {
-  organization: WorkspaceContext["organization"];
-  membership_id: string;
-  role_id: string;
-  role: string;
-  role_name: string;
-  role_slug: string;
-  status: string;
-  is_owner: boolean;
-  relationships: string[];
-  primary_relationship: string;
-};
+export type { WorkspaceContext } from "@/components/dashboard-session-context";
 
 function relationshipLabel(value: string) {
   if (value === "owner") return "Owner";
@@ -46,54 +19,13 @@ function relationshipLabel(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export function WorkspaceSwitcher({
-  onContextChange,
-}: {
-  onContextChange?: (context: WorkspaceContext | null) => void;
-}) {
+export function WorkspaceSwitcher() {
   const router = useRouter();
   const rootRef = useRef<HTMLDivElement>(null);
+  const { workspaces, tenant: current, setTenant } = useDashboardSession();
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [switchingId, setSwitchingId] = useState<string | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([]);
-  const [current, setCurrent] = useState<WorkspaceContext | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const organizationsResponse = await fetch("/api/organizations", { cache: "no-store" });
-      if (organizationsResponse.status === 401) {
-        router.replace("/login");
-        return;
-      }
-      const organizationsPayload = await organizationsResponse.json().catch(() => []);
-      if (!organizationsResponse.ok) throw new Error("Unable to load workspaces");
-      setWorkspaces(Array.isArray(organizationsPayload) ? organizationsPayload : []);
-
-      const tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
-      if (tenantResponse.status === 401) {
-        router.replace("/login");
-        return;
-      }
-      if (tenantResponse.ok) {
-        const tenantPayload = (await tenantResponse.json()) as WorkspaceContext;
-        setCurrent(tenantPayload);
-        onContextChange?.(tenantPayload);
-      } else {
-        setCurrent(null);
-        onContextChange?.(null);
-      }
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load workspaces");
-    } finally {
-      setLoading(false);
-    }
-  }, [onContextChange, router]);
-
-  useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
     if (!open) return;
@@ -124,8 +56,7 @@ export function WorkspaceSwitcher({
       }
       if (!response.ok) throw new Error(payload?.detail ?? "Unable to switch workspace");
       const next = payload as WorkspaceContext;
-      setCurrent(next);
-      onContextChange?.(next);
+      setTenant(next);
       setOpen(false);
       router.push(next.primary_relationship === "client" ? "/dashboard/client-portal" : "/dashboard");
       router.refresh();
@@ -140,16 +71,16 @@ export function WorkspaceSwitcher({
     <button
       type="button"
       onClick={() => setOpen((value) => !value)}
-      disabled={loading}
+      disabled={switchingId !== null}
       className="flex w-full items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-2.5 text-left transition hover:bg-neutral-50 disabled:opacity-60"
       aria-expanded={open}
     >
       <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-neutral-950 text-white"><Building2 className="size-4" /></span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold">{loading ? "Loading workspace..." : current?.organization.name ?? "Choose workspace"}</span>
+        <span className="block truncate text-sm font-semibold">{current?.organization.name ?? "Choose workspace"}</span>
         <span className="mt-0.5 block truncate text-xs text-neutral-400">{current ? current.relationships.map(relationshipLabel).join(" · ") : "No workspace selected"}</span>
       </span>
-      {loading ? <Loader2 className="size-4 animate-spin text-neutral-400" /> : <ChevronDown className="size-4 text-neutral-400" />}
+      {switchingId ? <Loader2 className="size-4 animate-spin text-neutral-400" /> : <ChevronDown className="size-4 text-neutral-400" />}
     </button>
 
     {open ? <div className="absolute left-0 right-0 z-[70] mt-2 min-w-[290px] overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl">
