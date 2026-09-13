@@ -1,9 +1,20 @@
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+
+
+class BusinessSession(Session):
+    """SQLAlchemy session with opt-in deferred commits for atomic endpoint wrappers."""
+
+    def commit(self) -> None:
+        if int(self.info.get("deferred_commit_depth", 0)) > 0:
+            self.flush()
+            return
+        super().commit()
 
 
 engine = create_engine(
@@ -14,7 +25,36 @@ engine = create_engine(
     pool_recycle=settings.database_pool_recycle_seconds,
 )
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+SessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    expire_on_commit=False,
+    class_=BusinessSession,
+)
+
+
+@contextmanager
+def defer_commits(db: Session) -> Iterator[None]:
+    """Turn nested commit() calls into flushes until the outer wrapper commits once.
+
+    Financial API wrappers use this when they call established service/endpoint
+    functions that historically committed internally. It lets the business record,
+    operational balance movement, journal, idempotency record, and audit entry commit
+    as one database transaction without rewriting mature business logic.
+    """
+
+    previous_depth = int(db.info.get("deferred_commit_depth", 0))
+    db.info["deferred_commit_depth"] = previous_depth + 1
+    try:
+        yield
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if previous_depth:
+            db.info["deferred_commit_depth"] = previous_depth
+        else:
+            db.info.pop("deferred_commit_depth", None)
 
 
 def _is_activity_log(instance: object) -> bool:

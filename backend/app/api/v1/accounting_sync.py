@@ -4,12 +4,19 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.services.accounting_integrity import audit_financial_integrity
 from app.services.accounting_sync import sync_operational_accounting
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting", tags=["Accounting"])
+AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 AccountingManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
+
+
+class AccountingIntegrityRead(BaseModel):
+    counts: dict[str, int]
+    issues: list[str]
 
 
 class AccountingSyncRead(BaseModel):
@@ -17,14 +24,30 @@ class AccountingSyncRead(BaseModel):
     errors: list[str]
 
 
+@router.get("/integrity", response_model=AccountingIntegrityRead)
+def accounting_integrity(db: DbSession, tenant: AccountingViewer):
+    """Read-only operational-vs-GL audit. Never mutates or repairs data."""
+
+    return AccountingIntegrityRead(**audit_financial_integrity(db, tenant.organization_id))
+
+
 @router.post("/sync", response_model=AccountingSyncRead)
 def sync_accounting(request: Request, db: DbSession, tenant: AccountingManager):
+    # Repair/backfill only. Normal financial mutations post their journal entries
+    # atomically and do not depend on this endpoint.
     result = sync_operational_accounting(
         db,
         organization_id=tenant.organization_id,
         user_id=tenant.user_id,
         base_currency=tenant.organization.currency,
     )
+    integrity = audit_financial_integrity(db, tenant.organization_id)
+    result["counts"]["integrity_issues"] = int(integrity["counts"]["issue_count"])
+    if integrity["issues"]:
+        result["errors"].extend(
+            f"Integrity audit: {message}" for message in integrity["issues"]
+        )
+
     record_activity(
         db,
         action="accounting.operational_sync.completed",
@@ -34,8 +57,13 @@ def sync_accounting(request: Request, db: DbSession, tenant: AccountingManager):
         entity_type="organization",
         entity_id=tenant.organization_id,
         after=result["counts"],
-        metadata={"error_count": len(result["errors"]), "errors": result["errors"][:20]},
-        message="Operational finance records synchronized to accounting journals",
+        metadata={
+            "mode": "repair_backfill",
+            "error_count": len(result["errors"]),
+            "errors": result["errors"][:20],
+            "integrity_counts": integrity["counts"],
+        },
+        message="Operational accounting repair/backfill completed and financial integrity audited",
         request=request,
     )
     db.commit()
