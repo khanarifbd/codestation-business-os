@@ -38,7 +38,7 @@ class ProjectAccess:
 
 
 def role_permissions(db: Session, tenant: TenantContext) -> set[str]:
-    role = tenant.organization_role
+    role = getattr(tenant, "organization_role", None)
     if (
         role is not None
         and role.id == tenant.membership.role_id
