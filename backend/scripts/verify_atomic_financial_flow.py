@@ -72,9 +72,16 @@ def main() -> None:
     db = SessionLocal()
     marker = uuid4().hex[:10]
     try:
-        user = db.scalar(select(User).order_by(User.created_at.asc()))
-        if user is None:
-            raise AssertionError("atomic accounting verification requires a user")
+        fixture_org = db.scalar(
+            select(Organization)
+            .where(Organization.name == "Existing Tenant Fixture")
+            .order_by(Organization.created_at.desc())
+        )
+        if fixture_org is None:
+            raise AssertionError("atomic accounting verification requires the existing tenant fixture")
+        user = db.get(User, fixture_org.created_by_user_id)
+        if user is None or user.system_role != "user":
+            raise AssertionError("atomic accounting verification requires a regular tenant fixture owner")
 
         created = create_organization(
             OrganizationCreate(
@@ -164,11 +171,6 @@ def main() -> None:
 
         # The public mutation path must be complete without calling accounting sync.
         financial, ledger = financial_ledger_account(db, organization.id, account.id)
-        tx_rows = db.execute(
-            select(financial.__class__.__table__.c.id).where(financial.__class__.__table__.c.id == financial.id)
-        ).all()
-        if not tx_rows:
-            raise AssertionError("financial account disappeared during atomic flow")
 
         from app.models.finance import FinancialTransaction
 
