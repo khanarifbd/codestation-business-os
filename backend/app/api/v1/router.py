@@ -7,6 +7,7 @@ from app.api.v1.accounting_assets import router as accounting_assets_router
 from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
 from app.api.v1.accounting_loans import router as accounting_loans_router
 from app.api.v1.accounting_money import router as accounting_money_router
+from app.api.v1.accounting_read_fast import router as accounting_read_fast_router
 from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
 from app.api.v1.accounting_reports import router as accounting_reports_router
 from app.api.v1.accounting_sync import router as accounting_sync_router
@@ -125,6 +126,38 @@ for _router in (
     _remove_shadowed_financial_routes(_router)
 
 
+# Expensive accounting list reads keep their original business handlers importable
+# for verification, while the public GET operations are served by batched queries.
+_SHADOWED_ACCOUNTING_READ_OPERATIONS = {
+    ("GET", "/accounting/money"),
+    ("GET", "/accounting/reconciliations/meta"),
+    ("GET", "/accounting/reconciliations"),
+    ("GET", "/accounting/journals"),
+}
+
+
+def _remove_shadowed_accounting_read_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_ACCOUNTING_READ_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+for _router in (
+    accounting_money_router,
+    accounting_reconciliation_router,
+    accounting_router,
+):
+    _remove_shadowed_accounting_read_routes(_router)
+
+
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
@@ -173,6 +206,7 @@ api_router.include_router(inventory_workflows_router)
 api_router.include_router(financial_safety_router)
 api_router.include_router(financial_corrections_router)
 api_router.include_router(financial_correction_history_router)
+api_router.include_router(accounting_read_fast_router)
 api_router.include_router(accounting_router)
 api_router.include_router(accounting_accounts_router)
 api_router.include_router(accounting_assets_router)
