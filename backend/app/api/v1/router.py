@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.routing import APIRoute
 
 from app.api.v1.accounting import router as accounting_router
 from app.api.v1.accounting_accounts import router as accounting_accounts_router
@@ -81,6 +82,48 @@ from app.api.v1.tax import router as tax_router
 from app.api.v1.team import invitation_router, router as team_router
 from app.api.v1.tenant import router as tenant_router
 from app.api.v1.workspace import router as workspace_router
+
+
+# These mutations are intentionally exposed only through financial_safety_router.
+# The underlying endpoint functions remain importable business handlers, but their
+# duplicate public routes are removed so route ordering can never bypass atomic
+# posting, idempotency, or journal creation.
+_SHADOWED_FINANCIAL_OPERATIONS = {
+    ("POST", "/finance/accounts"),
+    ("PATCH", "/finance/invoices/{invoice_id}/status"),
+    ("POST", "/finance/payments"),
+    ("POST", "/finance/expenses"),
+    ("POST", "/finance/expenses/{expense_id}/void"),
+    ("POST", "/finance/transfers"),
+    ("POST", "/accounting/payables/{bill_id}/payments"),
+    ("POST", "/accounting/loans/{loan_id}/disburse"),
+    ("POST", "/accounting/loans/{loan_id}/repay"),
+}
+
+
+def _remove_shadowed_financial_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_FINANCIAL_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+for _router in (
+    finance_router,
+    finance_expenses_router,
+    finance_transfers_router,
+    payables_router,
+    accounting_loans_router,
+):
+    _remove_shadowed_financial_routes(_router)
+
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -167,3 +210,23 @@ api_router.include_router(tenant_activity_router)
 api_router.include_router(platform_router)
 api_router.include_router(platform_organization_detail_router)
 api_router.include_router(platform_activity_router)
+
+
+def _assert_unique_operations(router: APIRouter) -> None:
+    seen: dict[tuple[str, str], str] = {}
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods or set():
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            key = (method, route.path)
+            previous = seen.get(key)
+            if previous is not None:
+                raise RuntimeError(
+                    f"Duplicate API operation {method} {route.path}: {previous} and {route.name}"
+                )
+            seen[key] = route.name
+
+
+_assert_unique_operations(api_router)
