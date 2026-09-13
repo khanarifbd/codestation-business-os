@@ -4,6 +4,7 @@ from collections import Counter
 
 from fastapi.routing import APIRoute
 
+from app.api.v1.financial_safety import router as financial_safety_router
 from app.main import app
 
 
@@ -66,6 +67,28 @@ def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list
     return counts, routes
 
 
+def _diagnostic_routes() -> dict[str, list[tuple[str, str, str]]]:
+    safety: list[tuple[str, str, str]] = []
+    public: list[tuple[str, str, str]] = []
+    for route in financial_safety_router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in sorted(route.methods or set()):
+            if method not in {"HEAD", "OPTIONS"}:
+                safety.append((method, route.path, route.endpoint.__module__))
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not (
+            "/finance/" in route.path
+            or "/accounting/loans/" in route.path
+            or "/accounting/payables/" in route.path
+        ):
+            continue
+        for method in sorted(route.methods or set()):
+            if method not in {"HEAD", "OPTIONS"}:
+                public.append((method, route.path, route.endpoint.__module__))
+    return {"financial_safety_router": safety, "public_financial_routes": public}
+
+
 def main() -> None:
     counts, routes = _route_index()
 
@@ -73,7 +96,8 @@ def main() -> None:
         key = _public_key(operation)
         if counts[key] != 1:
             raise AssertionError(
-                f"critical financial operation must be registered exactly once on the public API: {key}, count={counts[key]}"
+                f"critical financial operation must be registered exactly once on the public API: {key}, "
+                f"count={counts[key]}, diagnostics={_diagnostic_routes()}"
             )
         endpoint_module = routes[key][0].endpoint.__module__
         if endpoint_module != "app.api.v1.financial_safety":
@@ -91,7 +115,7 @@ def main() -> None:
         if routes[key][0].response_model is None:
             untyped.append(key)
     if missing:
-        raise AssertionError(f"missing or duplicated typed accounting operations: {missing}")
+        raise AssertionError(f"missing or duplicated typed accounting operations: {missing}, diagnostics={_diagnostic_routes()}")
     if untyped:
         raise AssertionError(f"public accounting operations are missing response models: {untyped}")
 
