@@ -18,7 +18,6 @@ from app.api.v1.phase4_read_fast_extra import (
     list_client_portal_orders_fast,
 )
 from app.api.v1.phase4_remaining_fast import expense_meta_lite, hr_workspace_summary_fast
-from app.api.v1.router import api_router
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models.client_access import ClientMembership
@@ -84,11 +83,11 @@ def client_portal_tenant(db) -> TenantContext:
 def public_route_endpoint(method: str, path: str):
     matches = [
         route
-        for route in api_router.routes
+        for route in app.routes
         if isinstance(route, APIRoute) and route.path == path and method in (route.methods or set())
     ]
     if len(matches) != 1:
-        raise AssertionError(f"expected one canonical {method} {path}, found {len(matches)}")
+        raise AssertionError(f"expected one public Phase 4 {method} {path}, found {len(matches)}")
     return matches[0].endpoint
 
 
@@ -183,10 +182,10 @@ def main() -> None:
             ("GET", "/hr/workspace-summary", "hr_workspace_summary_fast"),
             ("GET", "/finance/expense-meta-lite", "expense_meta_lite"),
         ):
-            endpoint = public_route_endpoint(method, path)
-            if endpoint.__name__ != expected_name:
-                raise AssertionError(f"{method} {path} is not owned by the Phase 4 bounded handler")
             public_path = f"{API_PREFIX}{path}"
+            endpoint = public_route_endpoint(method, public_path)
+            if endpoint.__name__ != expected_name:
+                raise AssertionError(f"{method} {public_path} is not owned by the Phase 4 bounded handler")
             if public_path not in schema_paths or method.lower() not in schema_paths[public_path]:
                 raise AssertionError(f"public OpenAPI operation is missing: {method} {public_path}")
     finally:
