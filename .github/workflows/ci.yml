@@ -120,6 +120,7 @@ jobs:
         run: >-
           bash -n
           deployment/deploy.sh
+          deployment/safe-deploy.sh
           deployment/backup.sh
           deployment/restore.sh
           deployment/install-backup-timer.sh
