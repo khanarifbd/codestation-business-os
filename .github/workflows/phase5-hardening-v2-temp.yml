@@ -1,0 +1,378 @@
+name: Phase 5 Hardening V2 Temp
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+      - name: Apply Phase 5 hardening patch
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          root = Path.cwd()
+
+          def replace_once(rel, old, new):
+              path = root / rel
+              text = path.read_text()
+              if new in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f"Missing patch anchor in {rel}: {old[:100]!r}")
+              path.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "backend/app/api/v1/router.py",
+              """for _router in (
+              inventory_router,
+              inventory_management_router,
+              project_execution_router,
+              client_access_router,
+              client_portal_router,
+              capital_router,
+              capital_insights_router,
+              hr_workspace_router,
+              hr_router,
+          ):
+              _remove_shadowed_phase4_read_routes(_router)
+
+
+          api_router = APIRouter()""",
+              """for _router in (
+              inventory_router,
+              inventory_management_router,
+              project_execution_router,
+              client_access_router,
+              client_portal_router,
+              capital_router,
+              capital_insights_router,
+              hr_workspace_router,
+              hr_router,
+          ):
+              _remove_shadowed_phase4_read_routes(_router)
+
+
+          _SHADOWED_REPORT_READ_OPERATIONS = {
+              ("GET", "/reports/overview"),
+          }
+
+
+          def _remove_shadowed_report_read_routes(router: APIRouter) -> None:
+              router.routes[:] = [
+                  route
+                  for route in router.routes
+                  if not (
+                      isinstance(route, APIRoute)
+                      and any(
+                          (method, route.path) in _SHADOWED_REPORT_READ_OPERATIONS
+                          for method in (route.methods or set())
+                      )
+                  )
+              ]
+
+
+          _remove_shadowed_report_read_routes(reports_router)
+
+
+          api_router = APIRouter()""",
+          )
+
+          replace_once(
+              "backend/app/main.py",
+              "import logging\nfrom contextlib import asynccontextmanager",
+              "import logging\nimport re\nfrom contextlib import asynccontextmanager",
+          )
+          replace_once(
+              "backend/app/main.py",
+              "HIGH_QUERY_COUNT = 50\n\n\n@asynccontextmanager",
+              """HIGH_QUERY_COUNT = 50
+          REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+          def _request_id(header_value: str | None) -> str:
+              if header_value and REQUEST_ID_PATTERN.fullmatch(header_value):
+                  return header_value
+              return str(uuid4())
+
+
+          @asynccontextmanager""",
+          )
+          replace_once(
+              "backend/app/main.py",
+              '    request_id = request.headers.get("x-request-id") or str(uuid4())',
+              '    request_id = _request_id(request.headers.get("x-request-id"))',
+          )
+
+          replace_once(
+              "backend/Dockerfile",
+              'CMD ["sh", "-c", "uv run --no-sync alembic upgrade head && uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000"]',
+              'CMD ["sh", "-c", "exec uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-1}"]',
+          )
+
+          replace_once(
+              "deployment/docker-compose.yml",
+              """  backend:
+              build:
+                context: ../backend
+              restart: unless-stopped""",
+              """  backend:
+              build:
+                context: ../backend
+              image: codestation-business-os-backend:latest
+              restart: unless-stopped""",
+          )
+          path = root / "deployment/docker-compose.yml"
+          text = path.read_text().replace("ENVIRONMENT: staging", "ENVIRONMENT: production")
+          text = text.replace(
+              """  finance-scheduler:
+              build:
+                context: ../backend
+              restart: unless-stopped""",
+              """  finance-scheduler:
+              image: codestation-business-os-backend:latest
+              restart: unless-stopped""",
+          )
+          text = text.replace(
+              '    command: ["sh", "-c", "uv run --no-sync alembic upgrade head && uv run --no-sync python -m scripts.run_recurring_auto_post"]',
+              '    command: ["uv", "run", "--no-sync", "python", "-m", "scripts.run_recurring_auto_post"]',
+          )
+          text = text.replace(
+              """volumes:
+            business_os_postgres:
+            business_os_uploads:""",
+              """volumes:
+            business_os_postgres:
+            business_os_uploads:
+              name: codestation-business-os_business_os_uploads""",
+          )
+          path.write_text(text)
+
+          replace_once(
+              "docker-compose.staging.yml",
+              """  backend:
+              build:
+                context: ./backend
+              restart: unless-stopped""",
+              """  backend:
+              build:
+                context: ./backend
+              image: codestation-business-os-backend:latest
+              restart: unless-stopped""",
+          )
+
+          replace_once(
+              "deployment/safe-deploy.sh",
+              'COMPOSE_FILE="${ROOT_DIR}/docker-compose.staging.yml"\nPROJECT_NAME="codestation-business-os"',
+              'COMPOSE_FILE="${ROOT_DIR}/docker-compose.staging.yml"\nSCHEDULER_COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"\nPROJECT_NAME="codestation-business-os"\nUPLOADS_VOLUME="${PROJECT_NAME}_business_os_uploads"',
+          )
+          replace_once(
+              "deployment/safe-deploy.sh",
+              '    -e DATABASE_URL="${database_url}" \\\n    -p "127.0.0.1:${backend_port}:8000" \\',
+              '    -e DATABASE_URL="${database_url}" \\\n    -v "${UPLOADS_VOLUME}:/data/uploads" \\\n    -p "127.0.0.1:${backend_port}:8000" \\',
+          )
+          replace_once(
+              "deployment/safe-deploy.sh",
+              '[[ -f "${COMPOSE_FILE}" ]] || fail "Missing ${COMPOSE_FILE}"',
+              '[[ -f "${COMPOSE_FILE}" ]] || fail "Missing ${COMPOSE_FILE}"\n[[ -f "${SCHEDULER_COMPOSE_FILE}" ]] || fail "Missing ${SCHEDULER_COMPOSE_FILE}"',
+          )
+          replace_once(
+              "deployment/safe-deploy.sh",
+              """mkdir -p "${STATE_DIR}"
+          chmod 700 "${STATE_DIR}"
+
+          COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")""",
+              """mkdir -p "${STATE_DIR}"
+          chmod 700 "${STATE_DIR}"
+
+          if ! docker volume inspect "${UPLOADS_VOLUME}" >/dev/null 2>&1; then
+            log "Creating persistent upload volume ${UPLOADS_VOLUME}"
+            docker volume create "${UPLOADS_VOLUME}" >/dev/null
+          fi
+
+          COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+          SCHEDULER_COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${SCHEDULER_COMPOSE_FILE}")""",
+          )
+          replace_once(
+              "deployment/safe-deploy.sh",
+              'git pull --ff-only origin "${branch}"\n\n"${COMPOSE[@]}" config -q',
+              'git pull --ff-only origin "${branch}"\n\nBUSINESS_OS_ENV_FILE="${ENV_FILE}" bash "${ROOT_DIR}/deployment/verify-production.sh" --config-only\n"${COMPOSE[@]}" config -q\n"${SCHEDULER_COMPOSE[@]}" config -q',
+          )
+          replace_once(
+              "deployment/safe-deploy.sh",
+              """log "Switching Nginx traffic atomically to ${candidate_slot}""",
+              """log "Refreshing singleton finance scheduler from candidate backend image"
+          if ! "${SCHEDULER_COMPOSE[@]}" up -d --no-deps --force-recreate finance-scheduler; then
+            fail "Finance scheduler could not be refreshed; active ${active_slot} release was not switched"
+          fi
+          scheduler_id=""
+          for attempt in $(seq 1 10); do
+            scheduler_id="$("${SCHEDULER_COMPOSE[@]}" ps -q finance-scheduler 2>/dev/null || true)"
+            if [[ -n "${scheduler_id}" ]] && [[ "$(docker inspect -f '{{.State.Running}}' "${scheduler_id}" 2>/dev/null || true)" == "true" ]]; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ -z "${scheduler_id}" ]] || [[ "$(docker inspect -f '{{.State.Running}}' "${scheduler_id}" 2>/dev/null || true)" != "true" ]]; then
+            [[ -z "${scheduler_id}" ]] || docker logs --tail=120 "${scheduler_id}" || true
+            fail "Finance scheduler did not stay running; active ${active_slot} release was not switched"
+          fi
+
+          log "Switching Nginx traffic atomically to ${candidate_slot}""",
+          )
+
+          replace_once(
+              "deployment/nginx/codestation-business-os.conf",
+              "limit_req_zone $binary_remote_addr zone=business_os_auth:10m rate=30r/m;\n\n# Blue is the bootstrap/default slot.",
+              """limit_req_zone $binary_remote_addr zone=business_os_auth:10m rate=30r/m;
+
+          map $http_upgrade $business_os_connection_upgrade {
+              default upgrade;
+              ''      '';
+          }
+
+          # Blue is the bootstrap/default slot.""",
+          )
+          path = root / "deployment/nginx/codestation-business-os.conf"
+          text = path.read_text().replace('proxy_set_header Connection "upgrade";', 'proxy_set_header Connection $business_os_connection_upgrade;')
+          backend_marker = """        proxy_set_header X-Forwarded-Proto $scheme;
+              }
+
+              location / {
+                  proxy_pass http://business_os_backend;"""
+          backend_replacement = """        proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection $business_os_connection_upgrade;
+              }
+
+              location / {
+                  proxy_pass http://business_os_backend;"""
+          if backend_marker in text:
+              text = text.replace(backend_marker, backend_replacement, 1)
+          final_marker = """        proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+
+          # TLS is installed"""
+          final_replacement = """        proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection $business_os_connection_upgrade;
+              }
+          }
+
+          # TLS is installed"""
+          if final_marker in text:
+              text = text.replace(final_marker, final_replacement, 1)
+          path.write_text(text)
+
+          replace_once(
+              ".env.staging.example",
+              "# PostgreSQL application pool\nDATABASE_POOL_SIZE=10",
+              "# Backend process concurrency. Keep at 1 until DB connection budget/load testing validates more.\nWEB_CONCURRENCY=1\n\n# PostgreSQL application pool (per worker process)\nDATABASE_POOL_SIZE=10",
+          )
+
+          verifier = root / "backend/scripts/verify_phase5_architecture.py"
+          verifier.write_text("""from __future__ import annotations
+
+          from pathlib import Path
+
+          from fastapi.routing import APIRoute
+
+          from app.api.v1.router import api_router
+          from app.main import _request_id, app
+
+
+          ROOT = Path(__file__).resolve().parents[2]
+
+
+          def main() -> None:
+              routes = [
+                  route
+                  for route in api_router.routes
+                  if isinstance(route, APIRoute)
+                  and route.path == "/reports/overview"
+                  and "GET" in (route.methods or set())
+              ]
+              if len(routes) != 1 or routes[0].name != "reports_overview_fast":
+                  raise AssertionError(f"reports overview route ownership regression: {[r.name for r in routes]}")
+              operation_id = app.openapi()["paths"]["/api/v1/reports/overview"]["get"].get("operationId")
+              if "reports_overview_fast" not in str(operation_id or ""):
+                  raise AssertionError(f"reports overview OpenAPI owner regression: {operation_id}")
+
+              good = "trace-ABC_123:xyz"
+              if _request_id(good) != good:
+                  raise AssertionError("valid request id was not preserved")
+              for bad in ("", " bad", "bad value", "x" * 129, "bad\\nvalue"):
+                  generated = _request_id(bad)
+                  if generated == bad or len(generated) != 36:
+                      raise AssertionError(f"unsafe request id was not replaced: {bad!r}")
+
+              dockerfile = (ROOT / "backend/Dockerfile").read_text()
+              if "alembic upgrade head &&" in dockerfile:
+                  raise AssertionError("backend container still owns migrations")
+              if "exec uv run --no-sync uvicorn" not in dockerfile:
+                  raise AssertionError("backend process is not exec-based")
+
+              compose = (ROOT / "deployment/docker-compose.yml").read_text()
+              if compose.count("ENVIRONMENT: production") < 2:
+                  raise AssertionError("production services are not marked production")
+              if "alembic upgrade head" in compose:
+                  raise AssertionError("long-running production service still runs migrations")
+              if "image: codestation-business-os-backend:latest" not in compose:
+                  raise AssertionError("scheduler does not share backend image")
+
+              safe = (ROOT / "deployment/safe-deploy.sh").read_text()
+              for needle in (
+                  'UPLOADS_VOLUME="${PROJECT_NAME}_business_os_uploads"',
+                  '-v "${UPLOADS_VOLUME}:/data/uploads"',
+                  'verify-production.sh" --config-only',
+                  'finance-scheduler',
+              ):
+                  if needle not in safe:
+                      raise AssertionError(f"safe-deploy hardening missing: {needle}")
+
+              nginx = (ROOT / "deployment/nginx/codestation-business-os.conf").read_text()
+              if "map $http_upgrade $business_os_connection_upgrade" not in nginx:
+                  raise AssertionError("Nginx keepalive map missing")
+              if 'Connection "upgrade"' in nginx:
+                  raise AssertionError("Nginx still forces Connection: upgrade")
+              if nginx.count("Connection $business_os_connection_upgrade") < 4:
+                  raise AssertionError("Nginx conditional Connection header missing from proxy locations")
+
+              print("Phase 5 architecture verification passed")
+
+
+          if __name__ == "__main__":
+              main()
+          """.replace("\n          ", "\n"))
+
+          replace_once(
+              ".github/workflows/ci.yml",
+              "      - run: uv run python scripts/verify_phase4_remaining_performance.py\n      - run: uv run python scripts/verify_sales_catalog_flow.py",
+              "      - run: uv run python scripts/verify_phase4_remaining_performance.py\n      - run: uv run python scripts/verify_phase5_architecture.py\n      - run: uv run python scripts/verify_sales_catalog_flow.py",
+          )
+          PY
+
+          python -m compileall backend/app backend/scripts >/dev/null
+          bash -n deployment/safe-deploy.sh deployment/deploy.sh deployment/verify-production.sh
+
+          if git diff --quiet; then
+            echo "Phase 5 hardening already applied."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend deployment docker-compose.staging.yml .env.staging.example .github/workflows/ci.yml
+          git commit -m "Harden Phase 5 production architecture"
+          git push origin HEAD:develop
