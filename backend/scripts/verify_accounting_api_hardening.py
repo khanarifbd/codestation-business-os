@@ -4,9 +4,10 @@ from collections import Counter
 
 from fastapi.routing import APIRoute
 
-from app.api.v1.router import api_router
 from app.main import app
 
+
+API_PREFIX = "/api/v1"
 
 CRITICAL_SINGLETON_OPERATIONS = {
     ("POST", "/finance/accounts"),
@@ -45,10 +46,15 @@ TYPED_OPERATIONS = {
 }
 
 
+def _public_key(operation: tuple[str, str]) -> tuple[str, str]:
+    method, path = operation
+    return method, f"{API_PREFIX}{path}"
+
+
 def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list[APIRoute]]]:
     counts: Counter[tuple[str, str]] = Counter()
     routes: dict[tuple[str, str], list[APIRoute]] = {}
-    for route in api_router.routes:
+    for route in app.routes:
         if not isinstance(route, APIRoute):
             continue
         for method in route.methods or set():
@@ -63,10 +69,11 @@ def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list
 def main() -> None:
     counts, routes = _route_index()
 
-    for key in sorted(CRITICAL_SINGLETON_OPERATIONS):
+    for operation in sorted(CRITICAL_SINGLETON_OPERATIONS):
+        key = _public_key(operation)
         if counts[key] != 1:
             raise AssertionError(
-                f"critical financial operation must be registered exactly once in api_router: {key}, count={counts[key]}"
+                f"critical financial operation must be registered exactly once on the public API: {key}, count={counts[key]}"
             )
         endpoint_module = routes[key][0].endpoint.__module__
         if endpoint_module != "app.api.v1.financial_safety":
@@ -74,17 +81,24 @@ def main() -> None:
                 f"critical financial operation bypasses financial safety wrapper: {key}, endpoint={endpoint_module}"
             )
 
-    missing = [key for key in sorted(TYPED_OPERATIONS) if counts[key] != 1]
+    missing = []
+    untyped = []
+    for operation in sorted(TYPED_OPERATIONS):
+        key = _public_key(operation)
+        if counts[key] != 1:
+            missing.append((key, counts[key]))
+            continue
+        if routes[key][0].response_model is None:
+            untyped.append(key)
     if missing:
         raise AssertionError(f"missing or duplicated typed accounting operations: {missing}")
-    untyped = [key for key in sorted(TYPED_OPERATIONS) if routes[key][0].response_model is None]
     if untyped:
         raise AssertionError(f"public accounting operations are missing response models: {untyped}")
 
     schema = app.openapi()
     public_paths = schema.get("paths", {})
     for method, path in sorted(CRITICAL_SINGLETON_OPERATIONS | TYPED_OPERATIONS):
-        public_path = f"/api/v1{path}"
+        public_path = f"{API_PREFIX}{path}"
         if public_path not in public_paths or method.lower() not in public_paths[public_path]:
             raise AssertionError(f"public OpenAPI operation is missing: {method} {public_path}")
 
@@ -101,8 +115,8 @@ def main() -> None:
             raise AssertionError(f"{field} is not exposed as an OpenAPI date: {definition}")
 
     print(
-        "accounting API hardening verification passed: singleton safety routes, "
-        "typed contracts, public OpenAPI coverage, strict reconciliation dates"
+        "accounting API hardening verification passed: singleton public safety routes, "
+        "typed contracts, OpenAPI coverage, strict reconciliation dates"
     )
 
 
