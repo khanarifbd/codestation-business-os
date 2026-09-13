@@ -203,7 +203,7 @@ start_candidate() {
     --network "${NETWORK_NAME}" \
     --restart unless-stopped \
     --env-file "${ENV_FILE}" \
-    -e ENVIRONMENT=staging \
+    -e ENVIRONMENT=production \
     -e DATABASE_URL="${database_url}" \
     -p "127.0.0.1:${backend_port}:8000" \
     "${backend_image}" >/dev/null
