@@ -22,6 +22,7 @@ class AccountingIntegrityRead(BaseModel):
 class AccountingSyncRead(BaseModel):
     counts: dict[str, int]
     errors: list[str]
+    integrity: AccountingIntegrityRead
 
 
 @router.get("/integrity", response_model=AccountingIntegrityRead)
@@ -41,12 +42,9 @@ def sync_accounting(request: Request, db: DbSession, tenant: AccountingManager):
         user_id=tenant.user_id,
         base_currency=tenant.organization.currency,
     )
-    integrity = audit_financial_integrity(db, tenant.organization_id)
-    result["counts"]["integrity_issues"] = int(integrity["counts"]["issue_count"])
-    if integrity["issues"]:
-        result["errors"].extend(
-            f"Integrity audit: {message}" for message in integrity["issues"]
-        )
+    integrity_result = audit_financial_integrity(db, tenant.organization_id)
+    integrity = AccountingIntegrityRead(**integrity_result)
+    result["counts"]["integrity_issues"] = int(integrity.counts["issue_count"])
 
     record_activity(
         db,
@@ -61,10 +59,15 @@ def sync_accounting(request: Request, db: DbSession, tenant: AccountingManager):
             "mode": "repair_backfill",
             "error_count": len(result["errors"]),
             "errors": result["errors"][:20],
-            "integrity_counts": integrity["counts"],
+            "integrity_counts": integrity.counts,
+            "integrity_issues": integrity.issues[:20],
         },
         message="Operational accounting repair/backfill completed and financial integrity audited",
         request=request,
     )
     db.commit()
-    return AccountingSyncRead(**result)
+    return AccountingSyncRead(
+        counts=result["counts"],
+        errors=result["errors"],
+        integrity=integrity,
+    )
