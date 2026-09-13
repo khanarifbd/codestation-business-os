@@ -44,7 +44,9 @@ export function ProjectClientMilestoneSharing() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [milestones, setMilestones] = useState<MilestoneRow[]>([]);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loadingProject, setLoadingProject] = useState(false);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(false);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -53,39 +55,55 @@ export function ProjectClientMilestoneSharing() {
     setOpen(false);
     setProject(null);
     setMilestones([]);
+    setWorkspaceLoaded(false);
     setError(null);
     setMessage(null);
     if (!projectId) return;
 
     let active = true;
     void (async () => {
-      setLoading(true);
+      setLoadingProject(true);
       try {
-        const projectResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { cache: "no-store" });
-        if (!projectResponse.ok) return;
-        const projectPayload = await projectResponse.json().catch(() => null) as ProjectDetail | null;
-        if (!projectPayload) return;
-        const canManage = Boolean(projectPayload.access?.can_manage_project || projectPayload.access?.is_project_manager);
-        if (!canManage) return;
-
-        const workspaceResponse = await fetch(`/api/projects/${encodeURIComponent(projectId)}/workspace`, { cache: "no-store" });
-        if (!workspaceResponse.ok) return;
-        const workspacePayload = await workspaceResponse.json().catch(() => null) as ProjectWorkspace | null;
-        if (!workspacePayload) return;
-
-        if (active) {
-          setProject(projectPayload);
-          setMilestones(workspacePayload.milestones ?? []);
-        }
+        // Keep the lightweight access check so non-managers do not see the
+        // sharing control, but defer the heavy project workspace request until
+        // the user actually opens the panel.
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => null) as ProjectDetail | null;
+        if (!payload) return;
+        const canManage = Boolean(payload.access?.can_manage_project || payload.access?.is_project_manager);
+        if (active && canManage) setProject(payload);
       } finally {
-        if (active) setLoading(false);
+        if (active) setLoadingProject(false);
       }
     })();
 
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [projectId]);
+
+  async function loadWorkspace() {
+    if (!projectId || workspaceLoaded || loadingWorkspace) return;
+    setLoadingWorkspace(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/workspace`, { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as (ProjectWorkspace & { detail?: string }) | null;
+      if (!response.ok || !payload) throw new Error(payload?.detail ?? "Unable to load project milestones.");
+      setMilestones(payload.milestones ?? []);
+      setWorkspaceLoaded(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load project milestones.");
+    } finally {
+      setLoadingWorkspace(false);
+    }
+  }
+
+  async function openSharing() {
+    setOpen(true);
+    setError(null);
+    setMessage(null);
+    await loadWorkspace();
+  }
 
   async function toggleVisibility(milestone: MilestoneRow) {
     if (!projectId || savingId) return;
@@ -117,19 +135,19 @@ export function ProjectClientMilestoneSharing() {
     }
   }
 
-  if (!projectId || loading || !project) return null;
+  if (!projectId || loadingProject || !project) return null;
 
   const sharedCount = milestones.filter((item) => item.client_visible).length;
 
   return <>
     <button
       type="button"
-      onClick={() => { setOpen(true); setError(null); setMessage(null); }}
+      onClick={() => void openSharing()}
       className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-neutral-700 shadow-lg transition hover:border-neutral-300 hover:text-neutral-950 lg:bottom-6 lg:right-6"
     >
       <Share2 className="size-4" />
       Client milestones
-      <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] text-neutral-500">{sharedCount}/{milestones.length}</span>
+      {workspaceLoaded ? <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] text-neutral-500">{sharedCount}/{milestones.length}</span> : null}
     </button>
 
     {open ? <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingId) setOpen(false); }}>
@@ -147,7 +165,7 @@ export function ProjectClientMilestoneSharing() {
           {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
           {message ? <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
-          {milestones.length ? <div className="space-y-3">{milestones.map((milestone) => <article key={milestone.id} className="rounded-xl border p-4">
+          {loadingWorkspace ? <div className="flex items-center justify-center gap-2 py-12 text-sm text-neutral-400"><Loader2 className="size-4 animate-spin" />Loading project milestones…</div> : milestones.length ? <div className="space-y-3">{milestones.map((milestone) => <article key={milestone.id} className="rounded-xl border p-4">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -166,7 +184,7 @@ export function ProjectClientMilestoneSharing() {
                 {milestone.client_visible ? "Hide from client" : "Share with client"}
               </button>
             </div>
-          </article>)}</div> : <div className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-neutral-400">No project milestones exist yet. Create milestones in the Project workspace first.</div>}
+          </article>)}</div> : workspaceLoaded ? <div className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-neutral-400">No project milestones exist yet. Create milestones in the Project workspace first.</div> : null}
         </div>
       </section>
     </div> : null}
