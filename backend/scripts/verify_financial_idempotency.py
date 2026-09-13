@@ -1,15 +1,13 @@
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
+import subprocess
+import sys
 from uuid import uuid4
 
 from sqlalchemy import func, select, text
 from starlette.requests import Request
-
-# Initialize the canonical FastAPI application before importing leaf financial
-# modules. This mirrors Uvicorn/browser-smoke startup and avoids a partially
-# initialized router graph during route-hardening introspection.
-from verify_accounting_api_hardening import main as verify_accounting_api_hardening
 
 from app.api.v1.accounting_loans import (
     AccountingLoanCreate,
@@ -56,6 +54,18 @@ def make_request(method: str, path: str, idempotency_key: str | None = None) -> 
         "headers": headers, "query_string": b"", "scheme": "https",
         "server": ("testserver", 443), "client": ("127.0.0.1", 50000),
     })
+
+
+def run_api_hardening_verifier() -> None:
+    """Run public route/OpenAPI verification with a pristine import graph.
+
+    The idempotency fixture intentionally imports leaf financial handlers so it can
+    call them directly. FastAPI router introspection must instead see the same clean
+    module initialization order as Uvicorn, so execute that verifier in a separate
+    interpreter rather than weakening its public-route assertions.
+    """
+    verifier = Path(__file__).with_name("verify_accounting_api_hardening.py")
+    subprocess.run([sys.executable, str(verifier)], check=True)
 
 
 def main() -> None:
@@ -239,7 +249,7 @@ def main() -> None:
         db.close()
 
     print("financial idempotency verification passed: invoice payment, payable payment, loan disbursement, loan repayment")
-    verify_accounting_api_hardening()
+    run_api_hardening_verifier()
     verify_atomic_financial_flow()
 
 
