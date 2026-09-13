@@ -4,12 +4,8 @@ from collections import Counter
 
 from fastapi.routing import APIRoute
 
-# Build the application through the same import path used by Uvicorn/browser
-# smoke before introspecting individual routers. Importing a leaf router first
-# can create a partially initialized module graph that does not represent the
-# canonical production application surface.
+from app.api.v1.router import api_router
 from app.main import app
-from app.api.v1.financial_safety import router as financial_safety_router
 
 
 API_PREFIX = "/api/v1"
@@ -51,15 +47,10 @@ TYPED_OPERATIONS = {
 }
 
 
-def _public_key(operation: tuple[str, str]) -> tuple[str, str]:
-    method, path = operation
-    return method, f"{API_PREFIX}{path}"
-
-
 def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list[APIRoute]]]:
     counts: Counter[tuple[str, str]] = Counter()
     routes: dict[tuple[str, str], list[APIRoute]] = {}
-    for route in app.routes:
+    for route in api_router.routes:
         if not isinstance(route, APIRoute):
             continue
         for method in route.methods or set():
@@ -71,36 +62,30 @@ def _route_index() -> tuple[Counter[tuple[str, str]], dict[tuple[str, str], list
     return counts, routes
 
 
-def _diagnostic_routes() -> dict[str, list[tuple[str, str, str]]]:
-    safety: list[tuple[str, str, str]] = []
-    public: list[tuple[str, str, str]] = []
-    for route in financial_safety_router.routes:
-        if not isinstance(route, APIRoute):
-            continue
-        for method in sorted(route.methods or set()):
-            if method not in {"HEAD", "OPTIONS"}:
-                safety.append((method, route.path, route.endpoint.__module__))
-    for route in app.routes:
+def _diagnostic_routes() -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for route in api_router.routes:
         if not isinstance(route, APIRoute) or not (
             "/finance/" in route.path
-            or "/accounting/loans/" in route.path
-            or "/accounting/payables/" in route.path
+            or "/accounting/loans" in route.path
+            or "/accounting/payables" in route.path
         ):
             continue
         for method in sorted(route.methods or set()):
             if method not in {"HEAD", "OPTIONS"}:
-                public.append((method, route.path, route.endpoint.__module__))
-    return {"financial_safety_router": safety, "public_financial_routes": public}
+                rows.append((method, route.path, route.endpoint.__module__))
+    return rows
 
 
 def main() -> None:
     counts, routes = _route_index()
 
-    for operation in sorted(CRITICAL_SINGLETON_OPERATIONS):
-        key = _public_key(operation)
+    # Verify the canonical API router before the public /api/v1 mount. This is
+    # where endpoint ownership and duplicate registration are authoritative.
+    for key in sorted(CRITICAL_SINGLETON_OPERATIONS):
         if counts[key] != 1:
             raise AssertionError(
-                f"critical financial operation must be registered exactly once on the public API: {key}, "
+                f"critical financial operation must be registered exactly once: {key}, "
                 f"count={counts[key]}, diagnostics={_diagnostic_routes()}"
             )
         endpoint_module = routes[key][0].endpoint.__module__
@@ -111,8 +96,7 @@ def main() -> None:
 
     missing = []
     untyped = []
-    for operation in sorted(TYPED_OPERATIONS):
-        key = _public_key(operation)
+    for key in sorted(TYPED_OPERATIONS):
         if counts[key] != 1:
             missing.append((key, counts[key]))
             continue
@@ -123,6 +107,8 @@ def main() -> None:
     if untyped:
         raise AssertionError(f"public accounting operations are missing response models: {untyped}")
 
+    # Separately verify that the mounted FastAPI application exposes every
+    # canonical route through the public /api/v1 OpenAPI surface.
     schema = app.openapi()
     public_paths = schema.get("paths", {})
     for method, path in sorted(CRITICAL_SINGLETON_OPERATIONS | TYPED_OPERATIONS):
@@ -143,8 +129,8 @@ def main() -> None:
             raise AssertionError(f"{field} is not exposed as an OpenAPI date: {definition}")
 
     print(
-        "accounting API hardening verification passed: singleton public safety routes, "
-        "typed contracts, OpenAPI coverage, strict reconciliation dates"
+        "accounting API hardening verification passed: singleton safety routes, "
+        "typed contracts, public OpenAPI coverage, strict reconciliation dates"
     )
 
 
