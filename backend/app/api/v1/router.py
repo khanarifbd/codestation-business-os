@@ -174,6 +174,7 @@ _SHADOWED_PHASE4_READ_OPERATIONS = {
     ("GET", "/inventory/products"),
     ("GET", "/inventory/suppliers"),
     ("GET", "/projects/{project_id}/workspace"),
+    ("GET", "/crm/client-access"),
 }
 
 
@@ -195,6 +196,7 @@ for _router in (
     inventory_router,
     inventory_management_router,
     project_execution_router,
+    client_access_router,
 ):
     _remove_shadowed_phase4_read_routes(_router)
 
