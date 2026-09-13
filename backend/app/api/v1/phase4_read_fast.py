@@ -9,8 +9,11 @@ from sqlalchemy import and_, func, literal, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_any_tenant_permission, require_tenant_permission
+from app.api.v1.client_access import ClientAccessRecord, ClientAccessUser
 from app.api.v1.project_execution import _document_reads, _milestone_reads, _work_log_reads
 from app.models.activity_log import ActivityLog
+from app.models.client_access import ClientMembership
+from app.models.crm import Client
 from app.models.expenses import Vendor
 from app.models.inventory import InventoryBalance, Product, PurchaseReceipt
 from app.models.membership import Membership
@@ -24,9 +27,11 @@ from app.tenancy.context import TenantContext
 router = APIRouter()
 inventory_router = APIRouter(prefix="/inventory", tags=["Inventory"])
 projects_router = APIRouter(prefix="/projects", tags=["Project Execution"])
+client_access_router = APIRouter(prefix="/crm/client-access", tags=["Client Access"])
 
 InventoryViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 ProjectReader = Annotated[TenantContext, Depends(require_any_tenant_permission("projects.view", "projects.work"))]
+ClientAccessViewer = Annotated[TenantContext, Depends(require_tenant_permission("clients.view"))]
 
 QTY = Decimal("0.0001")
 COST = Decimal("0.0001")
@@ -135,6 +140,61 @@ def suppliers_fast(db: DbSession, tenant: InventoryViewer, include_inactive: boo
             "outstanding_total": outstanding_total or Decimal("0"),
         }
         for item, purchase_count, purchased_total, outstanding_total in rows
+    ]
+
+
+@client_access_router.get("", response_model=list[ClientAccessRecord])
+def list_client_access_fast(db: DbSession, tenant: ClientAccessViewer) -> list[ClientAccessRecord]:
+    clients = db.scalars(
+        select(Client)
+        .where(Client.organization_id == tenant.organization_id)
+        .order_by(Client.status.desc(), Client.display_name.asc())
+        .limit(500)
+    ).all()
+    if not clients:
+        return []
+
+    client_ids = [client.id for client in clients]
+    rows = db.execute(
+        select(ClientMembership, Membership, User)
+        .join(Membership, Membership.id == ClientMembership.membership_id)
+        .join(User, User.id == Membership.user_id)
+        .where(
+            ClientMembership.organization_id == tenant.organization_id,
+            ClientMembership.client_id.in_(client_ids),
+            ClientMembership.status == "active",
+        )
+        .order_by(
+            ClientMembership.client_id.asc(),
+            ClientMembership.is_primary_contact.desc(),
+            User.full_name.asc(),
+        )
+    ).all()
+    users_by_client: dict[str, list[ClientAccessUser]] = {client_id: [] for client_id in client_ids}
+    for access, membership, user in rows:
+        users_by_client.setdefault(access.client_id, []).append(
+            ClientAccessUser(
+                access_id=access.id,
+                membership_id=membership.id,
+                user_id=user.id,
+                full_name=user.full_name,
+                email=user.email,
+                is_primary_contact=access.is_primary_contact,
+                membership_role=membership.role,
+                membership_status=membership.status,
+            )
+        )
+    return [
+        ClientAccessRecord(
+            client_id=client.id,
+            client_code=client.client_code,
+            display_name=client.display_name,
+            client_type=client.client_type,
+            email=client.email,
+            status=client.status,
+            users=users_by_client.get(client.id, []),
+        )
+        for client in clients
     ]
 
 
@@ -337,3 +397,4 @@ def project_workspace_fast(project_id: str, db: DbSession, tenant: ProjectReader
 
 router.include_router(inventory_router)
 router.include_router(projects_router)
+router.include_router(client_access_router)
