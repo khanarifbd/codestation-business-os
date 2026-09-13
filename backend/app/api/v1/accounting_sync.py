@@ -66,6 +66,10 @@ def sync_accounting(request: Request, db: DbSession, tenant: AccountingManager):
         request=request,
     )
     db.commit()
+
+    # Repair execution errors and read-only integrity findings are intentionally
+    # separate: an audit can flag historical/manual fixtures that the repair scope
+    # must never silently mutate.
     return AccountingSyncRead(
         counts=result["counts"],
         errors=result["errors"],
