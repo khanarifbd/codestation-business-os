@@ -8,6 +8,7 @@ from app.api.v1.accounting_loan_details import router as accounting_loan_details
 from app.api.v1.accounting_loans import router as accounting_loans_router
 from app.api.v1.accounting_money import router as accounting_money_router
 from app.api.v1.accounting_read_fast import router as accounting_read_fast_router
+from app.api.v1.accounting_read_fast_extra import router as accounting_read_fast_extra_router
 from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
 from app.api.v1.accounting_reports import router as accounting_reports_router
 from app.api.v1.accounting_sync import router as accounting_sync_router
@@ -126,13 +127,17 @@ for _router in (
     _remove_shadowed_financial_routes(_router)
 
 
-# Expensive accounting list reads keep their original business handlers importable
-# for verification, while the public GET operations are served by batched queries.
+# Expensive accounting reads keep their original business handlers importable for
+# equivalence verification, while the public GET operations use bounded batched SQL.
 _SHADOWED_ACCOUNTING_READ_OPERATIONS = {
     ("GET", "/accounting/money"),
     ("GET", "/accounting/reconciliations/meta"),
     ("GET", "/accounting/reconciliations"),
     ("GET", "/accounting/journals"),
+    ("GET", "/accounting/customer-advances"),
+    ("GET", "/accounting/payables"),
+    ("GET", "/accounting/loans"),
+    ("GET", "/accounting/tax/report"),
 }
 
 
@@ -154,6 +159,10 @@ for _router in (
     accounting_money_router,
     accounting_reconciliation_router,
     accounting_router,
+    customer_advances_router,
+    payables_router,
+    accounting_loans_router,
+    tax_router,
 ):
     _remove_shadowed_accounting_read_routes(_router)
 
@@ -207,6 +216,7 @@ api_router.include_router(financial_safety_router)
 api_router.include_router(financial_corrections_router)
 api_router.include_router(financial_correction_history_router)
 api_router.include_router(accounting_read_fast_router)
+api_router.include_router(accounting_read_fast_extra_router)
 api_router.include_router(accounting_router)
 api_router.include_router(accounting_accounts_router)
 api_router.include_router(accounting_assets_router)
