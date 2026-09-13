@@ -70,6 +70,8 @@ export default function ExpensesPage() {
   const [profitability,setProfitability] = useState<Profitability>({profit_loss_by_currency:[],projects:[],clients:[]});
   const [profitabilityLoaded,setProfitabilityLoaded] = useState(false);
   const [profitabilityLoading,setProfitabilityLoading] = useState(false);
+  const [relationshipMetaLoaded,setRelationshipMetaLoaded] = useState(false);
+  const [relationshipMetaLoading,setRelationshipMetaLoading] = useState(false);
   const [loading,setLoading] = useState(true);
   const [listLoading,setListLoading] = useState(false);
   const [loadingMore,setLoadingMore] = useState(false);
@@ -103,14 +105,17 @@ export default function ExpensesPage() {
   },[search,statusFilter,categoryFilter]);
 
   const refreshSummary = useCallback(async () => { setSummary(await api("/expense-summary") as Summary); },[api]);
-  const refreshMeta = useCallback(async () => { setMeta(await api("/expense-meta") as Meta); },[api]);
+  const refreshLiteMeta = useCallback(async () => {
+    const lite = await api("/expense-meta-lite") as Meta;
+    setMeta((current) => ({ ...current, vendors: lite.vendors, categories: lite.categories, accounts: lite.accounts }));
+  },[api]);
   const refreshExpenses = useCallback(async (showLoader=false) => { if(showLoader)setListLoading(true);try{const data=await api(`/expenses?${expenseQuery()}`) as ExpensePage;setExpenses(data.items);setNextCursor(data.next_cursor);}finally{if(showLoader)setListLoading(false);}},[api,expenseQuery]);
   const refreshProfitability = useCallback(async () => { setProfitabilityLoading(true);try{setProfitability(await api("/profitability") as Profitability);setProfitabilityLoaded(true);}finally{setProfitabilityLoading(false);}},[api]);
 
   const bootstrap = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const [summaryData,metaData,expenseData] = await Promise.all([api("/expense-summary"),api("/expense-meta"),api(`/expenses?${new URLSearchParams({limit:"50"})}`)]);
+      const [summaryData,metaData,expenseData] = await Promise.all([api("/expense-summary"),api("/expense-meta-lite"),api(`/expenses?${new URLSearchParams({limit:"50"})}`)]);
       setSummary(summaryData as Summary); setMeta(metaData as Meta); const page=expenseData as ExpensePage; setExpenses(page.items); setNextCursor(page.next_cursor);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load expense workspace."); }
     finally { setLoading(false); }
@@ -136,7 +141,27 @@ export default function ExpensesPage() {
   const paymentOptions = useMemo(()=>meta.payments.filter((item)=>item.status==="confirmed").filter((item)=>!expenseForm.invoice_id || item.invoice_id===expenseForm.invoice_id).map((i)=>({value:i.id,label:`${i.number} · ${i.invoice_number} · ${money(i.invoice_amount,i.invoice_currency)} · ${i.payment_date}`,keywords:`${i.number} ${i.invoice_number} ${i.client_name}`})),[meta.payments,expenseForm.invoice_id]);
 
   function invalidateProfitability() { setProfitabilityLoaded(false); }
-  function openExpense() { const account=meta.accounts.find((item)=>item.is_active);const category=meta.categories.find((item)=>item.is_active);setExpenseForm({...blankExpense,account_id:account?.id||"",category_id:category?.id||"",expense_currency:account?.currency||"USD"});setError(null);setModal("expense"); }
+  async function openExpense() {
+    setError(null);
+    let nextMeta = meta;
+    if (!relationshipMetaLoaded) {
+      setRelationshipMetaLoading(true);
+      try {
+        nextMeta = await api("/expense-meta") as Meta;
+        setMeta(nextMeta);
+        setRelationshipMetaLoaded(true);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Unable to load expense relationships.");
+        return;
+      } finally {
+        setRelationshipMetaLoading(false);
+      }
+    }
+    const account=nextMeta.accounts.find((item)=>item.is_active);
+    const category=nextMeta.categories.find((item)=>item.is_active);
+    setExpenseForm({...blankExpense,account_id:account?.id||"",category_id:category?.id||"",expense_currency:account?.currency||"USD"});
+    setModal("expense");
+  }
 
   function selectOrder(value:string) {
     const order=meta.orders.find((item)=>item.id===value);
@@ -166,26 +191,26 @@ export default function ExpensesPage() {
         tax_amount:expenseForm.tax_amount||"0",payment_method:expenseForm.payment_method,reference:expenseForm.reference||null,notes:expenseForm.notes||null,
       })});
       setModal(null); setMessage("Expense posted, linked to the selected business records and account ledger updated."); invalidateProfitability();
-      await Promise.all([refreshSummary(),refreshMeta(),refreshExpenses()]); if(tab==="profitability")await refreshProfitability();
+      await Promise.all([refreshSummary(),refreshLiteMeta(),refreshExpenses()]); if(tab==="profitability")await refreshProfitability();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to post expense."); }
     finally { setSaving(false); }
   }
 
   async function openDetail(id:string) { setSaving(true);setError(null);try{const detail=await api(`/expenses/${id}`) as ExpenseDetail;setSelected(detail);setReceiptTitle(`${detail.expense_number} receipt`);setReceiptFile(null);setModal("detail");}catch(reason){setError(reason instanceof Error?reason.message:"Unable to open expense.");}finally{setSaving(false);} }
-  async function voidExpense() { if(!selected||!window.confirm(`Void ${selected.expense_number}? The account ledger will be reversed.`))return;setSaving(true);setError(null);try{const detail=await api(`/expenses/${selected.id}/void`,{method:"POST"}) as ExpenseDetail;setSelected(detail);setMessage(`${detail.expense_number} voided and account balance restored.`);invalidateProfitability();await Promise.all([refreshSummary(),refreshMeta(),refreshExpenses()]);if(tab==="profitability")await refreshProfitability();}catch(reason){setError(reason instanceof Error?reason.message:"Unable to void expense.");}finally{setSaving(false);} }
+  async function voidExpense() { if(!selected||!window.confirm(`Void ${selected.expense_number}? The account ledger will be reversed.`))return;setSaving(true);setError(null);try{const detail=await api(`/expenses/${selected.id}/void`,{method:"POST"}) as ExpenseDetail;setSelected(detail);setMessage(`${detail.expense_number} voided and account balance restored.`);invalidateProfitability();await Promise.all([refreshSummary(),refreshLiteMeta(),refreshExpenses()]);if(tab==="profitability")await refreshProfitability();}catch(reason){setError(reason instanceof Error?reason.message:"Unable to void expense.");}finally{setSaving(false);} }
   async function uploadReceipt(event:React.FormEvent<HTMLFormElement>) { event.preventDefault();if(!selected||!receiptFile)return;setSaving(true);setError(null);try{const data=new FormData();data.append("file",receiptFile);data.append("title",receiptTitle||receiptFile.name);data.append("document_type","receipt");const response=await fetch(`/api/expense-documents/${selected.id}/upload`,{method:"POST",body:data});const payload=await response.json().catch(()=>null);if(!response.ok)throw new Error(payload?.detail??"Unable to upload receipt.");const detail=await api(`/expenses/${selected.id}`) as ExpenseDetail;setSelected(detail);setReceiptFile(null);setReceiptTitle(`${detail.expense_number} receipt`);setMessage("Expense receipt uploaded.");await Promise.all([refreshSummary(),refreshExpenses()]);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to upload receipt.");}finally{setSaving(false);} }
   async function deleteReceipt(documentId:string) { if(!selected||!window.confirm("Delete this receipt/document?"))return;setSaving(true);setError(null);try{const response=await fetch(`/api/expense-documents/${selected.id}/${documentId}`,{method:"DELETE"});const payload=response.status===204?null:await response.json().catch(()=>null);if(!response.ok)throw new Error(payload?.detail??"Unable to delete document.");const detail=await api(`/expenses/${selected.id}`) as ExpenseDetail;setSelected(detail);setMessage("Expense document deleted.");await Promise.all([refreshSummary(),refreshExpenses()]);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to delete document.");}finally{setSaving(false);} }
-  async function submitVendor(event:React.FormEvent<HTMLFormElement>) { event.preventDefault();const form=new FormData(event.currentTarget);setSaving(true);setError(null);try{await api("/vendors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),contact_name:form.get("contact_name")||null,email:form.get("email")||null,phone:form.get("phone")||null,country_code:form.get("country_code")||null,currency:form.get("currency")||null,notes:form.get("notes")||null})});setModal(null);setMessage("Vendor created.");await Promise.all([refreshMeta(),refreshSummary()]);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to create vendor.");}finally{setSaving(false);} }
-  async function toggleVendor(item:Vendor) { setSaving(true);setError(null);try{await api(`/vendors/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})});await Promise.all([refreshMeta(),refreshSummary()]);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to update vendor.");}finally{setSaving(false);} }
-  async function submitCategory(event:React.FormEvent<HTMLFormElement>) { event.preventDefault();const form=new FormData(event.currentTarget);setSaving(true);setError(null);try{await api("/expense-categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),cost_type:form.get("cost_type"),sort_order:Number(form.get("sort_order")||0)})});setModal(null);setMessage("Expense category created.");await refreshMeta();}catch(reason){setError(reason instanceof Error?reason.message:"Unable to create category.");}finally{setSaving(false);} }
-  async function toggleCategory(item:Category) { setSaving(true);setError(null);try{await api(`/expense-categories/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})});await refreshMeta();}catch(reason){setError(reason instanceof Error?reason.message:"Unable to update category.");}finally{setSaving(false);} }
+  async function submitVendor(event:React.FormEvent<HTMLFormElement>) { event.preventDefault();const form=new FormData(event.currentTarget);setSaving(true);setError(null);try{await api("/vendors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),contact_name:form.get("contact_name")||null,email:form.get("email")||null,phone:form.get("phone")||null,country_code:form.get("country_code")||null,currency:form.get("currency")||null,notes:form.get("notes")||null})});setModal(null);setMessage("Vendor created.");await Promise.all([refreshLiteMeta(),refreshSummary()]);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to create vendor.");}finally{setSaving(false);} }
+  async function toggleVendor(item:Vendor) { setSaving(true);setError(null);try{await api(`/vendors/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})});await Promise.all([refreshLiteMeta(),refreshSummary()]);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to update vendor.");}finally{setSaving(false);} }
+  async function submitCategory(event:React.FormEvent<HTMLFormElement>) { event.preventDefault();const form=new FormData(event.currentTarget);setSaving(true);setError(null);try{await api("/expense-categories",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:form.get("name"),cost_type:form.get("cost_type"),sort_order:Number(form.get("sort_order")||0)})});setModal(null);setMessage("Expense category created.");await refreshLiteMeta();}catch(reason){setError(reason instanceof Error?reason.message:"Unable to create category.");}finally{setSaving(false);} }
+  async function toggleCategory(item:Category) { setSaving(true);setError(null);try{await api(`/expense-categories/${item.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({is_active:!item.is_active})});await refreshLiteMeta();}catch(reason){setError(reason instanceof Error?reason.message:"Unable to update category.");}finally{setSaving(false);} }
   async function filterExpenses() { setError(null);try{await refreshExpenses(true);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to filter expenses.");} }
   async function loadMore() { if(!nextCursor)return;setLoadingMore(true);setError(null);try{const data=await api(`/expenses?${expenseQuery(nextCursor)}`) as ExpensePage;setExpenses((current)=>[...current,...data.items]);setNextCursor(data.next_cursor);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to load more expenses.");}finally{setLoadingMore(false);} }
 
   if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400"/></main>;
 
   return <main className="min-h-screen bg-neutral-100 p-5 sm:p-7 lg:p-9"><div className="mx-auto max-w-[1500px]">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-neutral-500">Costs, vendors, receipts and profitability</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Expenses</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Posted expenses update the selected account ledger. Link costs to a client, order, project, invoice or payment when attribution matters.</p></div><div className="flex gap-2"><button onClick={()=>setModal("vendor")} className="rounded-xl border bg-white px-4 py-3 text-sm font-semibold">+ Vendor</button><button onClick={openExpense} className="rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white">+ New expense</button></div></div>
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-neutral-500">Costs, vendors, receipts and profitability</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Expenses</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Posted expenses update the selected account ledger. Link costs to a client, order, project, invoice or payment when attribution matters.</p></div><div className="flex gap-2"><button onClick={()=>setModal("vendor")} className="rounded-xl border bg-white px-4 py-3 text-sm font-semibold">+ Vendor</button><button onClick={()=>void openExpense()} disabled={relationshipMetaLoading} className="rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{relationshipMetaLoading?"Loading...":"+ New expense"}</button></div></div>
     <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><Metric label="Expenses" value={summary?.expense_count||0} icon={Receipt}/><Metric label="Posted" value={summary?.posted_count||0}/><Metric label="Voided" value={summary?.voided_count||0}/><Metric label="Vendors" value={summary?.vendor_count||0} icon={Store}/><Metric label="Receipts" value={summary?.receipt_count||0} icon={FileText}/><Metric label="Project costs" value={summary?.project_expense_count||0} icon={FolderKanban}/></div>
     {summary?.by_currency.length?<section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wider text-neutral-400">Cost summary by currency</p><div className="mt-3 flex flex-wrap gap-3">{summary.by_currency.map((item)=><div key={item.currency} className="rounded-xl bg-neutral-50 px-4 py-3 text-sm"><span className="font-semibold">{item.currency}</span><span className="ml-3 text-neutral-500">Expenses {Number(item.posted_expenses).toLocaleString()} · Transfer fees {Number(item.transfer_fees).toLocaleString()}</span></div>)}</div></section>:null}
     {message?<div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>:null}

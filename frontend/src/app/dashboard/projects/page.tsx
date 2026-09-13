@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, CirclePause, FolderKanban, Loader2, PlayCircle, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { SearchableSelect } from "@/components/searchable-select";
@@ -39,6 +39,7 @@ export default function ProjectsPage() {
   const [plannedStartDate, setPlannedStartDate] = useState(today());
   const [dueDate, setDueDate] = useState("");
   const [description, setDescription] = useState("");
+  const skipInitialListReload = useRef(true);
 
   useEffect(() => { setOrderId(new URLSearchParams(window.location.search).get("order_id")); }, []);
 
@@ -89,6 +90,7 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     if (loading) return;
+    if (skipInitialListReload.current) { skipInitialListReload.current = false; return; }
     void loadList();
   }, [query, loadList, loading]);
 

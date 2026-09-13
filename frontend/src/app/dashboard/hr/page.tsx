@@ -17,7 +17,7 @@ import {
   UserCheck,
   UsersRound,
 } from "lucide-react";
-import type { HRAccess } from "@/components/hr-module-nav";
+import { useHRAccess } from "@/components/hr-access-context";
 
 type Summary = {
   today: string;
@@ -37,34 +37,28 @@ async function readJson<T>(url: string): Promise<T> {
 
 export default function HROverviewPage() {
   const router = useRouter();
-  const [access, setAccess] = useState<HRAccess | null>(null);
+  const { access, loading: accessLoading, error: accessError } = useHRAccess();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (accessLoading) return;
+    if (!access) { setError(accessError ?? "Your company role does not have access to People & HR."); setLoading(false); return; }
+    if (!access.can_view) {
+      if (access.can_view_people) router.replace("/dashboard/hr/people");
+      else if (access.can_self) router.replace("/dashboard/hr/me");
+      else setError("Your company role does not have access to People & HR.");
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
-    void (async () => {
-      try {
-        const nextAccess = await readJson<HRAccess>("/api/hr/access");
-        if (cancelled) return;
-        setAccess(nextAccess);
-        if (!nextAccess.can_view) {
-          if (nextAccess.can_view_people) router.replace("/dashboard/hr/people");
-          else if (nextAccess.can_self) router.replace("/dashboard/hr/me");
-          else setError("Your company role does not have access to People & HR.");
-          return;
-        }
-        const nextSummary = await readJson<Summary>("/api/hr/workspace-summary");
-        if (!cancelled) setSummary(nextSummary);
-      } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "Unable to load People & HR.");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    void readJson<Summary>("/api/hr/workspace-summary")
+      .then((nextSummary) => { if (!cancelled) setSummary(nextSummary); })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "Unable to load People & HR."); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [router]);
+  }, [access, accessError, accessLoading, router]);
 
   const readiness = useMemo(() => {
     if (!summary) return [];
