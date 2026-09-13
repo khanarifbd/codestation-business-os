@@ -46,7 +46,26 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    user = db.get(User, claims.user_id)
+    user_session: UserSession | None = None
+    if claims.session_id:
+        row = db.execute(
+            select(User, UserSession)
+            .outerjoin(
+                UserSession,
+                and_(
+                    UserSession.id == claims.session_id,
+                    UserSession.user_id == User.id,
+                ),
+            )
+            .where(User.id == claims.user_id)
+        ).first()
+        if row is None:
+            user = None
+        else:
+            user, user_session = row
+    else:
+        user = db.get(User, claims.user_id)
+
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,12 +81,6 @@ def get_current_user(
 
     request.state.auth_session_id = None
     if claims.session_id:
-        user_session = db.scalar(
-            select(UserSession).where(
-                UserSession.id == claims.session_id,
-                UserSession.user_id == user.id,
-            )
-        )
         if user_session is None or not session_is_active(user_session, user=user):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
