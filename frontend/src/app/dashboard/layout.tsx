@@ -1,5 +1,6 @@
 import { DashboardSessionProvider } from "@/components/dashboard-session-context";
 import { DashboardShell } from "@/components/dashboard-shell";
+import { ProjectClientMilestoneSharing } from "@/components/project-client-milestone-sharing";
 import { TenantAreaGuard } from "@/components/tenant-area-guard";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -15,7 +16,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             }
           }
         `}</style>
-        <DashboardShell>{children}</DashboardShell>
+        <DashboardShell>
+          {children}
+          <ProjectClientMilestoneSharing />
+        </DashboardShell>
       </TenantAreaGuard>
     </DashboardSessionProvider>
   );
