@@ -91,6 +91,7 @@ jobs:
       - run: uv run python scripts/verify_inventory_sales.py
       - run: uv run python scripts/verify_phase4_read_performance.py
       - run: uv run python scripts/verify_phase4_remaining_performance.py
+      - run: uv run python scripts/verify_phase5_architecture.py
       - run: uv run python scripts/verify_sales_catalog_flow.py
       - run: uv run python scripts/verify_recurring_auto_post.py
       - run: uv run python scripts/verify_payroll.py
@@ -161,7 +162,7 @@ jobs:
       GOOGLE_OAUTH_CLIENT_ID: business-os-ci.apps.googleusercontent.com
       PROJECT_CREDENTIAL_ENCRYPTION_KEY: e2e-only-project-credential-key-0123456789abcdef
       SUPER_ADMIN_EMAIL: e2e-super-admin@example.com
-      SUPER_ADMIN_PASSWORD: e2e-super-admin-password-123!
+      SUPER_ADMIN_PASSWORD: E2E-Launch-Password-123!
       SUPER_ADMIN_NAME: Browser Smoke Super Admin
       PYTHONPATH: .
       ENVIRONMENT: test
