@@ -4,9 +4,11 @@ from fastapi.routing import APIRoute
 from sqlalchemy import event, select
 
 from app.main import app
+from app.api.v1.client_access import list_client_access as legacy_client_access
 from app.api.v1.inventory import products as legacy_products
 from app.api.v1.inventory_management import list_suppliers as legacy_suppliers
 from app.api.v1.phase4_read_fast import (
+    list_client_access_fast,
     products_fast,
     project_workspace_fast,
     router as phase4_read_fast_router,
@@ -86,6 +88,10 @@ def project_tenant(db):
     raise AssertionError("no project with a broad-view active tenant member found for Phase 4 verification")
 
 
+def dump_models(rows):
+    return [row.model_dump() for row in rows]
+
+
 def main() -> None:
     db = SessionLocal()
     try:
@@ -117,11 +123,21 @@ def main() -> None:
         if workspace_queries > 10:
             raise AssertionError(f"project workspace query regression: expected <=10 SELECTs, got {workspace_queries}")
 
+        legacy_access = legacy_client_access(db, tenant)
+        fast_access, client_access_queries = count_selects(lambda: list_client_access_fast(db, tenant))
+        if dump_models(legacy_access) != dump_models(fast_access):
+            raise AssertionError("batched client-access list changed API output")
+        if client_access_queries > 2:
+            raise AssertionError(
+                f"client-access query regression: expected <=2 SELECTs, got {client_access_queries}"
+            )
+
         schema_paths = app.openapi().get("paths", {})
         for method, path, expected_name in (
             ("GET", "/inventory/products", "products_fast"),
             ("GET", "/inventory/suppliers", "suppliers_fast"),
             ("GET", "/projects/{project_id}/workspace", "project_workspace_fast"),
+            ("GET", "/crm/client-access", "list_client_access_fast"),
         ):
             endpoint = source_route_endpoint(method, path)
             if endpoint.__name__ != expected_name:
@@ -134,7 +150,8 @@ def main() -> None:
 
     print(
         "Phase 4 read performance verification passed: "
-        f"products={product_queries}, suppliers={supplier_queries}, workspace={workspace_queries}"
+        f"products={product_queries}, suppliers={supplier_queries}, workspace={workspace_queries}, "
+        f"client_access={client_access_queries}"
     )
 
 
