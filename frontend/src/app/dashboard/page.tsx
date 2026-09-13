@@ -17,16 +17,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-type TenantContext = {
-  organization: {
-    id: string;
-    name: string;
-    country_code: string;
-    timezone: string;
-    currency: string;
-  };
-  role: string;
-};
+import { useDashboardSession } from "@/components/dashboard-session-context";
 
 type FinancialRow = {
   currency: string;
@@ -192,7 +183,7 @@ async function optionalPulse<T>(path: string): Promise<T | null> {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [tenant, setTenant] = useState<TenantContext | null>(null);
+  const { tenant } = useDashboardSession();
   const [data, setData] = useState<Overview | null>(null);
   const [orderPulse, setOrderPulse] = useState<OrderPulse | null>(null);
   const [projectPulse, setProjectPulse] = useState<ProjectPulse | null>(null);
@@ -205,37 +196,13 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!tenant) return;
+    let active = true;
     void (async () => {
       const range = presetRange("month");
+      setLoading(true);
+      setError(null);
       try {
-        let tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
-        if (tenantResponse.status === 401) {
-          router.replace("/login");
-          return;
-        }
-
-        if (tenantResponse.status === 404 || tenantResponse.status === 409) {
-          const organizationsResponse = await fetch("/api/organizations", { cache: "no-store" });
-          if (organizationsResponse.status === 401) {
-            router.replace("/login");
-            return;
-          }
-          const organizationsPayload = await organizationsResponse.json().catch(() => []);
-          if (!organizationsResponse.ok) throw new Error("Unable to load company workspaces");
-          if (!Array.isArray(organizationsPayload) || organizationsPayload.length === 0) {
-            router.replace("/onboarding");
-            return;
-          }
-          tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
-          if (tenantResponse.status === 401) {
-            router.replace("/login");
-            return;
-          }
-        }
-
-        if (!tenantResponse.ok) throw new Error("Unable to load company workspace");
-        setTenant((await tenantResponse.json()) as TenantContext);
-
         const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
         const [reportResponse, nextOrderPulse, nextProjectPulse, nextCrmPulse, nextFinancePulse, nextPeoplePulse] = await Promise.all([
           fetch(`/api/reports/overview?${params}`, { cache: "no-store" }),
@@ -246,6 +213,7 @@ export default function DashboardPage() {
           optionalPulse<PeoplePulse>("/api/dashboard-pulse/people"),
         ]);
 
+        if (!active) return;
         setOrderPulse(nextOrderPulse);
         setProjectPulse(nextProjectPulse);
         setCrmPulse(nextCrmPulse);
@@ -259,12 +227,13 @@ export default function DashboardPage() {
         if (reportResponse.ok) setData((await reportResponse.json()) as Overview);
         else if (reportResponse.status !== 403) throw new Error("Unable to load dashboard metrics");
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
+        if (active) setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     })();
-  }, [router]);
+    return () => { active = false; };
+  }, [router, tenant]);
 
   async function changePreset(next: Preset) {
     if (next === preset) return;
