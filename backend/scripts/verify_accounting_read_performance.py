@@ -52,7 +52,7 @@ def reconciliation_dump(rows):
 
 
 def model_dump(rows):
-    return [row.model_dump() for row in rows]
+    return [row.model_dump() if hasattr(row, "model_dump") else dict(row) for row in rows]
 
 
 def main() -> None:
