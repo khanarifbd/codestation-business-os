@@ -2,20 +2,21 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.finance import FinancialAccount
 from app.models.loan_accounting import LoanDisbursement, LoanFee
+from app.schemas.accounting_loans import LoanHistoryRead
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/loans", tags=["Accounting - Loans"])
 AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 
 
-@router.get("/{loan_id}/history")
+@router.get("/{loan_id}/history", response_model=LoanHistoryRead)
 def get_loan_history(loan_id: str, db: DbSession, tenant: AccountingViewer):
     loan = db.scalar(
         select(CompanyLoan).where(
@@ -24,8 +25,6 @@ def get_loan_history(loan_id: str, db: DbSession, tenant: AccountingViewer):
         )
     )
     if loan is None:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=404, detail="Loan not found")
 
     disbursement_rows = db.execute(
