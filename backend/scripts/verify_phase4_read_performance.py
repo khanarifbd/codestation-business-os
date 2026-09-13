@@ -1,0 +1,130 @@
+from dataclasses import dataclass
+
+from fastapi.routing import APIRoute
+from sqlalchemy import event, select
+
+from app.api.v1.inventory import products as legacy_products
+from app.api.v1.inventory_management import list_suppliers as legacy_suppliers
+from app.api.v1.phase4_read_fast import products_fast, project_workspace_fast, suppliers_fast
+from app.api.v1.project_execution import get_workspace as legacy_workspace
+from app.api.v1.router import api_router
+from app.db.session import SessionLocal, engine
+from app.models.membership import Membership
+from app.models.organization import Organization
+from app.models.projects import Project
+from app.models.team import OrganizationRole
+from app.models.user import User
+from app.tenancy.context import TenantContext
+
+
+@dataclass(frozen=True)
+class TenantStub:
+    organization_id: str
+
+
+def count_selects(fn):
+    count = 0
+
+    def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+        nonlocal count
+        if statement.lstrip().upper().startswith("SELECT"):
+            count += 1
+
+    event.listen(engine, "before_cursor_execute", before_cursor_execute)
+    try:
+        result = fn()
+    finally:
+        event.remove(engine, "before_cursor_execute", before_cursor_execute)
+    return result, count
+
+
+def route_endpoint(method: str, path: str):
+    matches = [
+        route
+        for route in api_router.routes
+        if isinstance(route, APIRoute) and route.path == path and method in (route.methods or set())
+    ]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one public {method} {path}, found {len(matches)}")
+    return matches[0].endpoint
+
+
+def project_tenant(db):
+    projects = db.scalars(select(Project).order_by(Project.created_at.desc())).all()
+    for project in projects:
+        organization = db.get(Organization, project.organization_id)
+        if organization is None:
+            continue
+        memberships = db.scalars(
+            select(Membership).where(
+                Membership.organization_id == project.organization_id,
+                Membership.status == "active",
+            )
+        ).all()
+        for membership in memberships:
+            role = db.get(OrganizationRole, membership.role_id) if membership.role_id else None
+            permissions = set(role.permissions or []) if role and role.is_active else set()
+            if "*" not in permissions and "projects.manage" not in permissions and "projects.view" not in permissions:
+                continue
+            user = db.get(User, membership.user_id)
+            if user is None:
+                continue
+            return project, TenantContext(
+                user=user,
+                organization=organization,
+                membership=membership,
+                organization_role=role,
+            )
+    raise AssertionError("no project with a broad-view active tenant member found for Phase 4 verification")
+
+
+def main() -> None:
+    db = SessionLocal()
+    try:
+        project, tenant = project_tenant(db)
+        inventory_tenant = TenantStub(organization_id=tenant.organization_id)
+
+        legacy_product_rows = legacy_products(db, inventory_tenant, include_inactive=True)  # type: ignore[arg-type]
+        fast_product_rows, product_queries = count_selects(
+            lambda: products_fast(db, inventory_tenant, include_inactive=True)  # type: ignore[arg-type]
+        )
+        if legacy_product_rows != fast_product_rows:
+            raise AssertionError("batched inventory product list changed API output")
+        if product_queries != 1:
+            raise AssertionError(f"inventory product query regression: expected 1 SELECT, got {product_queries}")
+
+        legacy_supplier_rows = legacy_suppliers(db, inventory_tenant, include_inactive=True)  # type: ignore[arg-type]
+        fast_supplier_rows, supplier_queries = count_selects(
+            lambda: suppliers_fast(db, inventory_tenant, include_inactive=True)  # type: ignore[arg-type]
+        )
+        if legacy_supplier_rows != fast_supplier_rows:
+            raise AssertionError("batched inventory supplier list changed API output")
+        if supplier_queries != 1:
+            raise AssertionError(f"inventory supplier query regression: expected 1 SELECT, got {supplier_queries}")
+
+        legacy_project = legacy_workspace(project.id, db, tenant)
+        fast_project, workspace_queries = count_selects(lambda: project_workspace_fast(project.id, db, tenant))
+        if legacy_project.model_dump() != fast_project.model_dump():
+            raise AssertionError("batched project workspace changed API output")
+        if workspace_queries > 10:
+            raise AssertionError(f"project workspace query regression: expected <=10 SELECTs, got {workspace_queries}")
+
+        for method, path, expected_name in (
+            ("GET", "/inventory/products", "products_fast"),
+            ("GET", "/inventory/suppliers", "suppliers_fast"),
+            ("GET", "/projects/{project_id}/workspace", "project_workspace_fast"),
+        ):
+            endpoint = route_endpoint(method, path)
+            if endpoint.__name__ != expected_name:
+                raise AssertionError(f"{method} {path} is not owned by the bounded Phase 4 read handler")
+    finally:
+        db.close()
+
+    print(
+        "Phase 4 read performance verification passed: "
+        f"products={product_queries}, suppliers={supplier_queries}, workspace={workspace_queries}"
+    )
+
+
+if __name__ == "__main__":
+    main()
