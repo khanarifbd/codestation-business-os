@@ -10,6 +10,7 @@ from app.main import app
 from app.api.v1.accounting_assets import router as accounting_assets_router
 from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
 from app.api.v1.accounting_loans import router as accounting_loans_router
+from app.api.v1.accounting_read_fast import router as accounting_read_fast_router
 from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
 from app.api.v1.finance import router as finance_router
 from app.api.v1.finance_expenses import router as finance_expenses_router
@@ -69,6 +70,7 @@ ACCOUNTING_CONTRACT_ROUTERS = (
     accounting_loans_router,
     accounting_loan_details_router,
     accounting_assets_router,
+    accounting_read_fast_router,
     accounting_reconciliation_router,
 )
 
@@ -161,7 +163,7 @@ def main() -> None:
 
     print(
         "accounting API hardening verification passed: safety ownership, legacy shadow removal, "
-        "typed contracts, public OpenAPI coverage, strict reconciliation dates"
+        "typed contracts across canonical read/write routers, public OpenAPI coverage, strict reconciliation dates"
     )
 
 
