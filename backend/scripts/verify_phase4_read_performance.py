@@ -3,11 +3,16 @@ from dataclasses import dataclass
 from fastapi.routing import APIRoute
 from sqlalchemy import event, select
 
+from app.main import app
 from app.api.v1.inventory import products as legacy_products
 from app.api.v1.inventory_management import list_suppliers as legacy_suppliers
-from app.api.v1.phase4_read_fast import products_fast, project_workspace_fast, suppliers_fast
+from app.api.v1.phase4_read_fast import (
+    products_fast,
+    project_workspace_fast,
+    router as phase4_read_fast_router,
+    suppliers_fast,
+)
 from app.api.v1.project_execution import get_workspace as legacy_workspace
-from app.api.v1.router import api_router
 from app.db.session import SessionLocal, engine
 from app.models.membership import Membership
 from app.models.organization import Organization
@@ -15,6 +20,9 @@ from app.models.projects import Project
 from app.models.team import OrganizationRole
 from app.models.user import User
 from app.tenancy.context import TenantContext
+
+
+API_PREFIX = "/api/v1"
 
 
 @dataclass(frozen=True)
@@ -38,14 +46,14 @@ def count_selects(fn):
     return result, count
 
 
-def route_endpoint(method: str, path: str):
+def source_route_endpoint(method: str, path: str):
     matches = [
         route
-        for route in api_router.routes
+        for route in phase4_read_fast_router.routes
         if isinstance(route, APIRoute) and route.path == path and method in (route.methods or set())
     ]
     if len(matches) != 1:
-        raise AssertionError(f"expected one public {method} {path}, found {len(matches)}")
+        raise AssertionError(f"expected one Phase 4 source {method} {path}, found {len(matches)}")
     return matches[0].endpoint
 
 
@@ -109,14 +117,18 @@ def main() -> None:
         if workspace_queries > 10:
             raise AssertionError(f"project workspace query regression: expected <=10 SELECTs, got {workspace_queries}")
 
+        schema_paths = app.openapi().get("paths", {})
         for method, path, expected_name in (
             ("GET", "/inventory/products", "products_fast"),
             ("GET", "/inventory/suppliers", "suppliers_fast"),
             ("GET", "/projects/{project_id}/workspace", "project_workspace_fast"),
         ):
-            endpoint = route_endpoint(method, path)
+            endpoint = source_route_endpoint(method, path)
             if endpoint.__name__ != expected_name:
                 raise AssertionError(f"{method} {path} is not owned by the bounded Phase 4 read handler")
+            public_path = f"{API_PREFIX}{path}"
+            if public_path not in schema_paths or method.lower() not in schema_paths[public_path]:
+                raise AssertionError(f"public OpenAPI operation is missing: {method} {public_path}")
     finally:
         db.close()
 
