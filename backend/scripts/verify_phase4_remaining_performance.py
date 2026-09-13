@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from fastapi.routing import APIRoute
 from sqlalchemy import event, select
 
@@ -18,13 +16,9 @@ from app.api.v1.phase4_read_fast_extra import (
     hr_dashboard_fast,
     hr_meta_fast,
     list_client_portal_orders_fast,
-    router as phase4_extra_router,
 )
-from app.api.v1.phase4_remaining_fast import (
-    expense_meta_lite,
-    hr_workspace_summary_fast,
-    router as phase4_remaining_router,
-)
+from app.api.v1.phase4_remaining_fast import expense_meta_lite, hr_workspace_summary_fast
+from app.api.v1.router import api_router
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models.client_access import ClientMembership
@@ -36,11 +30,6 @@ from app.tenancy.context import TenantContext
 
 
 API_PREFIX = "/api/v1"
-
-
-@dataclass(frozen=True)
-class TenantStub:
-    organization_id: str
 
 
 def count_selects(fn):
@@ -92,14 +81,14 @@ def client_portal_tenant(db) -> TenantContext:
     raise AssertionError("no active client portal membership found")
 
 
-def route_endpoint(source_router, method: str, path: str):
+def public_route_endpoint(method: str, path: str):
     matches = [
         route
-        for route in source_router.routes
+        for route in api_router.routes
         if isinstance(route, APIRoute) and route.path == path and method in (route.methods or set())
     ]
     if len(matches) != 1:
-        raise AssertionError(f"expected one Phase 4 source {method} {path}, found {len(matches)}")
+        raise AssertionError(f"expected one canonical {method} {path}, found {len(matches)}")
     return matches[0].endpoint
 
 
@@ -183,19 +172,18 @@ def main() -> None:
         if expense_meta_queries > 4:
             raise AssertionError(f"expense meta lite query regression: expected <=4 SELECTs, got {expense_meta_queries}")
 
-        source_operations = (
-            (phase4_extra_router, "GET", "/client-portal/orders", "list_client_portal_orders_fast"),
-            (phase4_extra_router, "GET", "/capital/meta", "capital_meta_fast"),
-            (phase4_extra_router, "GET", "/capital/insights", "capital_insights_fast"),
-            (phase4_extra_router, "GET", "/hr/access", "hr_access_fast"),
-            (phase4_extra_router, "GET", "/hr/dashboard", "hr_dashboard_fast"),
-            (phase4_extra_router, "GET", "/hr/meta", "hr_meta_fast"),
-            (phase4_remaining_router, "GET", "/hr/workspace-summary", "hr_workspace_summary_fast"),
-            (phase4_remaining_router, "GET", "/finance/expense-meta-lite", "expense_meta_lite"),
-        )
         schema_paths = app.openapi().get("paths", {})
-        for source_router, method, path, expected_name in source_operations:
-            endpoint = route_endpoint(source_router, method, path)
+        for method, path, expected_name in (
+            ("GET", "/client-portal/orders", "list_client_portal_orders_fast"),
+            ("GET", "/capital/meta", "capital_meta_fast"),
+            ("GET", "/capital/insights", "capital_insights_fast"),
+            ("GET", "/hr/access", "hr_access_fast"),
+            ("GET", "/hr/dashboard", "hr_dashboard_fast"),
+            ("GET", "/hr/meta", "hr_meta_fast"),
+            ("GET", "/hr/workspace-summary", "hr_workspace_summary_fast"),
+            ("GET", "/finance/expense-meta-lite", "expense_meta_lite"),
+        ):
+            endpoint = public_route_endpoint(method, path)
             if endpoint.__name__ != expected_name:
                 raise AssertionError(f"{method} {path} is not owned by the Phase 4 bounded handler")
             public_path = f"{API_PREFIX}{path}"
