@@ -15,7 +15,7 @@ router = APIRouter(prefix="/tenant", tags=["Tenant Context"])
 
 def _tenant_response(db: DbSession, tenant: CurrentTenant) -> TenantContextRead:
     relationships = membership_relationships(db, tenant.membership)
-    role = membership_role(db, tenant.membership)
+    role = tenant.organization_role or membership_role(db, tenant.membership)
     permissions = [] if role is None else sorted(set(role.permissions or []))
     return TenantContextRead(
         organization=OrganizationRead.model_validate(tenant.organization),

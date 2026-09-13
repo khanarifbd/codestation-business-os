@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.core.roles import (
@@ -107,8 +107,15 @@ def get_tenant_context(
         )
 
     row = db.execute(
-        select(Membership, Organization)
+        select(Membership, Organization, OrganizationRole)
         .join(Organization, Organization.id == Membership.organization_id)
+        .outerjoin(
+            OrganizationRole,
+            and_(
+                OrganizationRole.id == Membership.role_id,
+                OrganizationRole.organization_id == Membership.organization_id,
+            ),
+        )
         .where(
             Membership.organization_id == organization_id,
             Membership.user_id == current_user.id,
@@ -122,7 +129,7 @@ def get_tenant_context(
             detail="Workspace not found or access denied",
         )
 
-    membership, organization = row
+    membership, organization, organization_role = row
     if organization.status != ORGANIZATION_STATUS_ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -133,6 +140,7 @@ def get_tenant_context(
         user=current_user,
         organization=organization,
         membership=membership,
+        organization_role=organization_role,
     )
 
 
@@ -152,14 +160,18 @@ CurrentTenantAdmin = Annotated[TenantContext, Depends(get_current_tenant_admin)]
 
 
 def _active_role(db: DbSession, tenant: TenantContext) -> OrganizationRole:
-    role = db.scalar(
-        select(OrganizationRole).where(
-            OrganizationRole.id == tenant.membership.role_id,
-            OrganizationRole.organization_id == tenant.organization_id,
-            OrganizationRole.is_active.is_(True),
-        )
-    )
+    role = tenant.organization_role
     if role is None:
+        # Compatibility fallback for explicitly constructed TenantContext values
+        # in scripts/tests. Normal authenticated requests reuse the role loaded by
+        # get_tenant_context and do not issue this extra query.
+        role = db.scalar(
+            select(OrganizationRole).where(
+                OrganizationRole.id == tenant.membership.role_id,
+                OrganizationRole.organization_id == tenant.organization_id,
+            )
+        )
+    if role is None or not role.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company role is inactive")
     return role
 

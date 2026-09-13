@@ -45,6 +45,13 @@ export type WorkspaceMembership = {
   is_owner: boolean;
   relationships: string[];
   primary_relationship: string;
+  permissions: string[];
+};
+
+type DashboardBootstrap = {
+  profile: DashboardProfile;
+  workspaces: WorkspaceMembership[];
+  tenant: WorkspaceContext | null;
 };
 
 type DashboardSessionValue = {
@@ -93,48 +100,33 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
     setLoading(true);
     setError(null);
     try {
-      const [profileResponse, organizationsResponse] = await Promise.all([
-        fetch("/api/profile", { cache: "no-store" }),
-        fetch("/api/organizations", { cache: "no-store" }),
-      ]);
-
-      if (profileResponse.status === 401 || organizationsResponse.status === 401) {
+      const response = await fetch("/api/dashboard-bootstrap", { cache: "no-store" });
+      if (response.status === 401) {
         router.replace("/login");
         return;
       }
-      if (!profileResponse.ok) throw new Error("Unable to verify your account access.");
-      if (!organizationsResponse.ok) throw new Error("Unable to load company workspaces.");
+      if (!response.ok) throw new Error("Unable to load dashboard session.");
 
-      const nextProfile = await parseJson<DashboardProfile | null>(profileResponse, null);
-      const nextWorkspaces = await parseJson<WorkspaceMembership[]>(organizationsResponse, []);
-      if (!nextProfile) throw new Error("Unable to verify your account access.");
-      if (nextProfile.system_role === "super_admin") {
+      const bootstrap = await parseJson<DashboardBootstrap | null>(response, null);
+      if (!bootstrap?.profile) throw new Error("Unable to verify your account access.");
+      if (bootstrap.profile.system_role === "super_admin") {
         router.replace("/super-admin");
         router.refresh();
         return;
       }
 
-      setProfile(nextProfile);
-      setWorkspaces(Array.isArray(nextWorkspaces) ? nextWorkspaces : []);
+      const nextWorkspaces = Array.isArray(bootstrap.workspaces) ? bootstrap.workspaces : [];
+      setProfile(bootstrap.profile);
+      setWorkspaces(nextWorkspaces);
+      setTenant(bootstrap.tenant ?? null);
 
-      if (!Array.isArray(nextWorkspaces) || nextWorkspaces.length === 0) {
-        setTenant(null);
+      if (nextWorkspaces.length === 0) {
         router.replace("/onboarding");
         return;
       }
-
-      // /api/organizations validates or initializes the organization cookie.
-      // Fetch tenant only after that response has completed so every dashboard
-      // consumer can reuse one canonical workspace context.
-      const tenantResponse = await fetch("/api/tenant", { cache: "no-store" });
-      if (tenantResponse.status === 401) {
-        router.replace("/login");
-        return;
+      if (!bootstrap.tenant) {
+        throw new Error("No active company workspace is available for this account.");
       }
-      if (!tenantResponse.ok) throw new Error("Unable to load company workspace.");
-      const nextTenant = await parseJson<WorkspaceContext | null>(tenantResponse, null);
-      if (!nextTenant) throw new Error("Unable to load company workspace.");
-      setTenant(nextTenant);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load dashboard session.");
     } finally {

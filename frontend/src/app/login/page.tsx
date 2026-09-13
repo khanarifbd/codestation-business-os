@@ -39,13 +39,10 @@ export default function LoginPage() {
       return;
     }
 
-    const organizations = await fetch("/api/organizations", { cache: "no-store" });
-    if (organizations.ok) {
-      const items = (await organizations.json()) as unknown[];
-      router.replace(items.length > 0 ? "/dashboard" : "/onboarding");
-    } else {
-      router.replace("/onboarding");
-    }
+    // DashboardSessionProvider owns the canonical workspace bootstrap and will
+    // redirect accounts with no workspace to onboarding. Avoid fetching the
+    // organization list here and then fetching it again immediately on dashboard.
+    router.replace("/dashboard");
     router.refresh();
   }
 

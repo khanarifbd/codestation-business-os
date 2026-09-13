@@ -64,3 +64,4 @@ class OrganizationMembershipRead(BaseModel):
     is_owner: bool
     relationships: list[str]
     primary_relationship: str
+    permissions: list[str] = Field(default_factory=list)

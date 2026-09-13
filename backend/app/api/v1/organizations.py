@@ -1,12 +1,14 @@
 import re
 import unicodedata
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import CurrentUser, DbSession
 from app.core.roles import (
     MEMBERSHIP_ROLE_ADMIN,
+    ORGANIZATION_STATUS_ACTIVE,
     SUBSCRIPTION_STATUS_ACTIVE,
     SYSTEM_ROLE_SUPER_ADMIN,
 )
@@ -15,11 +17,14 @@ from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.subscription import Subscription
 from app.models.team import Employee
+from app.schemas.auth import UserProfileRead
+from app.schemas.bootstrap import DashboardBootstrapRead
 from app.schemas.organization import (
     OrganizationCreate,
     OrganizationMembershipRead,
     OrganizationRead,
 )
+from app.schemas.tenant import TenantContextRead
 from app.services.activity_log import record_activity
 from app.services.company_settings import ensure_company_settings_defaults
 from app.services.crm import ensure_crm_defaults
@@ -30,6 +35,7 @@ from app.services.membership_relationships import (
     membership_role,
     primary_relationship,
 )
+from app.services.organization_memberships import list_user_organization_memberships
 from app.services.team import ensure_system_roles, next_employee_code
 
 router = APIRouter(prefix="/organizations", tags=["Organizations"])
@@ -71,6 +77,42 @@ def _membership_response(
         is_owner=membership.is_owner,
         relationships=relationships,
         primary_relationship=primary_relationship(relationships),
+        permissions=[] if role is None else sorted(set(role.permissions or [])),
+    )
+
+
+def _profile_response(current_user: CurrentUser) -> UserProfileRead:
+    return UserProfileRead(
+        id=current_user.id,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        phone=current_user.phone,
+        timezone=current_user.timezone,
+        system_role=current_user.system_role,
+        is_active=current_user.is_active,
+        is_verified=current_user.is_verified,
+        has_password=current_user.password_hash is not None,
+        google_connected=current_user.google_subject is not None,
+        has_avatar=bool(current_user.avatar_storage_key),
+        avatar_version=current_user.avatar_version,
+        created_at=current_user.created_at,
+        updated_at=current_user.updated_at,
+    )
+
+
+def _tenant_from_workspace(workspace: OrganizationMembershipRead) -> TenantContextRead:
+    return TenantContextRead(
+        organization=workspace.organization,
+        membership_id=workspace.membership_id,
+        role_id=workspace.role_id,
+        role=workspace.role,
+        role_name=workspace.role_name,
+        role_slug=workspace.role_slug,
+        status=workspace.status,
+        is_owner=workspace.is_owner,
+        relationships=workspace.relationships,
+        primary_relationship=workspace.primary_relationship,
+        permissions=workspace.permissions,
     )
 
 
@@ -196,13 +238,39 @@ def list_organizations(
     db: DbSession,
     current_user: CurrentUser,
 ) -> list[OrganizationMembershipRead]:
-    rows = db.execute(
-        select(Membership, Organization)
-        .join(Organization, Organization.id == Membership.organization_id)
-        .where(Membership.user_id == current_user.id, Membership.status == "active")
-        .order_by(Organization.name.asc())
-    ).all()
-    return [_membership_response(db, organization, membership) for membership, organization in rows]
+    return list_user_organization_memberships(db, current_user.id)
+
+
+@router.get("/bootstrap", response_model=DashboardBootstrapRead)
+def dashboard_bootstrap(
+    db: DbSession,
+    current_user: CurrentUser,
+    organization_id: Annotated[str | None, Header(alias="X-Organization-ID")] = None,
+) -> DashboardBootstrapRead:
+    workspaces = list_user_organization_memberships(db, current_user.id)
+    active_workspaces = [
+        workspace
+        for workspace in workspaces
+        if workspace.status == "active" and workspace.organization.status == ORGANIZATION_STATUS_ACTIVE
+    ]
+    selected = None
+    if organization_id:
+        selected = next(
+            (
+                workspace
+                for workspace in active_workspaces
+                if workspace.organization.id == organization_id
+            ),
+            None,
+        )
+    if selected is None and active_workspaces:
+        selected = active_workspaces[0]
+
+    return DashboardBootstrapRead(
+        profile=_profile_response(current_user),
+        workspaces=workspaces,
+        tenant=_tenant_from_workspace(selected) if selected is not None else None,
+    )
 
 
 @router.get("/{organization_id}", response_model=OrganizationMembershipRead)
