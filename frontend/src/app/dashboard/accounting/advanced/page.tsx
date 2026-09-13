@@ -31,11 +31,6 @@ export default function AdvancedAccountingPage() {
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      const sync = await fetch("/api/accounting/sync", { method: "POST" });
-      if (!sync.ok && sync.status !== 403) {
-        const payload = await sync.json().catch(() => null);
-        setMessage(payload ? `Sync note: ${getApiErrorMessage(payload, "Accounting sync needs review")}` : null);
-      }
       const [accountResponse, trialResponse, journalResponse] = await Promise.all([
         fetch("/api/accounting/chart-of-accounts", { cache: "no-store" }),
         fetch("/api/accounting/trial-balance", { cache: "no-store" }),
