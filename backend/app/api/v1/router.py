@@ -215,6 +215,30 @@ for _router in (
     _remove_shadowed_phase4_read_routes(_router)
 
 
+# Reports keeps the legacy overview handler importable for equivalence tests while
+# the bounded-query implementation is the only public owner of GET /reports/overview.
+_SHADOWED_REPORT_READ_OPERATIONS = {
+    ("GET", "/reports/overview"),
+}
+
+
+def _remove_shadowed_report_read_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_REPORT_READ_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+_remove_shadowed_report_read_routes(reports_router)
+
+
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
