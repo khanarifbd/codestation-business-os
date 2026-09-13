@@ -11,10 +11,10 @@ from app.api.v1.phase4_read_fast import (
     list_client_access_fast,
     products_fast,
     project_workspace_fast,
-    router as phase4_read_fast_router,
     suppliers_fast,
 )
 from app.api.v1.project_execution import get_workspace as legacy_workspace
+from app.api.v1.router import api_router
 from app.db.session import SessionLocal, engine
 from app.models.inventory import Product
 from app.models.membership import Membership
@@ -50,14 +50,14 @@ def count_selects(fn):
     return result, count
 
 
-def source_route_endpoint(method: str, path: str):
+def public_route_endpoint(method: str, path: str):
     matches = [
         route
-        for route in phase4_read_fast_router.routes
+        for route in api_router.routes
         if isinstance(route, APIRoute) and route.path == path and method in (route.methods or set())
     ]
     if len(matches) != 1:
-        raise AssertionError(f"expected one Phase 4 source {method} {path}, found {len(matches)}")
+        raise AssertionError(f"expected one canonical {method} {path}, found {len(matches)}")
     return matches[0].endpoint
 
 
@@ -161,7 +161,7 @@ def main() -> None:
             ("GET", "/projects/{project_id}/workspace", "project_workspace_fast"),
             ("GET", "/crm/client-access", "list_client_access_fast"),
         ):
-            endpoint = source_route_endpoint(method, path)
+            endpoint = public_route_endpoint(method, path)
             if endpoint.__name__ != expected_name:
                 raise AssertionError(f"{method} {path} is not owned by the bounded Phase 4 read handler")
             public_path = f"{API_PREFIX}{path}"
