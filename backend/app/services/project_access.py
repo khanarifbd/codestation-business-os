@@ -38,6 +38,14 @@ class ProjectAccess:
 
 
 def role_permissions(db: Session, tenant: TenantContext) -> set[str]:
+    role = tenant.organization_role
+    if (
+        role is not None
+        and role.id == tenant.membership.role_id
+        and role.organization_id == tenant.organization_id
+        and role.is_active
+    ):
+        return set(role.permissions or [])
     role = db.scalar(
         select(OrganizationRole).where(
             OrganizationRole.id == tenant.membership.role_id,
