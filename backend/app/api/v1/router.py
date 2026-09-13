@@ -66,6 +66,7 @@ from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
 from app.api.v1.phase4_read_fast import router as phase4_read_fast_router
 from app.api.v1.phase4_read_fast_extra import router as phase4_read_fast_extra_router
+from app.api.v1.phase4_remaining_fast import router as phase4_remaining_fast_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.platform_organization_detail import router as platform_organization_detail_router
 from app.api.v1.profile import router as profile_router
@@ -182,6 +183,7 @@ _SHADOWED_PHASE4_READ_OPERATIONS = {
     ("GET", "/hr/access"),
     ("GET", "/hr/dashboard"),
     ("GET", "/hr/meta"),
+    ("GET", "/hr/workspace-summary"),
 }
 
 
@@ -251,6 +253,7 @@ api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
 api_router.include_router(phase4_read_fast_router)
 api_router.include_router(phase4_read_fast_extra_router)
+api_router.include_router(phase4_remaining_fast_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
 api_router.include_router(project_client_sharing_router)
