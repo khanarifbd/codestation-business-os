@@ -125,7 +125,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
-        journal_for(db, organization.id, "financial_account_opening", account.id)
+        journal_for(db, organization.id, "financial_account_opening_balance", account.id)
 
         invoice = create_invoice(
             InvoiceCreate(
