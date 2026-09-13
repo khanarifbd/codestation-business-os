@@ -126,7 +126,7 @@ def main() -> None:
         if capital_meta_queries > 2:
             raise AssertionError(f"capital meta query regression: expected <=2 SELECTs, got {capital_meta_queries}")
 
-        legacy_insights = legacy_capital_insights(db, tenant)
+        legacy_insights = legacy_capital_insights(db, tenant, date_from=None, date_to=None)
         fast_insights, capital_insight_queries = count_selects(lambda: capital_insights_fast(db, tenant))
         if legacy_insights != fast_insights:
             raise AssertionError("batched capital insights changed API output")
