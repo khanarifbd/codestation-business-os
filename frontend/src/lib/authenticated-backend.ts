@@ -1,13 +1,18 @@
+import { createHash } from "node:crypto";
+
 import { NextRequest } from "next/server";
 
 import type { TokenPair } from "@/lib/auth-session";
 import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
-async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
-  const refreshToken = request.cookies.get("refresh_token")?.value;
-  if (!refreshToken) return null;
+const refreshInFlight = new Map<string, Promise<TokenPair | null>>();
 
+function refreshKey(refreshToken: string) {
+  return createHash("sha256").update(refreshToken).digest("hex");
+}
+
+async function performRefresh(request: NextRequest, refreshToken: string): Promise<TokenPair | null> {
   const response = await backendFetch("/auth/refresh", {
     method: "POST",
     headers: {
@@ -19,6 +24,25 @@ async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
 
   if (!response.ok) return null;
   return (await response.json()) as TokenPair;
+}
+
+async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
+  const refreshToken = request.cookies.get("refresh_token")?.value;
+  if (!refreshToken) return null;
+
+  const key = refreshKey(refreshToken);
+  const existing = refreshInFlight.get(key);
+  if (existing) return existing;
+
+  const pending = performRefresh(request, refreshToken);
+  refreshInFlight.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight.get(key) === pending) {
+      refreshInFlight.delete(key);
+    }
+  }
 }
 
 export async function authenticatedBackendFetch(
