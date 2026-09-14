@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -59,6 +59,7 @@ function isActive(pathname: string, item: Item) {
 
 export function AccountingNav() {
   const pathname = usePathname();
+  const router = useRouter();
 
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:-mx-1 sm:px-1" aria-label="Finance workspace navigation">
@@ -66,10 +67,14 @@ export function AccountingNav() {
         {items.map((item) => {
           const active = isActive(pathname, item);
           const Icon = item.icon;
+          const warmRoute = () => router.prefetch(item.href);
           return (
             <Link
               key={item.href}
               href={item.href}
+              prefetch={false}
+              onMouseEnter={warmRoute}
+              onFocus={warmRoute}
               aria-current={active ? "page" : undefined}
               className={cn(
                 "inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-xl px-3 text-[13px] font-medium transition",
