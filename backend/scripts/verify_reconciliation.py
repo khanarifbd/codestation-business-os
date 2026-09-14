@@ -72,6 +72,24 @@ def main() -> None:
             created_by_user_id=tenant.user_id,
         )
         db.add(later_tx)
+        db.flush()
+        record_activity(
+            db,
+            action="ci.reconciliation.draft_fixture.create",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="financial_transaction",
+            entity_id=later_tx.id,
+            after={
+                "account_id": account.id,
+                "transaction_date": later_tx.transaction_date.isoformat(),
+                "direction": later_tx.direction,
+                "amount": str(later_tx.amount),
+                "currency": later_tx.currency,
+            },
+            request=request("POST","/ci/reconciliation-draft-fixture"),
+        )
         db.commit()
         db.refresh(later_tx)
 
