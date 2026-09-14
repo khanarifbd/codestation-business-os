@@ -6,7 +6,14 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from starlette.requests import Request
 
-from app.api.v1.accounting_reconciliation import ReconciliationCreate, create_reconciliation, detail, finalize, select_transaction
+from app.api.v1.accounting_reconciliation import (
+    ReconciliationCreate,
+    create_reconciliation,
+    detail,
+    discard_reconciliation,
+    finalize,
+    select_transaction,
+)
 from app.db.session import SessionLocal, engine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.reconciliation import BankReconciliation, BankReconciliationItem
@@ -50,9 +57,50 @@ def main() -> None:
         stored = db.scalar(select(BankReconciliation).where(BankReconciliation.id == rec["id"]))
         items = db.scalars(select(BankReconciliationItem).where(BankReconciliationItem.reconciliation_id == rec["id"])).all()
         if stored is None or stored.finalized_at is None or len(items) != 2: raise AssertionError("reconciliation persistence failed")
+
+        later_tx = FinancialTransaction(
+            organization_id=tenant.organization_id,
+            account_id=account.id,
+            transaction_date=date(2097,2,5),
+            direction="credit",
+            amount=Decimal("10"),
+            currency="BDT",
+            source_type="reconciliation_ci",
+            source_id=str(uuid4()),
+            reference=f"REC-DRAFT-{marker}",
+            description="Draft-only statement deposit",
+            created_by_user_id=tenant.user_id,
+        )
+        db.add(later_tx)
+        db.commit()
+        db.refresh(later_tx)
+
+        draft = create_reconciliation(
+            ReconciliationCreate(
+                account_id=account.id,
+                statement_end_date=date(2097,2,28),
+                statement_ending_balance=Decimal("1090"),
+            ),
+            request("POST","/accounting/reconciliations"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        select_transaction(draft["id"], later_tx.id, request("POST","/match-draft"), db, tenant)  # type: ignore[arg-type]
+        draft_detail = detail(draft["id"], db, tenant)  # type: ignore[arg-type]
+        if draft_detail["difference"] != Decimal("0.00") or draft_detail["matched_transactions"] != 1:
+            raise AssertionError("draft reconciliation did not reach expected matched state")
+
+        discard_reconciliation(draft["id"], request("DELETE","/accounting/reconciliations/draft"), db, tenant)  # type: ignore[arg-type]
+        discarded = db.scalar(select(BankReconciliation).where(BankReconciliation.id == draft["id"]))
+        discarded_items = db.scalars(select(BankReconciliationItem).where(BankReconciliationItem.reconciliation_id == draft["id"])).all()
+        retained_tx = db.scalar(select(FinancialTransaction).where(FinancialTransaction.id == later_tx.id))
+        if discarded is not None or discarded_items:
+            raise AssertionError("discarded draft or reconciliation items were retained")
+        if retained_tx is None:
+            raise AssertionError("discarding a reconciliation draft deleted the underlying financial transaction")
     finally:
         db.close()
-    print("bank reconciliation verification passed: draft -> match -> zero difference -> finalize -> lock")
+    print("bank reconciliation verification passed: draft -> match -> zero difference -> finalize -> lock; draft discard preserves transactions")
 
 
 if __name__ == "__main__":
