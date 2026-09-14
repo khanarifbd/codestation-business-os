@@ -45,10 +45,12 @@ def main() -> None:
 
     with engine.begin() as connection:
         fixture = connection.execute(text("""
-            SELECT id AS organization_id, created_by_user_id AS user_id
+            SELECT id AS organization_id, created_by_user_id AS user_id, timezone
             FROM organizations WHERE name='Existing Tenant Fixture'
             ORDER BY created_at DESC LIMIT 1
         """)).mappings().one()
+        if fixture["timezone"] != "Asia/Dhaka":
+            raise AssertionError(f"auto-post timezone verification expects Asia/Dhaka fixture, got {fixture['timezone']}")
         if connection.execute(text("SELECT to_regclass('public.recurring_expenses')")).scalar_one() is None:
             raise AssertionError("recurring_expenses table missing")
         columns = {row[0] for row in connection.execute(text("""
@@ -88,7 +90,7 @@ def main() -> None:
             expense_amount=Decimal("25000.00"),
             frequency="monthly",
             interval_count=1,
-            next_due_date=date(2026, 8, 8),
+            next_due_date=date(2026, 8, 9),
             payment_method="bank_transfer",
             tax_amount=Decimal("0"),
             is_active=True,
@@ -109,25 +111,30 @@ def main() -> None:
         )
         db.commit()
         recurring_id = recurring.id
-        run_at = datetime(2026, 8, 8, 12, 0, tzinfo=timezone.utc)
+
+        # 20:00 UTC on Aug 8 is already Aug 9 in Asia/Dhaka. The scheduler must use the
+        # organization's business date rather than the UTC calendar date.
+        run_at = datetime(2026, 8, 8, 20, 0, tzinfo=timezone.utc)
+        if run_at.date() != date(2026, 8, 8):
+            raise AssertionError("timezone verification setup is invalid")
 
         posted, failed = process_due_auto_posts(db, now=run_at)
         if posted < 1 or failed != 0:
-            raise AssertionError(f"unexpected auto-post result posted={posted} failed={failed}")
+            raise AssertionError(f"tenant-date auto-post failed posted={posted} failed={failed}")
         db.expire_all()
         recurring = db.get(RecurringExpense, recurring_id)
-        if recurring is None or recurring.next_due_date != date(2026, 9, 8) or recurring.last_posted_expense_id is None:
-            raise AssertionError("recurring schedule did not advance")
+        if recurring is None or recurring.next_due_date != date(2026, 9, 9) or recurring.last_posted_expense_id is None:
+            raise AssertionError("recurring schedule did not advance on the tenant business date")
         expense = db.get(Expense, recurring.last_posted_expense_id)
-        if expense is None or expense.status != "posted" or expense.expense_amount != Decimal("25000.00"):
+        if expense is None or expense.status != "posted" or expense.expense_amount != Decimal("25000.00") or expense.expense_date != date(2026, 8, 9):
             raise AssertionError("auto-posted expense is incorrect")
         tx = db.scalar(select(FinancialTransaction).where(
             FinancialTransaction.source_type == "expense",
             FinancialTransaction.source_id == expense.id,
             FinancialTransaction.direction == "debit",
         ))
-        if tx is None or tx.amount != Decimal("25000.00") or tx.currency != "BDT":
-            raise AssertionError("auto-post ledger debit missing")
+        if tx is None or tx.amount != Decimal("25000.00") or tx.currency != "BDT" or tx.transaction_date != date(2026, 8, 9):
+            raise AssertionError("auto-post ledger debit missing or used the wrong business date")
 
         expense_count_before = db.scalar(select(func.count(Expense.id)).where(
             Expense.organization_id == organization_id,
@@ -145,7 +152,7 @@ def main() -> None:
     finally:
         db.close()
 
-    print("recurring auto post scheduler verification passed")
+    print("recurring auto post scheduler verification passed: tenant business date + idempotency")
 
 
 if __name__ == "__main__":
