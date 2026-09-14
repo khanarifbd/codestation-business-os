@@ -1,0 +1,151 @@
+name: Performance regression fix
+
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]' && contains(github.event.head_commit.message, '[perf-regression-fix]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+      - name: Apply bounded performance fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected patch anchor missing in {path}: {old[:100]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          # Dashboard report: keep the full report endpoint for Reports, but give the
+          # dashboard a bounded endpoint that skips account/project/client detail work.
+          reports_path = "backend/app/api/v1/reports_fast.py"
+          reports = Path(reports_path).read_text()
+          if '@router.get("/dashboard", response_model=ReportsOverview)' not in reports:
+              anchor = '@router.get("/overview", response_model=ReportsOverview)\ndef reports_overview_fast('
+              if anchor not in reports:
+                  raise SystemExit("reports dashboard anchor missing")
+              endpoint = '''@router.get("/dashboard", response_model=ReportsOverview)\ndef reports_dashboard_fast(\n    db: DbSession,\n    tenant: ReportsViewer,\n    date_from: date | None = None,\n    date_to: date | None = None,\n    currency: str | None = Query(default=None, min_length=3, max_length=3),\n) -> ReportsOverview:\n    \"\"\"Return only the report data rendered by the dashboard command center.\n\n    The full /reports/overview endpoint also builds account, project and client\n    profitability detail. Dashboard does not render those collections, so loading\n    them on every dashboard visit wastes queries and blocks first paint.\n    \"\"\"\n    start, end = _period(date_from, date_to, tenant.organization.timezone)\n    code = _currency_filter(currency)\n    financials, trend = _financials_and_trend_fast(\n        db,\n        tenant.organization_id,\n        start,\n        end,\n        code,\n        None,\n        None,\n    )\n    return ReportsOverview(\n        date_from=start,\n        date_to=end,\n        financials=financials,\n        trend=trend,\n        accounts=[],\n        operations=_operations_fast(db, tenant.organization_id, tenant.organization.timezone),\n        projects=[],\n        clients=[],\n    )\n\n\n'''
+              reports = reports.replace(anchor, endpoint + anchor, 1)
+              Path(reports_path).write_text(reports)
+
+          # Dashboard pulses: one authenticated/tenant-resolved request instead of five.
+          pulse_path = "backend/app/api/v1/dashboard_pulse.py"
+          pulse = Path(pulse_path).read_text()
+          pulse = pulse.replace(
+              "from app.api.dependencies import DbSession, require_tenant_permission",
+              "from app.api.dependencies import CurrentTenant, DbSession, _active_role, require_tenant_permission",
+              1,
+          )
+          if "class DashboardPulseOverview(BaseModel):" not in pulse:
+              anchor = '''class PeoplePulse(BaseModel):\n    active_employees: int\n    present_today: int\n    late_today: int\n    on_leave_today: int\n    pending_leave: int\n\n\n'''
+              insert = anchor + '''class DashboardPulseOverview(BaseModel):\n    orders: OrderPulse | None = None\n    projects: ProjectPulse | None = None\n    crm: CrmPulse | None = None\n    finance: FinancePulse | None = None\n    people: PeoplePulse | None = None\n\n\n'''
+              if anchor not in pulse:
+                  raise SystemExit("dashboard pulse model anchor missing")
+              pulse = pulse.replace(anchor, insert, 1)
+          if '@router.get("/overview", response_model=DashboardPulseOverview)' not in pulse:
+              pulse += '''\n\n@router.get("/overview", response_model=DashboardPulseOverview)\ndef dashboard_pulse_overview(db: DbSession, tenant: CurrentTenant) -> DashboardPulseOverview:\n    \"\"\"Return every pulse the current organization role is allowed to view.\n\n    Permission filtering stays backend-enforced. Calling the existing pulse\n    functions directly reuses the already authenticated tenant context and avoids\n    five repeated auth/tenant resolutions from the browser.\n    \"\"\"\n    role = _active_role(db, tenant)\n    granted = set(role.permissions or [])\n\n    def allowed(permission: str) -> bool:\n        return \"*\" in granted or permission in granted\n\n    return DashboardPulseOverview(\n        orders=order_pulse(db, tenant) if allowed(\"orders.view\") else None,\n        projects=project_pulse(db, tenant) if allowed(\"projects.view\") else None,\n        crm=crm_pulse(db, tenant) if allowed(\"crm.view\") else None,\n        finance=finance_pulse(db, tenant) if allowed(\"finance.view\") else None,\n        people=people_pulse(db, tenant) if allowed(\"hr.view\") else None,\n    )\n'''
+          Path(pulse_path).write_text(pulse)
+
+          # Dashboard frontend: use bounded report + one pulse request.
+          dashboard_path = "frontend/src/app/dashboard/page.tsx"
+          dashboard = Path(dashboard_path).read_text()
+          if dashboard.count('/api/reports/overview?${params}') != 2:
+              raise SystemExit("expected exactly two dashboard overview fetches")
+          dashboard = dashboard.replace('/api/reports/overview?${params}', '/api/reports/dashboard?${params}')
+          helper = '''async function optionalPulse<T>(path: string): Promise<T | null> {\n  try {\n    const response = await fetch(path, { cache: \"no-store\" });\n    if (!response.ok) return null;\n    return (await response.json()) as T;\n  } catch {\n    return null;\n  }\n}\n\n'''
+          if helper not in dashboard:
+              raise SystemExit("optionalPulse helper anchor missing")
+          dashboard = dashboard.replace(helper, "", 1)
+          model_anchor = '''type PeoplePulse = {\n  active_employees: number;\n  present_today: number;\n  late_today: number;\n  on_leave_today: number;\n  pending_leave: number;\n};\n\n'''
+          model_insert = model_anchor + '''type DashboardPulseOverview = {\n  orders: OrderPulse | null;\n  projects: ProjectPulse | null;\n  crm: CrmPulse | null;\n  finance: FinancePulse | null;\n  people: PeoplePulse | null;\n};\n\n'''
+          if model_anchor not in dashboard:
+              raise SystemExit("dashboard pulse type anchor missing")
+          dashboard = dashboard.replace(model_anchor, model_insert, 1)
+          old_effect = '''  useEffect(() => {\n    if (!tenant) return;\n    let active = true;\n    void Promise.all([\n      optionalPulse<OrderPulse>(\"/api/dashboard-pulse/orders\"),\n      optionalPulse<ProjectPulse>(\"/api/dashboard-pulse/projects\"),\n      optionalPulse<CrmPulse>(\"/api/dashboard-pulse/crm\"),\n      optionalPulse<FinancePulse>(\"/api/dashboard-pulse/finance\"),\n      optionalPulse<PeoplePulse>(\"/api/dashboard-pulse/people\"),\n    ]).then(([nextOrderPulse, nextProjectPulse, nextCrmPulse, nextFinancePulse, nextPeoplePulse]) => {\n      if (!active) return;\n      setOrderPulse(nextOrderPulse);\n      setProjectPulse(nextProjectPulse);\n      setCrmPulse(nextCrmPulse);\n      setFinancePulse(nextFinancePulse);\n      setPeoplePulse(nextPeoplePulse);\n    });\n    return () => { active = false; };\n  }, [tenant]);\n'''
+          new_effect = '''  useEffect(() => {\n    if (!tenant) return;\n    let active = true;\n    void (async () => {\n      try {\n        const response = await fetch(\"/api/dashboard-pulse/overview\", { cache: \"no-store\" });\n        if (!active || !response.ok) return;\n        const pulse = (await response.json()) as DashboardPulseOverview;\n        if (!active) return;\n        setOrderPulse(pulse.orders);\n        setProjectPulse(pulse.projects);\n        setCrmPulse(pulse.crm);\n        setFinancePulse(pulse.finance);\n        setPeoplePulse(pulse.people);\n      } catch {\n        // Pulse cards are supplementary; the primary dashboard report remains usable.\n      }\n    })();\n    return () => { active = false; };\n  }, [tenant]);\n'''
+          if old_effect not in dashboard:
+              raise SystemExit("dashboard pulse effect anchor missing")
+          dashboard = dashboard.replace(old_effect, new_effect, 1)
+          Path(dashboard_path).write_text(dashboard)
+
+          # Restore Next.js production route prefetch. API data is still client-fetched,
+          # so this prefetch warms route JS/RSC without replaying page data calls.
+          shell_path = "frontend/src/components/dashboard-shell.tsx"
+          shell = Path(shell_path).read_text()
+          if shell.count("prefetch={false}") != 2:
+              raise SystemExit(f"expected two disabled shell prefetches, got {shell.count('prefetch={false}')}")
+          shell = shell.replace("                        prefetch={false}\n", "", 1)
+          shell = shell.replace("            prefetch={false}\n", "", 1)
+          Path(shell_path).write_text(shell)
+
+          # Payables needs vendors only from Expense metadata. Use the bounded Phase 4
+          # payload instead of loading clients/projects/orders/invoices/payments too.
+          payables_path = "frontend/src/app/dashboard/accounting/payables/page.tsx"
+          payables = Path(payables_path).read_text()
+          if payables.count('fetch("/api/finance/expense-meta", { cache: "no-store" })') != 1:
+              raise SystemExit("payables expense meta anchor missing")
+          payables = payables.replace(
+              'fetch("/api/finance/expense-meta", { cache: "no-store" })',
+              'fetch("/api/finance/expense-meta-lite", { cache: "no-store" })',
+              1,
+          )
+          Path(payables_path).write_text(payables)
+
+          # Query-budget regression coverage for the two new consolidated reads.
+          verifier_path = "backend/scripts/verify_reports_performance.py"
+          verifier = Path(verifier_path).read_text()
+          verifier = verifier.replace(
+              '''from app.api.v1.dashboard_pulse import (\n    crm_pulse,\n    finance_pulse,\n    order_pulse,\n    people_pulse,\n    project_pulse,\n)''',
+              '''from app.api.v1.dashboard_pulse import (\n    crm_pulse,\n    dashboard_pulse_overview,\n    finance_pulse,\n    order_pulse,\n    people_pulse,\n    project_pulse,\n)''',
+              1,
+          )
+          verifier = verifier.replace(
+              '''from app.api.v1.reports_fast import (\n    _client_rows_fast,\n    _financials_and_trend_fast,\n    _operations_fast,\n    _project_rows_fast,\n)''',
+              '''from app.api.v1.reports_fast import (\n    _client_rows_fast,\n    _financials_and_trend_fast,\n    _operations_fast,\n    _project_rows_fast,\n    reports_dashboard_fast,\n)''',
+              1,
+          )
+          insert_anchor = '''        pulse_query_counts = {}\n        for name, fn in (\n'''
+          insert_text = '''        dashboard_report, dashboard_report_queries = count_selects(\n            lambda: reports_dashboard_fast(\n                db,\n                tenant,\n                date_from=start,\n                date_to=end,\n                currency=None,\n            )\n        )\n        if dashboard_report_queries > 6:\n            raise AssertionError(\n                f\"dashboard report query regression: expected <=6 SELECTs, got {dashboard_report_queries}\"\n            )\n        if dashboard_report.accounts or dashboard_report.projects or dashboard_report.clients:\n            raise AssertionError(\"dashboard report must not materialize unused detail collections\")\n\n        _, combined_pulse_queries = count_selects(lambda: dashboard_pulse_overview(db, tenant))\n        if combined_pulse_queries > 5:\n            raise AssertionError(\n                f\"combined dashboard pulse query regression: expected <=5 SELECTs, got {combined_pulse_queries}\"\n            )\n\n''' + insert_anchor
+          if insert_anchor not in verifier:
+              raise SystemExit("reports verifier anchor missing")
+          verifier = verifier.replace(insert_anchor, insert_text, 1)
+          verifier = verifier.replace(
+              'f"overview_financial_trend={overview_aggregate_queries}, operations={operations_queries}, "\n        f"pulses={pulse_query_counts}"',
+              'f"overview_financial_trend={overview_aggregate_queries}, operations={operations_queries}, "\n        f"dashboard_report={dashboard_report_queries}, combined_pulse={combined_pulse_queries}, "\n        f"pulses={pulse_query_counts}"',
+              1,
+          )
+          Path(verifier_path).write_text(verifier)
+          PY
+
+          git diff --check
+          git status --short
+      - name: Commit performance fixes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/api/v1/reports_fast.py \
+                  backend/app/api/v1/dashboard_pulse.py \
+                  backend/scripts/verify_reports_performance.py \
+                  frontend/src/app/dashboard/page.tsx \
+                  frontend/src/components/dashboard-shell.tsx \
+                  frontend/src/app/dashboard/accounting/payables/page.tsx
+          git commit -m "perf: reduce dashboard and accounting navigation latency"
+          git push origin HEAD:develop
