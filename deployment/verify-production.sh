@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${BUSINESS_OS_ENV_FILE:-${ROOT_DIR}/.env.staging}"
 COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
 MODE="${1:---quick}"
+STATE_FILE="/var/lib/codestation-business-os/active-slot"
 
 cd "${ROOT_DIR}"
 
@@ -40,6 +41,11 @@ require_real_value() {
   if [[ -n "${placeholder}" && "${value}" == "${placeholder}" ]]; then
     fail "${key} still uses the example placeholder"
   fi
+}
+
+container_running() {
+  local name="$1"
+  [[ "$(docker inspect -f '{{.State.Running}}' "${name}" 2>/dev/null || true)" == "true" ]]
 }
 
 [[ "${MODE}" == "--config-only" || "${MODE}" == "--quick" || "${MODE}" == "--full" ]] || \
@@ -98,31 +104,88 @@ if [[ "${MODE}" == "--config-only" ]]; then
   exit 0
 fi
 
-COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+project_name="$(env_value COMPOSE_PROJECT_NAME)"
+project_name="${project_name:-codestation-business-os}"
+COMPOSE=(docker compose -p "${project_name}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 
-for service in postgres backend frontend finance-scheduler; do
+for service in postgres finance-scheduler; do
   if ! "${COMPOSE[@]}" ps --status running --services | grep -qx "${service}"; then
     fail "Docker service is not running: ${service}"
   fi
 done
 
+# Production safe-deploy uses manually named blue/green app containers while
+# PostgreSQL and the finance scheduler remain Compose-managed. Legacy installs
+# may still run backend/frontend directly as Compose services, so support both.
+app_topology="legacy-compose"
+active_slot=""
+backend_container=""
+frontend_container=""
+backend_port=8100
+frontend_port=3100
+
+if [[ -f "${STATE_FILE}" ]]; then
+  active_slot="$(tr -d '[:space:]' < "${STATE_FILE}")"
+  if [[ "${active_slot}" == "blue" || "${active_slot}" == "green" ]]; then
+    candidate_backend="${project_name}-${active_slot}-backend"
+    candidate_frontend="${project_name}-${active_slot}-frontend"
+    if container_running "${candidate_backend}" && container_running "${candidate_frontend}"; then
+      app_topology="blue-green"
+      backend_container="${candidate_backend}"
+      frontend_container="${candidate_frontend}"
+      if [[ "${active_slot}" == "green" ]]; then
+        backend_port=8101
+        frontend_port=3101
+      fi
+    else
+      warn "Active-slot state says ${active_slot}, but its app containers are not both running; checking legacy Compose services"
+    fi
+  else
+    warn "Ignoring invalid active-slot value in ${STATE_FILE}: ${active_slot}"
+    active_slot=""
+  fi
+fi
+
+if [[ "${app_topology}" == "legacy-compose" ]]; then
+  for service in backend frontend; do
+    if ! "${COMPOSE[@]}" ps --status running --services | grep -qx "${service}"; then
+      if [[ -n "${active_slot}" ]]; then
+        fail "Neither the active blue/green ${active_slot} app containers nor Compose ${service} are running"
+      fi
+      fail "Docker service is not running: ${service}"
+    fi
+  done
+  backend_container="$("${COMPOSE[@]}" ps -q backend)"
+  frontend_container="$("${COMPOSE[@]}" ps -q frontend)"
+fi
+
+run_backend() {
+  if [[ "${app_topology}" == "blue-green" ]]; then
+    docker exec "${backend_container}" "$@"
+  else
+    "${COMPOSE[@]}" exec -T backend "$@"
+  fi
+}
+
+echo "==> Application topology: ${app_topology}${active_slot:+ (active slot: ${active_slot})}"
+
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8100/api/v1/health >/dev/null; then
+  if curl -fsS "http://127.0.0.1:${backend_port}/api/v1/health" >/dev/null; then
     break
   fi
-  [[ "${attempt}" -lt 30 ]] || fail "Backend health check failed"
+  [[ "${attempt}" -lt 30 ]] || fail "Backend health check failed on 127.0.0.1:${backend_port}"
   sleep 2
 done
 
 for attempt in $(seq 1 30); do
-  if curl -fsI http://127.0.0.1:3100/login >/dev/null; then
+  if curl -fsI "http://127.0.0.1:${frontend_port}/login" >/dev/null; then
     break
   fi
-  [[ "${attempt}" -lt 30 ]] || fail "Frontend health check failed"
+  [[ "${attempt}" -lt 30 ]] || fail "Frontend health check failed on 127.0.0.1:${frontend_port}"
   sleep 2
 done
 
-if ! "${COMPOSE[@]}" exec -T backend sh -c 'uv run --no-sync alembic current' | grep -q '(head)'; then
+if ! run_backend sh -c 'uv run --no-sync alembic current' | grep -q '(head)'; then
   fail "Database is not at the current Alembic head"
 fi
 
@@ -146,13 +209,13 @@ if [[ "${MODE}" == "--full" ]]; then
   smtp_port="$(env_value SMTP_PORT)"
   smtp_port="${smtp_port:-587}"
   echo "==> Checking SMTP network reachability"
-  "${COMPOSE[@]}" exec -T backend python -c \
+  run_backend python -c \
     'import socket,sys; host=sys.argv[1]; port=int(sys.argv[2]); s=socket.create_connection((host,port), 10); s.close()' \
     "${smtp_host}" "${smtp_port}"
 
   if [[ -n "${accounting_audit_org_id}" ]]; then
     echo "==> Running read-only accounting integrity audit"
-    "${COMPOSE[@]}" exec -T backend \
+    run_backend \
       uv run --no-sync python scripts/audit_accounting_integrity.py \
       --organization-id "${accounting_audit_org_id}"
   else
@@ -160,7 +223,8 @@ if [[ "${MODE}" == "--full" ]]; then
   fi
 
   echo "==> Performing full disposable restore drill"
-  bash "${ROOT_DIR}/deployment/restore.sh" "${latest_backup}" --verify
+  BUSINESS_OS_ENV_FILE="${ENV_FILE}" \
+    bash "${ROOT_DIR}/deployment/restore.sh" "${latest_backup}" --verify
 fi
 
 echo "Production verification passed (${MODE})."
