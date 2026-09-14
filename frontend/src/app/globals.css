@@ -81,6 +81,12 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  --app-canvas: #f7f7f6;
+  --app-panel: #ffffff;
+  --app-subtle: #fafafa;
+  --app-border: #e7e7e5;
+  --app-text-muted: #737373;
 }
 
 .dark {
@@ -115,16 +121,39 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+
+  --app-canvas: #111111;
+  --app-panel: #171717;
+  --app-subtle: #1d1d1d;
+  --app-border: #2b2b2b;
+  --app-text-muted: #a3a3a3;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground font-sans;
-  }
+
   html {
     @apply font-sans;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    min-width: 320px;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, currentColor 14%, transparent);
   }
 }
