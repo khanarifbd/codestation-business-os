@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import base64
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.api.v1.finance import _invoice_list_item, _tenant_today
+from app.models.customer_advances import CustomerAdvance
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, Payment
 from app.schemas.finance import AccountTransferRead, InvoiceListItem, LedgerTransactionRead, PaymentRead
 from app.tenancy.context import TenantContext
@@ -39,6 +41,43 @@ class TransferCursorPage(BaseModel):
     next_cursor: str | None = None
 
 
+class ReceivableItem(InvoiceListItem):
+    days_overdue: int
+    aging_bucket: Literal["current", "1-30", "31-60", "61-90", "90+"]
+    available_credit: Decimal = Decimal("0")
+
+
+class ReceivableCurrencyTotal(BaseModel):
+    currency: str
+    amount: Decimal
+
+
+class ReceivableAgingTotal(BaseModel):
+    bucket: Literal["current", "1-30", "31-60", "61-90", "90+"]
+    currency: str
+    amount: Decimal
+
+
+class ReceivableCursorPage(BaseModel):
+    items: list[ReceivableItem]
+    next_cursor: str | None = None
+    open_invoice_count: int
+    overdue_count: int
+    filtered_count: int
+    outstanding_by_currency: list[ReceivableCurrencyTotal]
+    credit_by_currency: list[ReceivableCurrencyTotal]
+    aging: list[ReceivableAgingTotal]
+
+
+class ReceivableAdvanceItem(BaseModel):
+    id: str
+    advance_date: date
+    currency: str
+    original_amount: Decimal
+    remaining_amount: Decimal
+    reference: str | None
+
+
 def _encode(parts: list[str]) -> str:
     raw = "|".join(parts).encode()
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
@@ -53,6 +92,43 @@ def _decode(cursor: str, expected: int) -> list[str]:
         return parts
     except (ValueError, UnicodeDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid finance cursor") from exc
+
+
+def _receivable_conditions(organization_id: str):
+    return (
+        Invoice.organization_id == organization_id,
+        Invoice.balance_due > 0,
+        Invoice.status.not_in(["draft", "cancelled", "paid"]),
+    )
+
+
+def _receivable_aging_expression(today: date):
+    return case(
+        (or_(Invoice.due_date.is_(None), Invoice.due_date >= today), "current"),
+        (Invoice.due_date >= today - timedelta(days=30), "1-30"),
+        (Invoice.due_date >= today - timedelta(days=60), "31-60"),
+        (Invoice.due_date >= today - timedelta(days=90), "61-90"),
+        else_="90+",
+    )
+
+
+def _receivable_bucket(due_date: date | None, today: date) -> Literal["current", "1-30", "31-60", "61-90", "90+"]:
+    if due_date is None or due_date >= today:
+        return "current"
+    days = (today - due_date).days
+    if days <= 30:
+        return "1-30"
+    if days <= 60:
+        return "31-60"
+    if days <= 90:
+        return "61-90"
+    return "90+"
+
+
+def _receivable_days_overdue(due_date: date | None, today: date) -> int:
+    if due_date is None or due_date >= today:
+        return 0
+    return (today - due_date).days
 
 
 @router.get("/invoice-page", response_model=InvoiceCursorPage)
@@ -95,6 +171,143 @@ def invoice_page(
         items=[_invoice_list_item(item, tenant.organization.timezone) for item in items],
         next_cursor=_encode([items[-1].created_at.isoformat(), items[-1].id]) if has_more and items else None,
     )
+
+
+@router.get("/receivable-page", response_model=ReceivableCursorPage)
+def receivable_page(
+    db: DbSession,
+    tenant: FinanceViewer,
+    search: str | None = None,
+    aging: Literal["current", "1-30", "31-60", "61-90", "90+"] | None = None,
+    currency: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    cursor: str | None = None,
+) -> ReceivableCursorPage:
+    today = _tenant_today(tenant.organization.timezone)
+    base_conditions = _receivable_conditions(tenant.organization_id)
+    aging_expression = _receivable_aging_expression(today)
+
+    open_invoice_count, overdue_count = db.execute(
+        select(
+            func.count(Invoice.id),
+            func.count(Invoice.id).filter(Invoice.due_date.is_not(None), Invoice.due_date < today),
+        ).where(*base_conditions)
+    ).one()
+
+    outstanding_rows = db.execute(
+        select(Invoice.currency, func.coalesce(func.sum(Invoice.balance_due), 0))
+        .where(*base_conditions)
+        .group_by(Invoice.currency)
+        .order_by(Invoice.currency)
+    ).all()
+    credit_rows = db.execute(
+        select(CustomerAdvance.currency, func.coalesce(func.sum(CustomerAdvance.remaining_amount), 0))
+        .where(CustomerAdvance.organization_id == tenant.organization_id, CustomerAdvance.remaining_amount > 0)
+        .group_by(CustomerAdvance.currency)
+        .order_by(CustomerAdvance.currency)
+    ).all()
+    aging_rows = db.execute(
+        select(aging_expression.label("bucket"), Invoice.currency, func.coalesce(func.sum(Invoice.balance_due), 0))
+        .where(*base_conditions)
+        .group_by(aging_expression, Invoice.currency)
+        .order_by(Invoice.currency)
+    ).all()
+
+    filtered_conditions = list(base_conditions)
+    if currency:
+        filtered_conditions.append(Invoice.currency == currency.upper())
+    if aging == "current":
+        filtered_conditions.append(or_(Invoice.due_date.is_(None), Invoice.due_date >= today))
+    elif aging == "1-30":
+        filtered_conditions.extend((Invoice.due_date < today, Invoice.due_date >= today - timedelta(days=30)))
+    elif aging == "31-60":
+        filtered_conditions.extend((Invoice.due_date < today - timedelta(days=30), Invoice.due_date >= today - timedelta(days=60)))
+    elif aging == "61-90":
+        filtered_conditions.extend((Invoice.due_date < today - timedelta(days=60), Invoice.due_date >= today - timedelta(days=90)))
+    elif aging == "90+":
+        filtered_conditions.append(Invoice.due_date < today - timedelta(days=90))
+    if search and search.strip():
+        needle = f"%{search.strip()}%"
+        filtered_conditions.append(or_(Invoice.invoice_number.ilike(needle), Invoice.subject.ilike(needle), Invoice.client_name_snapshot.ilike(needle)))
+
+    filtered_count = db.scalar(select(func.count(Invoice.id)).where(*filtered_conditions)) or 0
+
+    credit_by_client = (
+        select(
+            CustomerAdvance.client_id,
+            CustomerAdvance.currency,
+            func.coalesce(func.sum(CustomerAdvance.remaining_amount), 0).label("available_credit"),
+        )
+        .where(CustomerAdvance.organization_id == tenant.organization_id, CustomerAdvance.remaining_amount > 0)
+        .group_by(CustomerAdvance.client_id, CustomerAdvance.currency)
+        .subquery()
+    )
+    query = (
+        select(Invoice, func.coalesce(credit_by_client.c.available_credit, 0))
+        .outerjoin(
+            credit_by_client,
+            and_(credit_by_client.c.client_id == Invoice.client_id, credit_by_client.c.currency == Invoice.currency),
+        )
+        .where(*filtered_conditions)
+    )
+    if cursor:
+        created_raw, row_id = _decode(cursor, 2)
+        created_at = datetime.fromisoformat(created_raw)
+        query = query.where(or_(Invoice.created_at < created_at, and_(Invoice.created_at == created_at, Invoice.id < row_id)))
+
+    rows = list(db.execute(query.order_by(Invoice.created_at.desc(), Invoice.id.desc()).limit(limit + 1)).all())
+    has_more = len(rows) > limit
+    visible = rows[:limit]
+    items = [
+        ReceivableItem(
+            **_invoice_list_item(invoice, tenant.organization.timezone).model_dump(),
+            days_overdue=_receivable_days_overdue(invoice.due_date, today),
+            aging_bucket=_receivable_bucket(invoice.due_date, today),
+            available_credit=Decimal(available_credit or 0),
+        )
+        for invoice, available_credit in visible
+    ]
+    last_invoice = visible[-1][0] if visible else None
+    return ReceivableCursorPage(
+        items=items,
+        next_cursor=_encode([last_invoice.created_at.isoformat(), last_invoice.id]) if has_more and last_invoice else None,
+        open_invoice_count=int(open_invoice_count or 0),
+        overdue_count=int(overdue_count or 0),
+        filtered_count=int(filtered_count),
+        outstanding_by_currency=[ReceivableCurrencyTotal(currency=code, amount=Decimal(value or 0)) for code, value in outstanding_rows],
+        credit_by_currency=[ReceivableCurrencyTotal(currency=code, amount=Decimal(value or 0)) for code, value in credit_rows],
+        aging=[ReceivableAgingTotal(bucket=bucket, currency=code, amount=Decimal(value or 0)) for bucket, code, value in aging_rows],
+    )
+
+
+@router.get("/receivable-advances", response_model=list[ReceivableAdvanceItem])
+def receivable_advances(
+    db: DbSession,
+    tenant: FinanceViewer,
+    client_id: str,
+    currency: str,
+) -> list[ReceivableAdvanceItem]:
+    rows = db.scalars(
+        select(CustomerAdvance)
+        .where(
+            CustomerAdvance.organization_id == tenant.organization_id,
+            CustomerAdvance.client_id == client_id,
+            CustomerAdvance.currency == currency.upper(),
+            CustomerAdvance.remaining_amount > 0,
+        )
+        .order_by(CustomerAdvance.advance_date.desc(), CustomerAdvance.created_at.desc())
+    ).all()
+    return [
+        ReceivableAdvanceItem(
+            id=item.id,
+            advance_date=item.advance_date,
+            currency=item.currency,
+            original_amount=item.original_amount,
+            remaining_amount=item.remaining_amount,
+            reference=item.reference,
+        )
+        for item in rows
+    ]
 
 
 @router.get("/payment-page", response_model=PaymentCursorPage)
