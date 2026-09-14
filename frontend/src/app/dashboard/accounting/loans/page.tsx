@@ -15,6 +15,7 @@ import {
   Search,
   ShieldCheck,
   WalletCards,
+  X,
 } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
@@ -230,6 +231,15 @@ export default function LoanAccountingPage() {
   useEffect(() => {
     void loadDetail(selectedLoanId);
   }, [selectedLoanId, loadDetail]);
+
+  useEffect(() => {
+    if (!mode) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mode]);
 
   const selected = useMemo(() => loans.find((loan) => loan.id === selectedLoanId) ?? null, [loans, selectedLoanId]);
   const filteredLoans = useMemo(() => {
@@ -740,31 +750,6 @@ export default function LoanAccountingPage() {
                   </div>
                 </Surface>
 
-                {mode && mode !== "new" ? (
-                  <LoanActionForm
-                    mode={mode}
-                    selected={selected}
-                    receive={receive}
-                    setReceive={setReceive}
-                    repay={repay}
-                    setRepay={setRepay}
-                    accountOptions={accountOptions}
-                    receiveAccount={receiveAccount}
-                    repayAccount={repayAccount}
-                    receivePrincipal={receivePrincipal}
-                    receiveFee={receiveFee}
-                    receiveNet={receiveNet}
-                    repayPrincipal={repayPrincipal}
-                    repayInterest={repayInterest}
-                    repayFee={repayFee}
-                    repayTotal={repayTotal}
-                    saving={saving}
-                    onReceiveSubmit={reviewReceive}
-                    onRepaySubmit={reviewRepay}
-                    onCancel={closeMode}
-                  />
-                ) : null}
-
                 <Surface className="overflow-hidden">
                   <div className="p-5 sm:p-6">
                     <SectionHeader
@@ -913,10 +898,12 @@ export default function LoanAccountingPage() {
             )}
           </div>
         </section>
+      </div>
 
-        {mode === "new" ? (
+      {mode === "new" ? (
+        <LoanFormDialog ariaLabel="New loan agreement" onClose={closeMode} closeDisabled={saving}>
           <Surface className="overflow-hidden">
-            <div className="border-b border-neutral-100 p-5 sm:p-6">
+            <div className="border-b border-neutral-100 p-5 pr-14 sm:p-6 sm:pr-16">
               <SectionHeader
                 title="Record a new loan agreement"
                 description="This captures approval terms only. It does not increase cash or create outstanding principal until the lender actually disburses money."
@@ -927,6 +914,7 @@ export default function LoanAccountingPage() {
                 <Field label="Lender name">
                   <input
                     required
+                    autoFocus
                     value={approve.lender_name}
                     onChange={(event) => setApprove((current) => ({ ...current, lender_name: event.target.value }))}
                     className={inputClass}
@@ -1032,8 +1020,39 @@ export default function LoanAccountingPage() {
               </div>
             </form>
           </Surface>
-        ) : null}
-      </div>
+        </LoanFormDialog>
+      ) : null}
+
+      {mode && mode !== "new" && selected ? (
+        <LoanFormDialog
+          ariaLabel={mode === "receive" ? "Receive loan money" : "Record loan repayment"}
+          onClose={closeMode}
+          closeDisabled={saving}
+        >
+          <LoanActionForm
+            mode={mode}
+            selected={selected}
+            receive={receive}
+            setReceive={setReceive}
+            repay={repay}
+            setRepay={setRepay}
+            accountOptions={accountOptions}
+            receiveAccount={receiveAccount}
+            repayAccount={repayAccount}
+            receivePrincipal={receivePrincipal}
+            receiveFee={receiveFee}
+            receiveNet={receiveNet}
+            repayPrincipal={repayPrincipal}
+            repayInterest={repayInterest}
+            repayFee={repayFee}
+            repayTotal={repayTotal}
+            saving={saving}
+            onReceiveSubmit={reviewReceive}
+            onRepaySubmit={reviewRepay}
+            onCancel={closeMode}
+          />
+        </LoanFormDialog>
+      ) : null}
 
       <FinancialConfirmationDialog
         open={confirmMode === "new"}
@@ -1069,6 +1088,47 @@ export default function LoanAccountingPage() {
         onConfirm={postRepay}
       />
     </AppPage>
+  );
+}
+
+function LoanFormDialog({
+  ariaLabel,
+  children,
+  onClose,
+  closeDisabled = false,
+}: {
+  ariaLabel: string;
+  children: React.ReactNode;
+  onClose: () => void;
+  closeDisabled?: boolean;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={ariaLabel}
+    >
+      <div
+        className="absolute inset-0 bg-black/45 backdrop-blur-[1px]"
+        aria-hidden="true"
+        onClick={() => {
+          if (!closeDisabled) onClose();
+        }}
+      />
+      <div className="relative z-10 max-h-[94dvh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:max-w-6xl sm:rounded-2xl">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={closeDisabled}
+          aria-label={`Close ${ariaLabel}`}
+          className="absolute right-3 top-3 z-20 flex size-10 items-center justify-center rounded-xl border border-neutral-200 bg-white/95 text-neutral-500 shadow-sm transition hover:bg-neutral-50 hover:text-neutral-950 disabled:cursor-not-allowed disabled:opacity-40 sm:right-4 sm:top-4"
+        >
+          <X className="size-4" />
+        </button>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -1132,7 +1192,7 @@ function LoanActionForm({
 
   return (
     <Surface className="overflow-hidden">
-      <div className="border-b border-neutral-100 p-5 sm:p-6">
+      <div className="border-b border-neutral-100 p-5 pr-14 sm:p-6 sm:pr-16">
         <SectionHeader
           title={receiving ? "Receive loan money" : "Record a loan repayment"}
           description={
