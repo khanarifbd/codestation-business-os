@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { useDashboardSession } from "@/components/dashboard-session-context";
+import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 
 type FinancialRow = {
   currency: string;
@@ -204,28 +205,14 @@ export default function DashboardPage() {
       setError(null);
       try {
         const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
-        const [reportResponse, nextOrderPulse, nextProjectPulse, nextCrmPulse, nextFinancePulse, nextPeoplePulse] = await Promise.all([
-          fetch(`/api/reports/overview?${params}`, { cache: "no-store" }),
-          optionalPulse<OrderPulse>("/api/dashboard-pulse/orders"),
-          optionalPulse<ProjectPulse>("/api/dashboard-pulse/projects"),
-          optionalPulse<CrmPulse>("/api/dashboard-pulse/crm"),
-          optionalPulse<FinancePulse>("/api/dashboard-pulse/finance"),
-          optionalPulse<PeoplePulse>("/api/dashboard-pulse/people"),
-        ]);
-
+        const response = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
         if (!active) return;
-        setOrderPulse(nextOrderPulse);
-        setProjectPulse(nextProjectPulse);
-        setCrmPulse(nextCrmPulse);
-        setFinancePulse(nextFinancePulse);
-        setPeoplePulse(nextPeoplePulse);
-
-        if (reportResponse.status === 401) {
+        if (response.status === 401) {
           router.replace("/login");
           return;
         }
-        if (reportResponse.ok) setData((await reportResponse.json()) as Overview);
-        else if (reportResponse.status !== 403) throw new Error("Unable to load dashboard metrics");
+        if (response.ok) setData((await response.json()) as Overview);
+        else if (response.status !== 403) throw new Error("Unable to load dashboard metrics");
       } catch (reason) {
         if (active) setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
       } finally {
@@ -234,6 +221,26 @@ export default function DashboardPage() {
     })();
     return () => { active = false; };
   }, [router, tenant]);
+
+  useEffect(() => {
+    if (!tenant) return;
+    let active = true;
+    void Promise.all([
+      optionalPulse<OrderPulse>("/api/dashboard-pulse/orders"),
+      optionalPulse<ProjectPulse>("/api/dashboard-pulse/projects"),
+      optionalPulse<CrmPulse>("/api/dashboard-pulse/crm"),
+      optionalPulse<FinancePulse>("/api/dashboard-pulse/finance"),
+      optionalPulse<PeoplePulse>("/api/dashboard-pulse/people"),
+    ]).then(([nextOrderPulse, nextProjectPulse, nextCrmPulse, nextFinancePulse, nextPeoplePulse]) => {
+      if (!active) return;
+      setOrderPulse(nextOrderPulse);
+      setProjectPulse(nextProjectPulse);
+      setCrmPulse(nextCrmPulse);
+      setFinancePulse(nextFinancePulse);
+      setPeoplePulse(nextPeoplePulse);
+    });
+    return () => { active = false; };
+  }, [tenant]);
 
   async function changePreset(next: Preset) {
     if (next === preset) return;
@@ -295,73 +302,85 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen overflow-x-hidden bg-neutral-100 p-4 sm:p-8 lg:p-10">
-        <div className="mx-auto max-w-[1500px] space-y-5">
-          <div className="h-20 animate-pulse rounded-2xl bg-white" />
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-6">
-            {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-white sm:h-32" />)}
+      <AppPage width="wide">
+        <div className="space-y-5">
+          <div className="h-28 animate-pulse rounded-2xl bg-white" />
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+            {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-white" />)}
           </div>
           <div className="h-80 animate-pulse rounded-2xl bg-white" />
         </div>
-      </main>
+      </AppPage>
     );
   }
 
   if (!tenant || !company) {
-    return <main className="p-4 text-sm text-red-700 sm:p-8">{error ?? "Workspace unavailable"}</main>;
+    return <AppPage width="wide"><p className="text-sm text-red-700">{error ?? "Workspace unavailable"}</p></AppPage>;
   }
 
   if (!data) {
     return (
-      <main className="min-h-screen overflow-x-hidden bg-neutral-100 p-4 sm:p-8 lg:p-10">
-        <div className="mx-auto max-w-[1500px]">
-          <h1 className="text-2xl font-semibold sm:text-3xl">{company.name}</h1>
-          <div className="mt-5 rounded-2xl border bg-white p-5 sm:mt-6 sm:p-6">
-            <p className="font-semibold">Employee workspace</p>
-            <p className="mt-2 text-sm leading-6 text-neutral-500">Business financial reports are restricted by role permissions. Your project and task workspace remains available from Projects.</p>
-            <Link href="/dashboard/projects" className="mt-4 inline-flex items-center gap-2 text-sm font-semibold">Open projects <ArrowRight className="size-4" /></Link>
-          </div>
+      <AppPage width="wide">
+        <div className="space-y-6">
+          <PageHeader eyebrow="Business OS" title={company.name} description="Your role has access to operational workspaces, but financial reporting is restricted." />
+          <Surface className="p-5 sm:p-6">
+            <SectionHeader title="Employee workspace" description="Open Projects to continue with your assigned delivery and task work." />
+            <Link prefetch={false} href="/dashboard/projects" className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-neutral-800 hover:text-neutral-950">Open projects <ArrowRight className="size-4" /></Link>
+          </Surface>
         </div>
-      </main>
+      </AppPage>
     );
   }
 
   const hasPulse = Boolean(orderPulse || projectPulse || crmPulse || financePulse || peoplePulse);
 
   return (
-    <main className="min-h-screen overflow-x-hidden bg-neutral-100 p-3 sm:p-8 lg:p-10">
-      <div className="mx-auto max-w-[1500px]">
-        <header className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400 sm:text-xs sm:tracking-[0.16em]">Business command center</p>
-              <h1 className="mt-2 break-words text-2xl font-semibold tracking-tight sm:text-3xl">{company.name}</h1>
-              <p className="mt-2 text-xs leading-5 text-neutral-500 sm:text-sm">{rangeLabel} · {data.date_from} — {data.date_to} · Reporting currency {company.currency}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-              <select value={preset} disabled={reportLoading} onChange={(event) => void changePreset(event.target.value as Preset)} className="h-11 min-w-0 w-full rounded-xl border bg-white px-3 text-sm font-medium outline-none transition focus:border-neutral-500 disabled:opacity-60 sm:w-auto">
+    <AppPage width="wide">
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow="Business command center"
+          title={company.name}
+          description="A single view of operations, collections, delivery and profitability without mixing currencies."
+          meta={
+            <>
+              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-1">{rangeLabel} · {data.date_from} — {data.date_to}</span>
+              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-1">Reporting currency · {company.currency}</span>
+            </>
+          }
+          actions={
+            <>
+              <select
+                value={preset}
+                disabled={reportLoading}
+                onChange={(event) => void changePreset(event.target.value as Preset)}
+                className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-medium outline-none transition focus:border-neutral-400 disabled:opacity-60"
+              >
                 <option value="month">This month</option>
                 <option value="last_month">Last month</option>
                 <option value="quarter">This quarter</option>
                 <option value="year">This year</option>
               </select>
-              <Link href="/dashboard/reports" className="inline-flex h-11 min-w-0 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-3 text-sm font-semibold text-white sm:px-4">
-                <BarChart3 className="size-4 shrink-0" /><span className="truncate">Open reports</span>
+              <Link prefetch={false} href="/dashboard/reports" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white transition hover:bg-neutral-800">
+                <BarChart3 className="size-4" /> Open reports
               </Link>
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:mt-5 lg:grid-cols-4">
+            </>
+          }
+        />
+
+        {reportLoading ? <div className="h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
+        {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+
+        <Surface className="p-4 sm:p-5">
+          <SectionHeader title="Quick actions" description="Start the most common operational and financial workflows." />
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
             <WorkspaceLink href="/dashboard/orders/new" label="Create order" />
             <WorkspaceLink href="/dashboard/accounting/money-in" label="Receive money" />
             <WorkspaceLink href="/dashboard/accounting/money-out" label="Pay money" />
             <WorkspaceLink href="/dashboard/accounting/transfers" label="Transfer funds" />
           </div>
-        </header>
+        </Surface>
 
-        {reportLoading ? <div className="mt-3 h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
-        {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-
-        <section className="mt-4 grid grid-cols-2 gap-3 sm:mt-5 sm:gap-4 xl:grid-cols-6">
+        <section className="grid grid-cols-2 gap-3 xl:grid-cols-6">
           <MetricCard label="Active clients" value={data.operations.active_clients} note="Current client base" href="/dashboard/clients" icon={Users} />
           <MetricCard label="Open orders" value={data.operations.open_orders} note="Delivery not closed" href="/dashboard/orders" icon={ReceiptText} />
           <MetricCard label="Active projects" value={data.operations.active_projects} note="Planned, active or on hold" href="/dashboard/projects" icon={FolderKanban} />
@@ -371,16 +390,12 @@ export default function DashboardPage() {
         </section>
 
         {hasPulse ? (
-          <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm sm:mt-5 sm:p-6">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
-              <div>
-                <p className="text-sm text-neutral-500">Right now</p>
-                <h2 className="mt-1 text-lg font-semibold sm:text-xl">Current business pulse</h2>
-                <p className="mt-1 text-xs leading-5 text-neutral-400">Order, project, pipeline and collection values stay in their original currencies. No cross-currency totals are combined.</p>
-              </div>
-            </div>
-
-            <div className={`mt-4 grid gap-4 sm:mt-5 ${peoplePulse ? "xl:grid-cols-3" : "xl:grid-cols-2"}`}>
+          <Surface className="p-5 sm:p-6">
+            <SectionHeader
+              title="Current business pulse"
+              description="Order, project, pipeline and collection values stay in their original currencies. No cross-currency totals are combined."
+            />
+            <div className={`mt-5 grid gap-4 ${peoplePulse ? "xl:grid-cols-3" : "xl:grid-cols-2"}`}>
               {(orderPulse || projectPulse || crmPulse) ? (
                 <PulseCard title="Sales & delivery" note="Commercial work currently in motion" href="/dashboard/orders" icon={ReceiptText}>
                   {orderPulse ? <PulseValueRow label="Open order value" count={orderPulse.open_orders} values={orderPulse.values} reportingCurrency={company.currency} /> : null}
@@ -391,17 +406,16 @@ export default function DashboardPage() {
 
               {peoplePulse ? (
                 <PulseCard title="People today" note="Today's workforce snapshot" href="/dashboard/hr" icon={Users}>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 p-3.5 sm:p-4">
                     <PeopleStat label="Active employees" value={peoplePulse.active_employees} />
                     <PeopleStat label="Present today" value={peoplePulse.present_today} />
                     <PeopleStat label="On leave" value={peoplePulse.on_leave_today} />
                     <PeopleStat label="Pending leave" value={peoplePulse.pending_leave} attention={peoplePulse.pending_leave > 0} />
                   </div>
-                  <div className="mt-3 flex items-center justify-between rounded-xl border bg-neutral-50 px-3 py-2.5 text-sm">
+                  <div className="flex items-center justify-between border-t px-4 py-3 text-sm">
                     <span className="text-neutral-500">Late today</span>
                     <span className="font-semibold tabular-nums">{peoplePulse.late_today}</span>
                   </div>
-                  <p className="mt-3 text-[11px] leading-4 text-neutral-400">Business OS does not infer absence from missing attendance records, so weekly-off or not-yet-recorded employees are not misclassified.</p>
                 </PulseCard>
               ) : null}
 
@@ -412,23 +426,19 @@ export default function DashboardPage() {
                 </PulseCard>
               ) : null}
             </div>
-          </section>
+          </Surface>
         ) : null}
 
-        <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm sm:mt-5 sm:p-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
-              <p className="text-sm text-neutral-500">{rangeLabel}</p>
-              <h2 className="mt-1 text-lg font-semibold sm:text-xl">Financial performance by currency</h2>
-              <p className="mt-1 text-xs leading-5 text-neutral-400">Currencies are intentionally kept separate. No cross-currency totals are combined.</p>
-            </div>
-            <Link href="/dashboard/accounting/reports" className="inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold text-neutral-600 hover:text-neutral-950">Accounting reports <ArrowRight className="size-4" /></Link>
-          </div>
-
+        <Surface className="p-5 sm:p-6">
+          <SectionHeader
+            title="Financial performance by currency"
+            description={`${rangeLabel}. Currencies are intentionally kept separate; no cross-currency totals are combined.`}
+            action={<Link prefetch={false} href="/dashboard/accounting/reports" className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-600 hover:text-neutral-950">Accounting reports <ArrowRight className="size-4" /></Link>}
+          />
           {financialRows.length ? (
-            <div className="mt-4 grid gap-3 sm:mt-5 sm:gap-4 xl:grid-cols-2">
+            <div className="mt-5 grid gap-4 xl:grid-cols-2">
               {financialRows.map((row) => (
-                <article key={row.currency} className="rounded-2xl border bg-neutral-50/60 p-4 sm:p-5">
+                <article key={row.currency} className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4 sm:p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -437,7 +447,7 @@ export default function DashboardPage() {
                       </div>
                       <p className="mt-1 text-xs text-neutral-400">Period performance</p>
                     </div>
-                    <CircleDollarSign className="size-5 shrink-0 text-neutral-300" />
+                    <CircleDollarSign className="size-5 text-neutral-300" />
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
                     <MoneyTile label="Invoiced" value={money(row.invoiced_revenue, row.currency)} />
@@ -456,18 +466,12 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : <EmptyState title="No financial activity" note={`No posted financial activity for ${rangeLabel.toLowerCase()}.`} />}
-        </section>
+        </Surface>
 
-        <div className="mt-4 grid gap-4 sm:mt-5 sm:gap-5 xl:grid-cols-[0.72fr_1.28fr]">
-          <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-neutral-500">Needs attention</p>
-                <h2 className="mt-1 text-lg font-semibold sm:text-xl">Action queue</h2>
-              </div>
-              <AlertTriangle className="size-5 shrink-0 text-neutral-300" />
-            </div>
-            <div className="mt-4 space-y-2.5 sm:mt-5 sm:space-y-3">
+        <div className="grid gap-5 xl:grid-cols-[0.72fr_1.28fr]">
+          <Surface className="p-5 sm:p-6">
+            <SectionHeader title="Action queue" description="Operational items that need attention." action={<AlertTriangle className="size-5 text-neutral-300" />} />
+            <div className="mt-5 space-y-3">
               <AlertRow label="Overdue tasks" value={data.operations.overdue_tasks} href="/dashboard/projects" />
               <AlertRow label="Due CRM follow-ups" value={data.operations.due_followups} href="/dashboard/crm" />
               <AlertRow label="Open invoices" value={data.operations.open_invoices} href="/dashboard/accounting/invoices" />
@@ -477,27 +481,21 @@ export default function DashboardPage() {
                 <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Period receivables</p>
                 <div className="mt-3 space-y-2">
                   {financialRows.filter((row) => Number(row.receivables) > 0).map((row) => (
-                    <Link key={row.currency} href="/dashboard/accounting/receivables" className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-3 py-2.5 text-sm hover:bg-neutral-100">
+                    <Link prefetch={false} key={row.currency} href="/dashboard/accounting/receivables" className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-3 py-2.5 text-sm hover:bg-neutral-100">
                       <span>{row.currency}</span><span className="break-all text-right font-semibold">{money(row.receivables, row.currency)}</span>
                     </Link>
                   ))}
                 </div>
               </div>
             ) : null}
-          </section>
+          </Surface>
 
-          <section className="min-w-0 rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm text-neutral-500">Up to last 6 reporting periods</p>
-                <h2 className="mt-1 text-lg font-semibold sm:text-xl">Performance trend</h2>
-              </div>
-              <TrendingUp className="size-5 shrink-0 text-neutral-300" />
-            </div>
+          <Surface className="min-w-0 p-5 sm:p-6">
+            <SectionHeader title="Performance trend" description="Up to the last 6 reporting periods, separated by currency." action={<TrendingUp className="size-5 text-neutral-300" />} />
             {trendGroups.length ? (
-              <div className="mt-4 grid min-w-0 gap-3 sm:mt-5 sm:gap-4 lg:grid-cols-2">
+              <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-2">
                 {trendGroups.map((group) => (
-                  <div key={group.currency} className="min-w-0 overflow-hidden rounded-xl border">
+                  <div key={group.currency} className="min-w-0 overflow-hidden rounded-xl border border-neutral-200">
                     <div className="flex items-center justify-between gap-3 bg-neutral-50 px-4 py-3">
                       <span className="font-semibold">{group.currency}</span>
                       {group.currency === company.currency ? <span className="text-right text-[11px] font-medium text-neutral-400">Reporting currency</span> : null}
@@ -514,30 +512,30 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : <EmptyState title="No trend yet" note="Trend data appears after invoices, payments or expenses are posted." />}
-          </section>
+          </Surface>
         </div>
 
-        <div className="mt-4 grid gap-4 sm:mt-5 sm:gap-5 xl:grid-cols-2">
-          <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
+        <div className="grid gap-5 xl:grid-cols-2">
+          <Surface className="p-5 sm:p-6">
             <SectionHeading title="Financial accounts" note={`${data.accounts.length} active account${data.accounts.length === 1 ? "" : "s"}`} href="/dashboard/accounting/accounts" icon={Landmark} />
             {data.accounts.length ? (
               <div className="mt-4 divide-y">
                 {data.accounts.slice(0, 8).map((row) => (
-                  <Link key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="flex flex-col items-start gap-2 py-3 text-sm hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-2">
+                  <Link prefetch={false} key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="flex flex-col items-start gap-2 py-3 text-sm hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-2">
                     <div className="min-w-0"><p className="break-words font-medium sm:truncate">{row.account_name}</p><p className="mt-0.5 text-xs capitalize text-neutral-400">{row.account_type.replaceAll("_", " ")} · {row.currency}</p></div>
                     <p className="max-w-full break-all font-semibold tabular-nums sm:shrink-0 sm:text-right">{money(row.balance, row.currency)}</p>
                   </Link>
                 ))}
               </div>
             ) : <EmptyState title="No financial accounts" note="Add bank, cash, wallet or gateway accounts to track real balances." />}
-          </section>
+          </Surface>
 
-          <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
+          <Surface className="p-5 sm:p-6">
             <SectionHeading title="Recent project economics" note={`${rangeLabel} profitability`} href="/dashboard/reports" icon={FolderKanban} />
             {data.projects.length ? (
               <div className="mt-4 divide-y">
                 {data.projects.slice(0, 6).map((row) => (
-                  <Link key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="block py-3 hover:bg-neutral-50 sm:px-2">
+                  <Link prefetch={false} key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="block py-3 hover:bg-neutral-50 sm:px-2">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <div className="min-w-0"><p className="break-words text-sm font-medium sm:truncate">{row.project_number} · {row.project_name}</p><p className="mt-0.5 break-words text-xs text-neutral-400 sm:truncate">{row.client_name}</p></div>
                       <div className="sm:shrink-0 sm:text-right"><p className="break-all text-sm font-semibold">{money(row.estimated_profit, row.currency)}</p><p className="mt-0.5 text-xs text-neutral-400">{percent(row.margin_percent)} margin</p></div>
@@ -547,37 +545,37 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : <EmptyState title="No project economics yet" note="Project profitability appears as projects, invoices and direct expenses are recorded." />}
-          </section>
+          </Surface>
         </div>
 
-        <section className="mt-4 rounded-2xl border bg-white p-4 shadow-sm sm:mt-5 sm:p-6">
+        <Surface className="p-5 sm:p-6">
           <SectionHeading title="Client economics" note={`${rangeLabel} client performance`} href="/dashboard/clients" icon={Users} />
           {data.clients.length ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {data.clients.slice(0, 9).map((row) => (
-                <Link key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="rounded-xl border p-4 transition hover:border-neutral-300 hover:bg-neutral-50">
+                <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="rounded-xl border border-neutral-200 p-4 transition hover:border-neutral-300 hover:bg-neutral-50">
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-semibold sm:truncate">{row.client_name}</p><p className="mt-1 text-xs text-neutral-400">{row.currency} · {percent(row.margin_percent)} margin</p></div><ArrowRight className="size-4 shrink-0 text-neutral-300" /></div>
                   <div className="mt-4 grid grid-cols-2 gap-2 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Direct cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
                 </Link>
               ))}
             </div>
           ) : <EmptyState title="No client economics yet" note="Client profitability appears after commercial and financial activity is recorded." />}
-        </section>
+        </Surface>
       </div>
-    </main>
+    </AppPage>
   );
 }
 
 function MetricCard({ label, value, note, href, icon: Icon, attention = false }: { label: string; value: number; note: string; href: string; icon: LucideIcon; attention?: boolean }) {
-  return <Link href={href} className="group min-w-0 rounded-2xl border bg-white p-3.5 shadow-sm transition hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-md sm:p-4"><div className="flex items-start justify-between gap-2"><p className="min-w-0 text-xs leading-4 text-neutral-500 sm:text-sm">{label}</p><Icon className={`size-4 shrink-0 ${attention && value > 0 ? "text-amber-500" : "text-neutral-300"}`} /></div><p className="mt-3 text-2xl font-semibold tracking-tight sm:mt-4 sm:text-3xl">{value}</p><div className="mt-2 flex items-end justify-between gap-2"><p className="min-w-0 text-[11px] leading-4 text-neutral-400 sm:text-xs">{note}</p><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></div></Link>;
+  return <Link prefetch={false} href={href} className="group min-w-0 rounded-2xl border border-neutral-200/90 bg-white p-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-md sm:p-4"><div className="flex items-start justify-between gap-2"><p className="min-w-0 text-xs leading-4 text-neutral-500 sm:text-sm">{label}</p><Icon className={`size-4 shrink-0 ${attention && value > 0 ? "text-amber-500" : "text-neutral-300"}`} /></div><p className="mt-3 text-2xl font-semibold tracking-tight sm:mt-4 sm:text-3xl">{value}</p><div className="mt-2 flex items-end justify-between gap-2"><p className="min-w-0 text-[11px] leading-4 text-neutral-400 sm:text-xs">{note}</p><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></div></Link>;
 }
 
 function PulseCard({ title, note, href, icon: Icon, children }: { title: string; note: string; href: string; icon: LucideIcon; children: React.ReactNode }) {
-  return <article className="min-w-0 rounded-2xl border bg-neutral-50/60 p-4 sm:p-5"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h3 className="font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div><div className="flex items-center gap-2"><Icon className="size-5 shrink-0 text-neutral-300" /><Link href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View →</Link></div></div><div className="mt-4 divide-y rounded-xl border bg-white">{children}</div></article>;
+  return <article className="min-w-0 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50/60"><div className="flex items-start justify-between gap-3 p-4 sm:p-5"><div className="min-w-0"><h3 className="font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div><div className="flex items-center gap-2"><Icon className="size-5 shrink-0 text-neutral-300" /><Link prefetch={false} href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View →</Link></div></div><div className="border-t bg-white">{children}</div></article>;
 }
 
 function PulseValueRow({ label, count, values, reportingCurrency, countLabel = "active", secondaryLabel, secondaryValues, attention = false }: { label: string; count: number; values: CurrencyValue[]; reportingCurrency: string; countLabel?: string; secondaryLabel?: string; secondaryValues?: CurrencyValue[]; attention?: boolean }) {
-  return <div className="p-3.5 sm:p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-neutral-700">{label}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${attention ? "bg-amber-50 text-amber-700" : "bg-neutral-100 text-neutral-500"}`}>{count} {countLabel}</span></div><CurrencyChips values={values} reportingCurrency={reportingCurrency} /><div>{secondaryLabel && secondaryValues ? <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[11px] text-neutral-400">{secondaryLabel}</span><CurrencyChips values={secondaryValues} reportingCurrency={reportingCurrency} compact /></div> : null}</div></div>;
+  return <div className="border-b p-3.5 last:border-b-0 sm:p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-neutral-700">{label}</p><span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${attention ? "bg-amber-50 text-amber-700" : "bg-neutral-100 text-neutral-500"}`}>{count} {countLabel}</span></div><CurrencyChips values={values} reportingCurrency={reportingCurrency} /><div>{secondaryLabel && secondaryValues ? <div className="mt-2 flex flex-wrap items-center gap-2"><span className="text-[11px] text-neutral-400">{secondaryLabel}</span><CurrencyChips values={secondaryValues} reportingCurrency={reportingCurrency} compact /></div> : null}</div></div>;
 }
 
 function CurrencyChips({ values, reportingCurrency, compact = false }: { values: CurrencyValue[]; reportingCurrency: string; compact?: boolean }) {
@@ -603,17 +601,17 @@ function ClientMetric({ label, value, strong = false }: { label: string; value: 
 }
 
 function AlertRow({ label, value, href }: { label: string; value: number; href: string }) {
-  return <Link href={href} className="flex items-center justify-between gap-3 rounded-xl border px-3 py-3 transition hover:bg-neutral-50 sm:px-4"><div className="flex min-w-0 items-center gap-2.5 sm:gap-3"><AlertTriangle className={`size-4 shrink-0 ${value ? "text-amber-500" : "text-neutral-300"}`} /><span className="min-w-0 text-sm font-medium">{label}</span></div><div className="flex shrink-0 items-center gap-2"><span className="text-sm font-semibold">{value}</span><ArrowRight className="size-3.5 text-neutral-300" /></div></Link>;
+  return <Link prefetch={false} href={href} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-3 transition hover:bg-neutral-50 sm:px-4"><div className="flex min-w-0 items-center gap-2.5 sm:gap-3"><AlertTriangle className={`size-4 shrink-0 ${value ? "text-amber-500" : "text-neutral-300"}`} /><span className="min-w-0 text-sm font-medium">{label}</span></div><div className="flex shrink-0 items-center gap-2"><span className="text-sm font-semibold">{value}</span><ArrowRight className="size-3.5 text-neutral-300" /></div></Link>;
 }
 
 function WorkspaceLink({ href, label }: { href: string; label: string }) {
-  return <Link href={href} className="group flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-xl border bg-neutral-50 px-3 py-2.5 text-sm font-medium transition hover:bg-neutral-100"><span className="min-w-0 leading-4">{label}</span><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></Link>;
+  return <Link prefetch={false} href={href} className="group flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm font-medium transition hover:bg-neutral-100"><span className="min-w-0 leading-4">{label}</span><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></Link>;
 }
 
 function SectionHeading({ title, note, href, icon: Icon }: { title: string; note: string; href: string; icon: LucideIcon }) {
-  return <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3"><div className="min-w-0"><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs text-neutral-400">{note}</p></div><div className="flex items-center justify-between gap-3 sm:justify-end"><Icon className="size-5 shrink-0 text-neutral-300" /><Link href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View all →</Link></div></div>;
+  return <div className="flex flex-col gap-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-3"><div className="min-w-0"><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs text-neutral-400">{note}</p></div><div className="flex items-center justify-between gap-3 sm:justify-end"><Icon className="size-5 shrink-0 text-neutral-300" /><Link prefetch={false} href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View all →</Link></div></div>;
 }
 
 function EmptyState({ title, note }: { title: string; note: string }) {
-  return <div className="mt-5 rounded-xl border border-dashed bg-neutral-50 px-4 py-7 text-center sm:py-8"><CircleDollarSign className="mx-auto size-6 text-neutral-300" /><p className="mt-3 text-sm font-medium">{title}</p><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div>;
+  return <div className="mt-5 rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-4 py-7 text-center sm:py-8"><CircleDollarSign className="mx-auto size-6 text-neutral-300" /><p className="mt-3 text-sm font-medium">{title}</p><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div>;
 }
