@@ -217,6 +217,14 @@ def reverse_journal(entry_id: str, request: Request, db: DbSession, tenant: Acco
     original = db.scalar(select(JournalEntry).where(JournalEntry.id == entry_id, JournalEntry.organization_id == tenant.organization_id).with_for_update())
     if original is None: raise HTTPException(status_code=404, detail="Journal entry not found")
     if original.source_type == "functional_currency_transition": raise HTTPException(status_code=409, detail="Functional-currency transition journals cannot be reversed as ordinary journals")
+    if original.source_type != "manual":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only manual accounting journals can be reversed from Advanced Accounting. "
+                "Correct operational financial records through their financial correction workflow so the business subledger, financial accounts and General Ledger stay synchronized."
+            ),
+        )
     current_period = current_functional_currency_period(db, tenant.organization_id)
     if original.functional_currency != current_period.currency or original.entry_date < current_period.effective_from: raise HTTPException(status_code=409, detail="This journal belongs to a sealed functional-currency period. Post a current-period correction instead of reversing historical currency-period entries.")
     existing = db.scalar(select(JournalEntry).where(JournalEntry.organization_id == tenant.organization_id, JournalEntry.reversed_entry_id == original.id))
