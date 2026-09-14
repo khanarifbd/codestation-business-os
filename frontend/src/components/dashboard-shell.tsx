@@ -186,6 +186,7 @@ function Navigation({
   permissions: string[];
   onNavigate?: () => void;
 }) {
+  const router = useRouter();
   const financeActive = isFinanceArea(pathname);
   const [financeOpen, setFinanceOpen] = useState(financeActive);
 
@@ -234,6 +235,9 @@ function Navigation({
                       <Link
                         key={childLabel}
                         href={childHref}
+                        prefetch={false}
+                        onMouseEnter={() => router.prefetch(childHref)}
+                        onFocus={() => router.prefetch(childHref)}
                         onClick={onNavigate}
                         aria-current={childActive ? "page" : undefined}
                         className={cn(
@@ -259,6 +263,9 @@ function Navigation({
           <Link
             key={label}
             href={href}
+            prefetch={false}
+            onMouseEnter={() => router.prefetch(href)}
+            onFocus={() => router.prefetch(href)}
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
