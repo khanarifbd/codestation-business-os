@@ -79,13 +79,15 @@ export default function AccountingReportsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (period?: { from?: string; to?: string }) => {
     setLoading(true);
     setError(null);
     try {
+      const from = period?.from ?? dateFrom;
+      const to = period?.to ?? dateTo;
       const params = new URLSearchParams();
-      if (dateFrom) params.set("date_from", dateFrom);
-      if (dateTo) params.set("date_to", dateTo);
+      if (from) params.set("date_from", from);
+      if (to) params.set("date_to", to);
       const response = await fetch(
         `/api/accounting/reports/financial-statements${params.size ? `?${params.toString()}` : ""}`,
         { cache: "no-store" },
@@ -124,7 +126,7 @@ export default function AccountingReportsPage() {
   function resetPeriod() {
     setDateFrom("");
     setDateTo("");
-    window.setTimeout(() => void load(), 0);
+    void load({ from: "", to: "" });
   }
 
   return (
