@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -36,6 +36,7 @@ class PayableAgingTotal(BaseModel):
 class PayablesWorkspacePage(BaseModel):
     items: list[PayableBillRead]
     next_cursor: str | None = None
+    business_date: date
     open_bill_count: int
     overdue_count: int
     filtered_count: int
@@ -200,6 +201,7 @@ def payables_workspace(
     return PayablesWorkspacePage(
         items=items,
         next_cursor=_encode_cursor(last_bill.created_at, last_bill.id) if has_more and last_bill else None,
+        business_date=today,
         open_bill_count=int(counts[0] or 0),
         overdue_count=int(counts[1] or 0),
         filtered_count=filtered_count,
