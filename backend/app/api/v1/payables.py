@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.v1.payables_workspace import router as payables_workspace_router
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.payables import PayableBill, PayablePayment
@@ -19,6 +20,7 @@ from app.services.functional_currency import functional_currency_for_date
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/payables", tags=["Accounting"])
+router.include_router(payables_workspace_router)
 AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 AccountingManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
 MONEY = Decimal("0.01")
