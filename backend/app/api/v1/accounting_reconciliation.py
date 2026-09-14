@@ -406,3 +406,44 @@ def finalize(reconciliation_id: str, request: Request, db: DbSession, tenant: Ma
     )
     db.commit()
     return row_json(db, row)
+
+
+@router.delete("/{reconciliation_id}", status_code=204)
+def discard_reconciliation(
+    reconciliation_id: str,
+    request: Request,
+    db: DbSession,
+    tenant: Manager,
+):
+    row = db.scalar(
+        select(BankReconciliation)
+        .where(
+            BankReconciliation.id == reconciliation_id,
+            BankReconciliation.organization_id == tenant.organization_id,
+        )
+        .with_for_update()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Reconciliation not found")
+    if row.status != "draft":
+        raise HTTPException(status_code=409, detail="Finalized reconciliation cannot be discarded")
+
+    before = row_json(db, row)
+    matched_count = before["matched_transactions"]
+    db.delete(row)
+    db.flush()
+    record_activity(
+        db,
+        action="accounting.reconciliation.discard",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="bank_reconciliation",
+        entity_id=reconciliation_id,
+        before=before,
+        after={"status": "discarded", "matched_transactions_removed": matched_count},
+        message=f"Reconciliation draft discarded: {before['account_name']} through {before['statement_end_date']}",
+        request=request,
+    )
+    db.commit()
+    return None
