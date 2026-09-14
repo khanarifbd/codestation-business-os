@@ -83,6 +83,16 @@ if is_true "${backup_remote_required:-false}" && [[ -z "${backup_remote_target}"
   fail "BACKUP_REMOTE_REQUIRED=true but BACKUP_REMOTE_RSYNC_TARGET is empty"
 fi
 
+accounting_audit_org_id="$(env_value ACCOUNTING_AUDIT_ORGANIZATION_ID)"
+accounting_audit_required="$(env_value ACCOUNTING_AUDIT_REQUIRED)"
+if [[ -n "${accounting_audit_org_id}" ]] \
+  && [[ ! "${accounting_audit_org_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  fail "ACCOUNTING_AUDIT_ORGANIZATION_ID must be a UUID"
+fi
+if is_true "${accounting_audit_required:-false}" && [[ -z "${accounting_audit_org_id}" ]]; then
+  fail "ACCOUNTING_AUDIT_REQUIRED=true but ACCOUNTING_AUDIT_ORGANIZATION_ID is empty"
+fi
+
 if [[ "${MODE}" == "--config-only" ]]; then
   echo "Production configuration verification passed."
   exit 0
@@ -139,6 +149,15 @@ if [[ "${MODE}" == "--full" ]]; then
   "${COMPOSE[@]}" exec -T backend python -c \
     'import socket,sys; host=sys.argv[1]; port=int(sys.argv[2]); s=socket.create_connection((host,port), 10); s.close()' \
     "${smtp_host}" "${smtp_port}"
+
+  if [[ -n "${accounting_audit_org_id}" ]]; then
+    echo "==> Running read-only accounting integrity audit"
+    "${COMPOSE[@]}" exec -T backend \
+      uv run --no-sync python scripts/audit_accounting_integrity.py \
+      --organization-id "${accounting_audit_org_id}"
+  else
+    warn "ACCOUNTING_AUDIT_ORGANIZATION_ID is not configured; read-only accounting integrity audit skipped"
+  fi
 
   echo "==> Performing full disposable restore drill"
   bash "${ROOT_DIR}/deployment/restore.sh" "${latest_backup}" --verify
