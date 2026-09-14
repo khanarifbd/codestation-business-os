@@ -16,7 +16,7 @@ from app.models.payables import PayableBill
 from app.schemas.payables import PayableBillRead
 from app.tenancy.context import TenantContext
 
-router = APIRouter(prefix="/accounting/payables", tags=["Accounting - Payables Workspace"])
+router = APIRouter(tags=["Accounting - Payables Workspace"])
 AccountingViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 PayableStatusFilter = Literal["all", "open", "overdue", "partial", "paid"]
 PayableAgingBucket = Literal["current", "1-30", "31-60", "61-90", "90+"]
@@ -165,9 +165,7 @@ def payables_workspace(
             )
         )
 
-    filtered_count = int(
-        db.scalar(select(func.count(PayableBill.id)).where(*conditions)) or 0
-    )
+    filtered_count = int(db.scalar(select(func.count(PayableBill.id)).where(*conditions)) or 0)
 
     item_query = (
         select(PayableBill, LedgerAccount.name)
