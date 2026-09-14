@@ -9,7 +9,7 @@ This folder is the canonical server/deployment layer for CodeStation Business OS
 - `backup.sh` — encrypted PostgreSQL + private-upload backup with retention and optional off-server rsync
 - `restore.sh` — safe restore verification and explicit disaster-recovery restore
 - `install-backup-timer.sh` — installs/enables the daily systemd backup timer
-- `verify-production.sh` — launch configuration/runtime verification and optional full restore drill
+- `verify-production.sh` — launch configuration/runtime verification, read-only accounting integrity audit, and optional full restore drill
 - `nginx/codestation-business-os.conf` — source Nginx reverse-proxy configuration
 
 ## Staging / first live-test server
@@ -109,6 +109,44 @@ BACKUP_REMOTE_REQUIRED=true
 
 Keep `BACKUP_REMOTE_REQUIRED=false` only while the first internal live test intentionally uses local-only backup. Before external customer data is onboarded, configure/test an off-server target and switch it to `true` so a failed remote copy makes the backup timer/deployment visibly fail.
 
+## Read-only accounting integrity audit
+
+The production verification layer can audit one real tenant directly from persisted operational and ledger data. This is inspection-only: it does not run accounting sync, repair data, create journals, or commit changes.
+
+Configure the immutable organization UUID in `.env.staging`:
+
+```text
+ACCOUNTING_AUDIT_ORGANIZATION_ID=<codestation-ai-organization-uuid>
+ACCOUNTING_AUDIT_REQUIRED=false
+```
+
+When `ACCOUNTING_AUDIT_ORGANIZATION_ID` is present, `deployment/verify-production.sh --full` runs:
+
+```bash
+uv run --no-sync python scripts/audit_accounting_integrity.py \
+  --organization-id <codestation-ai-organization-uuid>
+```
+
+The audit checks journal balance/source uniqueness/tenant ownership, invoice and payable subledger arithmetic and source journals, accounting-loan principal lifecycle, transaction/account currency consistency, financial-account GL mapping/protection, and Financial Account ↔ mapped GL balance when a direct local-currency comparison remains valid.
+
+For V1 financial sign-off, set:
+
+```text
+ACCOUNTING_AUDIT_REQUIRED=true
+```
+
+With that flag enabled, configuration verification fails if the organization UUID is missing. This prevents a V1/full-production verification from silently skipping the internal production tenant audit. Keep the target as an immutable UUID rather than an organization display name.
+
+The same audit can be run manually against the live backend container without invoking the rest of production verification:
+
+```bash
+docker compose --env-file .env.staging -f deployment/docker-compose.yml exec -T backend \
+  uv run --no-sync python scripts/audit_accounting_integrity.py \
+  --organization-id <codestation-ai-organization-uuid>
+```
+
+A non-zero exit means the audit detected at least one integrity issue. Investigate the underlying accounting/business logic before changing financial records; do not use sync or manual database edits to hide a mismatch.
+
 ## Restore verification and disaster recovery
 
 Verify an encrypted backup without touching production data:
@@ -119,13 +157,13 @@ sudo bash deployment/restore.sh /var/backups/codestation-business-os/business-os
 
 Verification checks the checksum/decryption/uploads archive and performs a real PostgreSQL restore into a disposable validation database, then removes it.
 
-A full operational verification runs the latest restore drill plus SMTP reachability:
+A full operational verification runs the read-only accounting integrity audit when configured, checks SMTP reachability, and performs the latest restore drill:
 
 ```bash
 sudo bash deployment/verify-production.sh --full
 ```
 
-Run this after the first live deployment and periodically (for example monthly).
+Run this after the first live deployment and periodically (for example monthly). Before V1 sign-off, configure the CodeStation AI organization UUID and set `ACCOUNTING_AUDIT_REQUIRED=true`.
 
 Actual production restore is intentionally explicit and destructive. It first creates a fresh safety backup, stops application writers, replaces the production database/uploads, restarts all services, and runs quick verification:
 
