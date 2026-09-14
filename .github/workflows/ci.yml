@@ -63,6 +63,7 @@ jobs:
       - run: uv run python scripts/verify_v1_accounting_integrity.py
       - run: uv run python scripts/verify_accounting_api_hardening.py
       - run: uv run python scripts/verify_atomic_financial_flow.py
+      - run: uv run python scripts/audit_accounting_integrity.py --organization-name-prefix "Atomic Accounting "
       - run: uv run python scripts/verify_performance_indexes.py
       - run: uv run python scripts/verify_crm_migration_fixture.py
       - run: uv run python scripts/verify_crm_won_flow.py
