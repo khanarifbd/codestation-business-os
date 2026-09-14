@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.crm import Lead, LeadStatus
@@ -89,14 +89,21 @@ def order_pulse(db: DbSession, tenant: OrdersViewer) -> OrderPulse:
         Order.organization_id == tenant.organization_id,
         Order.status.in_(["confirmed", "in_progress"]),
     ]
-    count = db.scalar(select(func.count(Order.id)).where(*conditions)) or 0
     rows = db.execute(
-        select(Order.currency, func.coalesce(func.sum(Order.total), 0))
+        select(
+            Order.currency,
+            func.count(Order.id),
+            func.coalesce(func.sum(Order.total), 0),
+        )
         .where(*conditions)
         .group_by(Order.currency)
         .order_by(Order.currency.asc())
     ).all()
-    return OrderPulse(open_orders=int(count), values=_currency_amounts(rows))
+    count = sum(int(row_count or 0) for _, row_count, _ in rows)
+    return OrderPulse(
+        open_orders=count,
+        values=_currency_amounts((currency, amount) for currency, _, amount in rows),
+    )
 
 
 @router.get("/projects", response_model=ProjectPulse)
@@ -105,14 +112,21 @@ def project_pulse(db: DbSession, tenant: ProjectsViewer) -> ProjectPulse:
         Project.organization_id == tenant.organization_id,
         Project.status.in_(["planned", "active", "on_hold"]),
     ]
-    count = db.scalar(select(func.count(Project.id)).where(*conditions)) or 0
     rows = db.execute(
-        select(Project.currency, func.coalesce(func.sum(Project.contract_value), 0))
+        select(
+            Project.currency,
+            func.count(Project.id),
+            func.coalesce(func.sum(Project.contract_value), 0),
+        )
         .where(*conditions)
         .group_by(Project.currency)
         .order_by(Project.currency.asc())
     ).all()
-    return ProjectPulse(active_projects=int(count), values=_currency_amounts(rows))
+    count = sum(int(row_count or 0) for _, row_count, _ in rows)
+    return ProjectPulse(
+        active_projects=count,
+        values=_currency_amounts((currency, amount) for currency, _, amount in rows),
+    )
 
 
 @router.get("/crm", response_model=CrmPulse)
@@ -122,35 +136,36 @@ def crm_pulse(db: DbSession, tenant: CrmViewer) -> CrmPulse:
         Lead.converted_client_id.is_(None),
         LeadStatus.category.in_(["open", "qualified"]),
     ]
-    open_leads = db.scalar(
-        select(func.count(Lead.id))
+    rows = db.execute(
+        select(
+            Lead.currency,
+            func.count(Lead.id),
+            func.count(Lead.estimated_value),
+            func.coalesce(func.sum(Lead.estimated_value), 0),
+            func.coalesce(
+                func.sum(Lead.estimated_value * func.coalesce(Lead.probability_percent, 0)),
+                0,
+            ),
+        )
         .join(LeadStatus, LeadStatus.id == Lead.status_id)
         .where(*base_conditions)
-    ) or 0
-
-    rows = db.execute(
-        select(Lead.currency, Lead.estimated_value, Lead.probability_percent)
-        .join(LeadStatus, LeadStatus.id == Lead.status_id)
-        .where(
-            *base_conditions,
-            Lead.currency.is_not(None),
-            Lead.estimated_value.is_not(None),
-        )
+        .group_by(Lead.currency)
+        .order_by(Lead.currency.asc())
     ).all()
 
-    totals: dict[str, tuple[Decimal, Decimal]] = {}
-    for currency, estimated_value, probability_percent in rows:
-        code = str(currency).upper()
-        amount = Decimal(estimated_value or 0)
-        probability = Decimal(probability_percent or 0) / Decimal("100")
-        current_amount, current_weighted = totals.get(code, (Decimal("0"), Decimal("0")))
-        totals[code] = (current_amount + amount, current_weighted + (amount * probability))
-
-    values = [
-        PipelineCurrencyAmount(currency=code, amount=amount, weighted_amount=weighted)
-        for code, (amount, weighted) in sorted(totals.items())
-    ]
-    return CrmPulse(open_leads=int(open_leads), values=values)
+    open_leads = sum(int(row_count or 0) for _, row_count, _, _, _ in rows)
+    values: list[PipelineCurrencyAmount] = []
+    for currency, _, estimated_count, amount, weighted_raw in rows:
+        if not currency or int(estimated_count or 0) == 0:
+            continue
+        values.append(
+            PipelineCurrencyAmount(
+                currency=str(currency).upper(),
+                amount=Decimal(amount or 0),
+                weighted_amount=Decimal(weighted_raw or 0) / Decimal("100"),
+            )
+        )
+    return CrmPulse(open_leads=open_leads, values=values)
 
 
 @router.get("/finance", response_model=FinancePulse)
@@ -161,29 +176,39 @@ def finance_pulse(db: DbSession, tenant: FinanceViewer) -> FinancePulse:
         Invoice.status == "sent",
         Invoice.balance_due > 0,
     ]
-    overdue_conditions = [*open_conditions, Invoice.due_date < today]
-
-    open_invoices = db.scalar(select(func.count(Invoice.id)).where(*open_conditions)) or 0
-    overdue_invoices = db.scalar(select(func.count(Invoice.id)).where(*overdue_conditions)) or 0
-
-    outstanding_rows = db.execute(
-        select(Invoice.currency, func.coalesce(func.sum(Invoice.balance_due), 0))
+    rows = db.execute(
+        select(
+            Invoice.currency,
+            func.count(Invoice.id),
+            func.coalesce(
+                func.sum(case((Invoice.due_date < today, 1), else_=0)),
+                0,
+            ),
+            func.coalesce(func.sum(Invoice.balance_due), 0),
+            func.coalesce(
+                func.sum(case((Invoice.due_date < today, Invoice.balance_due), else_=0)),
+                0,
+            ),
+        )
         .where(*open_conditions)
         .group_by(Invoice.currency)
         .order_by(Invoice.currency.asc())
     ).all()
-    overdue_rows = db.execute(
-        select(Invoice.currency, func.coalesce(func.sum(Invoice.balance_due), 0))
-        .where(*overdue_conditions)
-        .group_by(Invoice.currency)
-        .order_by(Invoice.currency.asc())
-    ).all()
+
+    open_invoices = sum(int(row_count or 0) for _, row_count, _, _, _ in rows)
+    overdue_invoices = sum(int(overdue_count or 0) for _, _, overdue_count, _, _ in rows)
+    outstanding = _currency_amounts((currency, amount) for currency, _, _, amount, _ in rows)
+    overdue = _currency_amounts(
+        (currency, amount)
+        for currency, _, overdue_count, _, amount in rows
+        if int(overdue_count or 0) > 0
+    )
 
     return FinancePulse(
-        open_invoices=int(open_invoices),
-        overdue_invoices=int(overdue_invoices),
-        outstanding=_currency_amounts(outstanding_rows),
-        overdue=_currency_amounts(overdue_rows),
+        open_invoices=open_invoices,
+        overdue_invoices=overdue_invoices,
+        outstanding=outstanding,
+        overdue=overdue,
     )
 
 
@@ -192,45 +217,65 @@ def people_pulse(db: DbSession, tenant: HRViewer) -> PeoplePulse:
     today = _tenant_today(tenant.organization.timezone)
     org_id = tenant.organization_id
 
-    active_employees = db.scalar(
-        select(func.count(Employee.id)).where(
+    active_employees = (
+        select(func.count(Employee.id))
+        .where(
             Employee.organization_id == org_id,
             Employee.employment_status == "active",
         )
-    ) or 0
-    present_today = db.scalar(
-        select(func.count(AttendanceRecord.id)).where(
+        .scalar_subquery()
+    )
+    present_today = (
+        select(func.count(AttendanceRecord.id))
+        .where(
             AttendanceRecord.organization_id == org_id,
             AttendanceRecord.attendance_date == today,
             AttendanceRecord.status.in_(["present", "late"]),
         )
-    ) or 0
-    late_today = db.scalar(
-        select(func.count(AttendanceRecord.id)).where(
+        .scalar_subquery()
+    )
+    late_today = (
+        select(func.count(AttendanceRecord.id))
+        .where(
             AttendanceRecord.organization_id == org_id,
             AttendanceRecord.attendance_date == today,
             AttendanceRecord.status == "late",
         )
-    ) or 0
-    on_leave_today = db.scalar(
-        select(func.count(LeaveRequest.id)).where(
+        .scalar_subquery()
+    )
+    on_leave_today = (
+        select(func.count(LeaveRequest.id))
+        .where(
             LeaveRequest.organization_id == org_id,
             LeaveRequest.status == "approved",
             LeaveRequest.start_date <= today,
             LeaveRequest.end_date >= today,
         )
-    ) or 0
-    pending_leave = db.scalar(
-        select(func.count(LeaveRequest.id)).where(
+        .scalar_subquery()
+    )
+    pending_leave = (
+        select(func.count(LeaveRequest.id))
+        .where(
             LeaveRequest.organization_id == org_id,
             LeaveRequest.status == "pending",
         )
-    ) or 0
+        .scalar_subquery()
+    )
+
+    row = db.execute(
+        select(
+            active_employees.label("active_employees"),
+            present_today.label("present_today"),
+            late_today.label("late_today"),
+            on_leave_today.label("on_leave_today"),
+            pending_leave.label("pending_leave"),
+        )
+    ).one()
 
     return PeoplePulse(
-        active_employees=int(active_employees),
-        present_today=int(present_today),
-        late_today=int(late_today),
-        on_leave_today=int(on_leave_today),
-        pending_leave=int(pending_leave),
+        active_employees=int(row.active_employees or 0),
+        present_today=int(row.present_today or 0),
+        late_today=int(row.late_today or 0),
+        on_leave_today=int(row.on_leave_today or 0),
+        pending_leave=int(row.pending_leave or 0),
     )

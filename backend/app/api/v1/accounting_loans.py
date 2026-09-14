@@ -12,6 +12,12 @@ from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.loan_accounting import LoanDisbursement, LoanFee, LoanScheduleItem
+from app.schemas.accounting_loans import (
+    AccountingLoanRead,
+    LoanDisbursementRead,
+    LoanRepaymentRead,
+    LoanScheduleItemRead,
+)
 from app.services.accounting_posting import PostingLine, financial_ledger_account, money, post_journal, system_account
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
@@ -197,7 +203,7 @@ def _loan_json(db: DbSession, item: CompanyLoan) -> dict:
     }
 
 
-@router.get("")
+@router.get("", response_model=list[AccountingLoanRead])
 def list_accounting_loans(db: DbSession, tenant: AccountingViewer):
     items = db.scalars(
         select(CompanyLoan)
@@ -207,7 +213,7 @@ def list_accounting_loans(db: DbSession, tenant: AccountingViewer):
     return [_loan_json(db, item) for item in items]
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AccountingLoanRead, status_code=status.HTTP_201_CREATED)
 def create_accounting_loan(
     payload: AccountingLoanCreate,
     request: Request,
@@ -225,7 +231,7 @@ def create_accounting_loan(
         loan_date=payload.approval_date,
         maturity_date=payload.maturity_date,
         account_id=None,
-        status="approved",
+        status="draft",
         reference=payload.reference.strip() if payload.reference and payload.reference.strip() else None,
         notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
         created_by_user_id=tenant.user_id,
@@ -234,7 +240,7 @@ def create_accounting_loan(
     db.flush()
     record_activity(
         db,
-        action="accounting.loan.approved",
+        action="accounting.loan.created",
         scope="tenant",
         actor_user_id=tenant.user_id,
         organization_id=tenant.organization_id,
@@ -246,14 +252,39 @@ def create_accounting_loan(
             "status": item.status,
             "outstanding_principal": "0.00",
         },
-        message=f"Loan approved from {item.lender_name}; no cash or liability posted until disbursement",
+        message=f"Loan agreement created for {item.lender_name}; approval is required before disbursement",
         request=request,
     )
     db.commit()
     return _loan_json(db, item)
 
 
-@router.post("/{loan_id}/disburse", status_code=status.HTTP_201_CREATED)
+@router.post("/{loan_id}/approve", response_model=AccountingLoanRead)
+def approve_loan(loan_id: str, request: Request, db: DbSession, tenant: AccountingManager):
+    loan = _loan(db, tenant.organization_id, loan_id, lock=True)
+    if loan.status == "approved":
+        return _loan_json(db, loan)
+    if loan.status != "draft":
+        raise HTTPException(status_code=409, detail="Only a draft loan can be approved")
+    loan.status = "approved"
+    record_activity(
+        db,
+        action="accounting.loan.approved",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="company_loan",
+        entity_id=loan.id,
+        before={"status": "draft"},
+        after={"status": "approved", "approved_amount": str(loan.principal_amount), "currency": loan.currency},
+        message=f"Loan approved from {loan.lender_name}; no cash or liability posted until disbursement",
+        request=request,
+    )
+    db.commit()
+    return _loan_json(db, loan)
+
+
+@router.post("/{loan_id}/disburse", response_model=LoanDisbursementRead, status_code=status.HTTP_201_CREATED)
 def disburse_loan(
     loan_id: str,
     payload: LoanDisbursementCreate,
@@ -262,8 +293,8 @@ def disburse_loan(
     tenant: AccountingManager,
 ):
     loan = _loan(db, tenant.organization_id, loan_id, lock=True)
-    if loan.status in {"paid", "cancelled"}:
-        raise HTTPException(status_code=409, detail="This loan cannot receive another disbursement")
+    if loan.status not in {"approved", "active"}:
+        raise HTTPException(status_code=409, detail="Loan must be approved and open before disbursement")
 
     financial, bank_ledger = financial_ledger_account(db, tenant.organization_id, payload.account_id)
     if financial.currency != loan.currency:
@@ -293,30 +324,12 @@ def disburse_loan(
 
     loans_payable = system_account(db, tenant.organization_id, "loans_payable")
     lines = [
-        PostingLine(
-            ledger_account_id=bank_ledger.id,
-            debit=net,
-            currency=loan.currency,
-            description=f"Loan cash received from {loan.lender_name}",
-        ),
-        PostingLine(
-            ledger_account_id=loans_payable.id,
-            credit=principal,
-            currency=loan.currency,
-            description=f"Loan principal liability — {loan.lender_name}",
-        ),
+        PostingLine(ledger_account_id=bank_ledger.id, debit=net, currency=loan.currency, description=f"Loan cash received from {loan.lender_name}"),
+        PostingLine(ledger_account_id=loans_payable.id, credit=principal, currency=loan.currency, description=f"Loan principal liability — {loan.lender_name}"),
     ]
     if fee > 0:
         fee_account = system_account(db, tenant.organization_id, "bank_fees")
-        lines.insert(
-            1,
-            PostingLine(
-                ledger_account_id=fee_account.id,
-                debit=fee,
-                currency=loan.currency,
-                description="Loan fee withheld at disbursement",
-            ),
-        )
+        lines.insert(1, PostingLine(ledger_account_id=fee_account.id, debit=fee, currency=loan.currency, description="Loan fee withheld at disbursement"))
         db.add(
             LoanFee(
                 organization_id=tenant.organization_id,
@@ -390,7 +403,7 @@ def disburse_loan(
     }
 
 
-@router.post("/{loan_id}/repay", status_code=status.HTTP_201_CREATED)
+@router.post("/{loan_id}/repay", response_model=LoanRepaymentRead, status_code=status.HTTP_201_CREATED)
 def repay_loan(
     loan_id: str,
     payload: LoanAccountingRepaymentCreate,
@@ -399,8 +412,8 @@ def repay_loan(
     tenant: AccountingManager,
 ):
     loan = _loan(db, tenant.organization_id, loan_id, lock=True)
-    if loan.status not in {"active", "approved"}:
-        raise HTTPException(status_code=409, detail="This loan is not available for repayment")
+    if loan.status != "active":
+        raise HTTPException(status_code=409, detail="Only an active disbursed loan can be repaid")
 
     principal = money(payload.principal_amount)
     interest = money(payload.interest_amount)
@@ -430,46 +443,17 @@ def repay_loan(
     db.flush()
 
     lines: list[PostingLine] = [
-        PostingLine(
-            ledger_account_id=bank_ledger.id,
-            credit=total,
-            currency=loan.currency,
-            description=f"Loan repayment paid to {loan.lender_name}",
-        )
+        PostingLine(ledger_account_id=bank_ledger.id, credit=total, currency=loan.currency, description=f"Loan repayment paid to {loan.lender_name}")
     ]
     if principal > 0:
         loans_payable = system_account(db, tenant.organization_id, "loans_payable")
-        lines.insert(
-            0,
-            PostingLine(
-                ledger_account_id=loans_payable.id,
-                debit=principal,
-                currency=loan.currency,
-                description="Loan principal repayment",
-            ),
-        )
+        lines.insert(0, PostingLine(ledger_account_id=loans_payable.id, debit=principal, currency=loan.currency, description="Loan principal repayment"))
     if interest > 0:
         interest_expense = system_account(db, tenant.organization_id, "interest_expense")
-        lines.insert(
-            0,
-            PostingLine(
-                ledger_account_id=interest_expense.id,
-                debit=interest,
-                currency=loan.currency,
-                description="Loan interest expense",
-            ),
-        )
+        lines.insert(0, PostingLine(ledger_account_id=interest_expense.id, debit=interest, currency=loan.currency, description="Loan interest expense"))
     if fee > 0:
         fee_expense = system_account(db, tenant.organization_id, "bank_fees")
-        lines.insert(
-            0,
-            PostingLine(
-                ledger_account_id=fee_expense.id,
-                debit=fee,
-                currency=loan.currency,
-                description=f"Loan fee — {payload.fee_type}",
-            ),
-        )
+        lines.insert(0, PostingLine(ledger_account_id=fee_expense.id, debit=fee, currency=loan.currency, description=f"Loan fee — {payload.fee_type}"))
         db.add(
             LoanFee(
                 organization_id=tenant.organization_id,
@@ -551,7 +535,38 @@ def repay_loan(
     }
 
 
-@router.get("/{loan_id}/schedule")
+@router.post("/{loan_id}/close", response_model=AccountingLoanRead)
+def close_loan(loan_id: str, request: Request, db: DbSession, tenant: AccountingManager):
+    loan = _loan(db, tenant.organization_id, loan_id, lock=True)
+    if loan.status == "closed":
+        return _loan_json(db, loan)
+    disbursed = _disbursed_total(db, loan)
+    if disbursed <= 0:
+        raise HTTPException(status_code=409, detail="A loan cannot be closed before any disbursement")
+    if money(loan.outstanding_principal) != Decimal("0.00"):
+        raise HTTPException(status_code=409, detail="Outstanding principal must be zero before closing the loan")
+    if loan.status not in {"approved", "paid"}:
+        raise HTTPException(status_code=409, detail="Loan must be fully repaid before it can be closed")
+    previous_status = loan.status
+    loan.status = "closed"
+    record_activity(
+        db,
+        action="accounting.loan.closed",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="company_loan",
+        entity_id=loan.id,
+        before={"status": previous_status, "outstanding_principal": str(loan.outstanding_principal)},
+        after={"status": "closed", "outstanding_principal": "0.00", "disbursed_amount": str(disbursed)},
+        message=f"Loan closed for {loan.lender_name}",
+        request=request,
+    )
+    db.commit()
+    return _loan_json(db, loan)
+
+
+@router.get("/{loan_id}/schedule", response_model=list[LoanScheduleItemRead])
 def get_schedule(loan_id: str, db: DbSession, tenant: AccountingViewer):
     _loan(db, tenant.organization_id, loan_id)
     items = db.scalars(
@@ -579,7 +594,7 @@ def get_schedule(loan_id: str, db: DbSession, tenant: AccountingViewer):
     ]
 
 
-@router.put("/{loan_id}/schedule")
+@router.put("/{loan_id}/schedule", response_model=list[LoanScheduleItemRead])
 def replace_schedule(
     loan_id: str,
     payload: LoanScheduleCreate,
@@ -588,6 +603,8 @@ def replace_schedule(
     tenant: AccountingManager,
 ):
     loan = _loan(db, tenant.organization_id, loan_id, lock=True)
+    if loan.status in {"closed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="A closed or cancelled loan schedule cannot be changed")
     existing = db.scalars(
         select(LoanScheduleItem).where(
             LoanScheduleItem.organization_id == tenant.organization_id,

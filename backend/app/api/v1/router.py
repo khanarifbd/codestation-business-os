@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.routing import APIRoute
 
 from app.api.v1.accounting import router as accounting_router
 from app.api.v1.accounting_accounts import router as accounting_accounts_router
@@ -6,6 +7,8 @@ from app.api.v1.accounting_assets import router as accounting_assets_router
 from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
 from app.api.v1.accounting_loans import router as accounting_loans_router
 from app.api.v1.accounting_money import router as accounting_money_router
+from app.api.v1.accounting_read_fast import router as accounting_read_fast_router
+from app.api.v1.accounting_read_fast_extra import router as accounting_read_fast_extra_router
 from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
 from app.api.v1.accounting_reports import router as accounting_reports_router
 from app.api.v1.accounting_sync import router as accounting_sync_router
@@ -61,6 +64,9 @@ from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
 from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
+from app.api.v1.phase4_read_fast import router as phase4_read_fast_router
+from app.api.v1.phase4_read_fast_extra import router as phase4_read_fast_extra_router
+from app.api.v1.phase4_remaining_fast import router as phase4_remaining_fast_router
 from app.api.v1.platform import router as platform_router
 from app.api.v1.platform_organization_detail import router as platform_organization_detail_router
 from app.api.v1.profile import router as profile_router
@@ -81,6 +87,157 @@ from app.api.v1.tax import router as tax_router
 from app.api.v1.team import invitation_router, router as team_router
 from app.api.v1.tenant import router as tenant_router
 from app.api.v1.workspace import router as workspace_router
+
+
+# These mutations are intentionally exposed only through financial_safety_router.
+# The underlying endpoint functions remain importable business handlers, but their
+# duplicate public routes are removed so route ordering can never bypass atomic
+# posting, idempotency, or journal creation.
+_SHADOWED_FINANCIAL_OPERATIONS = {
+    ("POST", "/finance/accounts"),
+    ("PATCH", "/finance/invoices/{invoice_id}/status"),
+    ("POST", "/finance/payments"),
+    ("POST", "/finance/expenses"),
+    ("POST", "/finance/expenses/{expense_id}/void"),
+    ("POST", "/finance/transfers"),
+    ("POST", "/accounting/payables/{bill_id}/payments"),
+    ("POST", "/accounting/loans/{loan_id}/disburse"),
+    ("POST", "/accounting/loans/{loan_id}/repay"),
+}
+
+
+def _remove_shadowed_financial_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_FINANCIAL_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+for _router in (
+    finance_router,
+    finance_expenses_router,
+    finance_transfers_router,
+    payables_router,
+    accounting_loans_router,
+):
+    _remove_shadowed_financial_routes(_router)
+
+
+# Expensive accounting reads keep their original business handlers importable for
+# equivalence verification, while the public GET operations use bounded batched SQL.
+_SHADOWED_ACCOUNTING_READ_OPERATIONS = {
+    ("GET", "/accounting/money"),
+    ("GET", "/accounting/reconciliations/meta"),
+    ("GET", "/accounting/reconciliations"),
+    ("GET", "/accounting/journals"),
+    ("GET", "/accounting/customer-advances"),
+    ("GET", "/accounting/payables"),
+    ("GET", "/accounting/loans"),
+    ("GET", "/accounting/tax/report"),
+}
+
+
+def _remove_shadowed_accounting_read_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_ACCOUNTING_READ_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+for _router in (
+    accounting_money_router,
+    accounting_reconciliation_router,
+    accounting_router,
+    customer_advances_router,
+    payables_router,
+    accounting_loans_router,
+    tax_router,
+):
+    _remove_shadowed_accounting_read_routes(_router)
+
+
+# Phase 4 keeps the mature write handlers in place while replacing only read
+# paths that have data-size-dependent N+1 growth or unnecessary repeated scans.
+_SHADOWED_PHASE4_READ_OPERATIONS = {
+    ("GET", "/inventory/products"),
+    ("GET", "/inventory/suppliers"),
+    ("GET", "/projects/{project_id}/workspace"),
+    ("GET", "/crm/client-access"),
+    ("GET", "/client-portal/orders"),
+    ("GET", "/capital/meta"),
+    ("GET", "/capital/insights"),
+    ("GET", "/hr/access"),
+    ("GET", "/hr/dashboard"),
+    ("GET", "/hr/meta"),
+    ("GET", "/hr/workspace-summary"),
+}
+
+
+def _remove_shadowed_phase4_read_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_PHASE4_READ_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+for _router in (
+    inventory_router,
+    inventory_management_router,
+    project_execution_router,
+    client_access_router,
+    client_portal_router,
+    capital_router,
+    capital_insights_router,
+    hr_workspace_router,
+    hr_router,
+):
+    _remove_shadowed_phase4_read_routes(_router)
+
+
+# Reports keeps the legacy overview handler importable for equivalence tests while
+# the bounded-query implementation is the only public owner of GET /reports/overview.
+_SHADOWED_REPORT_READ_OPERATIONS = {
+    ("GET", "/reports/overview"),
+}
+
+
+def _remove_shadowed_report_read_routes(router: APIRouter) -> None:
+    router.routes[:] = [
+        route
+        for route in router.routes
+        if not (
+            isinstance(route, APIRoute)
+            and any(
+                (method, route.path) in _SHADOWED_REPORT_READ_OPERATIONS
+                for method in (route.methods or set())
+            )
+        )
+    ]
+
+
+_remove_shadowed_report_read_routes(reports_router)
+
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -118,6 +275,9 @@ api_router.include_router(orders_router)
 api_router.include_router(order_commercial_router)
 api_router.include_router(inventory_fulfillment_router)
 api_router.include_router(order_links_router)
+api_router.include_router(phase4_read_fast_router)
+api_router.include_router(phase4_read_fast_extra_router)
+api_router.include_router(phase4_remaining_fast_router)
 api_router.include_router(projects_router)
 api_router.include_router(project_execution_router)
 api_router.include_router(project_client_sharing_router)
@@ -130,6 +290,8 @@ api_router.include_router(inventory_workflows_router)
 api_router.include_router(financial_safety_router)
 api_router.include_router(financial_corrections_router)
 api_router.include_router(financial_correction_history_router)
+api_router.include_router(accounting_read_fast_router)
+api_router.include_router(accounting_read_fast_extra_router)
 api_router.include_router(accounting_router)
 api_router.include_router(accounting_accounts_router)
 api_router.include_router(accounting_assets_router)
@@ -167,3 +329,23 @@ api_router.include_router(tenant_activity_router)
 api_router.include_router(platform_router)
 api_router.include_router(platform_organization_detail_router)
 api_router.include_router(platform_activity_router)
+
+
+def _assert_unique_operations(router: APIRouter) -> None:
+    seen: dict[tuple[str, str], str] = {}
+    for route in router.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods or set():
+            if method in {"HEAD", "OPTIONS"}:
+                continue
+            key = (method, route.path)
+            previous = seen.get(key)
+            if previous is not None:
+                raise RuntimeError(
+                    f"Duplicate API operation {method} {route.path}: {previous} and {route.name}"
+                )
+            seen[key] = route.name
+
+
+_assert_unique_operations(api_router)

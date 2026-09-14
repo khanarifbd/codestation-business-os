@@ -165,6 +165,7 @@ export default function InventoryPage() {
   const [purchaseForm, setPurchaseForm] = useState({ supplier_id: "", warehouse_id: "", receipt_date: today(), currency: "BDT", reference: "", notes: "" });
   const [purchaseLines, setPurchaseLines] = useState<PurchaseLine[]>([{ product_id: "", quantity: "1", unit_cost: "0", tax_code_id: "" }]);
   const [transferForm, setTransferForm] = useState({ product_id: "", from_warehouse_id: "", to_warehouse_id: "", transfer_date: today(), quantity: "", reason: "Stock transfer", reference: "" });
+  const [loadedTabs, setLoadedTabs] = useState<Set<Tab>>(() => new Set(["overview", "suppliers", "warehouses"]));
 
   const request = useCallback(async (url: string, init?: RequestInit) => {
     const response = await fetch(url, { cache: "no-store", ...init });
@@ -175,42 +176,58 @@ export default function InventoryPage() {
     return payload;
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const loadCore = useCallback(async (showLoader = true) => {
+    if (showLoader) setLoading(true);
     setError(null);
     try {
-      const urls = [
-        "/api/inventory/dashboard-summary",
-        "/api/inventory/products?include_inactive=true",
-        "/api/inventory/warehouses",
-        "/api/inventory/categories",
-        "/api/inventory/suppliers?include_inactive=true",
-        "/api/inventory/stock",
-        "/api/inventory/purchases",
-        "/api/inventory/movements",
-        "/api/accounting/tax/codes",
-        "/api/services/catalog?include_inactive=true",
-      ];
-      const payload = await Promise.all(urls.map((url) => request(url)));
-      const serviceTerms = new Map<string, number | null>((Array.isArray(payload[9]) ? payload[9] : []).map((item: { product_id: string; duration_months: number | null }) => [item.product_id, item.duration_months]));
-      setOverview(payload[0]);
-      setBaseCurrency(payload[0].base_currency || "BDT");
-      setProducts((payload[1] as Omit<Product, "service_duration_months">[]).map((item) => ({ ...item, service_duration_months: serviceTerms.get(item.id) ?? null })));
-      setWarehouses(payload[2]);
-      setCategories(payload[3]);
-      setSuppliers(payload[4]);
-      setStock(payload[5]);
-      setPurchases(payload[6]);
-      setMovements(payload[7]);
-      setTaxCodes(payload[8]);
+      const [summaryData, productData, warehouseData, categoryData, supplierData, taxData] = await Promise.all([
+        request("/api/inventory/dashboard-summary"),
+        request("/api/inventory/products?include_inactive=true"),
+        request("/api/inventory/warehouses"),
+        request("/api/inventory/categories"),
+        request("/api/inventory/suppliers?include_inactive=true"),
+        request("/api/accounting/tax/codes"),
+      ]);
+      setOverview(summaryData);
+      setBaseCurrency(summaryData.base_currency || "BDT");
+      setProducts((productData as Omit<Product, "service_duration_months">[]).map((item) => ({ ...item, service_duration_months: null })));
+      setWarehouses(warehouseData);
+      setCategories(categoryData);
+      setSuppliers(supplierData);
+      setTaxCodes(taxData);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load inventory");
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   }, [request]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadTab = useCallback(async (target: Tab, force = false) => {
+    if (target === "overview" || (!force && loadedTabs.has(target))) return;
+    if (target === "suppliers" || target === "warehouses" || target === "service_sales") {
+      setLoadedTabs((current) => { const next = new Set(current); next.add(target); return next; });
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      if (target === "items") {
+        const terms = await request("/api/services/catalog?include_inactive=true");
+        const serviceTerms = new Map<string, number | null>((Array.isArray(terms) ? terms : []).map((item: { product_id: string; duration_months: number | null }) => [item.product_id, item.duration_months]));
+        setProducts((current) => current.map((item) => ({ ...item, service_duration_months: serviceTerms.get(item.id) ?? null })));
+      } else if (target === "purchases") setPurchases(await request("/api/inventory/purchases"));
+      else if (target === "stock") setStock(await request("/api/inventory/stock"));
+      else if (target === "movements") setMovements(await request("/api/inventory/movements"));
+      setLoadedTabs((current) => { const next = new Set(current); next.add(target); return next; });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not load inventory section");
+    } finally {
+      setLoading(false);
+    }
+  }, [loadedTabs, request]);
+
+  useEffect(() => { void loadCore(); }, [loadCore]);
+  useEffect(() => { if (!loading) void loadTab(tab); }, [tab, loading, loadTab]);
 
   async function save(url: string, method: "POST" | "PATCH", body: unknown, success: string) {
     setSaving(true);
@@ -221,7 +238,9 @@ export default function InventoryPage() {
       setModal(null);
       setEditingId(null);
       setMessage(success);
-      await load();
+      setLoadedTabs(new Set(["overview", "suppliers", "warehouses"]));
+      await loadCore(false);
+      if (tab !== "overview") await loadTab(tab, true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save record");
     } finally {
@@ -335,12 +354,23 @@ export default function InventoryPage() {
     setModal("adjustment");
   }
 
-  function openTransfer() {
+  async function openTransfer() {
     if (activeWarehouses.length < 2) {
       setError("Add at least two active warehouses before transferring stock.");
       return;
     }
-    const sourceRow = stock.find((row) => Number(row.on_hand) > 0);
+    let availableStock = stock;
+    if (!loadedTabs.has("stock")) {
+      try {
+        availableStock = await request("/api/inventory/stock") as Stock[];
+        setStock(availableStock);
+        setLoadedTabs((current) => { const next = new Set(current); next.add("stock"); return next; });
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : "Could not load stock for transfer");
+        return;
+      }
+    }
+    const sourceRow = availableStock.find((row) => Number(row.on_hand) > 0);
     if (!sourceRow) {
       setError("There is no available stock to transfer yet.");
       return;
@@ -370,7 +400,7 @@ export default function InventoryPage() {
       if (baseForm.item_type === "service") {
         await request(`/api/services/catalog/${productId}/duration`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ duration_months: duration }) });
       }
-      setModal(null); setEditingId(null); setMessage(editingId ? "Item updated." : "Item added to catalog."); await load();
+      setModal(null); setEditingId(null); setMessage(editingId ? "Item updated." : "Item added to catalog."); setLoadedTabs(new Set(["overview", "suppliers", "warehouses"])); await loadCore(false); await loadTab("items", true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save item");
     } finally { setSaving(false); }
@@ -448,7 +478,7 @@ export default function InventoryPage() {
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-[1500px] space-y-6">
     <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
       <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Operations</p><h1 className="mt-1 text-3xl font-semibold">Inventory</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Manage products, services, suppliers, warehouses, purchases and stock movement without mixing currencies.</p></div>
-      <div className="flex flex-wrap gap-2"><button onClick={openPurchase} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><ShoppingCart className="size-4" />Receive purchase</button><button onClick={() => openNewItem()} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><Plus className="size-4" />Add item</button><button onClick={() => void load()} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm"><RefreshCw className="size-4" />Refresh</button></div>
+      <div className="flex flex-wrap gap-2"><button onClick={openPurchase} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><ShoppingCart className="size-4" />Receive purchase</button><button onClick={() => openNewItem()} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><Plus className="size-4" />Add item</button><button onClick={() => void (async () => { setLoadedTabs(new Set(["overview", "suppliers", "warehouses"])); await loadCore(); if (tab !== "overview") await loadTab(tab, true); })()} className="inline-flex h-11 items-center gap-2 rounded-xl border bg-white px-4 text-sm"><RefreshCw className="size-4" />Refresh</button></div>
     </header>
 
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}

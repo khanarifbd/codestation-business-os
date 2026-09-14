@@ -9,6 +9,8 @@ from sqlalchemy import text
 from app.core.client_ip import request_client_ip
 from app.db.session import SessionLocal
 
+_CLEANUP_SAMPLE_MODULUS = 32
+
 
 def _client_ip(request: Request) -> str:
     return request_client_ip(request) or "unknown"
@@ -37,10 +39,16 @@ def enforce_auth_rate_limit(
     # transaction so a rejected request still consumes its attempt and a later
     # rollback cannot erase the security control.
     with SessionLocal() as rate_db:
-        rate_db.execute(
-            text("DELETE FROM auth_rate_limit_buckets WHERE expires_at < :cutoff"),
-            {"cutoff": now - timedelta(hours=1)},
-        )
+        # Expired rows never participate in a new bucket because bucket_epoch is
+        # part of the key. Cleanup therefore does not need to run on every auth
+        # request. Deterministic sampling keeps storage bounded while removing a
+        # write-heavy DELETE from the common login/refresh path.
+        if int(key_hash[:8], 16) % _CLEANUP_SAMPLE_MODULUS == 0:
+            rate_db.execute(
+                text("DELETE FROM auth_rate_limit_buckets WHERE expires_at < :cutoff"),
+                {"cutoff": now - timedelta(hours=1)},
+            )
+
         count = rate_db.execute(
             text(
                 """

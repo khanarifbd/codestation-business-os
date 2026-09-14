@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useHRAccess } from "@/components/hr-access-context";
 import {
   CalendarClock,
   FileUser,
@@ -35,24 +36,7 @@ type Item = { label: string; href: string; icon: LucideIcon; show: boolean };
 export function HRModuleNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const [access, setAccess] = useState<HRAccess | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = await fetch("/api/hr/access", { cache: "no-store" });
-        if (response.status === 401) { router.replace("/login"); return; }
-        if (!response.ok) return;
-        const payload = (await response.json()) as HRAccess;
-        if (!cancelled) setAccess(payload);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [router]);
+  const { access, loading } = useHRAccess();
 
   const primary = useMemo<Item[]>(() => [
     { label: "Overview", href: "/dashboard/hr", icon: Gauge, show: Boolean(access?.can_view) },

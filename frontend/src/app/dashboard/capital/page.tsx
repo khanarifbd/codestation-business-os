@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDownToLine, ArrowUpFromLine, Building2, HandCoins, Loader2, Plus, RefreshCw, TrendingUp, Users } from "lucide-react";
 import { SearchableSelect } from "@/components/searchable-select";
 
@@ -29,23 +29,53 @@ export default function InvestmentsFundingPage(){
   const[projectInvestors,setProjectInvestors]=useState<ProjectInvestor[]>([]);
   const[investments,setInvestments]=useState<Investment[]>([]);
   const[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
+  const[tabLoading,setTabLoading]=useState(false);
+  const[loadedTabs,setLoadedTabs]=useState<Set<Tab>>(()=>new Set(["overview"]));
   const[error,setError]=useState<string|null>(null),[success,setSuccess]=useState<string|null>(null);
 
-  useEffect(()=>{void loadAll()},[]);
-  async function loadAll(){
-    setLoading(true);setError(null);
+  const loadOverview=useCallback(async(showLoader=false)=>{
+    if(showLoader)setLoading(true);
+    setError(null);
+    try{setDashboard(await api<Dashboard>("/api/capital/dashboard"))}
+    catch(e){setError(e instanceof Error?e.message:"Unable to load Investments & Funding")}
+    finally{if(showLoader)setLoading(false)}
+  },[]);
+
+  const loadTab=useCallback(async(target:Exclude<Tab,"overview">,force=false)=>{
+    if(!force&&loadedTabs.has(target))return;
+    setTabLoading(true);setError(null);
     try{
-      const[m,d,c,p,i]=await Promise.all([
-        api<Meta>("/api/capital/meta"), api<Dashboard>("/api/capital/dashboard"),
-        api<CompanyInvestor[]>("/api/capital/company-investors"), api<ProjectInvestor[]>("/api/capital/project-investors"),
-        api<Investment[]>("/api/capital/investments")
+      const[nextMeta,rows]=await Promise.all([
+        !force&&meta?Promise.resolve(meta):api<Meta>("/api/capital/meta"),
+        target==="company"?api<CompanyInvestor[]>("/api/capital/company-investors"):
+          target==="project"?api<ProjectInvestor[]>("/api/capital/project-investors"):
+          api<Investment[]>("/api/capital/investments")
       ]);
-      setMeta(m);setDashboard(d);setCompanyInvestors(c);setProjectInvestors(p);setInvestments(i);
-    }catch(e){setError(e instanceof Error?e.message:"Unable to load Investments & Funding")}finally{setLoading(false)}
+      setMeta(nextMeta);
+      if(target==="company")setCompanyInvestors(rows as CompanyInvestor[]);
+      else if(target==="project")setProjectInvestors(rows as ProjectInvestor[]);
+      else setInvestments(rows as Investment[]);
+      setLoadedTabs(current=>{const next=new Set(current);next.add(target);return next});
+    }catch(e){setError(e instanceof Error?e.message:"Unable to load capital workspace")}
+    finally{setTabLoading(false)}
+  },[loadedTabs,meta]);
+
+  useEffect(()=>{void loadOverview(true)},[loadOverview]);
+  useEffect(()=>{if(tab==="overview"||loadedTabs.has(tab))return;void loadTab(tab)},[tab,loadedTabs,loadTab]);
+
+  async function refreshCurrent(){
+    if(tab==="overview"){await loadOverview();return}
+    await Promise.all([loadOverview(),loadTab(tab,true)]);
   }
+
   async function post(path:string,payload:Record<string,unknown>,message:string,form?:HTMLFormElement){
     setBusy(true);setError(null);setSuccess(null);
-    try{await api(`/api/capital/${path}`,{method:"POST",body:JSON.stringify(payload)});form?.reset();setSuccess(message);await loadAll()}
+    try{
+      await api(`/api/capital/${path}`,{method:"POST",body:JSON.stringify(payload)});
+      form?.reset();setSuccess(message);
+      if(tab==="overview")await loadOverview();
+      else await Promise.all([loadOverview(),loadTab(tab,true)]);
+    }
     catch(e){setError(e instanceof Error?e.message:"Request failed")}finally{setBusy(false)}
   }
   const accountOptions=(currency?:string)=>(meta?.accounts??[]).filter(x=>!currency||x.currency===currency).map(x=>({value:x.id,label:`${x.name} · ${x.currency} · ${money(x.balance)}`}));
@@ -53,13 +83,14 @@ export default function InvestmentsFundingPage(){
 
   if(loading)return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400"/></main>;
   return <main className="min-h-screen bg-neutral-100 p-4 sm:p-7 lg:p-10"><div className="mx-auto max-w-[1500px] space-y-6">
-    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm text-neutral-500">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Investments & Funding</h1><p className="mt-2 max-w-4xl text-sm text-neutral-500">Track company investors, project-specific funding and investments made by the company. Commitments stay separate from actual cash movement, while funded transactions post to the accounting ledger.</p></div><button onClick={()=>void loadAll()} disabled={busy} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm"><RefreshCw className="size-4"/>Refresh</button></header>
+    <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm text-neutral-500">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Investments & Funding</h1><p className="mt-2 max-w-4xl text-sm text-neutral-500">Track company investors, project-specific funding and investments made by the company. Commitments stay separate from actual cash movement, while funded transactions post to the accounting ledger.</p></div><button onClick={()=>void refreshCurrent()} disabled={busy||tabLoading} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm disabled:opacity-50"><RefreshCw className="size-4"/>Refresh</button></header>
     {error?<Notice kind="error" text={error}/>:null}{success?<Notice kind="success" text={success}/>:null}
     <div className="flex gap-2 overflow-x-auto pb-1">{([['overview','Overview'],['company','Company Funding'],['project','Project Funding'],['ours','Our Investments']] as [Tab,string][]).map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`whitespace-nowrap rounded-xl px-4 py-2 text-sm ${tab===id?"bg-neutral-950 text-white":"border bg-white text-neutral-600"}`}>{label}</button>)}</div>
     {tab==="overview"?<Overview data={dashboard}/>:null}
-    {tab==="company"?<CompanyFunding items={companyInvestors} accounts={accountOptions} busy={busy} post={post}/>:null}
-    {tab==="project"?<ProjectFunding items={projectInvestors} projects={projectOptions} meta={meta} accounts={accountOptions} busy={busy} post={post}/>:null}
-    {tab==="ours"?<OurInvestments items={investments} accounts={accountOptions} busy={busy} post={post}/>:null}
+    {tab!=="overview"&&tabLoading?<div className="flex min-h-72 items-center justify-center rounded-3xl border bg-white"><Loader2 className="size-6 animate-spin text-neutral-400"/></div>:null}
+    {tab==="company"&&!tabLoading?<CompanyFunding items={companyInvestors} accounts={accountOptions} busy={busy} post={post}/>:null}
+    {tab==="project"&&!tabLoading?<ProjectFunding items={projectInvestors} projects={projectOptions} meta={meta} accounts={accountOptions} busy={busy} post={post}/>:null}
+    {tab==="ours"&&!tabLoading?<OurInvestments items={investments} accounts={accountOptions} busy={busy} post={post}/>:null}
   </div></main>
 }
 

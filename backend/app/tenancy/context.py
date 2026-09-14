@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from app.models.membership import Membership
 from app.models.organization import Organization
+from app.models.team import OrganizationRole
 from app.models.user import User
 
 
@@ -12,6 +13,7 @@ class TenantContext:
     user: User
     organization: Organization
     membership: Membership
+    organization_role: OrganizationRole | None = None
 
     @property
     def user_id(self) -> str:

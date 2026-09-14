@@ -5,12 +5,15 @@ umask 077
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env.staging"
 COMPOSE_FILE="${ROOT_DIR}/docker-compose.staging.yml"
+SCHEDULER_COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
 PROJECT_NAME="codestation-business-os"
 NETWORK_NAME="${PROJECT_NAME}_default"
+UPLOADS_VOLUME="${PROJECT_NAME}_business_os_uploads"
 STATE_DIR="/var/lib/codestation-business-os"
 STATE_FILE="${STATE_DIR}/active-slot"
 NGINX_SITE="/etc/nginx/sites-available/codestation-business-os"
 NGINX_UPSTREAMS="/etc/nginx/conf.d/codestation-business-os-upstreams.conf"
+NGINX_PROXY_MAP="/etc/nginx/conf.d/codestation-business-os-proxy-map.conf"
 LOCK_FILE="/var/lock/codestation-business-os-deploy.lock"
 
 BLUE_BACKEND_PORT=8100
@@ -156,6 +159,52 @@ ensure_nginx_named_upstreams() {
   systemctl reload nginx
 }
 
+ensure_nginx_keepalive_headers() {
+  [[ -f "${NGINX_SITE}" ]] || fail "Missing Nginx site ${NGINX_SITE}"
+
+  local site_backup map_backup="" map_created="false"
+  site_backup="$(mktemp)"
+  cp "${NGINX_SITE}" "${site_backup}"
+
+  if ! grep -Rqs 'map $http_upgrade $business_os_connection_upgrade' /etc/nginx; then
+    if [[ -f "${NGINX_PROXY_MAP}" ]]; then
+      map_backup="$(mktemp)"
+      cp "${NGINX_PROXY_MAP}" "${map_backup}"
+    else
+      map_created="true"
+    fi
+    cat > "${NGINX_PROXY_MAP}" <<'EOF'
+# Managed by CodeStation Business OS safe-deploy.sh.
+map $http_upgrade $business_os_connection_upgrade {
+    default upgrade;
+    ''      '';
+}
+EOF
+    chmod 0644 "${NGINX_PROXY_MAP}"
+  fi
+
+  sed -i 's|proxy_set_header Connection "upgrade";|proxy_set_header Connection $business_os_connection_upgrade;|g' "${NGINX_SITE}"
+
+  if nginx -t >/dev/null 2>&1; then
+    if ! cmp -s "${site_backup}" "${NGINX_SITE}"; then
+      log "Enabled conditional Nginx upgrade headers so normal HTTP can reuse upstream keepalive connections"
+      systemctl reload nginx
+    fi
+    rm -f "${site_backup}" "${map_backup}"
+    return 0
+  fi
+
+  cp "${site_backup}" "${NGINX_SITE}"
+  if [[ -n "${map_backup}" ]]; then
+    cp "${map_backup}" "${NGINX_PROXY_MAP}"
+  elif [[ "${map_created}" == "true" ]]; then
+    rm -f "${NGINX_PROXY_MAP}"
+  fi
+  rm -f "${site_backup}" "${map_backup}"
+  nginx -t
+  fail "Nginx keepalive header update failed and was rolled back"
+}
+
 remove_manual_slot() {
   local slot="$1"
   docker rm -f "$(slot_frontend_name "${slot}")" >/dev/null 2>&1 || true
@@ -174,6 +223,54 @@ remove_legacy_blue_if_inactive() {
     "${COMPOSE[@]}" stop frontend backend >/dev/null 2>&1 || true
     "${COMPOSE[@]}" rm -f frontend backend >/dev/null 2>&1 || true
   fi
+}
+
+active_backend_container() {
+  local active="$1"
+  local manual_name
+  manual_name="$(slot_backend_name "${active}")"
+  if docker inspect "${manual_name}" >/dev/null 2>&1; then
+    printf '%s' "${manual_name}"
+    return 0
+  fi
+
+  if [[ "${active}" == "blue" ]]; then
+    local legacy_backend
+    legacy_backend="$("${COMPOSE[@]}" ps -q backend 2>/dev/null || true)"
+    if [[ -n "${legacy_backend}" ]] && docker inspect "${legacy_backend}" >/dev/null 2>&1; then
+      printf '%s' "${legacy_backend}"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+sync_active_uploads_to_volume() {
+  local active="$1"
+  local source_container
+  source_container="$(active_backend_container "${active}" || true)"
+  [[ -n "${source_container}" ]] || return 0
+
+  local mounted_volume
+  mounted_volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data/uploads"}}{{.Name}}{{end}}{{end}}' "${source_container}" 2>/dev/null || true)"
+  if [[ "${mounted_volume}" == "${UPLOADS_VOLUME}" ]]; then
+    return 0
+  fi
+
+  if ! docker exec "${source_container}" sh -c 'test -d /data/uploads && test -n "$(find /data/uploads -mindepth 1 -print -quit 2>/dev/null)"' >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Preserving uploads from active ${active} backend into ${UPLOADS_VOLUME}"
+  local helper_name="${PROJECT_NAME}-upload-seed-$$"
+  docker rm -f "${helper_name}" >/dev/null 2>&1 || true
+  docker create --name "${helper_name}" -v "${UPLOADS_VOLUME}:/data/uploads" postgres:17-alpine sh -c true >/dev/null
+  if ! docker cp "${source_container}:/data/uploads/." "${helper_name}:/data/uploads/"; then
+    docker rm -f "${helper_name}" >/dev/null 2>&1 || true
+    fail "Could not preserve active uploads before candidate deployment"
+  fi
+  docker rm -f "${helper_name}" >/dev/null
 }
 
 start_candidate() {
@@ -203,8 +300,9 @@ start_candidate() {
     --network "${NETWORK_NAME}" \
     --restart unless-stopped \
     --env-file "${ENV_FILE}" \
-    -e ENVIRONMENT=staging \
+    -e ENVIRONMENT=production \
     -e DATABASE_URL="${database_url}" \
+    -v "${UPLOADS_VOLUME}:/data/uploads" \
     -p "127.0.0.1:${backend_port}:8000" \
     "${backend_image}" >/dev/null
 
@@ -228,8 +326,18 @@ start_candidate() {
   fi
 }
 
+restore_previous_scheduler() {
+  local previous_image="$1"
+  [[ -n "${previous_image}" ]] || return 1
+
+  log "Restoring previous finance scheduler image"
+  docker image tag "${previous_image}" "${PROJECT_NAME}-backend:latest" >/dev/null
+  "${SCHEDULER_COMPOSE[@]}" up -d --no-deps --force-recreate finance-scheduler >/dev/null
+}
+
 [[ -f "${ENV_FILE}" ]] || fail "Missing ${ENV_FILE}"
 [[ -f "${COMPOSE_FILE}" ]] || fail "Missing ${COMPOSE_FILE}"
+[[ -f "${SCHEDULER_COMPOSE_FILE}" ]] || fail "Missing ${SCHEDULER_COMPOSE_FILE}"
 for command_name in docker git curl nginx systemctl flock; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "${command_name} is required"
 done
@@ -240,7 +348,13 @@ flock -n 9 || fail "Another Business OS deployment is already running"
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
 
+if ! docker volume inspect "${UPLOADS_VOLUME}" >/dev/null 2>&1; then
+  log "Creating persistent upload volume ${UPLOADS_VOLUME}"
+  docker volume create "${UPLOADS_VOLUME}" >/dev/null
+fi
+
 COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+SCHEDULER_COMPOSE=(docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${SCHEDULER_COMPOSE_FILE}")
 
 active_slot="blue"
 if [[ -f "${STATE_FILE}" ]]; then
@@ -254,7 +368,6 @@ candidate_slot="$(other_slot "${active_slot}")"
 log "CodeStation Business OS safe deployment"
 log "Active slot: ${active_slot}; candidate slot: ${candidate_slot}"
 
-# Pulling/building never stops the active release.
 branch="${DEPLOY_BRANCH:-develop}"
 git fetch origin "${branch}"
 if [[ "$(git branch --show-current)" != "${branch}" ]]; then
@@ -262,7 +375,9 @@ if [[ "$(git branch --show-current)" != "${branch}" ]]; then
 fi
 git pull --ff-only origin "${branch}"
 
+BUSINESS_OS_ENV_FILE="${ENV_FILE}" bash "${ROOT_DIR}/deployment/verify-production.sh" --config-only
 "${COMPOSE[@]}" config -q
+"${SCHEDULER_COMPOSE[@]}" config -q
 
 log "Ensuring PostgreSQL is available"
 "${COMPOSE[@]}" up -d postgres
@@ -274,10 +389,20 @@ for attempt in $(seq 1 30); do
   sleep 2
 done
 
-# If the inactive blue slot is still the original Compose app, it is safe to
-# remove only after green is the recorded active release.
+# Older blue/green candidates stored uploads inside their container filesystem.
+# Merge that active data into the stable named volume before any inactive slot is
+# removed. Existing volume content is preserved; active files only add/overwrite
+# matching paths, so this is backward-compatible with older Compose deployments.
+sync_active_uploads_to_volume "${active_slot}"
+
 remove_legacy_blue_if_inactive "${active_slot}"
 remove_manual_slot "${candidate_slot}"
+
+previous_scheduler_id="$("${SCHEDULER_COMPOSE[@]}" ps -q finance-scheduler 2>/dev/null || true)"
+previous_scheduler_image=""
+if [[ -n "${previous_scheduler_id}" ]]; then
+  previous_scheduler_image="$(docker inspect -f '{{.Image}}' "${previous_scheduler_id}" 2>/dev/null || true)"
+fi
 
 log "Building candidate images while active release stays online"
 "${COMPOSE[@]}" build backend frontend
@@ -286,9 +411,6 @@ frontend_image="$(docker image inspect "${PROJECT_NAME}-frontend:latest" --forma
 [[ -n "${backend_image}" ]] || fail "Could not resolve newly built backend image"
 [[ -n "${frontend_image}" ]] || fail "Could not resolve newly built frontend image"
 
-# A failed migration leaves the active release untouched. Migrations deployed by
-# this workflow must be backward-compatible with the currently active app
-# (expand-first; destructive contract changes belong in a later release).
 log "Creating encrypted pre-migration backup"
 BUSINESS_OS_ENV_FILE="${ENV_FILE}" BUSINESS_OS_COMPOSE_FILE="${COMPOSE_FILE}" \
   bash "${ROOT_DIR}/deployment/backup.sh"
@@ -302,27 +424,51 @@ if ! start_candidate "${candidate_slot}" "${backend_image}" "${frontend_image}";
   fail "Candidate failed health checks; active ${active_slot} release was not switched"
 fi
 
-# Configure named upstreams only after both active and candidate endpoints exist.
 write_upstreams "${active_slot}"
 ensure_nginx_named_upstreams
+ensure_nginx_keepalive_headers
 
 log "Running candidate smoke checks before traffic switch"
 wait_url "http://127.0.0.1:$(slot_backend_port "${candidate_slot}")/api/v1/health" "candidate API smoke check"
 wait_url "http://127.0.0.1:$(slot_frontend_port "${candidate_slot}")/login" "candidate frontend smoke check"
 
+log "Refreshing singleton finance scheduler from candidate backend image"
+if ! "${SCHEDULER_COMPOSE[@]}" up -d --no-deps --force-recreate finance-scheduler; then
+  restore_previous_scheduler "${previous_scheduler_image}" || true
+  remove_manual_slot "${candidate_slot}"
+  fail "Finance scheduler could not be refreshed; active ${active_slot} release was not switched"
+fi
+
+scheduler_id=""
+for attempt in $(seq 1 10); do
+  scheduler_id="$("${SCHEDULER_COMPOSE[@]}" ps -q finance-scheduler 2>/dev/null || true)"
+  if [[ -n "${scheduler_id}" ]] \
+    && [[ "$(docker inspect -f '{{.State.Running}}' "${scheduler_id}" 2>/dev/null || true)" == "true" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ -z "${scheduler_id}" ]] \
+  || [[ "$(docker inspect -f '{{.State.Running}}' "${scheduler_id}" 2>/dev/null || true)" != "true" ]]; then
+  [[ -z "${scheduler_id}" ]] || docker logs --tail=120 "${scheduler_id}" || true
+  restore_previous_scheduler "${previous_scheduler_image}" || true
+  remove_manual_slot "${candidate_slot}"
+  fail "Finance scheduler did not stay running; active ${active_slot} release was not switched"
+fi
+
 log "Switching Nginx traffic atomically to ${candidate_slot}"
 if ! write_upstreams "${candidate_slot}"; then
   write_upstreams "${active_slot}" || true
+  restore_previous_scheduler "${previous_scheduler_image}" || true
   remove_manual_slot "${candidate_slot}"
   fail "Nginx traffic switch failed; ${active_slot} remains active"
 fi
 
-# Verify through the public ingress after the graceful Nginx reload. If this
-# fails, point traffic back to the previous slot immediately.
 if ! wait_url "https://api-os.codestationai.com/api/v1/health" "public API" 15 \
   || ! wait_url "https://os.codestationai.com/login" "public frontend" 15; then
   echo "ERROR: Public verification failed; rolling traffic back to ${active_slot}." >&2
   write_upstreams "${active_slot}" || true
+  restore_previous_scheduler "${previous_scheduler_image}" || true
   remove_manual_slot "${candidate_slot}"
   exit 1
 fi

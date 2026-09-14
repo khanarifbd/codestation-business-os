@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.core.roles import (
@@ -46,7 +46,26 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    user = db.get(User, claims.user_id)
+    user_session: UserSession | None = None
+    if claims.session_id:
+        row = db.execute(
+            select(User, UserSession)
+            .outerjoin(
+                UserSession,
+                and_(
+                    UserSession.id == claims.session_id,
+                    UserSession.user_id == User.id,
+                ),
+            )
+            .where(User.id == claims.user_id)
+        ).first()
+        if row is None:
+            user = None
+        else:
+            user, user_session = row
+    else:
+        user = db.get(User, claims.user_id)
+
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -62,12 +81,6 @@ def get_current_user(
 
     request.state.auth_session_id = None
     if claims.session_id:
-        user_session = db.scalar(
-            select(UserSession).where(
-                UserSession.id == claims.session_id,
-                UserSession.user_id == user.id,
-            )
-        )
         if user_session is None or not session_is_active(user_session, user=user):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -107,8 +120,15 @@ def get_tenant_context(
         )
 
     row = db.execute(
-        select(Membership, Organization)
+        select(Membership, Organization, OrganizationRole)
         .join(Organization, Organization.id == Membership.organization_id)
+        .outerjoin(
+            OrganizationRole,
+            and_(
+                OrganizationRole.id == Membership.role_id,
+                OrganizationRole.organization_id == Membership.organization_id,
+            ),
+        )
         .where(
             Membership.organization_id == organization_id,
             Membership.user_id == current_user.id,
@@ -122,7 +142,7 @@ def get_tenant_context(
             detail="Workspace not found or access denied",
         )
 
-    membership, organization = row
+    membership, organization, organization_role = row
     if organization.status != ORGANIZATION_STATUS_ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -133,6 +153,7 @@ def get_tenant_context(
         user=current_user,
         organization=organization,
         membership=membership,
+        organization_role=organization_role,
     )
 
 
@@ -152,14 +173,18 @@ CurrentTenantAdmin = Annotated[TenantContext, Depends(get_current_tenant_admin)]
 
 
 def _active_role(db: DbSession, tenant: TenantContext) -> OrganizationRole:
-    role = db.scalar(
-        select(OrganizationRole).where(
-            OrganizationRole.id == tenant.membership.role_id,
-            OrganizationRole.organization_id == tenant.organization_id,
-            OrganizationRole.is_active.is_(True),
-        )
-    )
+    role = tenant.organization_role
     if role is None:
+        # Compatibility fallback for explicitly constructed TenantContext values
+        # in scripts/tests. Normal authenticated requests reuse the role loaded by
+        # get_tenant_context and do not issue this extra query.
+        role = db.scalar(
+            select(OrganizationRole).where(
+                OrganizationRole.id == tenant.membership.role_id,
+                OrganizationRole.organization_id == tenant.organization_id,
+            )
+        )
+    if role is None or not role.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Company role is inactive")
     return role
 

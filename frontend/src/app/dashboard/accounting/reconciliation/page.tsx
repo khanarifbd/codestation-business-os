@@ -24,12 +24,23 @@ export default function ReconciliationPage(){
   const[loading,setLoading]=useState(true); const[busy,setBusy]=useState(false); const[error,setError]=useState<string|null>(null); const[success,setSuccess]=useState<string|null>(null);
   const[accountId,setAccountId]=useState(""); const[endDate,setEndDate]=useState(""); const[statementBalance,setStatementBalance]=useState(""); const[notes,setNotes]=useState("");
 
-  const load=useCallback(async()=>{setLoading(true);setError(null);try{const[m,s]=await Promise.all([api<Meta>("/api/accounting/reconciliations/meta"),api<Session[]>("/api/accounting/reconciliations")]);setMeta(m);setSessions(s);if(!accountId&&m.accounts.length)setAccountId(m.accounts[0].id);}catch(e){setError(e instanceof Error?e.message:"Could not load reconciliation")}finally{setLoading(false)}},[accountId]);
+  const load=useCallback(async()=>{setLoading(true);setError(null);try{const[m,s]=await Promise.all([api<Meta>("/api/accounting/reconciliations/meta"),api<Session[]>("/api/accounting/reconciliations")]);setMeta(m);setSessions(s);setAccountId(current=>current||m.accounts[0]?.id||"");}catch(e){setError(e instanceof Error?e.message:"Could not load reconciliation")}finally{setLoading(false)}},[]);
   useEffect(()=>{void load()},[load]);
-  async function open(id:string){setBusy(true);setError(null);try{setSelected(await api<Detail>(`/api/accounting/reconciliations/${id}`))}catch(e){setError(e instanceof Error?e.message:"Could not open reconciliation")}finally{setBusy(false)}}
+
+  async function open(id:string){
+    setBusy(true);setError(null);
+    try{
+      const detail=await api<Detail>(`/api/accounting/reconciliations/${id}`);
+      setSelected(detail);
+      setSessions(current=>current.map(row=>row.id===id?{...row,cleared_book_balance:detail.cleared_book_balance,difference:detail.difference,status:detail.status,matched_transactions:detail.matched_transactions,finalized_at:detail.finalized_at}:row));
+      return detail;
+    }catch(e){setError(e instanceof Error?e.message:"Could not open reconciliation");return null}
+    finally{setBusy(false)}
+  }
+
   async function create(e:FormEvent){e.preventDefault();setBusy(true);setError(null);setSuccess(null);try{const row=await api<Session>("/api/accounting/reconciliations",{method:"POST",body:JSON.stringify({account_id:accountId,statement_end_date:endDate,statement_ending_balance:statementBalance,notes:notes||null})});setSuccess("Reconciliation draft created. Match the transactions that appear on the statement.");setEndDate("");setStatementBalance("");setNotes("");await load();await open(row.id)}catch(e){setError(e instanceof Error?e.message:"Could not create reconciliation")}finally{setBusy(false)}}
-  async function toggle(tx:Tx){if(!selected||selected.status!=="draft")return;setBusy(true);setError(null);try{await api(tx.selected?`/api/accounting/reconciliations/${selected.id}/transactions/${tx.id}`:`/api/accounting/reconciliations/${selected.id}/transactions/${tx.id}`,{method:tx.selected?"DELETE":"POST"});await open(selected.id);await load()}catch(e){setError(e instanceof Error?e.message:"Could not update matched transaction")}finally{setBusy(false)}}
-  async function finalize(){if(!selected)return;setBusy(true);setError(null);setSuccess(null);try{const row=await api<Session>(`/api/accounting/reconciliations/${selected.id}/finalize`,{method:"POST",body:"{}"});setSuccess("Bank reconciliation finalized and locked.");await load();await open(row.id)}catch(e){setError(e instanceof Error?e.message:"Could not finalize reconciliation")}finally{setBusy(false)}}
+  async function toggle(tx:Tx){if(!selected||selected.status!=="draft")return;setBusy(true);setError(null);try{await api(tx.selected?`/api/accounting/reconciliations/${selected.id}/transactions/${tx.id}`:`/api/accounting/reconciliations/${selected.id}/transactions/${tx.id}`,{method:tx.selected?"DELETE":"POST"});await open(selected.id)}catch(e){setError(e instanceof Error?e.message:"Could not update matched transaction")}finally{setBusy(false)}}
+  async function finalize(){if(!selected)return;setBusy(true);setError(null);setSuccess(null);try{const row=await api<Session>(`/api/accounting/reconciliations/${selected.id}/finalize`,{method:"POST",body:"{}"});setSuccess("Bank reconciliation finalized and locked.");await open(row.id)}catch(e){setError(e instanceof Error?e.message:"Could not finalize reconciliation")}finally{setBusy(false)}}
 
   const account=useMemo(()=>meta.accounts.find(a=>a.id===accountId),[meta.accounts,accountId]);
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">

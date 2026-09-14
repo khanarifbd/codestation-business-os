@@ -1,9 +1,22 @@
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
+from time import perf_counter
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.services.performance_metrics import record_db_query
+
+
+class BusinessSession(Session):
+    """SQLAlchemy session with opt-in deferred commits for atomic endpoint wrappers."""
+
+    def commit(self) -> None:
+        if int(self.info.get("deferred_commit_depth", 0)) > 0:
+            self.flush()
+            return
+        super().commit()
 
 
 engine = create_engine(
@@ -14,7 +27,52 @@ engine = create_engine(
     pool_recycle=settings.database_pool_recycle_seconds,
 )
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+@event.listens_for(engine, "before_cursor_execute")
+def _start_query_timer(conn, cursor, statement, parameters, context, executemany) -> None:
+    # ExecutionContext is request/query-local, unlike pooled Connection.info.
+    # Never store SQL text or bind parameters in performance telemetry.
+    context._business_os_query_started_at = perf_counter()
+
+
+@event.listens_for(engine, "after_cursor_execute")
+def _finish_query_timer(conn, cursor, statement, parameters, context, executemany) -> None:
+    started_at = getattr(context, "_business_os_query_started_at", None)
+    if started_at is None:
+        return
+    record_db_query((perf_counter() - started_at) * 1000)
+
+
+SessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    expire_on_commit=False,
+    class_=BusinessSession,
+)
+
+
+@contextmanager
+def defer_commits(db: Session) -> Iterator[None]:
+    """Turn nested commit() calls into flushes until the outer wrapper commits once.
+
+    Financial API wrappers use this when they call established service/endpoint
+    functions that historically committed internally. It lets the business record,
+    operational balance movement, journal, idempotency record, and audit entry commit
+    as one database transaction without rewriting mature business logic.
+    """
+
+    previous_depth = int(db.info.get("deferred_commit_depth", 0))
+    db.info["deferred_commit_depth"] = previous_depth + 1
+    try:
+        yield
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if previous_depth:
+            db.info["deferred_commit_depth"] = previous_depth
+        else:
+            db.info.pop("deferred_commit_depth", None)
 
 
 def _is_activity_log(instance: object) -> bool:

@@ -1,5 +1,7 @@
 from sqlalchemy import select
 
+from app.api.dependencies import get_tenant_context, require_tenant_permission
+from app.api.v1.organizations import dashboard_bootstrap
 from app.core.roles import MEMBERSHIP_ROLE_ADMIN, MEMBERSHIP_ROLE_CLIENT, MEMBERSHIP_ROLE_USER
 from app.core.security import hash_password
 from app.db.session import SessionLocal
@@ -10,6 +12,8 @@ from app.models.organization import Organization
 from app.models.team import Employee
 from app.models.user import User
 from app.services.membership_relationships import membership_relationships, primary_relationship
+from app.services.organization_memberships import list_user_organization_memberships
+from app.services.performance_metrics import finish_request_metrics, start_request_metrics
 from app.services.team import ensure_system_roles
 
 
@@ -144,9 +148,53 @@ def main() -> None:
         if primary_relationship(combined) != "employee":
             raise AssertionError(f"employee should be the primary staff relationship: {combined}")
 
+        metrics, token = start_request_metrics()
+        try:
+            workspaces = list_user_organization_memberships(db, user.id)
+        finally:
+            finish_request_metrics(token)
+        if metrics.db_query_count != 1:
+            raise AssertionError(
+                f"organization membership list must be one batched query, got {metrics.db_query_count}"
+            )
+        workspace = next((item for item in workspaces if item.organization.id == organization.id), None)
+        if workspace is None:
+            raise AssertionError("batched organization membership missing fixture workspace")
+        if "employee" not in workspace.relationships or "client" not in workspace.relationships:
+            raise AssertionError(f"batched relationships are incomplete: {workspace.relationships}")
+
+        metrics, token = start_request_metrics()
+        try:
+            bootstrap = dashboard_bootstrap(db, user, organization.id)
+        finally:
+            finish_request_metrics(token)
+        if metrics.db_query_count != 1:
+            raise AssertionError(
+                f"dashboard bootstrap must resolve workspace data in one query, got {metrics.db_query_count}"
+            )
+        if bootstrap.tenant is None or bootstrap.tenant.organization.id != organization.id:
+            raise AssertionError("dashboard bootstrap did not resolve the requested authorized workspace")
+
+        owner_user = db.get(User, organization.created_by_user_id)
+        if owner_user is None:
+            raise AssertionError("fixture owner user missing")
+        metrics, token = start_request_metrics()
+        try:
+            tenant = get_tenant_context(db, owner_user, organization.id)
+            require_tenant_permission("phase2.query-budget.probe")(db, tenant)
+        finally:
+            finish_request_metrics(token)
+        if metrics.db_query_count != 1:
+            raise AssertionError(
+                f"tenant membership and role must be reused from one query, got {metrics.db_query_count}"
+            )
+
         db.rollback()
 
-    print("multi-org relationship verification passed: ownership, client isolation, employee+client coexist")
+    print(
+        "multi-org relationship verification passed: ownership, client isolation, employee+client coexist, "
+        "batched workspaces, bootstrap query budget, tenant role reuse"
+    )
 
 
 if __name__ == "__main__":

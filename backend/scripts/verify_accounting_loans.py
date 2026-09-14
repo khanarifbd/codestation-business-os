@@ -3,6 +3,7 @@ from datetime import date
 from decimal import Decimal
 from uuid import uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from starlette.requests import Request
 
@@ -10,6 +11,8 @@ from app.api.v1.accounting_loans import (
     AccountingLoanCreate,
     LoanAccountingRepaymentCreate,
     LoanDisbursementCreate,
+    approve_loan,
+    close_loan,
     create_accounting_loan,
     disburse_loan,
     repay_loan,
@@ -49,6 +52,16 @@ def request(method: str, path: str) -> Request:
     })
 
 
+def expect_conflict(fn, label: str) -> None:
+    try:
+        fn()
+    except HTTPException as exc:
+        if exc.status_code != 409:
+            raise AssertionError(f"{label}: expected 409, got {exc.status_code}: {exc.detail}") from exc
+        return
+    raise AssertionError(f"{label}: expected HTTP 409")
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""
@@ -73,6 +86,7 @@ def main() -> None:
                 FinancialAccount.organization_id == tenant.organization_id,
                 FinancialAccount.is_active.is_(True),
                 FinancialAccount.currency == tenant.organization.currency,
+                FinancialAccount.account_type != "credit_card",
             ).order_by(FinancialAccount.created_at.asc())
         )
         if account is None:
@@ -80,10 +94,11 @@ def main() -> None:
                 select(FinancialAccount).where(
                     FinancialAccount.organization_id == tenant.organization_id,
                     FinancialAccount.is_active.is_(True),
+                    FinancialAccount.account_type != "credit_card",
                 ).order_by(FinancialAccount.created_at.asc())
             )
         if account is None:
-            raise AssertionError("accounting loan fixture requires an active financial account")
+            raise AssertionError("accounting loan fixture requires an active non-card financial account")
 
         before_cash_count = db.scalar(
             select(func.count(FinancialTransaction.id)).where(
@@ -104,8 +119,35 @@ def main() -> None:
             ),
             request("POST", "/accounting/loans"), db, tenant,  # type: ignore[arg-type]
         )
+        if loan["status"] != "draft":
+            raise AssertionError("new accounting loan must start in draft status")
         if loan["outstanding_principal"] != Decimal("0") or loan["disbursed_amount"] != Decimal("0.00"):
-            raise AssertionError("loan approval must not create principal liability")
+            raise AssertionError("draft loan must not create principal liability")
+
+        blocked_payload = LoanDisbursementCreate(
+            account_id=account.id,
+            disbursement_date=date(2097, 1, 2),
+            principal_amount=Decimal("100000"),
+            fee_withheld_amount=Decimal("1000"),
+            reference=f"ALD-{marker}",
+        )
+        expect_conflict(
+            lambda: disburse_loan(
+                loan["id"], blocked_payload,
+                request("POST", f"/accounting/loans/{loan['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
+            ),
+            "draft loan disbursement",
+        )
+        db.rollback()
+
+        approved = approve_loan(
+            loan["id"],
+            request("POST", f"/accounting/loans/{loan['id']}/approve"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if approved["status"] != "approved":
+            raise AssertionError("loan approval transition failed")
         after_approval_cash_count = db.scalar(
             select(func.count(FinancialTransaction.id)).where(
                 FinancialTransaction.organization_id == tenant.organization_id,
@@ -116,20 +158,15 @@ def main() -> None:
             raise AssertionError("loan approval must not change cash ledger")
 
         disbursement = disburse_loan(
-            loan["id"],
-            LoanDisbursementCreate(
-                account_id=account.id,
-                disbursement_date=date(2097, 1, 2),
-                principal_amount=Decimal("100000"),
-                fee_withheld_amount=Decimal("1000"),
-                reference=f"ALD-{marker}",
-            ),
+            loan["id"], blocked_payload,
             request("POST", f"/accounting/loans/{loan['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
         )
         if disbursement["net_received_amount"] != Decimal("99000.00"):
             raise AssertionError("loan disbursement net receipt calculation failed")
         if disbursement["loan"]["outstanding_principal"] != Decimal("100000.00"):
             raise AssertionError("loan disbursement must create outstanding principal")
+        if disbursement["loan"]["status"] != "active":
+            raise AssertionError("disbursement must activate the loan")
 
         repayment = repay_loan(
             loan["id"],
@@ -148,6 +185,16 @@ def main() -> None:
             raise AssertionError("loan repayment cash total failed")
         if repayment["loan"]["outstanding_principal"] != Decimal("90000.00"):
             raise AssertionError("interest or fees incorrectly changed principal")
+        expect_conflict(
+            lambda: close_loan(
+                loan["id"],
+                request("POST", f"/accounting/loans/{loan['id']}/close"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+            "close loan with outstanding principal",
+        )
+        db.rollback()
 
         journal_ids = [disbursement["journal_entry_id"], repayment["journal_entry_id"]]
         journals = db.scalars(
@@ -176,9 +223,59 @@ def main() -> None:
         ).all())
         if {"loan_disbursement", "loan_repayment_accounting"} - sources:
             raise AssertionError("operational financial-account cash postings are missing")
+
+        close_marker = uuid4().hex[:8]
+        close_loan_row = create_accounting_loan(
+            AccountingLoanCreate(
+                lender_name=f"Close Lifecycle Bank {close_marker}",
+                lender_type="bank",
+                currency=account.currency,
+                approved_amount=Decimal("1000"),
+                annual_interest_rate=Decimal("0"),
+                approval_date=date(2097, 3, 1),
+                reference=f"ALC-{close_marker}",
+            ),
+            request("POST", "/accounting/loans"), db, tenant,  # type: ignore[arg-type]
+        )
+        approve_loan(
+            close_loan_row["id"],
+            request("POST", f"/accounting/loans/{close_loan_row['id']}/approve"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        disburse_loan(
+            close_loan_row["id"],
+            LoanDisbursementCreate(
+                account_id=account.id,
+                disbursement_date=date(2097, 3, 2),
+                principal_amount=Decimal("1000"),
+                reference=f"ALC-D-{close_marker}",
+            ),
+            request("POST", f"/accounting/loans/{close_loan_row['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
+        )
+        paid = repay_loan(
+            close_loan_row["id"],
+            LoanAccountingRepaymentCreate(
+                account_id=account.id,
+                payment_date=date(2097, 3, 3),
+                principal_amount=Decimal("1000"),
+                reference=f"ALC-R-{close_marker}",
+            ),
+            request("POST", f"/accounting/loans/{close_loan_row['id']}/repay"), db, tenant,  # type: ignore[arg-type]
+        )
+        if paid["loan"]["status"] != "paid":
+            raise AssertionError("fully repaid loan must become paid")
+        closed = close_loan(
+            close_loan_row["id"],
+            request("POST", f"/accounting/loans/{close_loan_row['id']}/close"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if closed["status"] != "closed" or closed["outstanding_principal"] != Decimal("0.00"):
+            raise AssertionError("paid loan did not close cleanly")
     finally:
         db.close()
-    print("accounting loan verification passed: approval -> disbursement -> balanced journal -> repayment split")
+    print("accounting loan verification passed: draft -> approve -> disburse -> repay -> close with balanced journals")
 
 
 if __name__ == "__main__":
