@@ -212,3 +212,25 @@ def payables_workspace(
             for bucket, code, amount in aging_rows
         ],
     )
+
+
+@router.get("/{bill_id}", response_model=PayableBillRead)
+def payable_detail(bill_id: str, db: DbSession, tenant: AccountingViewer) -> PayableBillRead:
+    row = db.execute(
+        select(PayableBill, LedgerAccount.name)
+        .join(
+            LedgerAccount,
+            and_(
+                LedgerAccount.id == PayableBill.expense_ledger_account_id,
+                LedgerAccount.organization_id == tenant.organization_id,
+            ),
+        )
+        .where(
+            PayableBill.id == bill_id,
+            PayableBill.organization_id == tenant.organization_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Payable bill not found")
+    bill, expense_name = row
+    return _bill_read(bill, expense_name)
