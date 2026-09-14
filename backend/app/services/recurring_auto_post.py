@@ -3,6 +3,7 @@ from __future__ import annotations
 import calendar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,6 +22,15 @@ MONEY = Decimal("0.01")
 
 def _money(value: Decimal) -> Decimal:
     return Decimal(value).quantize(MONEY, rounding=ROUND_HALF_UP)
+
+
+def _organization_date(timezone_name: str, now: datetime) -> date:
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    try:
+        return now.astimezone(ZoneInfo(timezone_name)).date()
+    except ZoneInfoNotFoundError:
+        return now.astimezone(timezone.utc).date()
 
 
 def _add_months(value: date, months: int) -> date:
@@ -183,14 +193,17 @@ def post_due_recurring_expense(db: Session, recurring: RecurringExpense, *, now:
 
 def process_due_auto_posts(db: Session, *, now: datetime | None = None, limit: int = 100) -> tuple[int, int]:
     now = now or datetime.now(timezone.utc)
-    today = now.date()
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    utc_today = now.astimezone(timezone.utc).date()
+    candidate_through = utc_today + timedelta(days=1)
     ids = db.scalars(
         select(RecurringExpense.id)
         .join(Organization, Organization.id == RecurringExpense.organization_id)
         .where(
             RecurringExpense.auto_post.is_(True),
             RecurringExpense.is_active.is_(True),
-            RecurringExpense.next_due_date <= today,
+            RecurringExpense.next_due_date <= candidate_through,
         )
         .order_by(RecurringExpense.next_due_date.asc())
         .limit(limit)
@@ -204,7 +217,13 @@ def process_due_auto_posts(db: Session, *, now: datetime | None = None, limit: i
                 .where(RecurringExpense.id == recurring_id)
                 .with_for_update(skip_locked=True)
             )
-            if recurring is None or not recurring.auto_post or not recurring.is_active or recurring.next_due_date > today:
+            if recurring is None or not recurring.auto_post or not recurring.is_active:
+                db.rollback()
+                continue
+            organization = db.get(Organization, recurring.organization_id)
+            timezone_name = organization.timezone if organization is not None else "UTC"
+            local_today = _organization_date(timezone_name, now)
+            if recurring.next_due_date > local_today:
                 db.rollback()
                 continue
             post_due_recurring_expense(db, recurring, now=now)
