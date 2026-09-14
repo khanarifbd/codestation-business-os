@@ -1,15 +1,16 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
-from typing import Annotated
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.expenses import ExpenseCategory, Vendor
 from app.models.finance import FinancialAccount
 from app.models.finance_controls import RecurringExpense
 from app.services.activity_log import record_activity
+from app.services.functional_currency import organization_local_date
 from app.services.recurring_auto_post import auto_post_eligibility, post_due_recurring_expense
 from app.tenancy.context import TenantContext
 
@@ -44,12 +45,11 @@ class AutoPostRow(BaseModel):
     last_error: str | None
 
 
-def _read(db: DbSession, item: RecurringExpense) -> AutoPostRow:
+def _read(db: DbSession, item: RecurringExpense, today: date) -> AutoPostRow:
     account = db.get(FinancialAccount, item.account_id)
     category = db.get(ExpenseCategory, item.category_id)
     vendor = db.get(Vendor, item.vendor_id) if item.vendor_id else None
     eligible, reason = auto_post_eligibility(db, item)
-    today = datetime.now(timezone.utc).date()
     return AutoPostRow(
         id=item.id,
         name=item.name,
@@ -80,7 +80,8 @@ def list_recurring_auto_post(db: DbSession, tenant: FinanceViewer):
         .where(RecurringExpense.organization_id == tenant.organization_id)
         .order_by(RecurringExpense.is_active.desc(), RecurringExpense.next_due_date.asc(), RecurringExpense.name.asc())
     ).all()
-    return [_read(db, item) for item in items]
+    today = organization_local_date(tenant.organization)
+    return [_read(db, item, today) for item in items]
 
 
 @router.patch("/recurring-auto-post/{recurring_id}", response_model=AutoPostRow)
@@ -123,7 +124,7 @@ def set_recurring_auto_post(
     )
     db.commit()
     db.refresh(item)
-    return _read(db, item)
+    return _read(db, item, organization_local_date(tenant.organization))
 
 
 @router.post("/recurring-auto-post/{recurring_id}/retry", response_model=AutoPostRow)
@@ -134,6 +135,7 @@ def retry_recurring_auto_post(
     tenant: FinanceManager,
 ):
     now = datetime.now(timezone.utc)
+    today = organization_local_date(tenant.organization)
     item = db.scalar(
         select(RecurringExpense)
         .where(RecurringExpense.id == recurring_id, RecurringExpense.organization_id == tenant.organization_id)
@@ -143,7 +145,7 @@ def retry_recurring_auto_post(
         raise HTTPException(status_code=404, detail="Recurring expense not found")
     if not item.auto_post or not item.is_active:
         raise HTTPException(status_code=409, detail="Enable Auto Post and resume this schedule before retrying")
-    if item.next_due_date > now.date():
+    if item.next_due_date > today:
         raise HTTPException(status_code=409, detail=f"This schedule is not due until {item.next_due_date.isoformat()}")
     try:
         post_due_recurring_expense(db, item, now=now)
@@ -162,7 +164,7 @@ def retry_recurring_auto_post(
         )
         db.commit()
         db.refresh(item)
-        return _read(db, item)
+        return _read(db, item, today)
     except Exception as exc:
         db.rollback()
         failed = db.scalar(
