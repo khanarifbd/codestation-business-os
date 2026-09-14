@@ -215,7 +215,7 @@ if [[ "${MODE}" == "--full" ]]; then
 
   if [[ -n "${accounting_audit_org_id}" ]]; then
     echo "==> Running read-only accounting integrity audit"
-    run_backend \
+    run_backend env PYTHONPATH=/app \
       uv run --no-sync python scripts/audit_accounting_integrity.py \
       --organization-id "${accounting_audit_org_id}"
   else
