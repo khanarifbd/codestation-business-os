@@ -12,6 +12,8 @@ import {
   HandCoins,
   LayoutDashboard,
   Receipt,
+  Scale,
+  SlidersHorizontal,
   WalletCards,
   type LucideIcon,
 } from "lucide-react";
@@ -40,6 +42,13 @@ const items: Item[] = [
   { label: "Receivables", href: "/dashboard/accounting/receivables", icon: Receipt },
   { label: "Payables", href: "/dashboard/accounting/payables", icon: Building2 },
   { label: "Statements", href: "/dashboard/accounting/reports", icon: BarChart3 },
+  { label: "Reconcile", href: "/dashboard/accounting/reconciliation", icon: Scale },
+  {
+    label: "Controls",
+    href: "/dashboard/accounting/controls",
+    icon: SlidersHorizontal,
+    aliases: ["/dashboard/finance/controls"],
+  },
   { label: "Accounting", href: "/dashboard/accounting/advanced", icon: BookOpenText },
 ];
 
