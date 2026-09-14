@@ -455,6 +455,43 @@ def _client_rows_fast(
     return rows
 
 
+@router.get("/dashboard", response_model=ReportsOverview)
+def reports_dashboard_fast(
+    db: DbSession,
+    tenant: ReportsViewer,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
+) -> ReportsOverview:
+    """Return only the report data rendered by the dashboard command center.
+
+    The full /reports/overview endpoint also builds account, project and client
+    profitability detail. Dashboard does not render those collections, so loading
+    them on every dashboard visit wastes queries and blocks first paint.
+    """
+    start, end = _period(date_from, date_to, tenant.organization.timezone)
+    code = _currency_filter(currency)
+    financials, trend = _financials_and_trend_fast(
+        db,
+        tenant.organization_id,
+        start,
+        end,
+        code,
+        None,
+        None,
+    )
+    return ReportsOverview(
+        date_from=start,
+        date_to=end,
+        financials=financials,
+        trend=trend,
+        accounts=[],
+        operations=_operations_fast(db, tenant.organization_id, tenant.organization.timezone),
+        projects=[],
+        clients=[],
+    )
+
+
 @router.get("/overview", response_model=ReportsOverview)
 def reports_overview_fast(
     db: DbSession,

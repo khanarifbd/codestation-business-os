@@ -253,7 +253,7 @@ export default function PayablesPage() {
       const [categoryResponse, accountResponse, metaResponse, taxResponse, tenantResponse] = await Promise.all([
         fetch("/api/accounting/chart-of-accounts", { cache: "no-store" }),
         fetch("/api/finance/accounts", { cache: "no-store" }),
-        fetch("/api/finance/expense-meta", { cache: "no-store" }),
+        fetch("/api/finance/expense-meta-lite", { cache: "no-store" }),
         fetch("/api/accounting/tax/codes", { cache: "no-store" }),
         fetch("/api/tenant/context", { cache: "no-store" }),
       ]);

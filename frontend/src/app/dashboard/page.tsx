@@ -131,6 +131,14 @@ type PeoplePulse = {
   pending_leave: number;
 };
 
+type DashboardPulseOverview = {
+  orders: OrderPulse | null;
+  projects: ProjectPulse | null;
+  crm: CrmPulse | null;
+  finance: FinancePulse | null;
+  people: PeoplePulse | null;
+};
+
 type Preset = "month" | "last_month" | "quarter" | "year";
 
 function iso(d: Date) {
@@ -172,16 +180,6 @@ function periodLabel(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(new Date(year, month - 1, 1));
 }
 
-async function optionalPulse<T>(path: string): Promise<T | null> {
-  try {
-    const response = await fetch(path, { cache: "no-store" });
-    if (!response.ok) return null;
-    return (await response.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const { tenant } = useDashboardSession();
@@ -205,7 +203,7 @@ export default function DashboardPage() {
       setError(null);
       try {
         const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
-        const response = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
+        const response = await fetch(`/api/reports/dashboard?${params}`, { cache: "no-store" });
         if (!active) return;
         if (response.status === 401) {
           router.replace("/login");
@@ -225,20 +223,21 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!tenant) return;
     let active = true;
-    void Promise.all([
-      optionalPulse<OrderPulse>("/api/dashboard-pulse/orders"),
-      optionalPulse<ProjectPulse>("/api/dashboard-pulse/projects"),
-      optionalPulse<CrmPulse>("/api/dashboard-pulse/crm"),
-      optionalPulse<FinancePulse>("/api/dashboard-pulse/finance"),
-      optionalPulse<PeoplePulse>("/api/dashboard-pulse/people"),
-    ]).then(([nextOrderPulse, nextProjectPulse, nextCrmPulse, nextFinancePulse, nextPeoplePulse]) => {
-      if (!active) return;
-      setOrderPulse(nextOrderPulse);
-      setProjectPulse(nextProjectPulse);
-      setCrmPulse(nextCrmPulse);
-      setFinancePulse(nextFinancePulse);
-      setPeoplePulse(nextPeoplePulse);
-    });
+    void (async () => {
+      try {
+        const response = await fetch("/api/dashboard-pulse/overview", { cache: "no-store" });
+        if (!active || !response.ok) return;
+        const pulse = (await response.json()) as DashboardPulseOverview;
+        if (!active) return;
+        setOrderPulse(pulse.orders);
+        setProjectPulse(pulse.projects);
+        setCrmPulse(pulse.crm);
+        setFinancePulse(pulse.finance);
+        setPeoplePulse(pulse.people);
+      } catch {
+        // Pulse cards are supplementary; the primary dashboard report remains usable.
+      }
+    })();
     return () => { active = false; };
   }, [tenant]);
 
@@ -250,7 +249,7 @@ export default function DashboardPage() {
     setError(null);
     const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
     try {
-      const response = await fetch(`/api/reports/overview?${params}`, { cache: "no-store" });
+      const response = await fetch(`/api/reports/dashboard?${params}`, { cache: "no-store" });
       if (response.status === 401) {
         router.replace("/login");
         return;

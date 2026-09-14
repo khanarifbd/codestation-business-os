@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import case, func, select
 
-from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.dependencies import CurrentTenant, DbSession, _active_role, require_tenant_permission
 from app.models.crm import Lead, LeadStatus
 from app.models.finance import Invoice
 from app.models.hr import AttendanceRecord, LeaveRequest
@@ -66,6 +66,14 @@ class PeoplePulse(BaseModel):
     late_today: int
     on_leave_today: int
     pending_leave: int
+
+
+class DashboardPulseOverview(BaseModel):
+    orders: OrderPulse | None = None
+    projects: ProjectPulse | None = None
+    crm: CrmPulse | None = None
+    finance: FinancePulse | None = None
+    people: PeoplePulse | None = None
 
 
 def _tenant_today(timezone_name: str):
@@ -278,4 +286,27 @@ def people_pulse(db: DbSession, tenant: HRViewer) -> PeoplePulse:
         late_today=int(row.late_today or 0),
         on_leave_today=int(row.on_leave_today or 0),
         pending_leave=int(row.pending_leave or 0),
+    )
+
+
+@router.get("/overview", response_model=DashboardPulseOverview)
+def dashboard_pulse_overview(db: DbSession, tenant: CurrentTenant) -> DashboardPulseOverview:
+    """Return every pulse the current organization role is allowed to view.
+
+    Permission filtering stays backend-enforced. Calling the existing pulse
+    functions directly reuses the already authenticated tenant context and avoids
+    five repeated auth/tenant resolutions from the browser.
+    """
+    role = _active_role(db, tenant)
+    granted = set(role.permissions or [])
+
+    def allowed(permission: str) -> bool:
+        return "*" in granted or permission in granted
+
+    return DashboardPulseOverview(
+        orders=order_pulse(db, tenant) if allowed("orders.view") else None,
+        projects=project_pulse(db, tenant) if allowed("projects.view") else None,
+        crm=crm_pulse(db, tenant) if allowed("crm.view") else None,
+        finance=finance_pulse(db, tenant) if allowed("finance.view") else None,
+        people=people_pulse(db, tenant) if allowed("hr.view") else None,
     )

@@ -235,7 +235,6 @@ function Navigation({
                       <Link
                         key={childLabel}
                         href={childHref}
-                        prefetch={false}
                         onMouseEnter={() => router.prefetch(childHref)}
                         onFocus={() => router.prefetch(childHref)}
                         onClick={onNavigate}
@@ -263,7 +262,6 @@ function Navigation({
           <Link
             key={label}
             href={href}
-            prefetch={false}
             onMouseEnter={() => router.prefetch(href)}
             onFocus={() => router.prefetch(href)}
             onClick={onNavigate}

@@ -4,6 +4,7 @@ from sqlalchemy import event, select
 
 from app.api.v1.dashboard_pulse import (
     crm_pulse,
+    dashboard_pulse_overview,
     finance_pulse,
     order_pulse,
     people_pulse,
@@ -15,6 +16,7 @@ from app.api.v1.reports_fast import (
     _financials_and_trend_fast,
     _operations_fast,
     _project_rows_fast,
+    reports_dashboard_fast,
 )
 from app.db.session import SessionLocal, engine
 from app.models.membership import Membership
@@ -115,6 +117,28 @@ def main() -> None:
             organization_role=role,
         )
 
+        dashboard_report, dashboard_report_queries = count_selects(
+            lambda: reports_dashboard_fast(
+                db,
+                tenant,
+                date_from=start,
+                date_to=end,
+                currency=None,
+            )
+        )
+        if dashboard_report_queries > 6:
+            raise AssertionError(
+                f"dashboard report query regression: expected <=6 SELECTs, got {dashboard_report_queries}"
+            )
+        if dashboard_report.accounts or dashboard_report.projects or dashboard_report.clients:
+            raise AssertionError("dashboard report must not materialize unused detail collections")
+
+        _, combined_pulse_queries = count_selects(lambda: dashboard_pulse_overview(db, tenant))
+        if combined_pulse_queries > 5:
+            raise AssertionError(
+                f"combined dashboard pulse query regression: expected <=5 SELECTs, got {combined_pulse_queries}"
+            )
+
         pulse_query_counts = {}
         for name, fn in (
             ("orders", order_pulse),
@@ -136,6 +160,7 @@ def main() -> None:
         "reports performance verification passed: "
         f"projects={project_queries}, clients={client_queries}, "
         f"overview_financial_trend={overview_aggregate_queries}, operations={operations_queries}, "
+        f"dashboard_report={dashboard_report_queries}, combined_pulse={combined_pulse_queries}, "
         f"pulses={pulse_query_counts}"
     )
 
