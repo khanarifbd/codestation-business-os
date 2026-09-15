@@ -3,6 +3,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from app.api.v1.sales import _effective_quotation_status, _latest_revision_clause, _require_latest_revision
 from app.db.session import engine
 from app.main import app
 from app.models.sales import Quotation
@@ -14,6 +15,14 @@ REQUIRED_PATHS = {
     "/api/v1/sales/quotations/{quotation_id}/commercial": {"get", "patch"},
     "/api/v1/sales/quotations/{quotation_id}/revisions": {"get", "post"},
 }
+
+
+class _ScalarSession:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar(self, _statement):
+        return self.value
 
 
 def main() -> None:
@@ -91,7 +100,29 @@ def main() -> None:
     else:
         raise AssertionError("incomplete payment schedule was accepted")
 
-    print("quotation V2 structured API, revision workflow, and payment validation verified")
+    historical = Quotation(organization_id="org-1", revision_number=1, status="sent")
+    successor_session = _ScalarSession(2)
+    if _effective_quotation_status(successor_session, historical) != "superseded":
+        raise AssertionError("historical quotation revision is not exposed as superseded")
+    try:
+        _require_latest_revision(successor_session, historical)
+    except HTTPException as exc:
+        if exc.status_code != 409 or "superseded" not in str(exc.detail).lower():
+            raise AssertionError(f"unexpected superseded revision guard response: {exc.detail}") from exc
+    else:
+        raise AssertionError("superseded quotation revision remained actionable")
+
+    latest = Quotation(organization_id="org-1", revision_number=2, status="sent")
+    latest_session = _ScalarSession(None)
+    if _effective_quotation_status(latest_session, latest) != "sent":
+        raise AssertionError("latest quotation revision status was altered")
+    _require_latest_revision(latest_session, latest)
+
+    latest_clause_sql = str(_latest_revision_clause("org-1").compile(compile_kwargs={"literal_binds": True}))
+    if "supersedes_quotation_id" not in latest_clause_sql or "organization_id" not in latest_clause_sql:
+        raise AssertionError("latest-only quotation query is missing tenant-scoped revision filtering")
+
+    print("quotation V2 structured API, revision controls, and payment validation verified")
 
 
 if __name__ == "__main__":
