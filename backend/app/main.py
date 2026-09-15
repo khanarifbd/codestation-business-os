@@ -13,7 +13,11 @@ from starlette.responses import JSONResponse
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.services.bootstrap import ensure_super_admin
-from app.services.performance_metrics import finish_request_metrics, start_request_metrics
+from app.services.performance_metrics import (
+    build_request_performance_breakdown,
+    finish_request_metrics,
+    start_request_metrics,
+)
 
 logger = logging.getLogger(__name__)
 performance_logger = logging.getLogger("uvicorn.error")
@@ -91,27 +95,61 @@ async def request_observability(request: Request, call_next):
         return response
     finally:
         total_ms = (perf_counter() - started_at) * 1000
-        db_ms = metrics.db_total_ms
+        breakdown = build_request_performance_breakdown(metrics, total_ms)
+        db_ms = breakdown.database_ms
         query_count = metrics.db_query_count
         finish_request_metrics(metrics_token)
 
         if response is not None:
             response.headers["X-Request-ID"] = request_id
             if settings.environment.lower().strip() != "production":
-                response.headers["Server-Timing"] = f'app;dur={total_ms:.2f}, db;dur={db_ms:.2f}'
+                response.headers["Server-Timing"] = (
+                    f'app;dur={total_ms:.2f}, '
+                    f'db;dur={db_ms:.2f}, '
+                    f'auth;dur={breakdown.authentication_ms:.2f}, '
+                    f'tenant;dur={breakdown.tenant_resolution_ms:.2f}, '
+                    f'permission;dur={breakdown.permission_ms:.2f}, '
+                    f'other;dur={breakdown.application_other_ms:.2f}'
+                )
                 response.headers["X-Performance-Total-Ms"] = f"{total_ms:.2f}"
                 response.headers["X-Performance-DB-Ms"] = f"{db_ms:.2f}"
                 response.headers["X-Performance-DB-Queries"] = str(query_count)
+                response.headers["X-Performance-DB-Max-Query-Ms"] = f"{metrics.db_max_query_ms:.2f}"
+                response.headers["X-Performance-DB-Slow-Queries"] = str(metrics.db_slow_query_count)
+                response.headers["X-Performance-Auth-Ms"] = f"{breakdown.authentication_ms:.2f}"
+                response.headers["X-Performance-Tenant-Ms"] = f"{breakdown.tenant_resolution_ms:.2f}"
+                response.headers["X-Performance-Permission-Ms"] = f"{breakdown.permission_ms:.2f}"
+                response.headers["X-Performance-Application-Other-Ms"] = f"{breakdown.application_other_ms:.2f}"
+                response.headers["X-Performance-Root-Cause"] = breakdown.root_cause
+                response.headers["X-Performance-Root-Cause-Pct"] = f"{breakdown.root_cause_pct:.1f}"
 
-        log = performance_logger.warning if total_ms >= SLOW_REQUEST_MS or query_count >= HIGH_QUERY_COUNT else performance_logger.info
+        is_slow = (
+            total_ms >= SLOW_REQUEST_MS
+            or query_count >= HIGH_QUERY_COUNT
+            or metrics.db_slow_query_count > 0
+        )
+        log = performance_logger.warning if is_slow else performance_logger.info
         log(
-            "request.performance method=%s path=%s status=%s total_ms=%.2f db_ms=%.2f db_queries=%s request_id=%s",
+            "request.performance method=%s path=%s status=%s total_ms=%.2f "
+            "root_cause=%s root_cause_ms=%.2f root_cause_pct=%.1f "
+            "db_ms=%.2f db_queries=%s db_max_query_ms=%.2f db_slow_queries=%s "
+            "auth_ms=%.2f tenant_ms=%.2f permission_ms=%.2f application_other_ms=%.2f "
+            "request_id=%s",
             request.method,
             request.url.path,
             status_code,
             total_ms,
+            breakdown.root_cause,
+            breakdown.root_cause_ms,
+            breakdown.root_cause_pct,
             db_ms,
             query_count,
+            metrics.db_max_query_ms,
+            metrics.db_slow_query_count,
+            breakdown.authentication_ms,
+            breakdown.tenant_resolution_ms,
+            breakdown.permission_ms,
+            breakdown.application_other_ms,
             request_id,
         )
 
