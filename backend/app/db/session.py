@@ -1,3 +1,4 @@
+import inspect
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from time import perf_counter
@@ -6,7 +7,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
-from app.services.performance_metrics import record_db_query
+from app.services.performance_metrics import SLOW_DB_QUERY_MS, record_db_query
 
 
 class BusinessSession(Session):
@@ -28,6 +29,28 @@ engine = create_engine(
 )
 
 
+def _slow_query_source() -> str:
+    """Find the nearest Business OS call site without exposing request/business data."""
+
+    frame = None
+    try:
+        frame = inspect.currentframe()
+        if frame is not None:
+            frame = frame.f_back
+        while frame is not None:
+            module_name = str(frame.f_globals.get("__name__", ""))
+            if module_name.startswith("app.") and module_name not in {
+                "app.db.session",
+                "app.services.performance_metrics",
+            }:
+                return f"{module_name}:{frame.f_code.co_name}"
+            frame = frame.f_back
+    finally:
+        # Break frame reference cycles immediately.
+        del frame
+    return "unknown"
+
+
 @event.listens_for(engine, "before_cursor_execute")
 def _start_query_timer(conn, cursor, statement, parameters, context, executemany) -> None:
     # ExecutionContext is request/query-local, unlike pooled Connection.info.
@@ -40,7 +63,12 @@ def _finish_query_timer(conn, cursor, statement, parameters, context, executeman
     started_at = getattr(context, "_business_os_query_started_at", None)
     if started_at is None:
         return
-    record_db_query((perf_counter() - started_at) * 1000)
+    duration_ms = (perf_counter() - started_at) * 1000
+    record_db_query(
+        duration_ms,
+        statement=statement if duration_ms >= SLOW_DB_QUERY_MS else None,
+        source=_slow_query_source() if duration_ms >= SLOW_DB_QUERY_MS else None,
+    )
 
 
 SessionLocal = sessionmaker(
