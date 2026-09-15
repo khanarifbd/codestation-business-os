@@ -27,6 +27,7 @@ from app.services.activity_log import record_activity
 from app.services.quotation_v2 import (
     clean_text,
     clone_revision,
+    latest_revision,
     replace_milestones,
     replace_payment_milestones,
     replace_sections,
@@ -50,6 +51,23 @@ def _quotation(db: DbSession, organization_id: str, quotation_id: str, *, for_up
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
     return quotation
+
+
+def _effective_status(db: DbSession, quotation: Quotation) -> str:
+    _root_id, latest = latest_revision(db, quotation)
+    return quotation.status if latest.id == quotation.id else "superseded"
+
+
+def _require_latest_revision(db: DbSession, quotation: Quotation) -> None:
+    _root_id, latest = latest_revision(db, quotation)
+    if latest.id != quotation.id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Quotation R{quotation.revision_number} has been superseded by "
+                f"R{latest.revision_number}; use the latest revision"
+            ),
+        )
 
 
 def _item_read(item: QuotationItem) -> QuotationV2ItemRead:
@@ -161,7 +179,7 @@ def _detail(db: DbSession, quotation: Quotation) -> QuotationCommercialDetail:
         supersedes_quotation_id=quotation.supersedes_quotation_id,
         revision_number=quotation.revision_number,
         revision_reason=quotation.revision_reason,
-        status=quotation.status,
+        status=_effective_status(db, quotation),
         client_id=quotation.client_id,
         source_lead_id=quotation.source_lead_id,
         assigned_employee_id=quotation.assigned_employee_id,
@@ -239,6 +257,7 @@ def update_commercial_quotation(
     tenant: QuotationManager,
 ) -> QuotationCommercialDetail:
     quotation = _quotation(db, tenant.organization_id, quotation_id, for_update=True)
+    _require_latest_revision(db, quotation)
     if quotation.status != "draft":
         raise HTTPException(status_code=409, detail="Sent, accepted, rejected, or cancelled quotations are immutable; create a revision instead")
 
@@ -335,13 +354,14 @@ def list_quotation_revisions(
         )
         .order_by(Quotation.revision_number.asc(), Quotation.created_at.asc())
     ).all()
+    latest_id = rows[-1].id if rows else None
     return [
         QuotationRevisionListItem(
             id=item.id,
             quotation_number=item.quotation_number,
             revision_number=item.revision_number,
             revision_reason=item.revision_reason,
-            status=item.status,
+            status=item.status if item.id == latest_id else "superseded",
             issue_date=item.issue_date,
             valid_until=item.valid_until,
             currency=item.currency,
