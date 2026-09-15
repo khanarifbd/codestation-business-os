@@ -128,6 +128,7 @@ jobs:
           bash -n
           deployment/deploy.sh
           deployment/safe-deploy.sh
+          deployment/migrate-legacy-uploads.sh
           deployment/backup.sh
           deployment/restore.sh
           deployment/install-backup-timer.sh
