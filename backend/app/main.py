@@ -98,6 +98,7 @@ async def request_observability(request: Request, call_next):
         breakdown = build_request_performance_breakdown(metrics, total_ms)
         db_ms = breakdown.database_ms
         query_count = metrics.db_query_count
+        slowest_query = metrics.db_slowest_query
         finish_request_metrics(metrics_token)
 
         if response is not None:
@@ -133,6 +134,7 @@ async def request_observability(request: Request, call_next):
             "request.performance method=%s path=%s status=%s total_ms=%.2f "
             "root_cause=%s root_cause_ms=%.2f root_cause_pct=%.1f "
             "db_ms=%.2f db_queries=%s db_max_query_ms=%.2f db_slow_queries=%s "
+            "db_slowest_fingerprint=%s db_slowest_operation=%s db_slowest_tables=%s db_slowest_source=%s "
             "auth_ms=%.2f tenant_ms=%.2f permission_ms=%.2f application_other_ms=%.2f "
             "request_id=%s",
             request.method,
@@ -146,6 +148,10 @@ async def request_observability(request: Request, call_next):
             query_count,
             metrics.db_max_query_ms,
             metrics.db_slow_query_count,
+            slowest_query.fingerprint if slowest_query else "-",
+            slowest_query.operation if slowest_query else "-",
+            ",".join(slowest_query.tables) if slowest_query and slowest_query.tables else "-",
+            slowest_query.source if slowest_query else "-",
             breakdown.authentication_ms,
             breakdown.tenant_resolution_ms,
             breakdown.permission_ms,
