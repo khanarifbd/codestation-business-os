@@ -21,8 +21,8 @@ export const metadata: Metadata = {
   },
   description: "One operating system to run your business.",
   icons: {
-    icon: "/brand/codestationai-mark.svg",
-    shortcut: "/brand/codestationai-mark.svg",
+    icon: "/brand/codestationai-mark.svg?v=2",
+    shortcut: "/brand/codestationai-mark.svg?v=2",
   },
 };
 
