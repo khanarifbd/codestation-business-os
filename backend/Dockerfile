@@ -2,7 +2,8 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    LOCAL_STORAGE_PATH=/data/uploads
 
 WORKDIR /app
 
@@ -13,7 +14,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY . .
 RUN uv sync --frozen --no-dev
-RUN mkdir -p /data
+RUN mkdir -p /data/uploads
 
 EXPOSE 8000
 
