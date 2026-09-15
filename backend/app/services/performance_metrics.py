@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -10,6 +12,32 @@ PERFORMANCE_PHASE_AUTHENTICATION = "authentication"
 PERFORMANCE_PHASE_TENANT_RESOLUTION = "tenant_resolution"
 PERFORMANCE_PHASE_PERMISSION = "permission"
 SLOW_DB_QUERY_MS = 100.0
+
+_SQL_STRING_LITERAL_RE = re.compile(r"'(?:''|[^'])*'")
+_SQL_NUMBER_LITERAL_RE = re.compile(r"(?<![A-Za-z0-9_$])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9_$])")
+_SQL_BIND_RE = re.compile(r"%\([^)]+\)s|:\w+|\$\d+|\?")
+_SQL_WHITESPACE_RE = re.compile(r"\s+")
+_SQL_OPERATION_RE = re.compile(r"^\s*([A-Za-z]+)")
+_SQL_TABLE_RE = re.compile(
+    r'\b(?:FROM|JOIN|UPDATE|INTO|DELETE\s+FROM)\s+(?:(?:"?[A-Za-z_][\w$]*"?)\.)?"?([A-Za-z_][\w$]*)"?',
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class SlowQuerySample:
+    """Privacy-safe identity for the slowest SQL statement in a request.
+
+    Raw SQL and bind values are deliberately discarded. The fingerprint is a
+    one-way hash of normalized SQL shape, while operation/table/source metadata
+    contains only code/schema identifiers that help engineers locate the query.
+    """
+
+    duration_ms: float
+    fingerprint: str
+    operation: str
+    tables: tuple[str, ...]
+    source: str
 
 
 @dataclass
@@ -26,6 +54,7 @@ class RequestPerformanceMetrics:
     db_total_ms: float = 0.0
     db_max_query_ms: float = 0.0
     db_slow_query_count: int = 0
+    db_slowest_query: SlowQuerySample | None = None
     phase_total_ms: dict[str, float] = field(default_factory=dict)
     phase_db_ms: dict[str, float] = field(default_factory=dict)
 
@@ -88,7 +117,23 @@ def track_performance_phase(phase: str) -> Iterator[None]:
         _current_phase.reset(phase_token)
 
 
-def record_db_query(duration_ms: float) -> None:
+def _safe_query_identity(statement: str, source: str | None) -> tuple[str, str, tuple[str, ...], str]:
+    """Return a stable query identity without retaining literals or bind values."""
+
+    without_strings = _SQL_STRING_LITERAL_RE.sub("?", statement)
+    normalized = _SQL_NUMBER_LITERAL_RE.sub("?", without_strings)
+    normalized = _SQL_BIND_RE.sub("?", normalized)
+    normalized = _SQL_WHITESPACE_RE.sub(" ", normalized).strip().lower()
+
+    operation_match = _SQL_OPERATION_RE.search(normalized)
+    operation = operation_match.group(1).upper() if operation_match else "UNKNOWN"
+    tables = tuple(dict.fromkeys(match.lower() for match in _SQL_TABLE_RE.findall(without_strings)))[:8]
+    fingerprint = hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()[:16]
+    safe_source = source or "unknown"
+    return fingerprint, operation, tables, safe_source
+
+
+def record_db_query(duration_ms: float, *, statement: str | None = None, source: str | None = None) -> None:
     metrics = _current_metrics.get()
     if metrics is None:
         return
@@ -99,6 +144,18 @@ def record_db_query(duration_ms: float) -> None:
     metrics.db_max_query_ms = max(metrics.db_max_query_ms, safe_duration_ms)
     if safe_duration_ms >= SLOW_DB_QUERY_MS:
         metrics.db_slow_query_count += 1
+        if statement and (
+            metrics.db_slowest_query is None
+            or safe_duration_ms > metrics.db_slowest_query.duration_ms
+        ):
+            fingerprint, operation, tables, safe_source = _safe_query_identity(statement, source)
+            metrics.db_slowest_query = SlowQuerySample(
+                duration_ms=safe_duration_ms,
+                fingerprint=fingerprint,
+                operation=operation,
+                tables=tables,
+                source=safe_source,
+            )
 
     phase = _current_phase.get()
     if phase is not None:
