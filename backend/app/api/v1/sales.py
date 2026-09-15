@@ -89,8 +89,49 @@ def _cursor_clause(decoded: tuple[datetime, str] | None):
     )
 
 
-def _is_expired(item: Quotation) -> bool:
-    return bool(item.valid_until and item.valid_until < date.today() and item.status == "sent")
+def _is_expired(item: Quotation, *, effective_status: str | None = None) -> bool:
+    status_value = effective_status or item.status
+    return bool(item.valid_until and item.valid_until < date.today() and status_value == "sent")
+
+
+def _latest_revision_clause(organization_id: str):
+    successor = aliased(Quotation)
+    return ~(
+        select(successor.id)
+        .where(
+            successor.organization_id == organization_id,
+            successor.supersedes_quotation_id == Quotation.id,
+        )
+        .exists()
+    )
+
+
+def _successor_revision(db: DbSession, quotation: Quotation) -> int | None:
+    return db.scalar(
+        select(Quotation.revision_number)
+        .where(
+            Quotation.organization_id == quotation.organization_id,
+            Quotation.supersedes_quotation_id == quotation.id,
+        )
+        .order_by(Quotation.revision_number.desc())
+        .limit(1)
+    )
+
+
+def _effective_quotation_status(db: DbSession, quotation: Quotation) -> str:
+    return "superseded" if _successor_revision(db, quotation) is not None else quotation.status
+
+
+def _require_latest_revision(db: DbSession, quotation: Quotation) -> None:
+    successor_revision = _successor_revision(db, quotation)
+    if successor_revision is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Quotation R{quotation.revision_number} has been superseded by "
+                f"R{successor_revision}; use the latest revision"
+            ),
+        )
 
 
 def _address_text(address: OrganizationAddress | None) -> str | None:
@@ -137,11 +178,11 @@ def _employee_options(db: DbSession, organization_id: str) -> list[SalesEmployee
     return [SalesEmployeeOption(id=row.id, employee_code=row.employee_code, full_name=row.full_name) for row in rows]
 
 
-def _quotation_query(organization_id: str):
+def _quotation_query(organization_id: str, *, latest_only: bool = False):
     employee_alias = aliased(Employee)
     membership_alias = aliased(Membership)
     user_alias = aliased(User)
-    return (
+    query = (
         select(Quotation, Client.display_name, user_alias.full_name)
         .join(Client, Client.id == Quotation.client_id)
         .outerjoin(employee_alias, employee_alias.id == Quotation.assigned_employee_id)
@@ -149,6 +190,9 @@ def _quotation_query(organization_id: str):
         .outerjoin(user_alias, user_alias.id == membership_alias.user_id)
         .where(Quotation.organization_id == organization_id)
     )
+    if latest_only:
+        query = query.where(_latest_revision_clause(organization_id))
+    return query
 
 
 def _list_item(row) -> QuotationListItem:
@@ -200,6 +244,7 @@ def _detail(db: DbSession, organization_id: str, quotation_id: str) -> Quotation
     if row is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
     quotation, _client_name, assigned_name = row
+    effective_status = _effective_quotation_status(db, quotation)
     items = db.scalars(
         select(QuotationItem)
         .where(
@@ -215,7 +260,7 @@ def _detail(db: DbSession, organization_id: str, quotation_id: str) -> Quotation
         source_lead_id=quotation.source_lead_id,
         assigned_employee_id=quotation.assigned_employee_id,
         assigned_employee_name=assigned_name,
-        status=quotation.status,
+        status=effective_status,
         subject=quotation.subject,
         issue_date=quotation.issue_date,
         valid_until=quotation.valid_until,
@@ -241,7 +286,7 @@ def _detail(db: DbSession, organization_id: str, quotation_id: str) -> Quotation
         accepted_at=quotation.accepted_at,
         rejected_at=quotation.rejected_at,
         cancelled_at=quotation.cancelled_at,
-        is_expired=_is_expired(quotation),
+        is_expired=_is_expired(quotation, effective_status=effective_status),
         items=[_item_read(item) for item in items],
         created_at=quotation.created_at,
         updated_at=quotation.updated_at,
@@ -559,6 +604,7 @@ def get_client_options(
 @router.get("/quotations/summary", response_model=QuotationSummary)
 def quotation_summary(db: DbSession, tenant: QuotationViewer) -> QuotationSummary:
     organization_id = tenant.organization_id
+    latest_clause = _latest_revision_clause(organization_id)
     row = db.execute(
         select(
             func.count(Quotation.id),
@@ -567,7 +613,10 @@ def quotation_summary(db: DbSession, tenant: QuotationViewer) -> QuotationSummar
             func.count(Quotation.id).filter(Quotation.status == "accepted"),
             func.count(Quotation.id).filter(Quotation.status == "rejected"),
             func.count(Quotation.id).filter(Quotation.status == "cancelled"),
-        ).where(Quotation.organization_id == organization_id)
+        ).where(
+            Quotation.organization_id == organization_id,
+            latest_clause,
+        )
     ).one()
     return QuotationSummary(total=row[0], draft=row[1], sent=row[2], accepted=row[3], rejected=row[4], cancelled=row[5])
 
@@ -582,7 +631,7 @@ def list_quotations(
     quotation_status: str | None = Query(default=None, alias="status"),
     client_id: str | None = None,
 ) -> QuotationPage:
-    query = _quotation_query(tenant.organization_id)
+    query = _quotation_query(tenant.organization_id, latest_only=True)
     if search:
         needle = f"%{search.strip()}%"
         query = query.where(or_(Quotation.quotation_number.ilike(needle), Quotation.subject.ilike(needle), Client.display_name.ilike(needle)))
@@ -716,10 +765,12 @@ def update_quotation(
     )
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
-    editable_statuses = {"draft", "sent", "rejected"}
-    if quotation.status not in editable_statuses:
-        raise HTTPException(status_code=409, detail="Accepted or cancelled quotations are locked and cannot be edited")
-    previous_status = quotation.status
+    _require_latest_revision(db, quotation)
+    if quotation.status != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail="Sent, accepted, rejected, or cancelled quotations are immutable; create a revision instead",
+        )
 
     before = {
         "status": quotation.status,
@@ -751,12 +802,6 @@ def update_quotation(
     elif "tax_calculation_mode" in changes:
         _recalculate_items(db, quotation)
 
-    revised_to_draft = previous_status in {"sent", "rejected"}
-    if revised_to_draft:
-        quotation.status = "draft"
-        quotation.sent_at = None
-        quotation.rejected_at = None
-
     db.flush()
     after = {
         "status": quotation.status,
@@ -780,11 +825,7 @@ def update_quotation(
         entity_id=quotation.id,
         before=before,
         after=after,
-        message=(
-            f"Quotation revised and returned to draft: {quotation.quotation_number}"
-            if revised_to_draft
-            else f"Quotation updated: {quotation.quotation_number}"
-        ),
+        message=f"Quotation updated: {quotation.quotation_number}",
         request=request,
     )
     db.commit()
@@ -806,6 +847,7 @@ def change_quotation_status(
     )
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")
+    _require_latest_revision(db, quotation)
     if quotation.status == payload.status:
         return _detail(db, tenant.organization_id, quotation.id)
 
