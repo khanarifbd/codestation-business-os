@@ -30,6 +30,22 @@ ALLOWED_CONTENT_TYPES = {
 }
 
 UNRESTRICTED_DOCUMENT_NAMESPACE_ROOTS = {"projects", "clients"}
+PERSISTENT_DEPLOYMENT_STORAGE_ROOT = Path("/data/uploads")
+
+
+def effective_storage_root(configured_path: str, environment: str) -> Path:
+    """Resolve document storage without allowing deployed containers to use ephemeral relative paths.
+
+    Local development keeps the configured relative path. Staging/production use
+    the mounted /data/uploads volume whenever LOCAL_STORAGE_PATH is relative or
+    omitted, preventing files from being tied to a disposable container layer.
+    Explicit absolute paths remain supported for future external/shared mounts.
+    """
+
+    configured = Path(configured_path)
+    if environment.lower().strip() in {"staging", "production"} and not configured.is_absolute():
+        return PERSISTENT_DEPLOYMENT_STORAGE_ROOT
+    return configured
 
 
 class DocumentStorage(Protocol):
@@ -51,7 +67,7 @@ class LocalDocumentStorage:
     """Private VPS storage adapter; swap with S3/R2 later without schema changes."""
 
     def __init__(self) -> None:
-        self.root = Path(settings.local_storage_path).resolve()
+        self.root = effective_storage_root(settings.local_storage_path, settings.environment).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_bytes = settings.max_document_upload_mb * 1024 * 1024
 
