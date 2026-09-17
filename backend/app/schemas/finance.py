@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -10,6 +10,8 @@ PaymentMethod = Literal["bank_transfer", "cash", "card", "payoneer", "wise", "st
 CustomSalesItemType = Literal["service", "non_stock_item"]
 
 LEGACY_ACCOUNT_TYPE_ALIASES = {"wallet": "mobile_wallet", "gateway": "payment_gateway"}
+PAYMENT_MONEY = Decimal("0.01")
+PAYMENT_RATE = Decimal("0.00000001")
 
 
 def _canonical_account_type(value):
@@ -222,10 +224,40 @@ class PaymentCreate(BaseModel):
 
     @model_validator(mode="after")
     def normalize_conversion(self):
-        if self.exchange_rate is None and self.account_amount is not None:
-            self.exchange_rate = self.account_amount / self.invoice_amount
-        if self.account_amount is None and self.exchange_rate is not None:
-            self.account_amount = self.invoice_amount * self.exchange_rate
+        invoice_amount = self.invoice_amount.quantize(PAYMENT_MONEY, rounding=ROUND_HALF_UP)
+        if invoice_amount <= 0:
+            raise ValueError("invoice_amount must be at least 0.01")
+
+        account_amount = (
+            self.account_amount.quantize(PAYMENT_MONEY, rounding=ROUND_HALF_UP)
+            if self.account_amount is not None
+            else None
+        )
+        exchange_rate = (
+            self.exchange_rate.quantize(PAYMENT_RATE, rounding=ROUND_HALF_UP)
+            if self.exchange_rate is not None
+            else None
+        )
+        if account_amount is not None and account_amount <= 0:
+            raise ValueError("account_amount must be at least 0.01")
+        if exchange_rate is not None and exchange_rate <= 0:
+            raise ValueError("exchange_rate is too small for the supported 8-decimal precision")
+
+        if account_amount is None and exchange_rate is not None:
+            account_amount = (invoice_amount * exchange_rate).quantize(PAYMENT_MONEY, rounding=ROUND_HALF_UP)
+        elif exchange_rate is None and account_amount is not None:
+            exchange_rate = (account_amount / invoice_amount).quantize(PAYMENT_RATE, rounding=ROUND_HALF_UP)
+
+        if account_amount is not None and exchange_rate is not None:
+            expected_account_amount = (invoice_amount * exchange_rate).quantize(PAYMENT_MONEY, rounding=ROUND_HALF_UP)
+            if expected_account_amount != account_amount:
+                raise ValueError(
+                    "account_amount must match invoice_amount multiplied by exchange_rate at the supported precision"
+                )
+
+        self.invoice_amount = invoice_amount
+        self.account_amount = account_amount
+        self.exchange_rate = exchange_rate
         return self
 
 
