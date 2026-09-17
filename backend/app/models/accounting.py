@@ -41,7 +41,7 @@ class JournalEntry(TenantOwnedMixin, Base):
     __table_args__ = (
         UniqueConstraint("organization_id", "entry_number", name="uq_journal_entries_org_number"),
         Index("ix_journal_entries_org_date_status", "organization_id", "entry_date", "status"),
-        Index("ix_journal_entries_org_source", "organization_id", "source_type", "source_id"),
+        Index("ix_journal_entries_org_source", "organization_id", "source_type", "source_id", unique=True),
         Index("ix_journal_entries_org_functional_date", "organization_id", "functional_currency", "entry_date"),
     )
 

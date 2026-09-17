@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 
 from app.api.v1.accounting import trial_balance
@@ -168,7 +169,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
-        journal_for(db, organization.id, "invoice_payment", payment.id)
+        payment_journal = journal_for(db, organization.id, "invoice_payment", payment.id)
 
         # The public mutation path must be complete without calling accounting sync.
         financial, ledger = financial_ledger_account(db, organization.id, account.id)
@@ -215,10 +216,73 @@ def main() -> None:
                 f"balance sheet is not balanced: assets={statements.total_assets}, "
                 f"liabilities+equity={statements.total_liabilities_and_equity}"
             )
+
+        # Application-level source lookups are not enough under concurrency. The
+        # database must reject a second journal for the same tenant/source pair.
+        source_date = payment_journal.entry_date
+        source_currency = payment_journal.functional_currency
+        duplicate_entry = JournalEntry(
+            organization_id=organization.id,
+            entry_number=f"CI-DUP-{uuid4().hex[:12].upper()}",
+            entry_date=source_date,
+            functional_currency=source_currency,
+            status="posted",
+            source_type=payment_journal.source_type,
+            source_id=payment_journal.source_id,
+            reference="CI duplicate source idempotency guard",
+            memo="This row must be rejected by the unique source index",
+            created_by_user_id=user.id,
+            posted_by_user_id=user.id,
+        )
+        db.add(duplicate_entry)
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            if "ix_journal_entries_org_source" not in str(exc.orig):
+                raise AssertionError(
+                    f"duplicate source journal failed for an unexpected reason: {exc.orig}"
+                ) from exc
+        else:
+            raise AssertionError("database allowed a second journal for the same operational source")
+
+        # NULL source ids are intentional for manual/source-less journals and must
+        # remain legal even though source-backed journals are unique.
+        manual_marker = uuid4().hex[:8].upper()
+        db.add_all(
+            [
+                JournalEntry(
+                    organization_id=organization.id,
+                    entry_number=f"CI-MAN-{manual_marker}-A",
+                    entry_date=source_date,
+                    functional_currency=source_currency,
+                    status="posted",
+                    source_type="manual",
+                    source_id=None,
+                    reference="CI nullable source guard A",
+                    created_by_user_id=user.id,
+                    posted_by_user_id=user.id,
+                ),
+                JournalEntry(
+                    organization_id=organization.id,
+                    entry_number=f"CI-MAN-{manual_marker}-B",
+                    entry_date=source_date,
+                    functional_currency=source_currency,
+                    status="posted",
+                    source_type="manual",
+                    source_id=None,
+                    reference="CI nullable source guard B",
+                    created_by_user_id=user.id,
+                    posted_by_user_id=user.id,
+                ),
+            ]
+        )
+        db.flush()
+        db.rollback()
     finally:
         db.close()
 
-    print("atomic financial flow verification passed: invoice -> payment -> journal -> trial balance -> P&L -> balance sheet without sync")
+    print("atomic financial flow verification passed: invoice -> payment -> journal -> trial balance -> P&L -> balance sheet, with database source idempotency")
 
 
 if __name__ == "__main__":
