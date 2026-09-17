@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from starlette.requests import Request
 
@@ -68,6 +69,54 @@ def main() -> None:
         """), {"organization_id": fixture["organization_id"]}).scalar_one()
         if payment_prefix != "PAY":
             raise AssertionError("payment sequence was not backfilled")
+
+    # Payment conversion inputs are persisted at 2-decimal money and 8-decimal
+    # rate precision. The request model must normalize one supplied conversion
+    # value and reject contradictory dual values instead of silently discarding
+    # the client's actual settlement amount.
+    rate_only = PaymentCreate(
+        invoice_id="contract-invoice",
+        account_id="contract-account",
+        invoice_amount=Decimal("10.00"),
+        exchange_rate=Decimal("2.50000000"),
+    )
+    if rate_only.account_amount != Decimal("25.00") or rate_only.exchange_rate != Decimal("2.50000000"):
+        raise AssertionError("rate-only payment conversion was not normalized deterministically")
+
+    amount_only = PaymentCreate(
+        invoice_id="contract-invoice",
+        account_id="contract-account",
+        invoice_amount=Decimal("3.00"),
+        account_amount=Decimal("10.00"),
+    )
+    if amount_only.account_amount != Decimal("10.00") or amount_only.exchange_rate != Decimal("3.33333333"):
+        raise AssertionError("account-amount-only payment conversion was not normalized deterministically")
+
+    try:
+        PaymentCreate(
+            invoice_id="contract-invoice",
+            account_id="contract-account",
+            invoice_amount=Decimal("10.00"),
+            account_amount=Decimal("25.00"),
+            exchange_rate=Decimal("2.40000000"),
+        )
+    except ValidationError as exc:
+        if "account_amount must match" not in str(exc):
+            raise AssertionError(f"unexpected payment conversion validation error: {exc}") from exc
+    else:
+        raise AssertionError("contradictory payment conversion values were accepted")
+
+    try:
+        PaymentCreate(
+            invoice_id="contract-invoice",
+            account_id="contract-account",
+            invoice_amount=Decimal("0.004"),
+        )
+    except ValidationError as exc:
+        if "invoice_amount must be at least 0.01" not in str(exc):
+            raise AssertionError(f"unexpected sub-cent payment validation error: {exc}") from exc
+    else:
+        raise AssertionError("sub-cent invoice payment was accepted even though storage precision is 0.01")
 
     tenant = FixtureTenant(
         organization_id=str(fixture["organization_id"]),
