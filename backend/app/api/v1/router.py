@@ -96,6 +96,8 @@ from app.api.v1.workspace import router as workspace_router
 _SHADOWED_FINANCIAL_OPERATIONS = {
     ("POST", "/finance/accounts"),
     ("POST", "/accounting/money"),
+    ("POST", "/accounting/customer-advances"),
+    ("POST", "/accounting/customer-advances/{advance_id}/apply"),
     ("PATCH", "/finance/invoices/{invoice_id}/status"),
     ("POST", "/finance/payments"),
     ("POST", "/finance/expenses"),
@@ -124,6 +126,7 @@ def _remove_shadowed_financial_routes(router: APIRouter) -> None:
 for _router in (
     finance_router,
     accounting_money_router,
+    customer_advances_router,
     finance_expenses_router,
     finance_transfers_router,
     payables_router,
