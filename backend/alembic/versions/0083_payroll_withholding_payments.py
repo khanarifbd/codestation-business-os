@@ -1,6 +1,6 @@
 """add payroll withholding payments
 
-Revision ID: 0083_payroll_withholding_payments
+Revision ID: 0083_payroll_withholding
 Revises: 0082_owner_equity_transactions
 Create Date: 2026-09-19
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = "0083_payroll_withholding_payments"
+revision: str = "0083_payroll_withholding"
 down_revision: str | None = "0082_owner_equity_transactions"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
