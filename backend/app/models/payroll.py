@@ -55,7 +55,7 @@ class PayrollPeriod(TenantOwnedMixin, Base):
 class PayrollRun(TenantOwnedMixin, Base):
     __tablename__ = "payroll_runs"
     __table_args__ = (
-        UniqueConstraint("organization_id", "period_id", "currency", name="uq_payroll_runs_org_period_currency"),
+        Index("ix_payroll_runs_org_period_currency", "organization_id", "period_id", "currency"),
         Index("ix_payroll_runs_org_status_created", "organization_id", "status", "created_at"),
     )
 
