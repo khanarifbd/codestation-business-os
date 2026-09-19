@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { ArrowRight, Fingerprint, Loader2, LockKeyhole } from "lucide-react";
 
 import { AuthFrame } from "@/components/auth/auth-frame";
@@ -20,6 +20,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
+  const conditionalPasskeyAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -36,6 +37,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     const controller = new AbortController();
+    conditionalPasskeyAbortRef.current = controller;
     let active = true;
     void (async () => {
       if (!await conditionalPasskeysSupported()) return;
@@ -67,6 +69,7 @@ export default function LoginPage() {
     return () => {
       active = false;
       controller.abort();
+      if (conditionalPasskeyAbortRef.current === controller) conditionalPasskeyAbortRef.current = null;
     };
   }, [router]);
 
@@ -91,6 +94,8 @@ export default function LoginPage() {
   }
 
   async function handlePasskeySignIn() {
+    conditionalPasskeyAbortRef.current?.abort();
+    conditionalPasskeyAbortRef.current = null;
     setPasskeyLoading(true);
     setError(null);
     setNotice(null);
@@ -121,6 +126,8 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    conditionalPasskeyAbortRef.current?.abort();
+    conditionalPasskeyAbortRef.current = null;
     setLoading(true);
     setError(null);
     if (!pendingGoogleCredential) setNotice(null);
