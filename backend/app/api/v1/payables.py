@@ -65,11 +65,25 @@ def _payable_carrying_base(db: DbSession, organization_id: str, bill: PayableBil
     issue = db.scalar(select(JournalEntry).where(JournalEntry.organization_id == organization_id, JournalEntry.source_type == "payable_bill", JournalEntry.source_id == bill.id, JournalEntry.status == "posted"))
     if issue is None: raise HTTPException(status_code=409, detail=f"Payable bill {bill.bill_number} does not have its source journal")
     issue_base = Decimal(db.scalar(select(func.coalesce(func.sum(JournalLine.credit), 0)).where(JournalLine.organization_id == organization_id, JournalLine.journal_entry_id == issue.id, JournalLine.ledger_account_id == payable_account_id)) or 0)
+    reversed_payment = (
+        select(FinancialTransaction.id)
+        .where(
+            FinancialTransaction.organization_id == organization_id,
+            FinancialTransaction.source_id == PayablePayment.id,
+            FinancialTransaction.source_type.like("payable_payment_reversal%"),
+        )
+        .exists()
+    )
     prior = db.execute(
         select(PayablePayment.amount, JournalLine.debit)
         .join(JournalEntry, (JournalEntry.organization_id == PayablePayment.organization_id) & (JournalEntry.source_type == "payable_payment") & (JournalEntry.source_id == PayablePayment.id) & (JournalEntry.status == "posted"))
         .join(JournalLine, (JournalLine.organization_id == PayablePayment.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == payable_account_id))
-        .where(PayablePayment.organization_id == organization_id, PayablePayment.bill_id == bill.id, PayablePayment.id != current_payment_id)
+        .where(
+            PayablePayment.organization_id == organization_id,
+            PayablePayment.bill_id == bill.id,
+            PayablePayment.id != current_payment_id,
+            ~reversed_payment,
+        )
     ).all()
     prior_original = _money(sum((Decimal(original) for original, _ in prior), Decimal("0")))
     prior_base = _money(sum((Decimal(base) for _, base in prior), Decimal("0")))
