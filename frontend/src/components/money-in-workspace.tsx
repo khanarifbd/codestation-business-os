@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownLeft,
   CheckCircle2,
@@ -74,6 +74,11 @@ export function MoneyInWorkspace() {
   const [preselectionApplied, setPreselectionApplied] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [form, setForm] = useState<MoneyInForm>(blankForm());
+  const postingKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    postingKeyRef.current = null;
+  }, [sourceType, relationType, relationId, form]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -205,19 +210,22 @@ export function MoneyInWorkspace() {
     setError(null);
     setMessage(null);
     try {
+      const idempotencyKey = postingKeyRef.current ?? crypto.randomUUID();
+      postingKeyRef.current = idempotencyKey;
+      const mutationHeaders = { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey };
       if (sourceType === "advance") {
-        const response = await fetch("/api/accounting/customer-advances", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.source_id, financial_account_id: form.account_id, advance_date: form.date, amount: Number(form.amount), reference: form.reference || null, notes: form.notes || null }) });
+        const response = await fetch("/api/accounting/customer-advances", { method: "POST", headers: mutationHeaders, body: JSON.stringify({ client_id: form.source_id, financial_account_id: form.account_id, advance_date: form.date, amount: Number(form.amount), reference: form.reference || null, notes: form.notes || null }) });
         const payload = await response.json();
         if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record client advance"));
         setMessage(`Client advance recorded for ${payload.client_name}. It is held as customer credit, not income, until applied to an invoice.`);
       } else if (sourceType === "other") {
-        const response = await fetch("/api/accounting/money", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "income", entry_date: form.date, financial_account_id: form.account_id, category_ledger_account_id: form.category_id, amount: Number(form.amount), description: form.description, reference: form.reference || null, notes: form.notes || null, source_type: relationType || null, source_id: relationId || null }) });
+        const response = await fetch("/api/accounting/money", { method: "POST", headers: mutationHeaders, body: JSON.stringify({ kind: "income", entry_date: form.date, financial_account_id: form.account_id, category_ledger_account_id: form.category_id, amount: Number(form.amount), description: form.description, reference: form.reference || null, notes: form.notes || null, source_type: relationType || null, source_id: relationId || null }) });
         const payload = await response.json();
         if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record income"));
         setMessage("Income recorded. Account balance, accounting ledger and business relationship were updated.");
       } else {
         const invoice = sourceType === "invoice" ? (sourceInvoice ?? (() => { throw new Error("Select an invoice"); })()) : await ensureInvoice();
-        const response = await fetch("/api/finance/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invoice_id: invoice.id, account_id: form.account_id, payment_date: form.date, invoice_amount: Number(form.amount), method: form.method, reference: form.reference || null, notes: form.notes || null }) });
+        const response = await fetch("/api/finance/payments", { method: "POST", headers: mutationHeaders, body: JSON.stringify({ invoice_id: invoice.id, account_id: form.account_id, payment_date: form.date, invoice_amount: Number(form.amount), method: form.method, reference: form.reference || null, notes: form.notes || null }) });
         const payload = await response.json();
         if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record payment"));
         setMessage(`Payment ${payload.payment_number} recorded and linked to ${invoice.invoice_number}.`);
@@ -225,6 +233,7 @@ export function MoneyInWorkspace() {
       setConfirmOpen(false);
       setRelationType("");
       setRelationId("");
+      postingKeyRef.current = null;
       setForm(blankForm());
       await load();
     } catch (reason) {
