@@ -10,7 +10,7 @@ from app.models.company_settings import OrganizationDocumentSequence
 from app.models.accounting import JournalEntry, JournalLine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.membership import Membership
-from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, SalaryProfile
+from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
 from app.models.team import Employee
 from app.models.user import User
 from app.schemas.payroll import (
@@ -24,6 +24,8 @@ from app.schemas.payroll import (
     PayrollPeriodRead,
     PayrollRunCreate,
     PayrollRunRead,
+    PayrollWithholdingPaymentCreate,
+    PayrollWithholdingPaymentRead,
     SalaryProfileCreate,
     SalaryProfileRead,
     SalaryProfileUpdate,
@@ -298,6 +300,170 @@ def _ensure_payroll_accrual(
         reference=run.run_number,
         memo=f"Payroll accrual {run.run_number} · {period.name}",
         lines=lines,
+    )
+
+
+def _payroll_withholding_balance(db: DbSession, organization_id: str, as_of) -> Decimal:
+    ledger = system_account(db, organization_id, "payroll_withholdings")
+    debit, credit = db.execute(
+        select(
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
+        )
+        .join(
+            JournalEntry,
+            (JournalEntry.id == JournalLine.journal_entry_id)
+            & (JournalEntry.organization_id == JournalLine.organization_id),
+        )
+        .where(
+            JournalLine.organization_id == organization_id,
+            JournalLine.ledger_account_id == ledger.id,
+            JournalEntry.status == "posted",
+            JournalEntry.entry_date <= as_of,
+        )
+    ).one()
+    return _money(Decimal(credit) - Decimal(debit))
+
+
+@router.get("/withholdings/meta")
+def payroll_withholding_meta(payment_date: str, db: DbSession, tenant: PayrollViewer):
+    target_date = datetime.strptime(payment_date, "%Y-%m-%d").date()
+    base_currency = functional_currency_for_date(db, tenant.organization_id, target_date)
+    accounts = db.scalars(
+        select(FinancialAccount).where(
+            FinancialAccount.organization_id == tenant.organization_id,
+            FinancialAccount.is_active.is_(True),
+            FinancialAccount.currency == base_currency,
+            FinancialAccount.account_type != "credit_card",
+        ).order_by(FinancialAccount.name)
+    ).all()
+    return {
+        "currency": base_currency,
+        "liability_balance": _payroll_withholding_balance(db, tenant.organization_id, target_date),
+        "accounts": [{"id": item.id, "name": item.name, "balance": _account_balance(db, item)} for item in accounts],
+    }
+
+
+@router.get("/withholdings/payments", response_model=list[PayrollWithholdingPaymentRead])
+def list_payroll_withholding_payments(db: DbSession, tenant: PayrollViewer):
+    rows = db.execute(
+        select(PayrollWithholdingPayment, FinancialAccount.name)
+        .join(
+            FinancialAccount,
+            (FinancialAccount.id == PayrollWithholdingPayment.account_id)
+            & (FinancialAccount.organization_id == tenant.organization_id),
+        )
+        .where(PayrollWithholdingPayment.organization_id == tenant.organization_id)
+        .order_by(PayrollWithholdingPayment.payment_date.desc(), PayrollWithholdingPayment.created_at.desc())
+        .limit(500)
+    ).all()
+    return [
+        PayrollWithholdingPaymentRead(
+            id=item.id,
+            account_id=item.account_id,
+            account_name=account_name,
+            payment_date=item.payment_date,
+            currency=item.currency,
+            amount=item.amount,
+            reference=item.reference,
+            notes=item.notes,
+            created_at=item.created_at,
+        )
+        for item, account_name in rows
+    ]
+
+
+@router.post("/withholdings/payments", response_model=PayrollWithholdingPaymentRead, status_code=status.HTTP_201_CREATED)
+def pay_payroll_withholding(payload: PayrollWithholdingPaymentCreate, request: Request, db: DbSession, tenant: PayrollManager):
+    base_currency = functional_currency_for_date(db, tenant.organization_id, payload.payment_date)
+    amount = _money(payload.amount)
+    available = _payroll_withholding_balance(db, tenant.organization_id, payload.payment_date)
+    if amount > available:
+        raise HTTPException(status_code=409, detail=f"Payment exceeds payroll withholding liability {available} {base_currency}")
+
+    financial = db.scalar(
+        select(FinancialAccount)
+        .where(
+            FinancialAccount.id == payload.account_id,
+            FinancialAccount.organization_id == tenant.organization_id,
+            FinancialAccount.is_active.is_(True),
+        )
+        .with_for_update()
+    )
+    if financial is None:
+        raise HTTPException(status_code=404, detail="Active financial account not found")
+    if financial.currency != base_currency:
+        raise HTTPException(status_code=400, detail=f"Payroll withholding settlement must use a {base_currency} account")
+    if financial.account_type == "credit_card":
+        raise HTTPException(status_code=400, detail="Payroll withholding settlement cannot use a credit-card liability account")
+    if _account_balance(db, financial) < amount:
+        raise HTTPException(status_code=409, detail="Insufficient financial account balance")
+
+    item = PayrollWithholdingPayment(
+        organization_id=tenant.organization_id,
+        account_id=financial.id,
+        payment_date=payload.payment_date,
+        currency=base_currency,
+        amount=amount,
+        reference=payload.reference.strip() if payload.reference and payload.reference.strip() else None,
+        notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
+        created_by_user_id=tenant.user_id,
+    )
+    db.add(item)
+    db.flush()
+    withholding = system_account(db, tenant.organization_id, "payroll_withholdings")
+    _, cash = financial_ledger_account(db, tenant.organization_id, financial.id)
+    journal = post_journal(
+        db,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        entry_date=item.payment_date,
+        source_type="payroll_withholding_payment",
+        source_id=item.id,
+        reference=item.reference,
+        memo="Payroll deductions and tax remittance",
+        lines=[
+            PostingLine(ledger_account_id=withholding.id, debit=amount, currency=base_currency, original_amount=amount, description="Payroll withholdings remitted"),
+            PostingLine(ledger_account_id=cash.id, credit=amount, currency=base_currency, original_amount=amount, description="Payroll withholding payment"),
+        ],
+    )
+    db.add(
+        FinancialTransaction(
+            organization_id=tenant.organization_id,
+            account_id=financial.id,
+            transaction_date=item.payment_date,
+            direction="debit",
+            amount=amount,
+            currency=base_currency,
+            source_type="payroll_withholding_payment",
+            source_id=item.id,
+            reference=item.reference,
+            description="Payroll deductions and tax remittance",
+            created_by_user_id=tenant.user_id,
+        )
+    )
+    record_activity(
+        db,
+        action="payroll.withholding.paid",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="payroll_withholding_payment",
+        entity_id=item.id,
+        after={"amount": str(amount), "currency": base_currency, "account_id": financial.id, "journal_entry_id": journal.id},
+        request=request,
+    )
+    db.commit()
+    return PayrollWithholdingPaymentRead(
+        id=item.id,
+        account_id=item.account_id,
+        account_name=financial.name,
+        payment_date=item.payment_date,
+        currency=item.currency,
+        amount=item.amount,
+        reference=item.reference,
+        notes=item.notes,
+        created_at=item.created_at,
     )
 
 
