@@ -1,11 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "@/lib/qrcode-svg";
 import { ArrowLeft, Printer } from "lucide-react";
 import { useParams, useRouter } from "next/navigation";
 
 import { ClientPortalError, ClientPortalLoading, formatPortalDate, formatPortalMoney } from "@/components/client-portal-ui";
 import type { ClientPortalInvoiceDetail } from "@/lib/client-portal-types";
+
+function PaymentLinkQr({ value }: { value: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const svg = QRCode({ msg: value, dim: 128, pad: 4, ecl: "M", pal: ["#000", "#fff"] });
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "QR code for invoice payment link");
+    svg.classList.add("size-32", "print:size-[88px]");
+    container.replaceChildren(svg);
+    return () => { container.replaceChildren(); };
+  }, [value]);
+
+  return <div ref={containerRef} className="size-32 shrink-0 print:size-[88px]" />;
+}
 
 export default function ClientInvoicePrintPage() {
   const params = useParams<{ invoiceId: string }>();
@@ -47,7 +65,30 @@ export default function ClientInvoicePrintPage() {
         <div className="ml-auto mt-6 grid max-w-sm gap-2 text-sm"><div className="flex justify-between gap-5"><span className="text-neutral-500">Subtotal</span><span>{formatPortalMoney(invoice.subtotal, invoice.currency)}</span></div><div className="flex justify-between gap-5"><span className="text-neutral-500">Discount</span><span>{formatPortalMoney(invoice.discount_total, invoice.currency)}</span></div><div className="flex justify-between gap-5"><span className="text-neutral-500">Tax</span><span>{formatPortalMoney(invoice.tax_total, invoice.currency)}</span></div><div className="mt-1 flex justify-between gap-5 border-t pt-3 text-lg font-semibold"><span>Total</span><span>{formatPortalMoney(invoice.total, invoice.currency)}</span></div><div className="flex justify-between gap-5"><span className="text-neutral-500">Paid</span><span>{formatPortalMoney(invoice.amount_paid, invoice.currency)}</span></div><div className="flex justify-between gap-5 font-semibold"><span>Balance due</span><span>{formatPortalMoney(invoice.balance_due, invoice.currency)}</span></div></div>
       </section>
 
-      {(invoice.payment_account_name || invoice.payment_instructions) ? <section className="border-t py-6"><h2 className="font-semibold">Payment information</h2><div className="mt-3 grid gap-2 text-sm text-neutral-600">{invoice.payment_account_name ? <p><span className="text-neutral-400">Account:</span> {invoice.payment_account_name}</p> : null}{invoice.payment_provider ? <p><span className="text-neutral-400">Provider:</span> {invoice.payment_provider}</p> : null}{invoice.payment_account_holder ? <p><span className="text-neutral-400">Account holder:</span> {invoice.payment_account_holder}</p> : null}{invoice.payment_account_reference ? <p><span className="text-neutral-400">Reference:</span> {invoice.payment_account_reference}</p> : null}{invoice.payment_instructions ? <p className="mt-2 whitespace-pre-wrap leading-6">{invoice.payment_instructions}</p> : null}</div></section> : null}
+      {Number(invoice.balance_due) > 0 && (invoice.payment_method || invoice.payment_account_name || invoice.payment_instructions || invoice.payment_url) ? (
+        <section className="break-inside-avoid border-t py-6">
+          <h2 className="font-semibold">Payment information</h2>
+          <div className="mt-3 flex flex-wrap items-start justify-between gap-5 sm:flex-nowrap">
+            <div className="grid min-w-0 gap-2 text-sm text-neutral-600">
+              {invoice.payment_method ? <p><span className="text-neutral-400">Method:</span> {invoice.payment_method.replaceAll("_", " ")}</p> : null}
+              {invoice.payment_account_name ? <p><span className="text-neutral-400">Account:</span> {invoice.payment_account_name}</p> : null}
+              {invoice.payment_provider ? <p><span className="text-neutral-400">Provider:</span> {invoice.payment_provider}</p> : null}
+              {invoice.payment_account_holder ? <p><span className="text-neutral-400">Account holder:</span> {invoice.payment_account_holder}</p> : null}
+              {invoice.payment_account_reference ? <p><span className="text-neutral-400">Reference:</span> {invoice.payment_account_reference}</p> : null}
+              {invoice.payment_currency ? <p><span className="text-neutral-400">Receive currency:</span> {invoice.payment_currency}</p> : null}
+              <p><span className="text-neutral-400">Payment reference:</span> {invoice.invoice_number}</p>
+              {invoice.payment_instructions ? <p className="mt-2 whitespace-pre-wrap leading-6">{invoice.payment_instructions}</p> : null}
+              {invoice.payment_url ? <a href={invoice.payment_url} target="_blank" rel="noopener noreferrer" className="mt-2 block break-all text-blue-700 underline underline-offset-4">{invoice.payment_url}</a> : null}
+            </div>
+            {invoice.payment_url ? (
+              <div className="flex shrink-0 flex-col items-center rounded-xl border bg-white p-2">
+                <PaymentLinkQr value={invoice.payment_url} />
+                <span className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Scan to pay</span>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       {(invoice.notes || invoice.terms_conditions) ? <section className="grid gap-6 border-t pt-6 sm:grid-cols-2">{invoice.notes ? <div><h2 className="font-semibold">Notes</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{invoice.notes}</p></div> : null}{invoice.terms_conditions ? <div><h2 className="font-semibold">Terms & conditions</h2><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{invoice.terms_conditions}</p></div> : null}</section> : null}
     </article>
   </div></main>;
