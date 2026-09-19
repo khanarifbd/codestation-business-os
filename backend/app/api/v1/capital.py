@@ -16,7 +16,7 @@ from app.api.v1.accounting_loans import (
     disburse_loan as disburse_accounting_loan,
     repay_loan as repay_accounting_loan,
 )
-from app.models.accounting import LedgerAccount
+from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.loan_accounting import LoanDisbursement
 from app.models.capital import (
     CompanyInvestment,
@@ -36,6 +36,7 @@ from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.projects import Project
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
+from app.services.functional_currency import functional_currency_for_date
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/capital", tags=["Investments & Funding"])
@@ -77,7 +78,8 @@ def share_capital_account(db: DbSession, tenant: TenantContext) -> LedgerAccount
 
 def posting_line(db: DbSession, tenant: TenantContext, ledger_id: str, *, tx_date: date, debit: Decimal = Decimal("0"), credit: Decimal = Decimal("0"), currency: str, description: str) -> PostingLine:
     original = debit if debit > 0 else credit
-    base, rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, original, currency, rate_date=tx_date)
+    base_currency = functional_currency_for_date(db, tenant.organization_id, tx_date)
+    base, rate = to_base_amount(db, tenant.organization_id, base_currency, original, currency, rate_date=tx_date)
     return PostingLine(ledger_account_id=ledger_id, debit=base if debit > 0 else Decimal("0"), credit=base if credit > 0 else Decimal("0"), description=description, currency=currency, exchange_rate_to_base=rate, original_amount=original)
 
 
@@ -232,7 +234,7 @@ def post_investment_return(db: DbSession, tenant: TenantContext, *, investment_i
     investment_asset = system_account(db, tenant.organization_id, "investments")
     income_account = system_account(db, tenant.organization_id, "other_income")
     total = money(principal + income)
-    cash_base, cash_rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, total, currency, rate_date=tx_date)
+    cash_base, cash_rate = to_base_amount(db, tenant.organization_id, functional_currency_for_date(db, tenant.organization_id, tx_date), total, currency, rate_date=tx_date)
     lines = [PostingLine(ledger_account_id=cash.id, debit=cash_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=total, description=description)]
     fx_difference = Decimal("0.00")
     if principal > 0:
@@ -252,17 +254,17 @@ def post_investment_return(db: DbSession, tenant: TenantContext, *, investment_i
         lines.append(PostingLine(ledger_account_id=income_account.id, credit=income_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=income, description="Investment income"))
     if fx_difference > 0:
         gain = system_account(db, tenant.organization_id, "realized_fx_gain")
-        lines.append(PostingLine(ledger_account_id=gain.id, credit=fx_difference, currency=tenant.organization.currency, original_amount=fx_difference, description="Realized FX gain on investment principal return"))
+        lines.append(PostingLine(ledger_account_id=gain.id, credit=fx_difference, currency=functional_currency_for_date(db, tenant.organization_id, tx_date), original_amount=fx_difference, description="Realized FX gain on investment principal return"))
     elif fx_difference < 0:
         loss = system_account(db, tenant.organization_id, "realized_fx_loss")
-        lines.append(PostingLine(ledger_account_id=loss.id, debit=abs(fx_difference), currency=tenant.organization.currency, original_amount=abs(fx_difference), description="Realized FX loss on investment principal return"))
+        lines.append(PostingLine(ledger_account_id=loss.id, debit=abs(fx_difference), currency=functional_currency_for_date(db, tenant.organization_id, tx_date), original_amount=abs(fx_difference), description="Realized FX loss on investment principal return"))
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=tx_date, source_type="investment_return", source_id=source_id, reference=reference, memo=description, lines=lines)
 
 
 def post_investor_payout(db: DbSession, tenant: TenantContext, *, investor_kind: Literal["company", "project"], investor_id: str, account_id: str, currency: str, tx_date: date, source_type: str, source_id: str, reference: str | None, principal: Decimal, profit: Decimal, principal_account: LedgerAccount, profit_account: LedgerAccount, description: str) -> None:
     _, cash = financial_ledger_account(db, tenant.organization_id, account_id)
     total = money(principal + profit)
-    cash_base, cash_rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, total, currency, rate_date=tx_date)
+    cash_base, cash_rate = to_base_amount(db, tenant.organization_id, functional_currency_for_date(db, tenant.organization_id, tx_date), total, currency, rate_date=tx_date)
     lines = [PostingLine(ledger_account_id=cash.id, credit=cash_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=total, description=description)]
     fx_difference = Decimal("0.00")
     if principal > 0:
@@ -284,10 +286,10 @@ def post_investor_payout(db: DbSession, tenant: TenantContext, *, investor_kind:
         lines.append(PostingLine(ledger_account_id=profit_account.id, debit=profit_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=profit, description="Investor profit distribution"))
     if fx_difference > 0:
         loss = system_account(db, tenant.organization_id, "realized_fx_loss")
-        lines.append(PostingLine(ledger_account_id=loss.id, debit=fx_difference, currency=tenant.organization.currency, original_amount=fx_difference, description="Realized FX loss on investor principal settlement"))
+        lines.append(PostingLine(ledger_account_id=loss.id, debit=fx_difference, currency=functional_currency_for_date(db, tenant.organization_id, tx_date), original_amount=fx_difference, description="Realized FX loss on investor principal settlement"))
     elif fx_difference < 0:
         gain = system_account(db, tenant.organization_id, "realized_fx_gain")
-        lines.append(PostingLine(ledger_account_id=gain.id, credit=abs(fx_difference), currency=tenant.organization.currency, original_amount=abs(fx_difference), description="Realized FX gain on investor principal settlement"))
+        lines.append(PostingLine(ledger_account_id=gain.id, credit=abs(fx_difference), currency=functional_currency_for_date(db, tenant.organization_id, tx_date), original_amount=abs(fx_difference), description="Realized FX gain on investor principal settlement"))
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=tx_date, source_type=source_type, source_id=source_id, reference=reference, memo=description, lines=lines)
 
 
@@ -716,8 +718,9 @@ def company_investors(db: DbSession, tenant: CapitalViewer):
 @router.post("/company-investors", status_code=201)
 def create_company_investor(payload: CompanyInvestorCreate, request: Request, db: DbSession, tenant: CapitalManager):
     currency = payload.currency.upper()
-    if payload.instrument == "equity" and currency != tenant.organization.currency.upper():
-        raise HTTPException(400, "V1 share-capital funding must use the organization functional currency")
+    agreement_functional_currency = functional_currency_for_date(db, tenant.organization_id, payload.agreement_date)
+    if payload.instrument == "equity" and currency != agreement_functional_currency:
+        raise HTTPException(400, "V1 share-capital funding must use the functional currency effective on the agreement date")
     row = CompanyInvestor(organization_id=tenant.organization_id, investor_name=payload.investor_name.strip(), investor_email=payload.investor_email, investor_type=payload.investor_type, instrument=payload.instrument, currency=currency, committed_amount=money(payload.committed_amount), funded_amount=money(0), ownership_percent=payload.ownership_percent, valuation_amount=money(payload.valuation_amount) if payload.valuation_amount else None, agreement_date=payload.agreement_date, effective_date=payload.effective_date, expected_exit_date=payload.expected_exit_date, agreement_reference=payload.agreement_reference, status="active", notes=payload.notes, created_by_user_id=tenant.user_id)
     db.add(row); db.flush()
     record_activity(db, action="capital.company_investor.create", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="company_investor", entity_id=row.id, after=company_investor_json(row), request=request)
