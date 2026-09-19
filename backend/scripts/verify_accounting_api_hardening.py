@@ -10,9 +10,11 @@ from app.main import app
 from app.api.v1.accounting_assets import router as accounting_assets_router
 from app.api.v1.accounting_loan_details import router as accounting_loan_details_router
 from app.api.v1.accounting_loans import router as accounting_loans_router
+from app.api.v1.accounting_money import router as accounting_money_router
 from app.api.v1.accounting_read_fast import router as accounting_read_fast_router
 from app.api.v1.accounting_read_fast_extra import router as accounting_read_fast_extra_router
 from app.api.v1.accounting_reconciliation import router as accounting_reconciliation_router
+from app.api.v1.customer_advances import router as customer_advances_router
 from app.api.v1.finance import router as finance_router
 from app.api.v1.finance_expenses import router as finance_expenses_router
 from app.api.v1.finance_transfers import router as finance_transfers_router
@@ -24,6 +26,9 @@ API_PREFIX = "/api/v1"
 
 CRITICAL_SINGLETON_OPERATIONS = {
     ("POST", "/finance/accounts"),
+    ("POST", "/accounting/money"),
+    ("POST", "/accounting/customer-advances"),
+    ("POST", "/accounting/customer-advances/{advance_id}/apply"),
     ("PATCH", "/finance/invoices/{invoice_id}/status"),
     ("POST", "/finance/payments"),
     ("POST", "/finance/expenses"),
@@ -60,6 +65,8 @@ TYPED_OPERATIONS = {
 
 LEGACY_FINANCIAL_ROUTERS = (
     finance_router,
+    accounting_money_router,
+    customer_advances_router,
     finance_expenses_router,
     finance_transfers_router,
     payables_router,
