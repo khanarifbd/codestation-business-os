@@ -60,14 +60,14 @@ class PasskeyRegistrationVerifyRequest(BaseModel):
     def validate_credential(cls, value: dict[str, Any]) -> dict[str, Any]:
         return _validate_credential_payload(value)
 
-    @field_validator("credential")
-    @classmethod
-    def validate_credential(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return _validate_credential_payload(value)
-
 
 class PasskeyAuthenticationVerifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     challenge_id: str = Field(min_length=36, max_length=36)
     credential: dict[str, Any]
+
+    @field_validator("credential")
+    @classmethod
+    def validate_credential(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _validate_credential_payload(value)
