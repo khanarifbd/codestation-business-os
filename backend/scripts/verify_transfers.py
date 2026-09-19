@@ -1,15 +1,25 @@
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from starlette.requests import Request
 
+from app.api.v1.accounting import trial_balance
+from app.api.v1.accounting_reports import financial_statements
 from app.api.v1.finance import create_account
 from app.api.v1.finance_transfers import record_transfer
+from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.db.session import SessionLocal, engine
+from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction
 from app.schemas.finance import AccountTransferCreate, FinancialAccountCreate
+from app.services.accounting_posting import financial_ledger_account
+from app.services.activity_log import record_activity
+from app.services.exchange_rates import record_rate_snapshot
+from app.services.operational_posting import post_financial_account_opening, post_transfer
 
 
 @dataclass(frozen=True)
@@ -195,10 +205,302 @@ def main() -> None:
         persisted = db.scalar(select(AccountTransfer).where(AccountTransfer.id == cross_currency.id))
         if persisted is None or not persisted.transfer_number.startswith("TRF-"):
             raise AssertionError("transfer record/number was not persisted")
+
+        # Accounting regression: moving foreign cash must remove the source at
+        # its carrying value, not at the transfer-date spot rate. Otherwise a
+        # fully emptied foreign account can retain a phantom GL balance.
+        marker = uuid4().hex[:8]
+        base_currency = tenant.organization.currency.upper()
+        foreign_currency = "USD" if base_currency != "USD" else "EUR"
+        opening_date = date(2097, 1, 1)
+        transfer_date = date(2097, 2, 1)
+        reversal_date = date(2097, 2, 2)
+        record_rate_snapshot(
+            db,
+            organization_id=tenant.organization_id,
+            base_currency=foreign_currency,
+            quote_currency=base_currency,
+            effective_date=opening_date,
+            reference_rate=Decimal("120.00000000"),
+            effective_rate=Decimal("120.00000000"),
+            source="ci_transfer_integrity",
+            user_id=tenant.user_id,
+        )
+        record_rate_snapshot(
+            db,
+            organization_id=tenant.organization_id,
+            base_currency=foreign_currency,
+            quote_currency=base_currency,
+            effective_date=transfer_date,
+            reference_rate=Decimal("125.00000000"),
+            effective_rate=Decimal("125.00000000"),
+            source="ci_transfer_integrity",
+            user_id=tenant.user_id,
+        )
+        record_activity(
+            db,
+            action="verification.transfer.fx_seeded",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="organization",
+            entity_id=tenant.organization_id,
+            after={"currency": foreign_currency, "opening_rate": "120", "transfer_rate": "125"},
+            message="Seeded FX rates for transfer carrying-value verification",
+        )
+        db.commit()
+
+        fx_source = create_account(
+            FinancialAccountCreate(
+                name=f"CI Transfer FX Source {marker}",
+                account_type="wallet",
+                currency=foreign_currency,
+                opening_balance=Decimal("100.00"),
+            ),
+            make_request("POST", "/api/v1/finance/accounts"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        base_destination = create_account(
+            FinancialAccountCreate(
+                name=f"CI Transfer Base Destination {marker}",
+                account_type="bank",
+                currency=base_currency,
+                opening_balance=Decimal("0.00"),
+            ),
+            make_request("POST", "/api/v1/finance/accounts"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        post_financial_account_opening(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            account=db.get(FinancialAccount, fx_source.id),
+            entry_date=opening_date,
+        )
+        db.commit()
+
+        accounting_transfer = record_transfer(
+            AccountTransferCreate(
+                from_account_id=fx_source.id,
+                to_account_id=base_destination.id,
+                transfer_date=transfer_date,
+                source_amount=Decimal("100.00"),
+                fee_amount=Decimal("0.00"),
+                destination_amount=Decimal("12500.00"),
+                reference=f"CI-FX-CARRY-{marker}",
+            ),
+            make_request("POST", "/api/v1/finance/transfers"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        transfer_row = db.scalar(
+            select(AccountTransfer).where(
+                AccountTransfer.id == accounting_transfer.id,
+                AccountTransfer.organization_id == tenant.organization_id,
+            )
+        )
+        if transfer_row is None:
+            raise AssertionError("accounting transfer fixture missing")
+        transfer_journal = post_transfer(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            transfer=transfer_row,
+        )
+        db.commit()
+
+        transfer_lines = db.execute(
+            select(JournalLine, LedgerAccount.system_key, LedgerAccount.category)
+            .join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id)
+            .where(
+                JournalLine.organization_id == tenant.organization_id,
+                JournalLine.journal_entry_id == transfer_journal.id,
+                LedgerAccount.organization_id == tenant.organization_id,
+            )
+        ).all()
+        source_key = f"financial_account:{fx_source.id}"
+        destination_key = f"financial_account:{base_destination.id}"
+        source_credit = sum(
+            (Decimal(line.credit) for line, key, _ in transfer_lines if key == source_key),
+            Decimal("0"),
+        )
+        destination_debit = sum(
+            (Decimal(line.debit) for line, key, _ in transfer_lines if key == destination_key),
+            Decimal("0"),
+        )
+        fx_gain = sum(
+            (Decimal(line.credit) for line, key, _ in transfer_lines if key == "realized_fx_gain"),
+            Decimal("0"),
+        )
+        if source_credit != Decimal("12000.00"):
+            raise AssertionError(
+                f"foreign transfer did not remove source cash at carrying value; got {source_credit}"
+            )
+        if destination_debit != Decimal("12500.00"):
+            raise AssertionError(
+                f"base-currency destination GL does not match actual amount received; got {destination_debit}"
+            )
+        if fx_gain != Decimal("500.00"):
+            raise AssertionError(f"foreign cash transfer should realize 500.00 FX gain, got {fx_gain}")
+        if any(
+            category in {"income", "expense"}
+            and key not in {"realized_fx_gain", "realized_fx_loss", "bank_fees"}
+            for _, key, category in transfer_lines
+        ):
+            raise AssertionError("transfer principal was incorrectly classified as ordinary income/expense")
+
+        _, source_ledger = financial_ledger_account(db, tenant.organization_id, fx_source.id)
+        _, destination_ledger = financial_ledger_account(db, tenant.organization_id, base_destination.id)
+        source_gl = Decimal(
+            db.scalar(
+                select(func.coalesce(func.sum(JournalLine.debit - JournalLine.credit), 0))
+                .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+                .where(
+                    JournalLine.organization_id == tenant.organization_id,
+                    JournalLine.ledger_account_id == source_ledger.id,
+                    JournalEntry.organization_id == tenant.organization_id,
+                    JournalEntry.status == "posted",
+                )
+            )
+            or 0
+        )
+        destination_gl = Decimal(
+            db.scalar(
+                select(func.coalesce(func.sum(JournalLine.debit - JournalLine.credit), 0))
+                .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+                .where(
+                    JournalLine.organization_id == tenant.organization_id,
+                    JournalLine.ledger_account_id == destination_ledger.id,
+                    JournalEntry.organization_id == tenant.organization_id,
+                    JournalEntry.status == "posted",
+                )
+            )
+            or 0
+        )
+        if source_gl != Decimal("0.00"):
+            raise AssertionError(f"fully transferred foreign source retained phantom GL value {source_gl}")
+        if destination_gl != Decimal("12500.00"):
+            raise AssertionError(f"base destination GL mismatch after transfer: {destination_gl}")
+
+        # Same-currency own-account principal carries its historical basis across
+        # accounts and must not create revenue/expense merely because spot moved.
+        same_source = create_account(
+            FinancialAccountCreate(
+                name=f"CI Transfer Same Source {marker}",
+                account_type="wallet",
+                currency=foreign_currency,
+                opening_balance=Decimal("100.00"),
+            ),
+            make_request("POST", "/api/v1/finance/accounts"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        same_destination = create_account(
+            FinancialAccountCreate(
+                name=f"CI Transfer Same Destination {marker}",
+                account_type="bank",
+                currency=foreign_currency,
+                opening_balance=Decimal("0.00"),
+            ),
+            make_request("POST", "/api/v1/finance/accounts"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        post_financial_account_opening(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            account=db.get(FinancialAccount, same_source.id),
+            entry_date=opening_date,
+        )
+        db.commit()
+        same_transfer = record_transfer(
+            AccountTransferCreate(
+                from_account_id=same_source.id,
+                to_account_id=same_destination.id,
+                transfer_date=transfer_date,
+                source_amount=Decimal("100.00"),
+                destination_amount=Decimal("100.00"),
+                reference=f"CI-SAME-CARRY-{marker}",
+            ),
+            make_request("POST", "/api/v1/finance/transfers"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        same_transfer_row = db.scalar(
+            select(AccountTransfer).where(
+                AccountTransfer.id == same_transfer.id,
+                AccountTransfer.organization_id == tenant.organization_id,
+            )
+        )
+        if same_transfer_row is None:
+            raise AssertionError("same-currency accounting transfer fixture missing")
+        same_journal = post_transfer(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            transfer=same_transfer_row,
+        )
+        db.commit()
+        same_lines = db.execute(
+            select(JournalLine, LedgerAccount.system_key)
+            .join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id)
+            .where(
+                JournalLine.organization_id == tenant.organization_id,
+                JournalLine.journal_entry_id == same_journal.id,
+                LedgerAccount.organization_id == tenant.organization_id,
+            )
+        ).all()
+        if any(key in {"realized_fx_gain", "realized_fx_loss"} for _, key in same_lines):
+            raise AssertionError("same-currency own-account transfer principal incorrectly realized FX")
+        same_destination_key = f"financial_account:{same_destination.id}"
+        carried = sum(
+            (Decimal(line.debit) for line, key in same_lines if key == same_destination_key),
+            Decimal("0"),
+        )
+        if carried != Decimal("12000.00"):
+            raise AssertionError(f"same-currency transfer did not preserve carrying basis: {carried}")
+
+        reverse_business_transaction(
+            CorrectionRequest(
+                source_type="transfer",
+                source_id=accounting_transfer.id,
+                reason="CI cross-currency transfer correction",
+                reversal_date=reversal_date,
+            ),
+            make_request("POST", "/accounting/corrections/reverse"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        db.expire_all()
+        restored_source = db.get(FinancialAccount, fx_source.id)
+        restored_destination = db.get(FinancialAccount, base_destination.id)
+        if restored_source is None or restored_destination is None:
+            raise AssertionError("transfer reversal accounts missing")
+        if balance(db, restored_source) != Decimal("100.00"):
+            raise AssertionError("transfer reversal did not restore source account quantity")
+        if balance(db, restored_destination) != Decimal("0.00"):
+            raise AssertionError("transfer reversal did not restore destination account quantity")
+
+        trial = trial_balance(db, tenant, as_of=reversal_date)  # type: ignore[arg-type]
+        if trial.total_debit != trial.total_credit:
+            raise AssertionError("trial balance became unbalanced after transfer correction")
+        statements = financial_statements(
+            db,
+            tenant,  # type: ignore[arg-type]
+            date_from=opening_date,
+            date_to=reversal_date,
+        )
+        if statements.net_profit != statements.total_income - statements.total_expenses:
+            raise AssertionError("P&L does not reconcile after transfer correction")
+        if statements.total_assets != statements.total_liabilities_and_equity:
+            raise AssertionError("balance sheet does not balance after transfer correction")
     finally:
         db.close()
 
-    print("finance transfer fee and FX ledger verification passed")
+    print("finance transfer verification passed: operational balances + carrying value + realized FX + same-currency basis + correction + reports")
 
 
 if __name__ == "__main__":
