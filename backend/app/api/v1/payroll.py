@@ -687,6 +687,7 @@ def create_run(payload: PayrollRunCreate, request: Request, db: DbSession, tenan
             PayrollRun.organization_id == tenant.organization_id,
             PayrollRun.period_id == period.id,
             PayrollRun.currency == currency,
+            PayrollRun.status != "reversed",
         )
     ):
         raise HTTPException(status_code=409, detail=f"A {currency} payroll run already exists for this period")
