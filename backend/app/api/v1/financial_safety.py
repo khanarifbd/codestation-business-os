@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession
+from app.api.v1.accounting_money import _read as _money_entry_read, create_money_entry
 from app.api.v1.accounting_loans import (
     AccountingManager,
     LoanAccountingRepaymentCreate,
@@ -27,12 +28,14 @@ from app.api.v1.finance_transfers import _transfer_read, record_transfer
 from app.api.v1.payables import pay_payable_bill
 from app.db.session import defer_commits
 from app.models.accounting import JournalEntry
+from app.models.accounting_money import AccountingMoneyEntry
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialAccount, Invoice, Payment
 from app.models.loan_accounting import LoanDisbursement
 from app.models.payables import PayablePayment
 from app.schemas.accounting_loans import LoanDisbursementRead, LoanRepaymentRead
+from app.schemas.accounting_money import AccountingMoneyEntryCreate, AccountingMoneyEntryRead
 from app.schemas.expenses import ExpenseCreate, ExpenseDetail
 from app.schemas.finance import (
     AccountTransferCreate,
@@ -82,6 +85,40 @@ def _tenant_account(db: DbSession, organization_id: str, account_id: str) -> Fin
     if account is None:
         raise HTTPException(status_code=409, detail="Financial account is no longer available")
     return account
+
+
+@router.post("/accounting/money", response_model=AccountingMoneyEntryRead, status_code=status.HTTP_201_CREATED)
+def safe_create_money_entry(
+    payload: AccountingMoneyEntryCreate,
+    request: Request,
+    db: DbSession,
+    tenant: AccountingManager,
+):
+    with defer_commits(db):
+        guard, reused = reserve_posting(
+            db,
+            request,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            action=f"accounting.money.{payload.kind}.create",
+            payload=payload,
+        )
+        if reused:
+            resource_id = completed_resource(guard, "accounting_money_entry")
+            item = db.scalar(
+                select(AccountingMoneyEntry).where(
+                    AccountingMoneyEntry.id == resource_id,
+                    AccountingMoneyEntry.organization_id == tenant.organization_id,
+                )
+            )
+            if item is None:
+                raise HTTPException(status_code=409, detail="The original money entry result is no longer available")
+            return _money_entry_read(db, tenant.organization_id, item)
+
+        result = create_money_entry(payload, request, db, tenant)
+        complete_posting(db, guard, resource_type="accounting_money_entry", resource_id=result.id)
+    db.commit()
+    return result
 
 
 @router.post("/finance/accounts", response_model=FinancialAccountRead, status_code=status.HTTP_201_CREATED)
