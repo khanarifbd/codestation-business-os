@@ -98,7 +98,15 @@ def create_asset(payload:AssetCreate,request:Request,db:DbSession,tenant:Manager
     if payload.record_mode=="purchase":
         account,cash_ledger=financial_ledger_account(db,tenant.organization_id,payload.purchase_account_id or "")
         if account.currency!=currency: raise HTTPException(status_code=400,detail="Purchase account currency must match asset currency")
-        if account.account_type!="credit_card" and account_balance(db,account,tenant.organization_id)<cost: raise HTTPException(status_code=409,detail="Insufficient account balance")
+        if account.account_type=="credit_card":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Fixed-asset purchases from credit-card accounts are not supported by this workflow yet. "
+                    "Use a bank/cash account until dedicated credit-card liability posting is enabled."
+                ),
+            )
+        if account_balance(db,account,tenant.organization_id)<cost: raise HTTPException(status_code=409,detail="Insufficient account balance")
     row=FixedAsset(organization_id=tenant.organization_id,asset_code=payload.asset_code.strip().upper(),name=payload.name.strip(),category=payload.category.strip().lower().replace(" ","_"),currency=currency,acquisition_cost=cost,salvage_value=salvage,accumulated_depreciation=Decimal("0"),acquisition_date=payload.acquisition_date,in_service_date=payload.in_service_date,useful_life_months=payload.useful_life_months,depreciation_method=payload.depreciation_method,purchase_account_id=payload.purchase_account_id if payload.record_mode=="purchase" else None,reference=payload.reference,status="active",notes=payload.notes,created_by_user_id=tenant.user_id)
     db.add(row); db.flush(); description=f"Fixed asset acquisition: {row.asset_code} {row.name}"; fixed=system_account(db,tenant.organization_id,"fixed_assets")
     base,rate=to_base_amount(db,tenant.organization_id,tenant.organization.currency,cost,currency,rate_date=row.acquisition_date)
@@ -123,7 +131,7 @@ def run_depreciation(payload:DepreciationRun,request:Request,db:DbSession,tenant
         if exists: skipped.append({"asset_id":row.id,"reason":"already_posted_this_month"}); continue
         maximum=money(row.acquisition_cost-row.salvage_value); remaining=money(max(maximum-row.accumulated_depreciation,Decimal("0")))
         if remaining<=0: row.status="fully_depreciated"; skipped.append({"asset_id":row.id,"reason":"fully_depreciated"}); continue
-        monthly=money(maximum/Decimal(row.useful_life_months)); amount=money(min(monthly,remaining)); base,rate=to_base_amount(db,tenant.organization_id,tenant.organization.currency,amount,row.currency,rate_date=payload.period_date)
+        monthly=money(maximum/Decimal(row.useful_life_months)); amount=money(min(monthly,remaining)); base,rate=to_base_amount(db,tenant.organization_id,tenant.organization.currency,amount,row.currency,rate_date=row.acquisition_date)
         source_id=str(uuid4()); description=f"Depreciation {row.asset_code} {row.name} for {period.strftime('%Y-%m')}"
         journal=post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=payload.period_date,source_type="asset_depreciation",source_id=source_id,reference=row.asset_code,memo=description,lines=[PostingLine(ledger_account_id=expense.id,debit=base,description=description,currency=row.currency,exchange_rate_to_base=rate,original_amount=amount),PostingLine(ledger_account_id=accumulated.id,credit=base,description=description,currency=row.currency,exchange_rate_to_base=rate,original_amount=amount)])
         entry=AssetDepreciationEntry(id=source_id,organization_id=tenant.organization_id,asset_id=row.id,period_date=period,amount=amount,journal_entry_id=journal.id,created_by_user_id=tenant.user_id); db.add(entry); row.accumulated_depreciation=money(row.accumulated_depreciation+amount)
