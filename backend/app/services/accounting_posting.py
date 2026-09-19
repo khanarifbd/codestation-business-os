@@ -34,6 +34,8 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("2500", "Investor Funds Payable", "liability", "investor_funds_payable", "credit", "investor_funds_payable", False),
     ("3000", "Owner's Equity", "equity", "owners_equity", "credit", "owners_equity", True),
     ("3100", "Opening Balance Equity", "equity", "opening_balance_equity", "credit", "opening_balance_equity", True),
+    ("3200", "Share Capital", "equity", "share_capital", "credit", "share_capital", False),
+    ("3300", "Owner / Investor Distributions", "equity", "equity_distributions", "debit", "equity_distributions", False),
     ("4000", "Sales Revenue", "income", "sales_revenue", "credit", "sales_revenue", True),
     ("4100", "Service Revenue", "income", "service_revenue", "credit", "service_revenue", True),
     ("4900", "Other Income", "income", "other_income", "credit", "other_income", True),
