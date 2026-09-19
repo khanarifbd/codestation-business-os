@@ -15,6 +15,9 @@ class AssetRead(BaseModel):
     acquisition_cost: Decimal
     salvage_value: Decimal
     accumulated_depreciation: Decimal
+    opening_accumulated_depreciation: Decimal
+    record_mode: str
+    opening_balance_date: date | None = None
     book_value: Decimal
     depreciable_amount: Decimal
     acquisition_date: date
