@@ -9,7 +9,7 @@ import { FinancialConfirmationDialog } from "@/components/financial-confirmation
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
 
-type CorrectionType = "payment" | "expense" | "transfer" | "money_entry" | "customer_advance" | "customer_advance_application" | "payable_payment" | "loan_disbursement" | "loan_repayment";
+type CorrectionType = "payment" | "expense" | "transfer" | "money_entry" | "customer_advance" | "customer_advance_application" | "payable_payment" | "loan_disbursement" | "loan_repayment" | "fixed_asset" | "asset_depreciation" | "tax_settlement" | "payroll_withholding_payment" | "payroll_run" | "owner_equity";
 type Candidate = {
   source_type: CorrectionType;
   source_id: string;
@@ -45,6 +45,12 @@ const correctionTypes: TypeOption[] = [
   { value: "payable_payment", title: "Supplier payment", help: "Payment made against a supplier bill" },
   { value: "loan_disbursement", title: "Loan received", help: "Loan principal disbursed into a business account" },
   { value: "loan_repayment", title: "Loan repayment", help: "Principal, interest or fee paid to a lender" },
+  { value: "fixed_asset", title: "Fixed asset", help: "Asset purchase or opening balance posting" },
+  { value: "asset_depreciation", title: "Asset depreciation", help: "Posted monthly depreciation entry" },
+  { value: "tax_settlement", title: "Tax settlement", help: "Tax payment, refund or input-tax offset" },
+  { value: "payroll_withholding_payment", title: "Payroll withholding", help: "Employee deduction or payroll-tax remittance" },
+  { value: "payroll_run", title: "Payroll run", help: "Approved accrual or paid payroll" },
+  { value: "owner_equity", title: "Owner equity", help: "Owner contribution or drawing" },
 ];
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -56,6 +62,10 @@ function sourceHref(item: CorrectionHistory) {
   if (item.source_type === "transfer") return "/dashboard/accounting/transfers";
   if (item.source_type === "payable_payment") return "/dashboard/accounting/payables";
   if (item.source_type === "loan_disbursement" || item.source_type === "loan_repayment") return "/dashboard/accounting/loans";
+  if (item.source_type === "fixed_asset" || item.source_type === "asset_depreciation") return "/dashboard/accounting/assets";
+  if (item.source_type === "tax_settlement") return "/dashboard/accounting/tax";
+  if (item.source_type === "payroll_withholding_payment" || item.source_type === "payroll_run") return "/dashboard/payroll";
+  if (item.source_type === "owner_equity") return "/dashboard/capital";
   return "/dashboard/accounting/invoices";
 }
 
@@ -168,6 +178,9 @@ export default function FinancialCorrectionsPage() {
       {type === "customer_advance_application" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing an advance application re-opens the invoice for that amount and restores the customer credit without creating a cash movement.</div> : null}
       {type === "payable_payment" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a supplier payment re-opens the bill for the reversed amount and restores the selected financial account balance.</div> : null}
       {type === "loan_repayment" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a loan repayment restores principal outstanding and reverses interest/fee expense together with the cash movement.</div> : null}
+      {type === "fixed_asset" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reverse posted depreciation first. The asset remains in history with Reversed status; a purchase also restores the source financial account.</div> : null}
+      {type === "asset_depreciation" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Depreciation must be reversed newest-first so the asset schedule and accumulated depreciation remain chronological.</div> : null}
+      {type === "payroll_run" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">If payroll deductions/taxes have already been remitted, reverse those withholding payments first. Paid payroll reverses cash settlement and accrual together.</div> : null}
 
       <div className="mt-6 flex justify-end"><button type="button" disabled={!selected || reason.trim().length < 3 || saving} onClick={() => setConfirmOpen(true)} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-40"><RotateCcw className="size-4" />Review reversal</button></div>
     </section>
