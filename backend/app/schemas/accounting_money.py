@@ -10,7 +10,7 @@ class AccountingMoneyEntryCreate(BaseModel):
     entry_date: date
     financial_account_id: str
     category_ledger_account_id: str
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(ge=Decimal("0.01"))
     description: str = Field(min_length=1, max_length=500)
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
@@ -54,7 +54,7 @@ class AccountingIncomeWithFeeCreate(BaseModel):
     entry_date: date
     financial_account_id: str
     income_category_ledger_account_id: str
-    gross_amount: Decimal = Field(gt=0)
+    gross_amount: Decimal = Field(ge=Decimal("0.01"))
     fee_amount: Decimal = Field(default=Decimal("0"), ge=0)
     fee_expense_category_id: str | None = None
     fee_vendor_id: str | None = None
@@ -72,6 +72,8 @@ class AccountingIncomeWithFeeCreate(BaseModel):
             raise ValueError("source_id is required for a client, order or project source")
         if self.source_type in {None, "other"} and self.source_id:
             raise ValueError("source_id requires a client, order or project source type")
+        if Decimal("0") < self.fee_amount < Decimal("0.01"):
+            raise ValueError("fee_amount must be at least 0.01 when provided")
         if self.fee_amount > self.gross_amount:
             raise ValueError("fee_amount cannot exceed gross_amount")
         if self.fee_amount > 0 and not (self.fee_expense_category_id or self.fee_category_ledger_account_id):
