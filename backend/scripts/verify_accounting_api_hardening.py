@@ -27,6 +27,7 @@ API_PREFIX = "/api/v1"
 CRITICAL_SINGLETON_OPERATIONS = {
     ("POST", "/finance/accounts"),
     ("POST", "/accounting/money"),
+    ("POST", "/accounting/money/income-with-fee"),
     ("POST", "/accounting/customer-advances"),
     ("POST", "/accounting/customer-advances/{advance_id}/apply"),
     ("PATCH", "/finance/invoices/{invoice_id}/status"),
