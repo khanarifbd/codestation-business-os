@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.accounting_money import AccountingMoneyEntry
 from app.models.crm import Client, Lead, LeadStatus
 from app.models.expenses import Expense, ExpenseCategory
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, Payment
@@ -91,6 +92,37 @@ def _expense_scope(query, org_id: str, start: date, end: date, currency: str | N
     return query
 
 
+def _money_entry_scope(
+    query,
+    org_id: str,
+    start: date,
+    end: date,
+    currency: str | None,
+    client_id: str | None,
+    project_id: str | None,
+):
+    reversed_entry = FinancialTransaction.__table__.alias("money_entry_reversal")
+    query = query.where(
+        AccountingMoneyEntry.organization_id == org_id,
+        AccountingMoneyEntry.entry_date >= start,
+        AccountingMoneyEntry.entry_date <= end,
+        ~select(reversed_entry.c.id)
+        .where(
+            reversed_entry.c.organization_id == org_id,
+            reversed_entry.c.source_id == AccountingMoneyEntry.id,
+            reversed_entry.c.source_type.like("accounting_money_entry_reversal%"),
+        )
+        .exists(),
+    )
+    if currency:
+        query = query.where(AccountingMoneyEntry.currency == currency)
+    if client_id:
+        query = query.where(AccountingMoneyEntry.client_id == client_id)
+    if project_id:
+        query = query.where(AccountingMoneyEntry.project_id == project_id)
+    return query
+
+
 def _account_balances(db: DbSession, org_id: str, currency: str | None) -> list[ReportAccountBalance]:
     tx = (
         select(
@@ -166,6 +198,25 @@ def _financials(db: DbSession, org_id: str, start: date, end: date, currency: st
         data[code]["expenses"] += _money(amount)
         data[code]["platform"] += _money(platform)
 
+    direct_money_query = _money_entry_scope(
+        select(
+            AccountingMoneyEntry.currency,
+            AccountingMoneyEntry.kind,
+            func.sum(AccountingMoneyEntry.amount),
+        ).group_by(AccountingMoneyEntry.currency, AccountingMoneyEntry.kind),
+        org_id,
+        start,
+        end,
+        currency,
+        client_id,
+        project_id,
+    )
+    for code, kind, amount in db.execute(direct_money_query).all():
+        if kind == "income":
+            data[code]["direct_income"] += _money(amount)
+        elif kind == "expense":
+            data[code]["expenses"] += _money(amount)
+
     if not client_id and not project_id:
         payroll_query = (
             select(PayrollRun.currency, func.sum(PayrollRun.gross_total))
@@ -203,12 +254,13 @@ def _financials(db: DbSession, org_id: str, start: date, end: date, currency: st
         ReportFinancialRow(
             currency=code,
             invoiced_revenue=_money(values["invoiced"]),
+            direct_income=_money(values["direct_income"]),
             collected_revenue=_money(values["collected"]),
             receivables=_money(values["receivable"]),
             expenses=_money(values["expenses"]),
             platform_fees=_money(values["platform"]),
             transfer_fees=_money(values["transfer"]),
-            net_profit=_money(values["invoiced"] - values["expenses"] - values["transfer"]),
+            net_profit=_money(values["invoiced"] + values["direct_income"] - values["expenses"] - values["transfer"]),
         )
         for code, values in sorted(data.items())
     ]
@@ -245,6 +297,27 @@ def _trend(db: DbSession, org_id: str, start: date, end: date, currency: str | N
     for month, code, amount in db.execute(expense_query).all():
         data[(month, code)]["expenses"] += _money(amount)
 
+    money_period = func.to_char(func.date_trunc("month", AccountingMoneyEntry.entry_date), "YYYY-MM")
+    direct_money_query = _money_entry_scope(
+        select(
+            money_period,
+            AccountingMoneyEntry.currency,
+            AccountingMoneyEntry.kind,
+            func.sum(AccountingMoneyEntry.amount),
+        ).group_by(money_period, AccountingMoneyEntry.currency, AccountingMoneyEntry.kind),
+        org_id,
+        start,
+        end,
+        currency,
+        client_id,
+        project_id,
+    )
+    for month, code, kind, amount in db.execute(direct_money_query).all():
+        if kind == "income":
+            data[(month, code)]["direct_income"] += _money(amount)
+        elif kind == "expense":
+            data[(month, code)]["expenses"] += _money(amount)
+
     if not client_id and not project_id:
         payroll_period = func.to_char(func.date_trunc("month", PayrollPeriod.period_end), "YYYY-MM")
         payroll_query = (
@@ -280,10 +353,11 @@ def _trend(db: DbSession, org_id: str, start: date, end: date, currency: str | N
             period=month,
             currency=code,
             invoiced_revenue=_money(values["invoiced"]),
+            direct_income=_money(values["direct_income"]),
             collected_revenue=_money(values["collected"]),
             expenses=_money(values["expenses"]),
             transfer_fees=_money(values["transfer"]),
-            net_profit=_money(values["invoiced"] - values["expenses"] - values["transfer"]),
+            net_profit=_money(values["invoiced"] + values["direct_income"] - values["expenses"] - values["transfer"]),
         )
         for (month, code), values in sorted(data.items())
     ]
