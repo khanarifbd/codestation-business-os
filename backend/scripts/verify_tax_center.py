@@ -7,10 +7,12 @@ from sqlalchemy import select, text
 from starlette.requests import Request
 
 from app.api.v1.payables import create_payable_bill
-from app.api.v1.tax import TaxCodeCreate, create_code, tax_report
+from app.api.v1.tax import TaxCodeCreate, TaxSettlementCreate, create_code, create_settlement, tax_report
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
+from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.payables import PayableBill
+from app.models.tax import TaxSettlement
 from app.schemas.payables import PayableBillCreate
 from app.services.accounting_posting import system_account
 
@@ -49,6 +51,45 @@ def main() -> None:
         report = tax_report(db, tenant, date(2099,1,1), date(2099,12,31))  # type: ignore[arg-type]
         bdt = next((item for item in report["rows"] if item["currency"] == "BDT"), None)
         if bdt is None or bdt["input_tax"] < Decimal("150.00") or bdt["recoverable_input_tax"] < Decimal("120.00") or bdt["withholding_tax"] < Decimal("100.00"): raise AssertionError("tax report failed")
+
+        bank = FinancialAccount(
+            organization_id=tenant.organization_id,
+            name=f"CI Tax Bank {marker}",
+            account_type="bank",
+            currency="BDT",
+            opening_balance=Decimal("1000"),
+            is_active=True,
+            created_by_user_id=tenant.user_id,
+        )
+        db.add(bank); db.commit()
+        settlement = create_settlement(
+            TaxSettlementCreate(
+                settlement_type="withholding_tax_payment",
+                settlement_date=date(2099, 2, 15),
+                amount=Decimal("100"),
+                account_id=bank.id,
+                reference=f"TAX-{marker}",
+            ),
+            request("POST", "/accounting/tax/settlements"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if settlement["amount"] != Decimal("100.00"):
+            raise AssertionError("withholding tax settlement amount mismatch")
+        settlement_row = db.scalar(select(TaxSettlement).where(TaxSettlement.id == settlement["id"]))
+        settlement_journal = db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id == tenant.organization_id,
+            JournalEntry.source_type == "tax_settlement",
+            JournalEntry.source_id == settlement["id"],
+            JournalEntry.status == "posted",
+        ))
+        settlement_cash = db.scalar(select(FinancialTransaction).where(
+            FinancialTransaction.organization_id == tenant.organization_id,
+            FinancialTransaction.source_type == "tax_settlement",
+            FinancialTransaction.source_id == settlement["id"],
+        ))
+        if settlement_row is None or settlement_journal is None or settlement_cash is None or settlement_cash.direction != "debit":
+            raise AssertionError("withholding tax settlement did not post journal/cash movement")
     finally:
         db.close()
     print("tax center verification passed: tax codes -> input tax -> recoverability -> withholding -> net payable -> balanced journal -> report")
