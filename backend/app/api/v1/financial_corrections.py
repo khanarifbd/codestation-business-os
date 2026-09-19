@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.accounting_money import AccountingMoneyEntry
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialTransaction, Invoice, Payment
@@ -26,6 +27,7 @@ CorrectionType = Literal[
     "payment",
     "expense",
     "transfer",
+    "money_entry",
     "payable_payment",
     "loan_disbursement",
     "loan_repayment",
@@ -154,6 +156,12 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
         .order_by(AccountTransfer.transfer_date.desc(), AccountTransfer.created_at.desc())
         .limit(row_limit)
     ).all()
+    money_entries = db.scalars(
+        select(AccountingMoneyEntry)
+        .where(AccountingMoneyEntry.organization_id == tenant.organization_id)
+        .order_by(AccountingMoneyEntry.entry_date.desc(), AccountingMoneyEntry.created_at.desc())
+        .limit(row_limit)
+    ).all()
     payable_payments = db.execute(
         select(PayablePayment, PayableBill.bill_number, PayableBill.supplier_name)
         .join(PayableBill, PayableBill.id == PayablePayment.bill_id)
@@ -221,6 +229,19 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
             "currency": transfer.source_currency,
             "title": transfer.transfer_number,
             "subtitle": f"Own-account transfer · {transfer.source_currency} → {transfer.destination_currency}",
+        })
+    for entry in money_entries:
+        if _already_reversed(db, tenant.organization_id, entry.id, "accounting_money_entry_reversal"):
+            continue
+        items.append({
+            "source_type": "money_entry",
+            "source_id": entry.id,
+            "number": entry.reference or entry.id[:8].upper(),
+            "date": entry.entry_date,
+            "amount": entry.amount,
+            "currency": entry.currency,
+            "title": f"{entry.kind.title()} · {entry.description}",
+            "subtitle": "Direct Money In/Out accounting entry",
         })
     for payment, bill_number, supplier_name in payable_payments:
         if _already_reversed(db, tenant.organization_id, payment.id, "payable_payment_reversal"):
@@ -391,6 +412,45 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         )
         transfer.status = "reversed"
         reversed_number = transfer.transfer_number
+
+    elif payload.source_type == "money_entry":
+        entry = db.scalar(
+            select(AccountingMoneyEntry).where(
+                AccountingMoneyEntry.id == payload.source_id,
+                AccountingMoneyEntry.organization_id == tenant.organization_id,
+            ).with_for_update()
+        )
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Money entry not found")
+        if _already_reversed(db, tenant.organization_id, entry.id, "accounting_money_entry_reversal"):
+            raise HTTPException(status_code=409, detail="This money entry was already reversed")
+
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="accounting_money_entry",
+            source_id=entry.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        mirrored = _mirror_transactions(
+            db,
+            tenant=tenant,
+            source_types=["accounting_money_entry"],
+            source_id=entry.id,
+            reversal_source_type="accounting_money_entry_reversal",
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        if mirrored != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Money entry does not have exactly one operational financial-account movement to reverse",
+            )
+        reversed_number = entry.reference or f"Money {entry.id[:8].upper()}"
+        before_status = "posted"
+        after_status = "reversed"
 
     elif payload.source_type == "payable_payment":
         payment = db.scalar(
