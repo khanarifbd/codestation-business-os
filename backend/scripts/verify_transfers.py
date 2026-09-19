@@ -27,6 +27,7 @@ class FixtureOrganization:
     timezone: str
     currency: str
     name: str
+    financial_year_start_month: int
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,8 @@ def balance(db, account: FinancialAccount) -> Decimal:
 def main() -> None:
     with engine.begin() as connection:
         fixture = connection.execute(text("""
-            SELECT id AS organization_id, created_by_user_id AS user_id, timezone, currency, name
+            SELECT id AS organization_id, created_by_user_id AS user_id, timezone, currency, name,
+                   financial_year_start_month
             FROM organizations
             WHERE name='Existing Tenant Fixture'
             ORDER BY created_at DESC LIMIT 1
@@ -96,6 +98,7 @@ def main() -> None:
             timezone=str(fixture["timezone"] or "UTC"),
             currency=str(fixture["currency"] or "USD"),
             name=str(fixture["name"]),
+            financial_year_start_month=int(fixture["financial_year_start_month"] or 1),
         ),
     )
     db = SessionLocal()
