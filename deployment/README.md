@@ -4,7 +4,7 @@ This folder is the canonical server/deployment layer for CodeStation Business OS
 
 ## Contents
 
-- `deploy.sh` — one-command staging/live-test deployment
+- `deploy.sh` — the single canonical blue/green deployment command with health checks and automatic traffic rollback
 - `docker-compose.yml` — PostgreSQL, FastAPI, recurring finance scheduler, and Next.js services
 - `backup.sh` — encrypted PostgreSQL + private-upload backup with retention and optional off-server rsync
 - `restore.sh` — safe restore verification and explicit disaster-recovery restore
@@ -33,28 +33,28 @@ Company files are not exposed as a public static directory. Authenticated tenant
 
 ## One-command deploy
 
-The staging/live-test server tracks the `develop` branch. From the repository root:
+The live-test/production server tracks the `develop` branch. There is exactly one supported deployment entrypoint:
 
 ```bash
 sudo bash deployment/deploy.sh
 ```
 
-The script:
+Do not use a separate direct-restart deployment path. `deploy.sh` performs the safe blue/green release flow itself:
 
-1. ensures JWT, Credentials Vault, backup-encryption, and platform super-admin bootstrap secrets exist
+1. acquires a deployment lock and ensures JWT, Credentials Vault, backup-encryption, and platform super-admin bootstrap secrets exist
 2. fetches and fast-forwards `develop`
-3. validates Google OAuth, SMTP account-email delivery, backup configuration, and HTTPS public URLs
-4. safely ensures the Business OS frontend Nginx site accepts up to 25 MB requests
-5. builds backend/frontend/scheduler images
-6. starts/waits for PostgreSQL
+3. validates Google OAuth, SMTP, backup configuration, HTTPS URLs, and Docker Compose configuration
+4. hardens the Business OS Nginx site, including upload limits, trusted client-IP forwarding, named upstreams, and keepalive handling
+5. keeps the active release online while building the candidate backend/frontend images
+6. starts/waits for PostgreSQL and preserves the persistent uploads volume
 7. creates an encrypted pre-migration database + uploads backup
-8. runs `alembic upgrade head`
-9. starts backend, frontend, and `finance-scheduler`
-10. installs/enables the daily encrypted backup timer
-11. checks backend/frontend/scheduler, Alembic head, backup freshness, and timer state
-12. prints container status
+8. runs backward-compatible `alembic upgrade head`
+9. starts the inactive blue/green candidate and validates its backend/frontend health before traffic moves
+10. refreshes the singleton `finance-scheduler`, atomically switches Nginx traffic, and checks the public frontend/API
+11. installs/enables the daily encrypted backup timer and runs production quick verification
+12. keeps the previous release online as the immediate Nginx backup/rollback slot
 
-A deployment fails instead of silently continuing when required launch email/OAuth/backup configuration is still using example placeholders.
+If candidate health, Nginx switching, public verification, the backup timer, or final production verification fails, the script keeps or restores traffic to the previous active release. A deployment also fails instead of silently continuing when required launch email/OAuth/backup configuration still uses unsafe placeholders.
 
 ## Account email / SMTP
 
@@ -196,4 +196,4 @@ openssl rand -hex 32
 
 ## Nginx / SSL
 
-The live Nginx file is managed by the server under `/etc/nginx/sites-available/`. The repository copy is the source/template for disaster recovery and future server moves. Certbot manages the HTTPS certificate directives on the live server. `deploy.sh` only patches the Business OS frontend site with the upload-size directive when it is missing; other websites are not modified.
+The live Nginx file is managed by the server under `/etc/nginx/sites-available/`. The repository copy is the source/template for disaster recovery and future server moves. Certbot manages the HTTPS certificate directives on the live server. `deploy.sh` only manages the Business OS Nginx site and its dedicated upstream/map files; other websites are not modified.
