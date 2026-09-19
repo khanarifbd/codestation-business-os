@@ -151,6 +151,13 @@ test("Invoice print page renders a tenant-safe professional client document", as
 });
 
 test("Client invoice PDF includes the saved Payoneer link and scannable QR", async ({ page }) => {
+  // Unlike the dedicated print route, the client workspace requires a signed-in session.
+  await page.goto("/login");
+  await page.getByLabel(/email or username/i).fill(process.env.E2E_EMAIL ?? "e2e-owner@example.com");
+  await page.locator('input[name="password"]').fill(process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!");
+  await page.getByRole("button", { name: /sign in securely/i }).click();
+  await expect(page).toHaveURL(/\\/dashboard(?:$|\\/|\\?)/, { timeout: 15_000 });
+
   const portalInvoice = {
     ...invoice,
     seller_name: invoice.seller_name_snapshot,
