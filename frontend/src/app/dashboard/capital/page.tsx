@@ -11,7 +11,8 @@ type Dashboard = { rows:{currency:string;company_committed:string;company_funded
 type CompanyInvestor = { id:string;investor_name:string;investor_email?:string;investor_type:string;instrument:string;currency:string;committed_amount:string;funded_amount:string;outstanding_commitment:string;ownership_percent?:string;valuation_amount?:string;agreement_date:string;status:string;agreement_reference?:string;notes?:string };
 type ProjectInvestor = { id:string;project_id:string;project_name?:string;investor_name:string;investor_email?:string;currency:string;committed_amount:string;funded_amount:string;outstanding_commitment:string;investment_date:string;share_type:string;share_value:string;status:string;agreement_reference?:string;notes?:string };
 type Investment = { id:string;investee_name:string;investment_type:string;currency:string;invested_amount:string;carrying_value:string;ownership_percent?:string;investment_date:string;expected_exit_date?:string;status:string;reference?:string;notes?:string };
-type Tab = "overview"|"company"|"project"|"ours";
+type OwnerEquity = { id:string;transaction_type:"contribution"|"drawing";account_id:string;account_name:string;transaction_date:string;currency:string;amount:string;reference?:string|null;notes?:string|null;created_at:string };
+type Tab = "overview"|"owner"|"company"|"project"|"ours";
 
 async function api<T>(url:string,init?:RequestInit):Promise<T>{
   const response=await fetch(url,{...init,headers:{"Content-Type":"application/json",...(init?.headers||{})}});
@@ -28,6 +29,7 @@ export default function InvestmentsFundingPage(){
   const[companyInvestors,setCompanyInvestors]=useState<CompanyInvestor[]>([]);
   const[projectInvestors,setProjectInvestors]=useState<ProjectInvestor[]>([]);
   const[investments,setInvestments]=useState<Investment[]>([]);
+  const[ownerEquity,setOwnerEquity]=useState<OwnerEquity[]>([]);
   const[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
   const[tabLoading,setTabLoading]=useState(false);
   const[loadedTabs,setLoadedTabs]=useState<Set<Tab>>(()=>new Set(["overview"]));
@@ -47,12 +49,14 @@ export default function InvestmentsFundingPage(){
     try{
       const[nextMeta,rows]=await Promise.all([
         !force&&meta?Promise.resolve(meta):api<Meta>("/api/capital/meta"),
-        target==="company"?api<CompanyInvestor[]>("/api/capital/company-investors"):
+        target==="owner"?api<OwnerEquity[]>("/api/capital/owner-equity"):
+          target==="company"?api<CompanyInvestor[]>("/api/capital/company-investors"):
           target==="project"?api<ProjectInvestor[]>("/api/capital/project-investors"):
           api<Investment[]>("/api/capital/investments")
       ]);
       setMeta(nextMeta);
-      if(target==="company")setCompanyInvestors(rows as CompanyInvestor[]);
+      if(target==="owner")setOwnerEquity(rows as OwnerEquity[]);
+      else if(target==="company")setCompanyInvestors(rows as CompanyInvestor[]);
       else if(target==="project")setProjectInvestors(rows as ProjectInvestor[]);
       else setInvestments(rows as Investment[]);
       setLoadedTabs(current=>{const next=new Set(current);next.add(target);return next});
@@ -78,16 +82,17 @@ export default function InvestmentsFundingPage(){
     }
     catch(e){setError(e instanceof Error?e.message:"Request failed")}finally{setBusy(false)}
   }
-  const accountOptions=(currency?:string)=>(meta?.accounts??[]).filter(x=>!currency||x.currency===currency).map(x=>({value:x.id,label:`${x.name} · ${x.currency} · ${money(x.balance)}`}));
+  const accountOptions=(currency?:string)=>(meta?.accounts??[]).filter(x=>x.account_type!=="credit_card"&&(!currency||x.currency===currency)).map(x=>({value:x.id,label:`${x.name} · ${x.currency} · ${money(x.balance)}`}));
   const projectOptions=useMemo(()=>(meta?.projects??[]).map(x=>({value:x.id,label:`${x.project_number} · ${x.name} · ${x.currency}`})),[meta]);
 
   if(loading)return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400"/></main>;
   return <main className="min-h-screen bg-neutral-100 p-4 sm:p-7 lg:p-10"><div className="mx-auto max-w-[1500px] space-y-6">
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-sm text-neutral-500">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Investments & Funding</h1><p className="mt-2 max-w-4xl text-sm text-neutral-500">Track company investors, project-specific funding and investments made by the company. Commitments stay separate from actual cash movement, while funded transactions post to the accounting ledger.</p></div><button onClick={()=>void refreshCurrent()} disabled={busy||tabLoading} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm disabled:opacity-50"><RefreshCw className="size-4"/>Refresh</button></header>
     {error?<Notice kind="error" text={error}/>:null}{success?<Notice kind="success" text={success}/>:null}
-    <div className="flex gap-2 overflow-x-auto pb-1">{([['overview','Overview'],['company','Company Funding'],['project','Project Funding'],['ours','Our Investments']] as [Tab,string][]).map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`whitespace-nowrap rounded-xl px-4 py-2 text-sm ${tab===id?"bg-neutral-950 text-white":"border bg-white text-neutral-600"}`}>{label}</button>)}</div>
+    <div className="flex gap-2 overflow-x-auto pb-1">{([['overview','Overview'],['owner','Owner Equity'],['company','Company Funding'],['project','Project Funding'],['ours','Our Investments']] as [Tab,string][]).map(([id,label])=><button key={id} onClick={()=>setTab(id)} className={`whitespace-nowrap rounded-xl px-4 py-2 text-sm ${tab===id?"bg-neutral-950 text-white":"border bg-white text-neutral-600"}`}>{label}</button>)}</div>
     {tab==="overview"?<Overview data={dashboard}/>:null}
     {tab!=="overview"&&tabLoading?<div className="flex min-h-72 items-center justify-center rounded-3xl border bg-white"><Loader2 className="size-6 animate-spin text-neutral-400"/></div>:null}
+    {tab==="owner"&&!tabLoading?<OwnerEquityPanel items={ownerEquity} accounts={accountOptions} busy={busy} post={post}/>:null}
     {tab==="company"&&!tabLoading?<CompanyFunding items={companyInvestors} accounts={accountOptions} busy={busy} post={post}/>:null}
     {tab==="project"&&!tabLoading?<ProjectFunding items={projectInvestors} projects={projectOptions} meta={meta} accounts={accountOptions} busy={busy} post={post}/>:null}
     {tab==="ours"&&!tabLoading?<OurInvestments items={investments} accounts={accountOptions} busy={busy} post={post}/>:null}
@@ -96,6 +101,34 @@ export default function InvestmentsFundingPage(){
 
 function Overview({data}:{data:Dashboard|null}){
   return <div className="space-y-5"><div className="grid gap-4 sm:grid-cols-3"><Stat icon={Users} label="Company investors" value={String(data?.active_company_investors??0)}/><Stat icon={HandCoins} label="Project investors" value={String(data?.active_project_investors??0)}/><Stat icon={TrendingUp} label="Active investments" value={String(data?.active_investments??0)}/></div><Card title="Capital position by currency"><div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><Th>Currency</Th><Th>Company committed</Th><Th>Company funded</Th><Th>Project committed</Th><Th>Project funded</Th><Th>Our investments</Th><Th>Investment income</Th><Th>Profit distributed</Th></tr></thead><tbody>{data?.rows.length?data.rows.map(x=><tr key={x.currency} className="border-b last:border-0"><Td strong>{x.currency}</Td><Td>{money(x.company_committed)}</Td><Td>{money(x.company_funded)}</Td><Td>{money(x.project_committed)}</Td><Td>{money(x.project_funded)}</Td><Td>{money(x.our_investments)}</Td><Td>{money(x.investment_income)}</Td><Td>{money(x.investor_profit_paid)}</Td></tr>):<tr><td colSpan={8} className="py-12 text-center text-neutral-400">No investment or funding activity yet.</td></tr>}</tbody></table></div></Card></div>
+}
+
+function OwnerEquityPanel({items,accounts,busy,post}:{items:OwnerEquity[];accounts:(c?:string)=>{value:string;label:string}[];busy:boolean;post:Post}){
+  return <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
+    <Card title="Owner contribution / drawing">
+      <p className="mb-4 text-sm leading-6 text-neutral-500">Owner contributions increase equity and cash. Drawings reduce equity and cash; neither is business revenue or operating expense.</p>
+      <form onSubmit={e=>{e.preventDefault();const f=e.currentTarget,d=new FormData(f);const kind=String(d.get("transaction_type"));void post("owner-equity",{transaction_type:kind,account_id:d.get("account_id"),transaction_date:d.get("date"),amount:Number(d.get("amount")),reference:d.get("reference")||null,notes:d.get("notes")||null},kind==="contribution"?"Owner contribution posted.":"Owner drawing posted.",f)}} className="space-y-3">
+        <Select name="transaction_type" label="Transaction type" options={[["contribution","Owner contribution"],["drawing","Owner drawing"]]}/>
+        <SearchableSelect label="Financial account" name="account_id" required options={accounts()}/>
+        <Field name="date" label="Transaction date" type="date" required/>
+        <Field name="amount" label="Amount" type="number" step="0.01" required/>
+        <Field name="reference" label="Reference"/>
+        <Field name="notes" label="Notes"/>
+        <Submit busy={busy} text="Post owner equity"/>
+      </form>
+    </Card>
+    <Card title="Owner equity history">
+      <div className="space-y-3">
+        {items.length?items.map(item=><div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border p-4">
+          <div>
+            <p className="font-semibold">{item.transaction_type==="contribution"?"Owner contribution":"Owner drawing"}</p>
+            <p className="mt-1 text-xs text-neutral-500">{item.transaction_date} · {item.account_name}{item.reference?` · ${item.reference}`:""}</p>
+          </div>
+          <p className="font-semibold tabular-nums">{item.currency} {money(item.amount)}</p>
+        </div>):<Empty/>}
+      </div>
+    </Card>
+  </div>
 }
 
 function CompanyFunding({items,accounts,busy,post}:{items:CompanyInvestor[];accounts:(c?:string)=>{value:string;label:string}[];busy:boolean;post:Post}){
