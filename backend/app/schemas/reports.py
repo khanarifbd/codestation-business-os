@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class ReportFinancialRow(BaseModel):
     currency: str
     invoiced_revenue: Decimal
+    direct_income: Decimal
     collected_revenue: Decimal
     receivables: Decimal
     expenses: Decimal
@@ -19,6 +20,7 @@ class ReportTrendRow(BaseModel):
     period: str
     currency: str
     invoiced_revenue: Decimal
+    direct_income: Decimal
     collected_revenue: Decimal
     expenses: Decimal
     transfer_fees: Decimal
