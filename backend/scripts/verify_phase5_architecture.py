@@ -61,12 +61,16 @@ def main() -> None:
         raise AssertionError("long-running production services must not run migrations")
     if production_compose.count("image: codestation-business-os-backend:latest") < 2:
         raise AssertionError("backend and finance scheduler must share the deployed backend image")
+    if "image: codestation-business-os-frontend:latest" not in production_compose:
+        raise AssertionError("frontend image tag must remain stable across legacy and canonical Compose project names")
     if "name: codestation-business-os_business_os_uploads" not in production_compose:
         raise AssertionError("persistent upload volume name must remain stable across deployment paths")
 
-    safe_deploy = (ROOT / "deployment/safe-deploy.sh").read_text()
-    required_safe_deploy_fragments = (
-        'UPLOADS_VOLUME="${PROJECT_NAME}_business_os_uploads"',
+    deploy = (ROOT / "deployment/deploy.sh").read_text()
+    required_deploy_fragments = (
+        'UPLOADS_VOLUME="codestation-business-os_business_os_uploads"',
+        'resolve_compose_project() {',
+        'Refusing to risk switching to a different database volume.',
         '-v "${UPLOADS_VOLUME}:/data/uploads"',
         'verify-production.sh" --config-only',
         'Refreshing singleton finance scheduler from candidate backend image',
@@ -75,12 +79,15 @@ def main() -> None:
         'docker cp "${source_container}:/data/uploads/." "${helper_name}:/data/uploads/"',
         'sync_active_uploads_to_volume "${active_slot}"',
     )
-    for fragment in required_safe_deploy_fragments:
-        if fragment not in safe_deploy:
-            raise AssertionError(f"safe deployment hardening missing: {fragment}")
+    for fragment in required_deploy_fragments:
+        if fragment not in deploy:
+            raise AssertionError(f"canonical deployment hardening missing: {fragment}")
 
-    sync_call = safe_deploy.index('sync_active_uploads_to_volume "${active_slot}"')
-    inactive_removal = safe_deploy.index('remove_legacy_blue_if_inactive "${active_slot}"')
+    if (ROOT / "deployment/safe-deploy.sh").exists():
+        raise AssertionError("duplicate safe-deploy.sh entrypoint must not return")
+
+    sync_call = deploy.index('sync_active_uploads_to_volume "${active_slot}"')
+    inactive_removal = deploy.index('remove_legacy_blue_if_inactive "${active_slot}"')
     if sync_call >= inactive_removal:
         raise AssertionError("active uploads must be preserved before any legacy active data can be removed")
 
