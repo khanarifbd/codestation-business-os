@@ -135,6 +135,55 @@ def _resolve_source(
     raise HTTPException(status_code=400, detail="Unsupported business source")
 
 
+def _business_source_currency(
+    db: DbSession,
+    organization_id: str,
+    *,
+    order_id: str | None,
+    project_id: str | None,
+) -> str | None:
+    if project_id:
+        return db.scalar(
+            select(Project.currency).where(
+                Project.id == project_id,
+                Project.organization_id == organization_id,
+            )
+        )
+    if order_id:
+        return db.scalar(
+            select(Order.currency).where(
+                Order.id == order_id,
+                Order.organization_id == organization_id,
+            )
+        )
+    return None
+
+
+def _require_source_currency_match(
+    db: DbSession,
+    organization_id: str,
+    *,
+    financial_currency: str,
+    order_id: str | None,
+    project_id: str | None,
+) -> None:
+    source_currency = _business_source_currency(
+        db,
+        organization_id,
+        order_id=order_id,
+        project_id=project_id,
+    )
+    if source_currency and financial_currency.upper() != str(source_currency).upper():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This business source is denominated in {str(source_currency).upper()}. "
+                f"Select a {str(source_currency).upper()} financial account; "
+                "cross-currency conversion is not performed silently."
+            ),
+        )
+
+
 @router.get("", response_model=list[AccountingMoneyEntryRead])
 def list_money_entries(db: DbSession, tenant: AccountingViewer, kind: str | None = None, limit: int = 100):
     query = select(AccountingMoneyEntry).where(AccountingMoneyEntry.organization_id == tenant.organization_id)
@@ -168,8 +217,17 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
         payload.source_type,
         payload.source_id,
     )
+    _require_source_currency_match(
+        db,
+        tenant.organization_id,
+        financial_currency=financial.currency,
+        order_id=order_id,
+        project_id=project_id,
+    )
 
     amount = _money(payload.amount)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be at least 0.01 in the financial account currency")
     if payload.kind == "expense" and financial.account_type != "credit_card" and _financial_balance(db, financial) < amount:
         raise HTTPException(status_code=409, detail="Selected account does not have enough balance")
 
@@ -300,6 +358,10 @@ def create_income_with_fee(
 
     gross_amount = _money(payload.gross_amount)
     fee_amount = _money(payload.fee_amount)
+    if gross_amount <= 0:
+        raise HTTPException(status_code=400, detail="Gross income must be at least 0.01 in the financial account currency")
+    if Decimal(payload.fee_amount) > 0 and fee_amount <= 0:
+        raise HTTPException(status_code=400, detail="Processing fee must be at least 0.01 when provided")
     if fee_amount > gross_amount:
         raise HTTPException(status_code=400, detail="Processing fee cannot exceed gross income")
 
@@ -351,29 +413,13 @@ def create_income_with_fee(
         payload.source_id,
     )
 
-    source_currency: str | None = None
-    if project_id:
-        source_currency = db.scalar(
-            select(Project.currency).where(
-                Project.id == project_id,
-                Project.organization_id == tenant.organization_id,
-            )
-        )
-    elif order_id:
-        source_currency = db.scalar(
-            select(Order.currency).where(
-                Order.id == order_id,
-                Order.organization_id == tenant.organization_id,
-            )
-        )
-    if source_currency and financial.currency != source_currency:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"This income is denominated in {source_currency}. Select a {source_currency} financial account; "
-                "cross-currency conversion is not performed silently."
-            ),
-        )
+    _require_source_currency_match(
+        db,
+        tenant.organization_id,
+        financial_currency=financial.currency,
+        order_id=order_id,
+        project_id=project_id,
+    )
 
     if fee_amount > _money(_financial_balance(db, financial) + gross_amount):
         raise HTTPException(
