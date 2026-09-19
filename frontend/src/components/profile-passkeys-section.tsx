@@ -40,7 +40,6 @@ export function ProfilePasskeysSection({
   const [working, setWorking] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [name, setName] = useState("My passkey");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const supported = useMemo(() => typeof window === "undefined" || passkeysSupported(), []);
@@ -98,7 +97,6 @@ export function ProfilePasskeysSection({
       const verifyPayload = await verifyResponse.json().catch(() => null);
       if (!verifyResponse.ok) throw new Error(verifyPayload?.detail ?? "Unable to save this passkey.");
 
-      setPassword("");
       setMessage("Passkey added. You can now use it from the sign-in page.");
       await load();
     } catch (reason) {
@@ -162,7 +160,8 @@ export function ProfilePasskeysSection({
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              void registerPasskey({ current_password: password });
+              const form = new FormData(event.currentTarget);
+              void registerPasskey({ current_password: String(form.get("passkey_current_password") ?? "") });
             }}
           >
             <PasswordField
@@ -170,10 +169,8 @@ export function ProfilePasskeysSection({
               label="Current password"
               autoComplete="current-password"
               placeholder="Verify your password first"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
             />
-            <button type="submit" disabled={working || !supported || password.length < 8} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">
+            <button type="submit" disabled={working || !supported} className="inline-flex h-11 items-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50">
               {working ? <Loader2 className="size-4 animate-spin" /> : <Fingerprint className="size-4" />}
               {working ? "Adding passkey…" : "Verify & add passkey"}
             </button>
