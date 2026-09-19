@@ -9,7 +9,7 @@ import { FinancialConfirmationDialog } from "@/components/financial-confirmation
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
 
-type CorrectionType = "payment" | "expense" | "transfer" | "payable_payment" | "loan_disbursement" | "loan_repayment";
+type CorrectionType = "payment" | "expense" | "transfer" | "money_entry" | "payable_payment" | "loan_disbursement" | "loan_repayment";
 type Candidate = {
   source_type: CorrectionType;
   source_id: string;
@@ -39,6 +39,7 @@ const correctionTypes: TypeOption[] = [
   { value: "payment", title: "Customer payment", help: "Invoice collection recorded in Money In" },
   { value: "expense", title: "Expense", help: "Posted company, project or client expense" },
   { value: "transfer", title: "Account transfer", help: "Transfer between your own financial accounts" },
+  { value: "money_entry", title: "Direct Money In/Out", help: "Direct income or expense posted from the accounting money workspace" },
   { value: "payable_payment", title: "Supplier payment", help: "Payment made against a supplier bill" },
   { value: "loan_disbursement", title: "Loan received", help: "Loan principal disbursed into a business account" },
   { value: "loan_repayment", title: "Loan repayment", help: "Principal, interest or fee paid to a lender" },
@@ -48,7 +49,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
 function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (match) => match.toUpperCase()); }
 function sourceHref(item: CorrectionHistory) {
-  if (item.source_type === "expense") return "/dashboard/accounting/money-out";
+  if (item.source_type === "expense" || item.source_type === "money_entry") return "/dashboard/accounting/money-out";
   if (item.source_type === "transfer") return "/dashboard/accounting/transfers";
   if (item.source_type === "payable_payment") return "/dashboard/accounting/payables";
   if (item.source_type === "loan_disbursement" || item.source_type === "loan_repayment") return "/dashboard/accounting/loans";
@@ -159,6 +160,7 @@ export default function FinancialCorrectionsPage() {
       {selected ? <div className="mt-5 rounded-xl border bg-neutral-50 p-4 text-sm"><p className="font-medium">{selected.title}</p><p className="mt-1 text-neutral-500">{selected.subtitle}</p><div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-neutral-500"><span>Original date: {selected.date}</span><span>Amount: <strong className="text-neutral-900">{money(selected.amount, selected.currency)}</strong></span></div></div> : null}
 
       {type === "loan_disbursement" ? <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">Loan disbursement reversal is dependency-aware. If part of that principal was already repaid, reverse the related repayment first.</div> : null}
+      {type === "money_entry" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a direct Money In/Out entry keeps the original record for audit history, posts the opposite journal, and restores the financial account movement.</div> : null}
       {type === "payable_payment" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a supplier payment re-opens the bill for the reversed amount and restores the selected financial account balance.</div> : null}
       {type === "loan_repayment" ? <div className="mt-4 rounded-xl border bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Reversing a loan repayment restores principal outstanding and reverses interest/fee expense together with the cash movement.</div> : null}
 
