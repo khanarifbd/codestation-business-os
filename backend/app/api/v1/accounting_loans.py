@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.accounting import JournalEntry, JournalLine
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.loan_accounting import LoanDisbursement, LoanFee, LoanScheduleItem
@@ -18,8 +19,16 @@ from app.schemas.accounting_loans import (
     LoanRepaymentRead,
     LoanScheduleItemRead,
 )
-from app.services.accounting_posting import PostingLine, financial_ledger_account, money, post_journal, system_account
+from app.services.accounting_posting import (
+    PostingLine,
+    financial_ledger_account,
+    money,
+    post_journal,
+    system_account,
+    to_base_amount,
+)
 from app.services.activity_log import record_activity
+from app.services.functional_currency import functional_currency_for_date
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/loans", tags=["Accounting - Loans"])
@@ -181,6 +190,94 @@ def _disbursed_total(db: DbSession, loan: CompanyLoan) -> Decimal:
         )
     ) or Decimal("0")
     return money(loan.principal_amount if Decimal(legacy_received) > 0 else Decimal("0"))
+
+
+def _loan_principal_carrying_base(
+    db: DbSession,
+    *,
+    organization_id: str,
+    loan: CompanyLoan,
+    current_repayment_id: str,
+    loans_payable_account_id: str,
+    principal_amount: Decimal,
+) -> Decimal:
+    reversed_entry = JournalEntry.__table__.alias("reversed_entry")
+
+    disbursements = db.execute(
+        select(LoanDisbursement.principal_amount, JournalLine.credit)
+        .join(
+            JournalEntry,
+            (JournalEntry.organization_id == LoanDisbursement.organization_id)
+            & (JournalEntry.source_type == "loan_disbursement")
+            & (JournalEntry.source_id == LoanDisbursement.id)
+            & (JournalEntry.status == "posted"),
+        )
+        .join(
+            JournalLine,
+            (JournalLine.organization_id == LoanDisbursement.organization_id)
+            & (JournalLine.journal_entry_id == JournalEntry.id)
+            & (JournalLine.ledger_account_id == loans_payable_account_id),
+        )
+        .where(
+            LoanDisbursement.organization_id == organization_id,
+            LoanDisbursement.loan_id == loan.id,
+            LoanDisbursement.principal_amount > 0,
+            ~select(reversed_entry.c.id)
+            .where(
+                reversed_entry.c.organization_id == organization_id,
+                reversed_entry.c.reversed_entry_id == JournalEntry.id,
+            )
+            .exists(),
+        )
+    ).all()
+
+    repayments = db.execute(
+        select(LoanRepayment.principal_amount, JournalLine.debit)
+        .join(
+            JournalEntry,
+            (JournalEntry.organization_id == LoanRepayment.organization_id)
+            & (JournalEntry.source_type == "loan_repayment_accounting")
+            & (JournalEntry.source_id == LoanRepayment.id)
+            & (JournalEntry.status == "posted"),
+        )
+        .join(
+            JournalLine,
+            (JournalLine.organization_id == LoanRepayment.organization_id)
+            & (JournalLine.journal_entry_id == JournalEntry.id)
+            & (JournalLine.ledger_account_id == loans_payable_account_id),
+        )
+        .where(
+            LoanRepayment.organization_id == organization_id,
+            LoanRepayment.loan_id == loan.id,
+            LoanRepayment.id != current_repayment_id,
+            LoanRepayment.principal_amount > 0,
+            ~select(reversed_entry.c.id)
+            .where(
+                reversed_entry.c.organization_id == organization_id,
+                reversed_entry.c.reversed_entry_id == JournalEntry.id,
+            )
+            .exists(),
+        )
+    ).all()
+
+    remaining_principal = money(
+        sum((Decimal(amount) for amount, _ in disbursements), Decimal("0"))
+        - sum((Decimal(amount) for amount, _ in repayments), Decimal("0"))
+    )
+    remaining_base = money(
+        sum((Decimal(base) for _, base in disbursements), Decimal("0"))
+        - sum((Decimal(base) for _, base in repayments), Decimal("0"))
+    )
+    principal_amount = money(principal_amount)
+    if principal_amount <= 0:
+        return Decimal("0.00")
+    if remaining_principal <= 0 or remaining_base <= 0:
+        raise HTTPException(status_code=409, detail="Loan principal carrying value is unavailable for repayment")
+    if principal_amount > remaining_principal:
+        raise HTTPException(status_code=409, detail="Principal repayment exceeds the remaining accounting carrying quantity")
+    if principal_amount == remaining_principal:
+        return remaining_base
+    return money(remaining_base * principal_amount / remaining_principal)
 
 
 def _loan_json(db: DbSession, item: CompanyLoan) -> dict:
@@ -442,18 +539,103 @@ def repay_loan(
     db.add(repayment)
     db.flush()
 
+    base_currency = functional_currency_for_date(db, tenant.organization_id, repayment.payment_date)
+    _, repayment_rate = to_base_amount(
+        db,
+        tenant.organization_id,
+        base_currency,
+        Decimal("1"),
+        loan.currency,
+        rate_date=repayment.payment_date,
+    )
+    principal_cash_base = money(principal * repayment_rate)
+    interest_base = money(interest * repayment_rate)
+    fee_base = money(fee * repayment_rate)
+    cash_base = money(principal_cash_base + interest_base + fee_base)
+
     lines: list[PostingLine] = [
-        PostingLine(ledger_account_id=bank_ledger.id, credit=total, currency=loan.currency, description=f"Loan repayment paid to {loan.lender_name}")
+        PostingLine(
+            ledger_account_id=bank_ledger.id,
+            credit=cash_base,
+            currency=loan.currency,
+            exchange_rate_to_base=repayment_rate,
+            original_amount=total,
+            description=f"Loan repayment paid to {loan.lender_name}",
+        )
     ]
     if principal > 0:
         loans_payable = system_account(db, tenant.organization_id, "loans_payable")
-        lines.insert(0, PostingLine(ledger_account_id=loans_payable.id, debit=principal, currency=loan.currency, description="Loan principal repayment"))
+        principal_carrying_base = _loan_principal_carrying_base(
+            db,
+            organization_id=tenant.organization_id,
+            loan=loan,
+            current_repayment_id=repayment.id,
+            loans_payable_account_id=loans_payable.id,
+            principal_amount=principal,
+        )
+        principal_carrying_rate = (principal_carrying_base / principal).quantize(Decimal("0.00000001"))
+        lines.insert(
+            0,
+            PostingLine(
+                ledger_account_id=loans_payable.id,
+                debit=principal_carrying_base,
+                currency=loan.currency,
+                exchange_rate_to_base=principal_carrying_rate,
+                original_amount=principal,
+                description="Loan principal repayment",
+            ),
+        )
+        fx_difference = money(principal_cash_base - principal_carrying_base)
+        if fx_difference > 0:
+            realized_fx = system_account(db, tenant.organization_id, "realized_fx_loss")
+            lines.insert(
+                1,
+                PostingLine(
+                    ledger_account_id=realized_fx.id,
+                    debit=fx_difference,
+                    currency=base_currency,
+                    original_amount=fx_difference,
+                    description=f"Realized FX loss on loan principal repayment — {loan.lender_name}",
+                ),
+            )
+        elif fx_difference < 0:
+            realized_fx = system_account(db, tenant.organization_id, "realized_fx_gain")
+            lines.insert(
+                1,
+                PostingLine(
+                    ledger_account_id=realized_fx.id,
+                    credit=abs(fx_difference),
+                    currency=base_currency,
+                    original_amount=abs(fx_difference),
+                    description=f"Realized FX gain on loan principal repayment — {loan.lender_name}",
+                ),
+            )
     if interest > 0:
         interest_expense = system_account(db, tenant.organization_id, "interest_expense")
-        lines.insert(0, PostingLine(ledger_account_id=interest_expense.id, debit=interest, currency=loan.currency, description="Loan interest expense"))
+        lines.insert(
+            0,
+            PostingLine(
+                ledger_account_id=interest_expense.id,
+                debit=interest_base,
+                currency=loan.currency,
+                exchange_rate_to_base=repayment_rate,
+                original_amount=interest,
+                description="Loan interest expense",
+            ),
+        )
     if fee > 0:
         fee_expense = system_account(db, tenant.organization_id, "bank_fees")
-        lines.insert(0, PostingLine(ledger_account_id=fee_expense.id, debit=fee, currency=loan.currency, description=f"Loan fee — {payload.fee_type}"))
+        lines.insert(
+            0,
+            PostingLine(
+                ledger_account_id=fee_expense.id,
+                debit=fee_base,
+                currency=loan.currency,
+                exchange_rate_to_base=repayment_rate,
+                original_amount=fee,
+                description=f"Loan fee — {payload.fee_type}",
+            ),
+        )
         db.add(
             LoanFee(
                 organization_id=tenant.organization_id,
