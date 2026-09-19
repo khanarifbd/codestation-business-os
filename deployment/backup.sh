@@ -35,6 +35,7 @@ command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
 
 POSTGRES_USER="$(env_value POSTGRES_USER)"
 POSTGRES_DB="$(env_value POSTGRES_DB)"
+COMPOSE_PROJECT_NAME="$(env_value COMPOSE_PROJECT_NAME)"
 BACKUP_DIR="$(env_value BACKUP_DIR)"
 BACKUP_RETENTION_DAYS="$(env_value BACKUP_RETENTION_DAYS)"
 BACKUP_ENCRYPTION_KEY="$(env_value BACKUP_ENCRYPTION_KEY)"
@@ -43,6 +44,7 @@ BACKUP_REMOTE_REQUIRED="$(env_value BACKUP_REMOTE_REQUIRED)"
 
 POSTGRES_USER="${POSTGRES_USER:-business_os}"
 POSTGRES_DB="${POSTGRES_DB:-codestation_business_os}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-codestation-business-os}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/codestation-business-os}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 BACKUP_REMOTE_REQUIRED="${BACKUP_REMOTE_REQUIRED:-false}"
@@ -59,7 +61,7 @@ fi
 mkdir -p "${BACKUP_DIR}"
 chmod 700 "${BACKUP_DIR}"
 
-COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+COMPOSE=(docker compose -p "${COMPOSE_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 
 if ! "${COMPOSE[@]}" exec -T postgres pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
   fail "PostgreSQL is not running/ready; backup was not created"
