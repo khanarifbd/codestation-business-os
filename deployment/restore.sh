@@ -44,16 +44,18 @@ mode="${2:---verify}"
 
 POSTGRES_USER="$(env_value POSTGRES_USER)"
 POSTGRES_DB="$(env_value POSTGRES_DB)"
+COMPOSE_PROJECT_NAME="$(env_value COMPOSE_PROJECT_NAME)"
 BACKUP_ENCRYPTION_KEY="$(env_value BACKUP_ENCRYPTION_KEY)"
 POSTGRES_USER="${POSTGRES_USER:-business_os}"
 POSTGRES_DB="${POSTGRES_DB:-codestation_business_os}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-codestation-business-os}"
 
 [[ "${POSTGRES_USER}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail "POSTGRES_USER must be a safe PostgreSQL identifier"
 [[ "${POSTGRES_DB}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail "POSTGRES_DB must be a safe PostgreSQL identifier"
 [[ -n "${BACKUP_ENCRYPTION_KEY}" ]] || fail "BACKUP_ENCRYPTION_KEY is not configured"
 [[ "${BACKUP_ENCRYPTION_KEY}" != "replace_with_a_long_random_backup_encryption_key" ]] || fail "BACKUP_ENCRYPTION_KEY still uses the example placeholder"
 
-COMPOSE=(docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
+COMPOSE=(docker compose -p "${COMPOSE_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}")
 
 "${COMPOSE[@]}" up -d postgres >/dev/null
 for attempt in $(seq 1 30); do
@@ -135,6 +137,10 @@ bash "${ROOT_DIR}/deployment/backup.sh"
 
 echo "==> Stopping application writers"
 "${COMPOSE[@]}" stop backend frontend finance-scheduler >/dev/null || true
+for slot in blue green; do
+  docker rm -f "${COMPOSE_PROJECT_NAME}-${slot}-frontend" >/dev/null 2>&1 || true
+  docker rm -f "${COMPOSE_PROJECT_NAME}-${slot}-backend" >/dev/null 2>&1 || true
+done
 
 echo "==> Replacing production PostgreSQL database"
 "${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER}" -d postgres \
@@ -153,9 +159,7 @@ echo "==> Replacing private uploads"
   sh -c 'mkdir -p /data/uploads && tar -xzf - -C /data/uploads' \
   < "${uploads_archive}"
 
-echo "==> Restarting Business OS"
-"${COMPOSE[@]}" up -d --remove-orphans backend frontend finance-scheduler
-
-bash "${ROOT_DIR}/deployment/verify-production.sh" --quick
+echo "==> Releasing the restored database through the canonical deployment flow"
+BUSINESS_OS_ENV_FILE="${ENV_FILE}" bash "${ROOT_DIR}/deployment/deploy.sh"
 
 echo "Production restore completed successfully."
