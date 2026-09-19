@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
-import { ArrowRight, Loader2, LockKeyhole } from "lucide-react";
+import { ArrowRight, Fingerprint, Loader2, LockKeyhole } from "lucide-react";
 
 import { AuthFrame } from "@/components/auth/auth-frame";
 import { GoogleAuthSection } from "@/components/auth/google-sign-in";
 import { PasswordField } from "@/components/auth/password-field";
 import type { AuthUser } from "@/lib/auth-session";
+import { conditionalPasskeysSupported, getPasskeyCredential, type PasskeyOptionsEnvelope } from "@/lib/passkeys";
 
 type LoginResponse = { user: AuthUser };
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
@@ -31,6 +33,42 @@ export default function LoginPage() {
       setNotice("Email verified. You can now sign in.");
     }
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    void (async () => {
+      if (!await conditionalPasskeysSupported()) return;
+      try {
+        const optionsResponse = await fetch("/api/auth/passkeys/options", { method: "POST" });
+        if (!optionsResponse.ok || !active) return;
+        const options = await optionsResponse.json() as PasskeyOptionsEnvelope;
+        const credential = await getPasskeyCredential(options.public_key, {
+          conditional: true,
+          signal: controller.signal,
+        });
+        if (!active) return;
+        const verifyResponse = await fetch("/api/auth/passkeys/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ challenge_id: options.challenge_id, credential }),
+        });
+        if (!verifyResponse.ok || !active) return;
+        const login = await verifyResponse.json() as LoginResponse;
+        if (login.user.system_role === "super_admin") router.replace("/super-admin");
+        else router.replace("/dashboard");
+        router.refresh();
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        // Conditional mediation is intentionally quiet. The explicit passkey
+        // button below surfaces actionable errors when the user asks to sign in.
+      }
+    })();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [router]);
 
   async function finishAuthentication(user: AuthUser) {
     if (user.system_role === "super_admin") {
@@ -50,6 +88,35 @@ export default function LoginPage() {
     setPendingGoogleCredential(credential);
     setError(null);
     setNotice("Enter your existing Business OS email or username and password below once. After it is verified, this Google account will be connected securely.");
+  }
+
+  async function handlePasskeySignIn() {
+    setPasskeyLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const optionsResponse = await fetch("/api/auth/passkeys/options", { method: "POST" });
+      const optionsPayload = await optionsResponse.json().catch(() => null);
+      if (!optionsResponse.ok) throw new Error(optionsPayload?.detail ?? "Unable to start passkey sign-in.");
+
+      const options = optionsPayload as PasskeyOptionsEnvelope;
+      const credential = await getPasskeyCredential(options.public_key);
+      const verifyResponse = await fetch("/api/auth/passkeys/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ challenge_id: options.challenge_id, credential }),
+      });
+      const verifyPayload = await verifyResponse.json().catch(() => null);
+      if (!verifyResponse.ok) throw new Error(verifyPayload?.detail ?? "Unable to verify this passkey.");
+      await finishAuthentication((verifyPayload as LoginResponse).user);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "NotAllowedError") {
+        setError("Passkey sign-in was cancelled or timed out.");
+      } else {
+        setError(reason instanceof Error ? reason.message : "Unable to sign in with a passkey.");
+      }
+      setPasskeyLoading(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -108,6 +175,20 @@ export default function LoginPage() {
       asideTitle="Your business, connected from lead to ledger."
       asideDescription="Move from client conversations to delivery, invoicing, payments and accounting without stitching together separate tools."
     >
+      <button
+        type="button"
+        onClick={() => void handlePasskeySignIn()}
+        disabled={passkeyLoading || loading}
+        className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 text-sm font-semibold text-neutral-900 shadow-sm transition hover:border-neutral-300 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {passkeyLoading ? <Loader2 className="size-4 animate-spin" /> : <Fingerprint className="size-4" />}
+        {passkeyLoading ? "Waiting for passkey…" : "Sign in with a passkey"}
+      </button>
+      <div className="my-5 flex items-center gap-3" aria-hidden="true">
+        <div className="h-px flex-1 bg-neutral-200" />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">or</span>
+        <div className="h-px flex-1 bg-neutral-200" />
+      </div>
       <GoogleAuthSection mode="login" onAuthenticated={finishAuthentication} onLinkRequired={prepareGoogleLink} />
 
       <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
@@ -116,7 +197,7 @@ export default function LoginPage() {
           <input
             name="identifier"
             type="text"
-            autoComplete="username"
+            autoComplete="username webauthn"
             required
             autoFocus
             className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 text-[15px] outline-none transition placeholder:text-neutral-400 hover:border-neutral-300 focus:border-neutral-500 focus:ring-4 focus:ring-neutral-950/[0.04]"
