@@ -113,12 +113,12 @@ function methodLabel(value: string | null) {
 }
 
 function inferMethod(account: Destination): PaymentMethod {
-  if (account.account_type === "bank") return "bank_transfer";
-  const provider = (account.provider_name || account.name).toLowerCase();
+  const provider = `${account.provider_name ?? ""} ${account.name}`.toLowerCase();
   if (provider.includes("payoneer")) return "payoneer";
   if (provider.includes("wise")) return "wise";
   if (provider.includes("stripe")) return "stripe";
   if (provider.includes("paypal")) return "paypal";
+  if (account.account_type === "bank") return "bank_transfer";
   if (account.account_type === "cash" || account.account_type === "petty_cash") return "cash";
   return "other";
 }
