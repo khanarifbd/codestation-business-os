@@ -24,7 +24,7 @@ from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.customer_advances import CustomerAdvanceApplication
-from app.models.finance import FinancialAccount, FinancialTransaction
+from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
 from app.models.projects import Project
 from app.schemas.accounting_money import AccountingMoneyEntryCreate
 from app.schemas.crm import ClientCreate
@@ -569,22 +569,129 @@ def main() -> None:
         if account_balance(db, tenant.organization_id, foreign_account.id) != Decimal("100.00"):
             raise AssertionError("applying customer credit incorrectly created a second cash movement")
 
-        db.expire_all()
-        invoice_amounts = db.execute(
-            text("SELECT amount_paid, balance_due, status FROM invoices WHERE id=:invoice_id AND organization_id=:org_id"),
-            {"invoice_id": sent.id, "org_id": tenant.organization_id},
-        ).one()
-        if Decimal(invoice_amounts[0]) != Decimal("100.00") or Decimal(invoice_amounts[1]) != Decimal("0.00") or invoice_amounts[2] != "paid":
-            raise AssertionError("customer advance application did not settle the invoice exactly once")
+        # Receipt reversal is dependency-aware: an applied customer credit must
+        # first be detached from the invoice.
+        try:
+            reverse_business_transaction(
+                CorrectionRequest(
+                    source_type="customer_advance",
+                    source_id=advance.id,
+                    reason="CI dependency protection",
+                    reversal_date=date(2096, 7, 4),
+                ),
+                request("POST", "/accounting/corrections/reverse"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409 or "dependent" not in str(exc.detail).lower():
+                raise AssertionError(f"unexpected customer advance dependency error: {exc.detail}") from exc
+            db.rollback()
+        else:
+            raise AssertionError("customer advance receipt reversal must be blocked while an application is active")
 
-        trial = trial_balance(db, tenant, as_of=application_date)  # type: ignore[arg-type]
+        reverse_business_transaction(
+            CorrectionRequest(
+                source_type="customer_advance_application",
+                source_id=application.id,
+                reason="CI reverse advance application",
+                reversal_date=date(2096, 7, 4),
+            ),
+            request("POST", "/accounting/corrections/reverse"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        db.expire_all()
+        restored_advance = db.scalar(
+            select(CustomerAdvanceApplication.advance_id).where(
+                CustomerAdvanceApplication.id == application.id,
+                CustomerAdvanceApplication.organization_id == tenant.organization_id,
+            )
+        )
+        restored_invoice = db.scalar(
+            select(Invoice).where(
+                Invoice.id == sent.id,
+                Invoice.organization_id == tenant.organization_id,
+            )
+        )
+        refreshed_advance = safe_create_customer_advance(
+            advance_payload,
+            request("POST", "/accounting/customer-advances", advance_key),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if restored_advance != advance.id or Decimal(refreshed_advance.remaining_amount) != Decimal("100.00"):
+            raise AssertionError("reversing advance application did not restore customer credit")
+        if restored_invoice is None or Decimal(restored_invoice.amount_paid) != Decimal("0.00") or Decimal(restored_invoice.balance_due) != Decimal("100.00") or restored_invoice.status != "sent":
+            raise AssertionError("reversing advance application did not reopen the invoice")
+        if account_balance(db, tenant.organization_id, foreign_account.id) != Decimal("100.00"):
+            raise AssertionError("advance application reversal incorrectly moved cash")
+
+        reapplied = safe_apply_customer_advance(
+            advance.id,
+            CustomerAdvanceApply(
+                invoice_id=sent.id,
+                application_date=date(2096, 7, 5),
+                amount=Decimal("100.00"),
+            ),
+            request("POST", f"/accounting/customer-advances/{advance.id}/apply", f"ci-advance-reapply-{marker}"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if Decimal(reapplied.remaining_amount) != Decimal("0.00"):
+            raise AssertionError("re-applying restored customer credit did not consume the advance")
+        db.expire_all()
+        settled_invoice = db.scalar(
+            select(Invoice).where(
+                Invoice.id == sent.id,
+                Invoice.organization_id == tenant.organization_id,
+            )
+        )
+        if settled_invoice is None or Decimal(settled_invoice.amount_paid) != Decimal("100.00") or Decimal(settled_invoice.balance_due) != Decimal("0.00") or settled_invoice.status != "paid":
+            raise AssertionError("customer advance re-application did not settle the invoice")
+
+        reapplication = db.scalar(
+            select(CustomerAdvanceApplication)
+            .where(
+                CustomerAdvanceApplication.organization_id == tenant.organization_id,
+                CustomerAdvanceApplication.advance_id == advance.id,
+                CustomerAdvanceApplication.id != application.id,
+            )
+            .order_by(CustomerAdvanceApplication.created_at.desc())
+        )
+        if reapplication is None:
+            raise AssertionError("replacement customer advance application is missing")
+        reapplication_journal = source_journal(
+            db,
+            tenant.organization_id,
+            "customer_advance_application",
+            reapplication.id,
+        )
+        reapplication_lines = journal_rows(db, tenant.organization_id, reapplication_journal.id)
+        if sum((Decimal(line.debit) for line, key, _ in reapplication_lines if key == "customer_advances"), Decimal("0")) != Decimal("12000.00"):
+            raise AssertionError("reversed advance application incorrectly reduced liability carrying value on re-application")
+        if sum((Decimal(line.credit) for line, key, _ in reapplication_lines if key == "accounts_receivable"), Decimal("0")) != Decimal("12500.00"):
+            raise AssertionError("reversed advance application incorrectly reduced AR carrying value on re-application")
+        if sum((Decimal(line.debit) for line, key, _ in reapplication_lines if key == "realized_fx_loss"), Decimal("0")) != Decimal("500.00"):
+            raise AssertionError("replacement advance application did not restore the correct realized FX loss")
+
+        candidate_keys = {
+            (item["source_type"], item["source_id"])
+            for item in correction_candidates(db, tenant, limit=200)  # type: ignore[arg-type]
+        }
+        if ("customer_advance_application", application.id) in candidate_keys:
+            raise AssertionError("reversed customer advance application remains a correction candidate")
+        if ("customer_advance_application", reapplication.id) not in candidate_keys:
+            raise AssertionError("active customer advance application is missing from correction candidates")
+
+        trial = trial_balance(db, tenant, as_of=date(2096, 7, 5))  # type: ignore[arg-type]
         if trial.total_debit != trial.total_credit:
             raise AssertionError("trial balance became unbalanced after Money In/Out verification")
         statements = financial_statements(
             db,
             tenant,  # type: ignore[arg-type]
             date_from=date(2096, 6, 10),
-            date_to=application_date,
+            date_to=date(2096, 7, 5),
         )
         if statements.net_profit != statements.total_income - statements.total_expenses:
             raise AssertionError("P&L does not reconcile after Money In/Out verification")
@@ -593,7 +700,7 @@ def main() -> None:
 
         print(
             "accounting money integrity verification passed: keyless independence + explicit idempotency + "
-            "direct income/expense + currency guard + auditable reversal + customer-advance carrying values/FX + reports"
+            "direct income/expense + currency guard + auditable reversal + customer-advance carrying values/FX/corrections + reports"
         )
     finally:
         db.close()
