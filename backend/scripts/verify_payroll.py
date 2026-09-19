@@ -16,13 +16,14 @@ from app.api.v1.payroll import (
     list_salary_profiles,
     pay_run,
     payroll_meta,
+    pay_payroll_withholding,
 )
 from app.api.v1.reports import reports_overview
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialTransaction
 from app.models.payroll import PayrollEntry, PayrollRun
-from app.schemas.payroll import PayrollComponent, PayrollEntryUpdate, PayrollPayRequest, PayrollPeriodCreate, PayrollRunCreate, SalaryProfileCreate
+from app.schemas.payroll import PayrollComponent, PayrollEntryUpdate, PayrollPayRequest, PayrollPeriodCreate, PayrollRunCreate, PayrollWithholdingPaymentCreate, SalaryProfileCreate
 from app.api.v1.payroll import update_entry
 
 
@@ -187,6 +188,37 @@ def main() -> None:
         persisted = db.scalar(select(PayrollRun).where(PayrollRun.id == run.id))
         if persisted is None or persisted.paid_account_id != account_id:
             raise AssertionError("payroll paid account was not persisted")
+
+        withholding_payment = pay_payroll_withholding(
+            PayrollWithholdingPaymentCreate(
+                account_id=account_id,
+                payment_date=date(2098, 2, 1),
+                amount=Decimal("5000"),
+                reference=f"CI-PAYROLL-WH-{uuid4().hex[:8]}",
+            ),
+            request("POST", "/api/v1/payroll/withholdings/payments"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        withholding_journal = db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id == tenant.organization_id,
+            JournalEntry.source_type == "payroll_withholding_payment",
+            JournalEntry.source_id == withholding_payment.id,
+            JournalEntry.status == "posted",
+        ))
+        if withholding_journal is None:
+            raise AssertionError("payroll withholding payment journal is missing")
+        withholding_line = db.scalar(
+            select(JournalLine)
+            .join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id)
+            .where(
+                JournalLine.organization_id == tenant.organization_id,
+                JournalLine.journal_entry_id == withholding_journal.id,
+                LedgerAccount.system_key == "payroll_withholdings",
+            )
+        )
+        if withholding_line is None or Decimal(withholding_line.debit) != Decimal("5000.00"):
+            raise AssertionError("payroll withholding liability was not cleared")
 
         report = reports_overview(
             db=db,
