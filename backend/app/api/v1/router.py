@@ -95,6 +95,7 @@ from app.api.v1.workspace import router as workspace_router
 # posting, idempotency, or journal creation.
 _SHADOWED_FINANCIAL_OPERATIONS = {
     ("POST", "/finance/accounts"),
+    ("POST", "/accounting/money"),
     ("PATCH", "/finance/invoices/{invoice_id}/status"),
     ("POST", "/finance/payments"),
     ("POST", "/finance/expenses"),
@@ -122,6 +123,7 @@ def _remove_shadowed_financial_routes(router: APIRouter) -> None:
 
 for _router in (
     finance_router,
+    accounting_money_router,
     finance_expenses_router,
     finance_transfers_router,
     payables_router,
