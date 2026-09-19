@@ -10,8 +10,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.accounting import JournalEntry
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.capital import CompanyLoan, LoanRepayment
+from app.models.customer_advances import CustomerAdvance, CustomerAdvanceApplication
 from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialTransaction, Invoice, Payment
 from app.models.loan_accounting import LoanDisbursement, LoanFee
@@ -28,6 +30,8 @@ CorrectionType = Literal[
     "expense",
     "transfer",
     "money_entry",
+    "customer_advance",
+    "customer_advance_application",
     "payable_payment",
     "loan_disbursement",
     "loan_repayment",
@@ -62,6 +66,30 @@ def _already_reversed(db: DbSession, organization_id: str, source_id: str, rever
             FinancialTransaction.organization_id == organization_id,
             FinancialTransaction.source_id == source_id,
             FinancialTransaction.source_type.like(f"{reversal_prefix}%"),
+        )
+    ) is not None
+
+
+def _journal_reversed(
+    db: DbSession,
+    organization_id: str,
+    source_type: str,
+    source_id: str,
+) -> bool:
+    original_id = db.scalar(
+        select(JournalEntry.id).where(
+            JournalEntry.organization_id == organization_id,
+            JournalEntry.source_type == source_type,
+            JournalEntry.source_id == source_id,
+            JournalEntry.status == "posted",
+        )
+    )
+    if original_id is None:
+        return False
+    return db.scalar(
+        select(JournalEntry.id).where(
+            JournalEntry.organization_id == organization_id,
+            JournalEntry.reversed_entry_id == original_id,
         )
     ) is not None
 
@@ -162,6 +190,23 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
         .order_by(AccountingMoneyEntry.entry_date.desc(), AccountingMoneyEntry.created_at.desc())
         .limit(row_limit)
     ).all()
+    customer_advances = db.scalars(
+        select(CustomerAdvance)
+        .where(CustomerAdvance.organization_id == tenant.organization_id)
+        .order_by(CustomerAdvance.advance_date.desc(), CustomerAdvance.created_at.desc())
+        .limit(row_limit)
+    ).all()
+    advance_applications = db.execute(
+        select(CustomerAdvanceApplication, Invoice.invoice_number)
+        .join(
+            Invoice,
+            (Invoice.id == CustomerAdvanceApplication.invoice_id)
+            & (Invoice.organization_id == tenant.organization_id),
+        )
+        .where(CustomerAdvanceApplication.organization_id == tenant.organization_id)
+        .order_by(CustomerAdvanceApplication.application_date.desc(), CustomerAdvanceApplication.created_at.desc())
+        .limit(row_limit)
+    ).all()
     payable_payments = db.execute(
         select(PayablePayment, PayableBill.bill_number, PayableBill.supplier_name)
         .join(PayableBill, PayableBill.id == PayablePayment.bill_id)
@@ -242,6 +287,37 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
             "currency": entry.currency,
             "title": f"{entry.kind.title()} · {entry.description}",
             "subtitle": "Direct Money In/Out accounting entry",
+        })
+    for advance in customer_advances:
+        if _already_reversed(db, tenant.organization_id, advance.id, "customer_advance_reversal"):
+            continue
+        items.append({
+            "source_type": "customer_advance",
+            "source_id": advance.id,
+            "number": advance.reference or advance.id[:8].upper(),
+            "date": advance.advance_date,
+            "amount": advance.original_amount,
+            "currency": advance.currency,
+            "title": f"Customer advance · {advance.reference or advance.id[:8].upper()}",
+            "subtitle": f"Advance receipt · remaining {advance.currency} {advance.remaining_amount}",
+        })
+    for application, invoice_number in advance_applications:
+        if _journal_reversed(
+            db,
+            tenant.organization_id,
+            "customer_advance_application",
+            application.id,
+        ):
+            continue
+        items.append({
+            "source_type": "customer_advance_application",
+            "source_id": application.id,
+            "number": invoice_number,
+            "date": application.application_date,
+            "amount": application.amount,
+            "currency": application.currency,
+            "title": f"Advance applied · {invoice_number}",
+            "subtitle": "Customer credit applied to invoice",
         })
     for payment, bill_number, supplier_name in payable_payments:
         if _already_reversed(db, tenant.organization_id, payment.id, "payable_payment_reversal"):
@@ -451,6 +527,133 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         reversed_number = entry.reference or f"Money {entry.id[:8].upper()}"
         before_status = "posted"
         after_status = "reversed"
+
+    elif payload.source_type == "customer_advance":
+        advance = db.scalar(
+            select(CustomerAdvance).where(
+                CustomerAdvance.id == payload.source_id,
+                CustomerAdvance.organization_id == tenant.organization_id,
+            ).with_for_update()
+        )
+        if advance is None:
+            raise HTTPException(status_code=404, detail="Customer advance not found")
+        if _already_reversed(db, tenant.organization_id, advance.id, "customer_advance_reversal"):
+            raise HTTPException(status_code=409, detail="This customer advance was already reversed")
+
+        applications = db.scalars(
+            select(CustomerAdvanceApplication).where(
+                CustomerAdvanceApplication.organization_id == tenant.organization_id,
+                CustomerAdvanceApplication.advance_id == advance.id,
+            )
+        ).all()
+        active_applications = [
+            application
+            for application in applications
+            if not _journal_reversed(
+                db,
+                tenant.organization_id,
+                "customer_advance_application",
+                application.id,
+            )
+        ]
+        if active_applications:
+            raise HTTPException(
+                status_code=409,
+                detail="Reverse the dependent customer advance application(s) before reversing this advance receipt",
+            )
+
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="customer_advance",
+            source_id=advance.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        mirrored = _mirror_transactions(
+            db,
+            tenant=tenant,
+            source_types=["customer_advance"],
+            source_id=advance.id,
+            reversal_source_type="customer_advance_reversal",
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        if mirrored != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Customer advance does not have exactly one financial-account receipt to reverse",
+            )
+        advance.remaining_amount = Decimal("0")
+        reversed_number = advance.reference or f"Advance {advance.id[:8].upper()}"
+        before_status = "open_advance"
+        after_status = "reversed"
+
+    elif payload.source_type == "customer_advance_application":
+        application = db.scalar(
+            select(CustomerAdvanceApplication).where(
+                CustomerAdvanceApplication.id == payload.source_id,
+                CustomerAdvanceApplication.organization_id == tenant.organization_id,
+            ).with_for_update()
+        )
+        if application is None:
+            raise HTTPException(status_code=404, detail="Customer advance application not found")
+        if _journal_reversed(
+            db,
+            tenant.organization_id,
+            "customer_advance_application",
+            application.id,
+        ):
+            raise HTTPException(status_code=409, detail="This customer advance application was already reversed")
+
+        advance = db.scalar(
+            select(CustomerAdvance).where(
+                CustomerAdvance.id == application.advance_id,
+                CustomerAdvance.organization_id == tenant.organization_id,
+            ).with_for_update()
+        )
+        invoice = db.scalar(
+            select(Invoice).where(
+                Invoice.id == application.invoice_id,
+                Invoice.organization_id == tenant.organization_id,
+            ).with_for_update()
+        )
+        if advance is None or invoice is None:
+            raise HTTPException(status_code=409, detail="Advance or invoice is no longer available")
+
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="customer_advance_application",
+            source_id=application.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        advance.remaining_amount = min(
+            Decimal(advance.original_amount),
+            Decimal(advance.remaining_amount) + Decimal(application.amount),
+        )
+        invoice.amount_paid = max(
+            Decimal("0"),
+            Decimal(invoice.amount_paid) - Decimal(application.amount),
+        )
+        invoice.balance_due = max(
+            Decimal("0"),
+            Decimal(invoice.total) - Decimal(invoice.amount_paid),
+        )
+        invoice.paid_at = None
+        if invoice.balance_due == 0:
+            invoice.status = "paid"
+        elif invoice.amount_paid > 0:
+            invoice.status = "partially_paid"
+        else:
+            invoice.status = "sent"
+
+        reversed_number = invoice.invoice_number
+        before_status = "applied"
+        after_status = invoice.status
 
     elif payload.source_type == "payable_payment":
         payment = db.scalar(
