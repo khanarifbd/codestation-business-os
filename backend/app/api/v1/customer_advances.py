@@ -3,7 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import JournalEntry, JournalLine
