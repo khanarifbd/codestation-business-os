@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,7 +15,6 @@ from app.models.posting_idempotency import PostingIdempotency
 
 
 HEADER_NAMES = ("Idempotency-Key", "X-Idempotency-Key")
-AUTO_WINDOW_SECONDS = 120
 
 
 def _request_key(request: Request) -> str | None:
@@ -61,8 +59,12 @@ def reserve_posting(
 ) -> tuple[PostingIdempotency, bool]:
     fingerprint = _fingerprint(action, payload)
     explicit_key = _request_key(request)
-    bucket = int(time.time() // AUTO_WINDOW_SECONDS)
-    key = explicit_key or f"auto:{fingerprint[:48]}:{bucket}"
+    # Only an explicit client-supplied key may identify a retry. Two legitimate
+    # financial transactions can have identical payloads even seconds apart, so
+    # payload/time-bucket deduplication would incorrectly collapse real business
+    # events. Keyless requests receive a unique reservation and are processed
+    # independently.
+    key = explicit_key or f"auto:{new_uuid()}"
 
     existing = _lookup(db, organization_id=organization_id, action=action, key=key)
     if existing is not None:
