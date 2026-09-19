@@ -42,6 +42,7 @@ class Org:
     timezone: str
     currency: str
     name: str
+    country_code: str
     financial_year_start_month: int
 
 
@@ -122,7 +123,7 @@ def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""
             SELECT o.id organization_id, o.created_by_user_id user_id, o.timezone, o.currency, o.name,
-                   o.financial_year_start_month, m.id membership_id
+                   o.country_code, o.financial_year_start_month, m.id membership_id
             FROM organizations o
             JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id
             WHERE o.name='Existing Tenant Fixture'
@@ -139,6 +140,7 @@ def main() -> None:
             timezone=str(row["timezone"] or "UTC"),
             currency=str(row["currency"] or "BDT").upper(),
             name=str(row["name"]),
+            country_code=str(row["country_code"] or "BD").upper(),
             financial_year_start_month=int(row["financial_year_start_month"] or 1),
         ),
     )
