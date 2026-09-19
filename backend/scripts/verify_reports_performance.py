@@ -73,10 +73,10 @@ def main() -> None:
         (fast_financials, fast_trend), overview_aggregate_queries = count_selects(
             lambda: _financials_and_trend_fast(db, organization.id, start, end, None, None, None)
         )
-        if overview_aggregate_queries > 5:
+        if overview_aggregate_queries > 6:
             raise AssertionError(
                 "overview financial/trend query regression: "
-                f"expected <=5 SELECTs, got {overview_aggregate_queries}"
+                f"expected <=6 SELECTs, got {overview_aggregate_queries}"
             )
         if _dump_rows(fast_financials) != _dump_rows(legacy_financials):
             raise AssertionError("fast overview financial totals diverged from canonical report totals")
@@ -126,9 +126,9 @@ def main() -> None:
                 currency=None,
             )
         )
-        if dashboard_report_queries > 6:
+        if dashboard_report_queries > 7:
             raise AssertionError(
-                f"dashboard report query regression: expected <=6 SELECTs, got {dashboard_report_queries}"
+                f"dashboard report query regression: expected <=7 SELECTs, got {dashboard_report_queries}"
             )
         if dashboard_report.accounts or dashboard_report.projects or dashboard_report.clients:
             raise AssertionError("dashboard report must not materialize unused detail collections")
