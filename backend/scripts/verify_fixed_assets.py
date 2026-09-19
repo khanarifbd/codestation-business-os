@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from starlette.requests import Request
 
 from app.api.v1.accounting_assets import AssetCreate, DepreciationRun, create_asset, run_depreciation
+from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine
 from app.models.finance import FinancialAccount, FinancialTransaction
@@ -54,6 +55,26 @@ def main() -> None:
         if posted is None or posted["amount"]!=Decimal("1000.00") or posted["book_value"]!=Decimal("11000.00"): raise AssertionError("straight-line depreciation failed")
         stored=db.scalar(select(FixedAsset).where(FixedAsset.id==asset["id"])); dep=db.scalar(select(AssetDepreciationEntry).where(AssetDepreciationEntry.asset_id==asset["id"])); dep_journal=db.scalar(select(JournalEntry).where(JournalEntry.id==dep.journal_entry_id)) if dep else None
         if stored is None or stored.accumulated_depreciation!=Decimal("1000.00") or dep_journal is None: raise AssertionError("depreciation persistence/journal failed")
+
+        reverse_business_transaction(
+            CorrectionRequest(source_type="asset_depreciation",source_id=dep.id,reason="CI depreciation correction",reversal_date=date(2098,2,1)),
+            request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]
+        )
+        db.refresh(dep); db.refresh(stored)
+        if dep.status!="reversed" or stored.accumulated_depreciation!=Decimal("0.00"):
+            raise AssertionError("depreciation reversal did not restore accumulated depreciation")
+        reverse_business_transaction(
+            CorrectionRequest(source_type="fixed_asset",source_id=asset["id"],reason="CI fixed asset correction",reversal_date=date(2098,2,1)),
+            request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]
+        )
+        db.refresh(stored)
+        reversal_cash=db.scalar(select(FinancialTransaction).where(
+            FinancialTransaction.organization_id==tenant.organization_id,
+            FinancialTransaction.source_type=="fixed_asset_reversal",
+            FinancialTransaction.source_id==asset["id"],
+        ))
+        if stored.status!="reversed" or reversal_cash is None or reversal_cash.direction!="credit":
+            raise AssertionError("fixed asset acquisition reversal did not restore cash / historical status")
 
         opening=create_asset(AssetCreate(asset_code=f"FA-OPEN-{marker}",name="CI Opening Laptop",category="computer",currency=tenant.organization.currency,acquisition_cost=Decimal("12000"),salvage_value=Decimal("0"),acquisition_date=date(2097,1,1),in_service_date=date(2097,1,1),useful_life_months=12,record_mode="opening",opening_accumulated_depreciation=Decimal("9000"),opening_balance_date=date(2098,1,31),reference=f"FA-OPEN-{marker}"),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
         if opening["accumulated_depreciation"]!=Decimal("9000.00") or opening["book_value"]!=Decimal("3000.00") or opening["record_mode"]!="opening":
@@ -126,6 +147,6 @@ def main() -> None:
         if fx_line is None or Decimal(fx_line.debit)!=Decimal("1000.00"):
             raise AssertionError(f"foreign asset depreciation must use acquisition-date historical FX; got {fx_line.debit if fx_line else None}")
     finally: db.close()
-    print("fixed asset verification passed: purchase -> fixed asset journal -> straight-line depreciation -> accumulated depreciation")
+    print("fixed asset verification passed: purchase/opening -> historical FX depreciation -> controlled reversal -> accumulated depreciation")
 
 if __name__=="__main__": main()
