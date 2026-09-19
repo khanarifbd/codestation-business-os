@@ -33,13 +33,13 @@ Company files are not exposed as a public static directory. Authenticated tenant
 
 ## One-command deploy
 
-The live-test/production server tracks the `develop` branch. There is exactly one supported deployment entrypoint:
+The live-test/production server tracks the `develop` branch. There is exactly one supported deployment entrypoint. The first run detects whether the existing PostgreSQL state belongs to the legacy `deployment` Compose project or the newer `codestation-business-os` project, persists that choice as `COMPOSE_PROJECT_NAME`, and refuses ambiguous database state instead of creating/switching to a new empty volume:
 
 ```bash
 sudo bash deployment/deploy.sh
 ```
 
-Do not use a separate direct-restart deployment path. `deploy.sh` performs the safe blue/green release flow itself:
+Do not use a separate direct-restart deployment path. Legacy direct deployment scripts have been removed from the repository. `deploy.sh` performs the safe blue/green release flow itself:
 
 1. acquires a deployment lock and ensures JWT, Credentials Vault, backup-encryption, and platform super-admin bootstrap secrets exist
 2. fetches and fast-forwards `develop`
