@@ -28,6 +28,7 @@ from app.models.capital import (
     InvestmentReturn,
     InvestorPayout,
     LoanRepayment,
+    OwnerEquityTransaction,
     ProjectInvestor,
     ProjectInvestorFunding,
 )
@@ -54,6 +55,8 @@ def account(db: DbSession, org: str, account_id: str, currency: str) -> Financia
         raise HTTPException(404, "Financial account not found")
     if row.currency != currency:
         raise HTTPException(400, "Account currency must match transaction currency")
+    if row.account_type == "credit_card":
+        raise HTTPException(400, "Capital and investment cashflows cannot use a credit-card liability account")
     return row
 
 
@@ -69,13 +72,7 @@ def cash_ledger(db: DbSession, tenant: TenantContext, *, account_id: str, tx_dat
 
 
 def share_capital_account(db: DbSession, tenant: TenantContext) -> LedgerAccount:
-    row = db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id == tenant.organization_id, LedgerAccount.system_key == "share_capital", LedgerAccount.is_active.is_(True)))
-    if row:
-        return row
-    row = LedgerAccount(organization_id=tenant.organization_id, code="3200", name="Share Capital", category="equity", subtype="share_capital", normal_balance="credit", parent_id=None, system_key="share_capital", is_system=True, is_active=True, allow_manual_posting=False, notes="Company investor equity funding", created_by_user_id=tenant.user_id)
-    db.add(row)
-    db.flush()
-    return row
+    return system_account(db, tenant.organization_id, "share_capital")
 
 
 def posting_line(db: DbSession, tenant: TenantContext, ledger_id: str, *, tx_date: date, debit: Decimal = Decimal("0"), credit: Decimal = Decimal("0"), currency: str, description: str) -> PostingLine:
@@ -101,40 +98,196 @@ def post_outgoing_investment(db: DbSession, tenant: TenantContext, *, account_id
     ])
 
 
-def post_investment_return(db: DbSession, tenant: TenantContext, *, account_id: str, currency: str, tx_date: date, source_id: str, reference: str | None, principal: Decimal, income: Decimal, description: str) -> None:
+def _allocate_carrying_base(
+    *,
+    funded_original: Decimal,
+    funded_base: Decimal,
+    returned_original: Decimal,
+    returned_base: Decimal,
+    principal: Decimal,
+) -> Decimal:
+    remaining_original = money(funded_original - returned_original)
+    remaining_base = money(funded_base - returned_base)
+    principal = money(principal)
+    if principal <= 0:
+        return Decimal("0.00")
+    if remaining_original <= 0 or remaining_base <= 0:
+        raise HTTPException(409, "Historical carrying value is unavailable")
+    if principal > remaining_original:
+        raise HTTPException(409, "Principal movement exceeds the historical carrying amount available as of this date")
+    if principal == remaining_original:
+        return remaining_base
+    return money(remaining_base * principal / remaining_original)
+
+
+def _investment_principal_carrying_base(
+    db: DbSession,
+    tenant: TenantContext,
+    *,
+    investment_id: str,
+    current_return_id: str,
+    principal: Decimal,
+    return_date: date,
+) -> Decimal:
+    investment_asset = system_account(db, tenant.organization_id, "investments")
+    fundings = db.execute(
+        select(CompanyInvestmentFunding.amount, JournalLine.debit)
+        .join(JournalEntry, (JournalEntry.organization_id == CompanyInvestmentFunding.organization_id) & (JournalEntry.source_type == "company_investment_funding") & (JournalEntry.source_id == CompanyInvestmentFunding.id) & (JournalEntry.status == "posted"))
+        .join(JournalLine, (JournalLine.organization_id == CompanyInvestmentFunding.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == investment_asset.id))
+        .where(
+            CompanyInvestmentFunding.organization_id == tenant.organization_id,
+            CompanyInvestmentFunding.investment_id == investment_id,
+            CompanyInvestmentFunding.funding_date <= return_date,
+        )
+    ).all()
+    prior_returns = db.execute(
+        select(InvestmentReturn.principal_return_amount, JournalLine.credit)
+        .join(JournalEntry, (JournalEntry.organization_id == InvestmentReturn.organization_id) & (JournalEntry.source_type == "investment_return") & (JournalEntry.source_id == InvestmentReturn.id) & (JournalEntry.status == "posted"))
+        .join(JournalLine, (JournalLine.organization_id == InvestmentReturn.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == investment_asset.id))
+        .where(
+            InvestmentReturn.organization_id == tenant.organization_id,
+            InvestmentReturn.investment_id == investment_id,
+            InvestmentReturn.id != current_return_id,
+            InvestmentReturn.principal_return_amount > 0,
+            InvestmentReturn.return_date <= return_date,
+        )
+    ).all()
+    return _allocate_carrying_base(
+        funded_original=sum((Decimal(original) for original, _ in fundings), Decimal("0")),
+        funded_base=sum((Decimal(base) for _, base in fundings), Decimal("0")),
+        returned_original=sum((Decimal(original) for original, _ in prior_returns), Decimal("0")),
+        returned_base=sum((Decimal(base) for _, base in prior_returns), Decimal("0")),
+        principal=principal,
+    )
+
+
+def _investor_principal_carrying_base(
+    db: DbSession,
+    tenant: TenantContext,
+    *,
+    investor_kind: Literal["company", "project"],
+    investor_id: str,
+    current_payout_id: str,
+    principal: Decimal,
+    payout_date: date,
+    principal_account: LedgerAccount,
+) -> Decimal:
+    if investor_kind == "company":
+        fundings = db.execute(
+            select(CompanyInvestorFunding.amount, JournalLine.credit)
+            .join(JournalEntry, (JournalEntry.organization_id == CompanyInvestorFunding.organization_id) & (JournalEntry.source_type == "company_investor_funding") & (JournalEntry.source_id == CompanyInvestorFunding.id) & (JournalEntry.status == "posted"))
+            .join(JournalLine, (JournalLine.organization_id == CompanyInvestorFunding.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == principal_account.id))
+            .where(
+                CompanyInvestorFunding.organization_id == tenant.organization_id,
+                CompanyInvestorFunding.investor_id == investor_id,
+                CompanyInvestorFunding.funding_date <= payout_date,
+            )
+        ).all()
+        payouts = db.execute(
+            select(CompanyInvestorPayout.principal_return_amount, JournalLine.debit)
+            .join(JournalEntry, (JournalEntry.organization_id == CompanyInvestorPayout.organization_id) & (JournalEntry.source_type == "company_investor_payout") & (JournalEntry.source_id == CompanyInvestorPayout.id) & (JournalEntry.status == "posted"))
+            .join(JournalLine, (JournalLine.organization_id == CompanyInvestorPayout.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == principal_account.id))
+            .where(
+                CompanyInvestorPayout.organization_id == tenant.organization_id,
+                CompanyInvestorPayout.investor_id == investor_id,
+                CompanyInvestorPayout.id != current_payout_id,
+                CompanyInvestorPayout.principal_return_amount > 0,
+                CompanyInvestorPayout.payout_date <= payout_date,
+            )
+        ).all()
+    else:
+        fundings = db.execute(
+            select(ProjectInvestorFunding.amount, JournalLine.credit)
+            .join(JournalEntry, (JournalEntry.organization_id == ProjectInvestorFunding.organization_id) & (JournalEntry.source_type == "project_investor_funding") & (JournalEntry.source_id == ProjectInvestorFunding.id) & (JournalEntry.status == "posted"))
+            .join(JournalLine, (JournalLine.organization_id == ProjectInvestorFunding.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == principal_account.id))
+            .where(
+                ProjectInvestorFunding.organization_id == tenant.organization_id,
+                ProjectInvestorFunding.investor_id == investor_id,
+                ProjectInvestorFunding.funding_date <= payout_date,
+            )
+        ).all()
+        payouts = db.execute(
+            select(InvestorPayout.principal_return_amount, JournalLine.debit)
+            .join(JournalEntry, (JournalEntry.organization_id == InvestorPayout.organization_id) & (JournalEntry.source_type == "investor_payout") & (JournalEntry.source_id == InvestorPayout.id) & (JournalEntry.status == "posted"))
+            .join(JournalLine, (JournalLine.organization_id == InvestorPayout.organization_id) & (JournalLine.journal_entry_id == JournalEntry.id) & (JournalLine.ledger_account_id == principal_account.id))
+            .where(
+                InvestorPayout.organization_id == tenant.organization_id,
+                InvestorPayout.investor_id == investor_id,
+                InvestorPayout.id != current_payout_id,
+                InvestorPayout.principal_return_amount > 0,
+                InvestorPayout.payout_date <= payout_date,
+            )
+        ).all()
+    return _allocate_carrying_base(
+        funded_original=sum((Decimal(original) for original, _ in fundings), Decimal("0")),
+        funded_base=sum((Decimal(base) for _, base in fundings), Decimal("0")),
+        returned_original=sum((Decimal(original) for original, _ in payouts), Decimal("0")),
+        returned_base=sum((Decimal(base) for _, base in payouts), Decimal("0")),
+        principal=principal,
+    )
+
+
+def post_investment_return(db: DbSession, tenant: TenantContext, *, investment_id: str, account_id: str, currency: str, tx_date: date, source_id: str, reference: str | None, principal: Decimal, income: Decimal, description: str) -> None:
     _, cash = financial_ledger_account(db, tenant.organization_id, account_id)
     investment_asset = system_account(db, tenant.organization_id, "investments")
     income_account = system_account(db, tenant.organization_id, "other_income")
     total = money(principal + income)
-    lines = [posting_line(db, tenant, cash.id, tx_date=tx_date, debit=total, currency=currency, description=description)]
+    cash_base, cash_rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, total, currency, rate_date=tx_date)
+    lines = [PostingLine(ledger_account_id=cash.id, debit=cash_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=total, description=description)]
+    fx_difference = Decimal("0.00")
     if principal > 0:
-        lines.append(posting_line(db, tenant, investment_asset.id, tx_date=tx_date, credit=principal, currency=currency, description="Principal returned"))
+        carrying_base = _investment_principal_carrying_base(
+            db,
+            tenant,
+            investment_id=investment_id,
+            current_return_id=source_id,
+            principal=principal,
+            return_date=tx_date,
+        )
+        carrying_rate = (carrying_base / principal).quantize(Decimal("0.00000001"))
+        lines.append(PostingLine(ledger_account_id=investment_asset.id, credit=carrying_base, currency=currency, exchange_rate_to_base=carrying_rate, original_amount=principal, description="Principal returned"))
+        fx_difference = money(principal * cash_rate - carrying_base)
     if income > 0:
-        lines.append(posting_line(db, tenant, income_account.id, tx_date=tx_date, credit=income, currency=currency, description="Investment income"))
-    # FX conversion rounding can differ by one cent when a receipt is split. Keep
-    # the journal balanced by adjusting the final credit line in base currency.
-    debit_total = money(sum((x.debit for x in lines), Decimal("0")))
-    credit_total = money(sum((x.credit for x in lines), Decimal("0")))
-    if debit_total != credit_total and len(lines) > 1:
-        last = lines[-1]
-        lines[-1] = PostingLine(ledger_account_id=last.ledger_account_id, debit=last.debit, credit=money(last.credit + (debit_total - credit_total)), description=last.description, currency=last.currency, exchange_rate_to_base=last.exchange_rate_to_base, original_amount=last.original_amount)
+        income_base = money(income * cash_rate)
+        lines.append(PostingLine(ledger_account_id=income_account.id, credit=income_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=income, description="Investment income"))
+    if fx_difference > 0:
+        gain = system_account(db, tenant.organization_id, "realized_fx_gain")
+        lines.append(PostingLine(ledger_account_id=gain.id, credit=fx_difference, currency=tenant.organization.currency, original_amount=fx_difference, description="Realized FX gain on investment principal return"))
+    elif fx_difference < 0:
+        loss = system_account(db, tenant.organization_id, "realized_fx_loss")
+        lines.append(PostingLine(ledger_account_id=loss.id, debit=abs(fx_difference), currency=tenant.organization.currency, original_amount=abs(fx_difference), description="Realized FX loss on investment principal return"))
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=tx_date, source_type="investment_return", source_id=source_id, reference=reference, memo=description, lines=lines)
 
 
-def post_investor_payout(db: DbSession, tenant: TenantContext, *, account_id: str, currency: str, tx_date: date, source_type: str, source_id: str, reference: str | None, principal: Decimal, profit: Decimal, principal_account: LedgerAccount, description: str) -> None:
+def post_investor_payout(db: DbSession, tenant: TenantContext, *, investor_kind: Literal["company", "project"], investor_id: str, account_id: str, currency: str, tx_date: date, source_type: str, source_id: str, reference: str | None, principal: Decimal, profit: Decimal, principal_account: LedgerAccount, profit_account: LedgerAccount, description: str) -> None:
     _, cash = financial_ledger_account(db, tenant.organization_id, account_id)
-    profit_expense = system_account(db, tenant.organization_id, "investor_profit_share")
     total = money(principal + profit)
-    lines = [posting_line(db, tenant, cash.id, tx_date=tx_date, credit=total, currency=currency, description=description)]
+    cash_base, cash_rate = to_base_amount(db, tenant.organization_id, tenant.organization.currency, total, currency, rate_date=tx_date)
+    lines = [PostingLine(ledger_account_id=cash.id, credit=cash_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=total, description=description)]
+    fx_difference = Decimal("0.00")
     if principal > 0:
-        lines.append(posting_line(db, tenant, principal_account.id, tx_date=tx_date, debit=principal, currency=currency, description="Investor principal returned"))
+        carrying_base = _investor_principal_carrying_base(
+            db,
+            tenant,
+            investor_kind=investor_kind,
+            investor_id=investor_id,
+            current_payout_id=source_id,
+            principal=principal,
+            payout_date=tx_date,
+            principal_account=principal_account,
+        )
+        carrying_rate = (carrying_base / principal).quantize(Decimal("0.00000001"))
+        lines.append(PostingLine(ledger_account_id=principal_account.id, debit=carrying_base, currency=currency, exchange_rate_to_base=carrying_rate, original_amount=principal, description="Investor principal returned"))
+        fx_difference = money(principal * cash_rate - carrying_base)
     if profit > 0:
-        lines.append(posting_line(db, tenant, profit_expense.id, tx_date=tx_date, debit=profit, currency=currency, description="Investor profit distribution"))
-    credit_total = money(sum((x.credit for x in lines), Decimal("0")))
-    debit_total = money(sum((x.debit for x in lines), Decimal("0")))
-    if credit_total != debit_total and len(lines) > 1:
-        last = lines[-1]
-        lines[-1] = PostingLine(ledger_account_id=last.ledger_account_id, debit=money(last.debit + (credit_total - debit_total)), credit=last.credit, description=last.description, currency=last.currency, exchange_rate_to_base=last.exchange_rate_to_base, original_amount=last.original_amount)
+        profit_base = money(profit * cash_rate)
+        lines.append(PostingLine(ledger_account_id=profit_account.id, debit=profit_base, currency=currency, exchange_rate_to_base=cash_rate, original_amount=profit, description="Investor profit distribution"))
+    if fx_difference > 0:
+        loss = system_account(db, tenant.organization_id, "realized_fx_loss")
+        lines.append(PostingLine(ledger_account_id=loss.id, debit=fx_difference, currency=tenant.organization.currency, original_amount=fx_difference, description="Realized FX loss on investor principal settlement"))
+    elif fx_difference < 0:
+        gain = system_account(db, tenant.organization_id, "realized_fx_gain")
+        lines.append(PostingLine(ledger_account_id=gain.id, credit=abs(fx_difference), currency=tenant.organization.currency, original_amount=abs(fx_difference), description="Realized FX gain on investor principal settlement"))
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=tx_date, source_type=source_type, source_id=source_id, reference=reference, memo=description, lines=lines)
 
 
@@ -237,6 +390,15 @@ class ProjectInvestorCreate(BaseModel):
         if self.share_type in {"profit_percent", "revenue_share"} and self.share_value > 100:
             raise ValueError("Share percent cannot exceed 100%")
         return self
+
+
+class OwnerEquityCreate(BaseModel):
+    transaction_type: Literal["contribution", "drawing"]
+    account_id: str
+    transaction_date: date
+    amount: Decimal = Field(gt=0)
+    reference: str | None = Field(default=None, max_length=180)
+    notes: str | None = None
 
 
 class PayoutCreate(BaseModel):
@@ -416,6 +578,136 @@ def repay(loan_id: str, payload: RepaymentCreate, request: Request, db: DbSessio
     }
 
 
+
+
+@router.get("/owner-equity")
+def owner_equity_transactions(db: DbSession, tenant: CapitalViewer):
+    rows = db.execute(
+        select(OwnerEquityTransaction, FinancialAccount.name)
+        .join(
+            FinancialAccount,
+            (FinancialAccount.id == OwnerEquityTransaction.account_id)
+            & (FinancialAccount.organization_id == tenant.organization_id),
+        )
+        .where(OwnerEquityTransaction.organization_id == tenant.organization_id)
+        .order_by(OwnerEquityTransaction.transaction_date.desc(), OwnerEquityTransaction.created_at.desc())
+        .limit(500)
+    ).all()
+    return [
+        {
+            "id": item.id,
+            "transaction_type": item.transaction_type,
+            "account_id": item.account_id,
+            "account_name": account_name,
+            "transaction_date": item.transaction_date,
+            "currency": item.currency,
+            "amount": item.amount,
+            "reference": item.reference,
+            "notes": item.notes,
+            "created_at": item.created_at,
+        }
+        for item, account_name in rows
+    ]
+
+
+@router.post("/owner-equity", status_code=201)
+def create_owner_equity_transaction(payload: OwnerEquityCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    financial = db.scalar(
+        select(FinancialAccount)
+        .where(
+            FinancialAccount.id == payload.account_id,
+            FinancialAccount.organization_id == tenant.organization_id,
+            FinancialAccount.is_active.is_(True),
+        )
+        .with_for_update()
+    )
+    if financial is None:
+        raise HTTPException(404, "Financial account not found")
+    if financial.account_type == "credit_card":
+        raise HTTPException(400, "Owner equity cashflows cannot use a credit-card liability account")
+    amount = money(payload.amount)
+    if payload.transaction_type == "drawing" and balance(db, financial, tenant.organization_id) < amount:
+        raise HTTPException(409, "Insufficient account balance")
+
+    item = OwnerEquityTransaction(
+        organization_id=tenant.organization_id,
+        transaction_type=payload.transaction_type,
+        account_id=financial.id,
+        transaction_date=payload.transaction_date,
+        currency=financial.currency,
+        amount=amount,
+        reference=payload.reference.strip() if payload.reference and payload.reference.strip() else None,
+        notes=payload.notes.strip() if payload.notes and payload.notes.strip() else None,
+        created_by_user_id=tenant.user_id,
+    )
+    db.add(item)
+    db.flush()
+    _, cash = financial_ledger_account(db, tenant.organization_id, financial.id)
+    if item.transaction_type == "contribution":
+        equity = system_account(db, tenant.organization_id, "owners_equity")
+        lines = [
+            posting_line(db, tenant, cash.id, tx_date=item.transaction_date, debit=amount, currency=item.currency, description="Owner contribution"),
+            posting_line(db, tenant, equity.id, tx_date=item.transaction_date, credit=amount, currency=item.currency, description="Owner contribution"),
+        ]
+        direction = "credit"
+    else:
+        distributions = system_account(db, tenant.organization_id, "equity_distributions")
+        lines = [
+            posting_line(db, tenant, distributions.id, tx_date=item.transaction_date, debit=amount, currency=item.currency, description="Owner drawing"),
+            posting_line(db, tenant, cash.id, tx_date=item.transaction_date, credit=amount, currency=item.currency, description="Owner drawing"),
+        ]
+        direction = "debit"
+
+    journal = post_journal(
+        db,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        entry_date=item.transaction_date,
+        source_type="owner_equity",
+        source_id=item.id,
+        reference=item.reference,
+        memo=f"Owner {item.transaction_type}",
+        lines=lines,
+    )
+    cash_ledger(
+        db,
+        tenant,
+        account_id=financial.id,
+        tx_date=item.transaction_date,
+        direction=direction,
+        amount=amount,
+        currency=item.currency,
+        source_type="owner_equity",
+        source_id=item.id,
+        reference=item.reference,
+        description=f"Owner {item.transaction_type}",
+    )
+    record_activity(
+        db,
+        action=f"capital.owner_equity.{item.transaction_type}",
+        scope="tenant",
+        actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id,
+        entity_type="owner_equity_transaction",
+        entity_id=item.id,
+        after={"amount": str(amount), "currency": item.currency, "account_id": financial.id, "journal_entry_id": journal.id},
+        request=request,
+    )
+    db.commit()
+    return {
+        "id": item.id,
+        "transaction_type": item.transaction_type,
+        "account_id": item.account_id,
+        "account_name": financial.name,
+        "transaction_date": item.transaction_date,
+        "currency": item.currency,
+        "amount": item.amount,
+        "reference": item.reference,
+        "notes": item.notes,
+        "created_at": item.created_at,
+    }
+
+
 @router.get("/company-investors")
 def company_investors(db: DbSession, tenant: CapitalViewer):
     return [company_investor_json(x) for x in db.scalars(select(CompanyInvestor).where(CompanyInvestor.organization_id == tenant.organization_id).order_by(CompanyInvestor.created_at.desc())).all()]
@@ -423,7 +715,10 @@ def company_investors(db: DbSession, tenant: CapitalViewer):
 
 @router.post("/company-investors", status_code=201)
 def create_company_investor(payload: CompanyInvestorCreate, request: Request, db: DbSession, tenant: CapitalManager):
-    row = CompanyInvestor(organization_id=tenant.organization_id, investor_name=payload.investor_name.strip(), investor_email=payload.investor_email, investor_type=payload.investor_type, instrument=payload.instrument, currency=payload.currency.upper(), committed_amount=money(payload.committed_amount), funded_amount=money(0), ownership_percent=payload.ownership_percent, valuation_amount=money(payload.valuation_amount) if payload.valuation_amount else None, agreement_date=payload.agreement_date, effective_date=payload.effective_date, expected_exit_date=payload.expected_exit_date, agreement_reference=payload.agreement_reference, status="active", notes=payload.notes, created_by_user_id=tenant.user_id)
+    currency = payload.currency.upper()
+    if payload.instrument == "equity" and currency != tenant.organization.currency.upper():
+        raise HTTPException(400, "V1 share-capital funding must use the organization functional currency")
+    row = CompanyInvestor(organization_id=tenant.organization_id, investor_name=payload.investor_name.strip(), investor_email=payload.investor_email, investor_type=payload.investor_type, instrument=payload.instrument, currency=currency, committed_amount=money(payload.committed_amount), funded_amount=money(0), ownership_percent=payload.ownership_percent, valuation_amount=money(payload.valuation_amount) if payload.valuation_amount else None, agreement_date=payload.agreement_date, effective_date=payload.effective_date, expected_exit_date=payload.expected_exit_date, agreement_reference=payload.agreement_reference, status="active", notes=payload.notes, created_by_user_id=tenant.user_id)
     db.add(row); db.flush()
     record_activity(db, action="capital.company_investor.create", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="company_investor", entity_id=row.id, after=company_investor_json(row), request=request)
     db.commit(); return company_investor_json(row)
@@ -460,7 +755,8 @@ def company_investor_payout(investor_id: str, payload: PayoutCreate, request: Re
     description = f"Company investor payout to {row.investor_name}"
     cash_ledger(db, tenant, account_id=acc.id, tx_date=payout.payout_date, direction="debit", amount=total, currency=row.currency, source_type="company_investor_payout", source_id=payout.id, reference=payout.reference, description=description)
     principal_account = share_capital_account(db, tenant) if row.instrument == "equity" else system_account(db, tenant.organization_id, "investor_funds_payable")
-    post_investor_payout(db, tenant, account_id=acc.id, currency=row.currency, tx_date=payout.payout_date, source_type="company_investor_payout", source_id=payout.id, reference=payout.reference, principal=principal, profit=profit, principal_account=principal_account, description=description)
+    profit_account = system_account(db, tenant.organization_id, "equity_distributions") if row.instrument == "equity" else system_account(db, tenant.organization_id, "investor_profit_share")
+    post_investor_payout(db, tenant, investor_kind="company", investor_id=row.id, account_id=acc.id, currency=row.currency, tx_date=payout.payout_date, source_type="company_investor_payout", source_id=payout.id, reference=payout.reference, principal=principal, profit=profit, principal_account=principal_account, profit_account=profit_account, description=description)
     if money(paid_principal + principal) == row.funded_amount and row.funded_amount == row.committed_amount: row.status = "settled"
     record_activity(db, action="capital.company_investor.payout", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="company_investor_payout", entity_id=payout.id, after={"investor_id": row.id, "principal": principal, "profit": profit, "status": row.status}, request=request)
     db.commit(); return {"id": payout.id, "status": row.status}
@@ -521,7 +817,7 @@ def add_return(investment_id: str, payload: ReturnCreate, request: Request, db: 
     db.add(r); db.flush(); row.carrying_value = money(row.carrying_value - principal); row.status = "exited" if row.carrying_value == 0 else row.status
     description = f"Investment return from {row.investee_name}"
     cash_ledger(db, tenant, account_id=acc.id, tx_date=r.return_date, direction="credit", amount=r.cash_amount, currency=row.currency, source_type="investment_return", source_id=r.id, reference=r.reference, description=description)
-    post_investment_return(db, tenant, account_id=acc.id, currency=row.currency, tx_date=r.return_date, source_id=r.id, reference=r.reference, principal=principal, income=income, description=description)
+    post_investment_return(db, tenant, investment_id=row.id, account_id=acc.id, currency=row.currency, tx_date=r.return_date, source_id=r.id, reference=r.reference, principal=principal, income=income, description=description)
     record_activity(db, action="capital.investment.return", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="investment_return", entity_id=r.id, after={"investment_id": row.id, "cash": r.cash_amount, "principal": principal, "income": income, "carrying_value": row.carrying_value}, request=request)
     db.commit(); return {"id": r.id, "cash_amount": r.cash_amount, "income_amount": r.income_amount, "carrying_value": row.carrying_value, "status": row.status}
 
@@ -581,7 +877,7 @@ def payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSess
     p = InvestorPayout(organization_id=tenant.organization_id, investor_id=row.id, account_id=acc.id, payout_date=payload.payout_date, principal_return_amount=principal, profit_share_amount=profit, reference=payload.reference, notes=payload.notes, created_by_user_id=tenant.user_id)
     db.add(p); db.flush(); description = f"Project investor payout to {row.investor_name}"
     cash_ledger(db, tenant, account_id=acc.id, tx_date=p.payout_date, direction="debit", amount=total, currency=row.currency, source_type="investor_payout", source_id=p.id, reference=p.reference, description=description)
-    post_investor_payout(db, tenant, account_id=acc.id, currency=row.currency, tx_date=p.payout_date, source_type="investor_payout", source_id=p.id, reference=p.reference, principal=principal, profit=profit, principal_account=system_account(db, tenant.organization_id, "investor_funds_payable"), description=description)
+    post_investor_payout(db, tenant, investor_kind="project", investor_id=row.id, account_id=acc.id, currency=row.currency, tx_date=p.payout_date, source_type="investor_payout", source_id=p.id, reference=p.reference, principal=principal, profit=profit, principal_account=system_account(db, tenant.organization_id, "investor_funds_payable"), profit_account=system_account(db, tenant.organization_id, "investor_profit_share"), description=description)
     if money(paid_principal + principal) == row.funded_amount and row.funded_amount == row.committed_amount: row.status = "settled"
     record_activity(db, action="capital.project_investor.payout", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="investor_payout", entity_id=p.id, after={"investor_id": row.id, "principal": principal, "profit_share": profit, "status": row.status}, request=request)
     db.commit(); return {"id": p.id, "investor_id": row.id, "principal_return_amount": principal, "profit_share_amount": profit, "status": row.status}
