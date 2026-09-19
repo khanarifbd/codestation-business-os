@@ -9,6 +9,8 @@ SCHEDULER_COMPOSE_FILE="${COMPOSE_FILE}"
 PROJECT_NAME=""
 NETWORK_NAME=""
 UPLOADS_VOLUME="codestation-business-os_business_os_uploads"
+BACKEND_IMAGE_TAG="codestation-business-os-backend:latest"
+FRONTEND_IMAGE_TAG="codestation-business-os-frontend:latest"
 STATE_DIR="/var/lib/codestation-business-os"
 STATE_FILE="${STATE_DIR}/active-slot"
 NGINX_SITE="/etc/nginx/sites-available/codestation-business-os"
@@ -551,7 +553,7 @@ restore_previous_scheduler() {
   [[ -n "${previous_image}" ]] || return 1
 
   log "Restoring previous finance scheduler image"
-  docker image tag "${previous_image}" "${PROJECT_NAME}-backend:latest" >/dev/null
+  docker image tag "${previous_image}" "${BACKEND_IMAGE_TAG}" >/dev/null
   "${SCHEDULER_COMPOSE[@]}" up -d --no-deps --force-recreate finance-scheduler >/dev/null
 }
 
@@ -675,8 +677,8 @@ fi
 
 log "Building candidate images while active release stays online"
 "${COMPOSE[@]}" build backend frontend
-backend_image="$(docker image inspect "${PROJECT_NAME}-backend:latest" --format '{{.Id}}' 2>/dev/null || true)"
-frontend_image="$(docker image inspect "${PROJECT_NAME}-frontend:latest" --format '{{.Id}}' 2>/dev/null || true)"
+backend_image="$(docker image inspect "${BACKEND_IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true)"
+frontend_image="$(docker image inspect "${FRONTEND_IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null || true)"
 [[ -n "${backend_image}" ]] || fail "Could not resolve newly built backend image"
 [[ -n "${frontend_image}" ]] || fail "Could not resolve newly built frontend image"
 
