@@ -44,6 +44,7 @@ from app.services.google_identity import (
 
 _CHALLENGE_BYTES = 32
 _GOOGLE_REAUTH_MAX_AGE_SECONDS = 300
+_MAX_PASSKEYS_PER_USER = 20
 _ALLOWED_TRANSPORTS = {item.value for item in AuthenticatorTransport}
 
 
@@ -211,6 +212,8 @@ def registration_options(db: Session, user: User) -> tuple[PasskeyChallenge, dic
     rp_id, _ = relying_party()
     challenge = create_challenge(db, purpose="registration", user_id=user.id)
     existing = db.scalars(select(UserPasskey).where(UserPasskey.user_id == user.id)).all()
+    if len(existing) >= _MAX_PASSKEYS_PER_USER:
+        raise HTTPException(status_code=400, detail="You can save up to 20 passkeys. Remove an old passkey before adding another.")
     exclude_credentials: list[PublicKeyCredentialDescriptor] = []
     for item in existing:
         try:
