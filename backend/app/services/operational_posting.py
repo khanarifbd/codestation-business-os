@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select
 
 from app.models.accounting import JournalEntry, JournalLine
 from app.models.expenses import Expense, ExpenseCategory
-from app.models.finance import AccountTransfer, FinancialAccount, Invoice, InvoiceItem, Payment
+from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
 from app.services.accounting_posting import (
     PostingLine,
     financial_ledger_account,
