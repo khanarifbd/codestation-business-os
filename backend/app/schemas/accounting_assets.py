@@ -79,6 +79,7 @@ class AssetDepreciationEntryRead(BaseModel):
     id: str
     period_date: date
     amount: Decimal
+    status: str
     journal_entry_id: str
 
 
