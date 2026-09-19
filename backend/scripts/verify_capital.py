@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from starlette.requests import Request
 
+from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.api.v1.capital import (
     CompanyInvestorCreate,
     FundingCreate,
@@ -347,6 +348,18 @@ def main() -> None:
             raise AssertionError("equity investor payout must reduce equity/distributions, not P&L expense")
         if equity_funding["funded_amount"] != Decimal("5000.00"):
             raise AssertionError("equity investor funding failed")
+
+        reverse_business_transaction(
+            CorrectionRequest(source_type="owner_equity",source_id=owner_drawing["id"],reason="CI owner drawing correction",reversal_date=date(2096,8,5)),
+            request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]
+        )
+        owner_reversal=db.scalar(select(FinancialTransaction).where(
+            FinancialTransaction.organization_id==tenant.organization_id,
+            FinancialTransaction.source_type=="owner_equity_reversal",
+            FinancialTransaction.source_id==owner_drawing["id"],
+        ))
+        if owner_reversal is None or owner_reversal.direction!="credit":
+            raise AssertionError("owner drawing reversal did not restore cash/equity")
 
         refs = [f"INV-{marker}", f"INV2-{marker}", f"RET-{marker}", f"CIF-{marker}", f"CIP-{marker}", f"PIF-{marker}", f"PO-{marker}", f"OWNER-IN-{marker}", f"OWNER-OUT-{marker}", f"EQF-{marker}", f"EQP-{marker}"]
         sources = set(db.scalars(select(FinancialTransaction.source_type).where(FinancialTransaction.organization_id == tenant.organization_id, FinancialTransaction.reference.in_(refs))).all())
