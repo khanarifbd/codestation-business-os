@@ -44,14 +44,15 @@ class FixedAsset(TenantOwnedMixin, Base):
 class AssetDepreciationEntry(TenantOwnedMixin, Base):
     __tablename__ = "asset_depreciation_entries"
     __table_args__ = (
-        UniqueConstraint("organization_id", "asset_id", "period_date", name="uq_asset_depreciation_period"),
         Index("ix_asset_depreciation_org_period", "organization_id", "period_date"),
+        Index("ix_asset_depreciation_org_asset_period_status", "organization_id", "asset_id", "period_date", "status"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     asset_id: Mapped[str] = mapped_column(String(36), ForeignKey("fixed_assets.id", ondelete="RESTRICT"), nullable=False)
     period_date: Mapped[date] = mapped_column(Date, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="posted", nullable=False)
     journal_entry_id: Mapped[str] = mapped_column(String(36), ForeignKey("journal_entries.id", ondelete="RESTRICT"), nullable=False)
     created_by_user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
