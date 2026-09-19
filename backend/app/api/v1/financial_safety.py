@@ -233,7 +233,7 @@ def safe_create_income_with_fee(
                 select(ActivityLog)
                 .where(
                     ActivityLog.organization_id == tenant.organization_id,
-                    ActivityLog.action == "accounting.money.income_with_fee_created",
+                    ActivityLog.action == "accounting.money.income.created",
                     ActivityLog.entity_type == "accounting_money_entry",
                     ActivityLog.entity_id == income.id,
                 )
@@ -252,13 +252,19 @@ def safe_create_income_with_fee(
                 )
                 if fee is None:
                     raise HTTPException(status_code=409, detail="The original processing-fee result is unavailable")
+            income_read = _money_entry_read(db, tenant.organization_id, income)
+            fee_read = _money_entry_read(db, tenant.organization_id, fee) if fee is not None else None
             return AccountingIncomeWithFeeRead(
-                income=_money_entry_read(db, tenant.organization_id, income),
-                fee=_money_entry_read(db, tenant.organization_id, fee) if fee is not None else None,
+                income_entry=income_read,
+                fee_entry=fee_read,
+                currency=income.currency,
+                gross_amount=income.amount,
+                fee_amount=fee.amount if fee is not None else Decimal("0"),
+                net_amount=money(Decimal(income.amount) - (Decimal(fee.amount) if fee is not None else Decimal("0"))),
             )
 
         result = create_income_with_fee(payload, request, db, tenant)
-        complete_posting(db, guard, resource_type="accounting_money_entry", resource_id=result.income.id)
+        complete_posting(db, guard, resource_type="accounting_money_entry", resource_id=result.income_entry.id)
     db.commit()
     return result
 
