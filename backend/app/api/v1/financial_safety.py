@@ -15,6 +15,7 @@ from app.api.v1.accounting_loans import (
     disburse_loan,
     repay_loan,
 )
+from app.api.v1.customer_advances import _read as _advance_read, apply_advance, create_advance
 from app.api.v1.finance import (
     FinanceManager,
     _payment_read,
@@ -30,12 +31,14 @@ from app.db.session import defer_commits
 from app.models.accounting import JournalEntry
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.capital import CompanyLoan, LoanRepayment
+from app.models.customer_advances import CustomerAdvance
 from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialAccount, Invoice, Payment
 from app.models.loan_accounting import LoanDisbursement
 from app.models.payables import PayablePayment
 from app.schemas.accounting_loans import LoanDisbursementRead, LoanRepaymentRead
 from app.schemas.accounting_money import AccountingMoneyEntryCreate, AccountingMoneyEntryRead
+from app.schemas.customer_advances import CustomerAdvanceApply, CustomerAdvanceCreate, CustomerAdvanceRead
 from app.schemas.expenses import ExpenseCreate, ExpenseDetail
 from app.schemas.finance import (
     AccountTransferCreate,
@@ -85,6 +88,75 @@ def _tenant_account(db: DbSession, organization_id: str, account_id: str) -> Fin
     if account is None:
         raise HTTPException(status_code=409, detail="Financial account is no longer available")
     return account
+
+
+@router.post("/accounting/customer-advances", response_model=CustomerAdvanceRead, status_code=status.HTTP_201_CREATED)
+def safe_create_customer_advance(
+    payload: CustomerAdvanceCreate,
+    request: Request,
+    db: DbSession,
+    tenant: AccountingManager,
+):
+    with defer_commits(db):
+        guard, reused = reserve_posting(
+            db,
+            request,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            action="accounting.customer_advance.create",
+            payload=payload,
+        )
+        if reused:
+            resource_id = completed_resource(guard, "customer_advance")
+            advance = db.scalar(
+                select(CustomerAdvance).where(
+                    CustomerAdvance.id == resource_id,
+                    CustomerAdvance.organization_id == tenant.organization_id,
+                )
+            )
+            if advance is None:
+                raise HTTPException(status_code=409, detail="The original customer advance result is no longer available")
+            return _advance_read(db, tenant.organization_id, advance)
+
+        result = create_advance(payload, request, db, tenant)
+        complete_posting(db, guard, resource_type="customer_advance", resource_id=result.id)
+    db.commit()
+    return result
+
+
+@router.post("/accounting/customer-advances/{advance_id}/apply", response_model=CustomerAdvanceRead)
+def safe_apply_customer_advance(
+    advance_id: str,
+    payload: CustomerAdvanceApply,
+    request: Request,
+    db: DbSession,
+    tenant: AccountingManager,
+):
+    with defer_commits(db):
+        guard, reused = reserve_posting(
+            db,
+            request,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            action="accounting.customer_advance.apply",
+            payload={"advance_id": advance_id, "payload": payload.model_dump(mode="json")},
+        )
+        if reused:
+            resource_id = completed_resource(guard, "customer_advance")
+            advance = db.scalar(
+                select(CustomerAdvance).where(
+                    CustomerAdvance.id == resource_id,
+                    CustomerAdvance.organization_id == tenant.organization_id,
+                )
+            )
+            if advance is None:
+                raise HTTPException(status_code=409, detail="The original customer advance result is no longer available")
+            return _advance_read(db, tenant.organization_id, advance)
+
+        result = apply_advance(advance_id, payload, request, db, tenant)
+        complete_posting(db, guard, resource_type="customer_advance", resource_id=result.id)
+    db.commit()
+    return result
 
 
 @router.post("/accounting/money", response_model=AccountingMoneyEntryRead, status_code=status.HTTP_201_CREATED)
