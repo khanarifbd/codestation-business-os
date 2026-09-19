@@ -11,11 +11,14 @@ from app.models.accounting import (
     LedgerAccount,
     OrganizationFunctionalCurrencyPeriod,
 )
-from app.models.capital import CompanyLoan, LoanRepayment
+from app.models.capital import CompanyLoan, LoanRepayment, OwnerEquityTransaction
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, Payment
+from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
 from app.models.loan_accounting import LoanDisbursement
 from app.models.organization import Organization
 from app.models.payables import PayableBill, PayablePayment
+from app.models.payroll import PayrollRun, PayrollWithholdingPayment
+from app.models.tax import TaxSettlement
 
 MONEY = Decimal("0.01")
 
@@ -308,6 +311,116 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
                     "loan_closed_with_principal",
                     f"Loan {lender} status={status} but outstanding={money(outstanding)}",
                 )
+
+    # Fixed assets: acquisition + depreciation subledger must reconcile to GL-backed state.
+    assets = db.execute(
+        select(
+            FixedAsset.id,
+            FixedAsset.asset_code,
+            FixedAsset.acquisition_cost,
+            FixedAsset.salvage_value,
+            FixedAsset.accumulated_depreciation,
+            FixedAsset.opening_accumulated_depreciation,
+        ).where(FixedAsset.organization_id == organization_id)
+    ).all()
+    report.stats["fixed_assets"] = len(assets)
+    depreciation_by_asset = {
+        asset_id: money(Decimal(total or 0))
+        for asset_id, total in db.execute(
+            select(
+                AssetDepreciationEntry.asset_id,
+                func.coalesce(func.sum(AssetDepreciationEntry.amount), 0),
+            )
+            .where(AssetDepreciationEntry.organization_id == organization_id)
+            .group_by(AssetDepreciationEntry.asset_id)
+        ).all()
+    }
+    for asset_id, asset_code, cost, salvage, accumulated, opening_accumulated in assets:
+        if ("fixed_asset_acquisition", asset_id) not in source_journals:
+            report.add("fixed_asset_missing_journal", f"Fixed asset {asset_code} has no acquisition/opening journal")
+        expected_accumulated = money(Decimal(opening_accumulated or 0) + depreciation_by_asset.get(asset_id, Decimal("0")))
+        if money(accumulated) != expected_accumulated:
+            report.add(
+                "fixed_asset_depreciation_mismatch",
+                f"Fixed asset {asset_code} accumulated depreciation={money(accumulated)} expected={expected_accumulated}",
+            )
+        maximum = money(Decimal(cost) - Decimal(salvage))
+        if money(accumulated) < Decimal("0.00") or money(accumulated) > maximum:
+            report.add(
+                "fixed_asset_depreciation_out_of_range",
+                f"Fixed asset {asset_code} accumulated depreciation={money(accumulated)} depreciable={maximum}",
+            )
+
+    depreciation_entries = db.scalars(
+        select(AssetDepreciationEntry.id).where(AssetDepreciationEntry.organization_id == organization_id)
+    ).all()
+    report.stats["asset_depreciation_entries"] = len(depreciation_entries)
+    for entry_id in depreciation_entries:
+        if ("asset_depreciation", entry_id) not in source_journals:
+            report.add("asset_depreciation_missing_journal", f"Asset depreciation {entry_id} has no posted journal")
+
+    # Payroll: approved runs accrue liabilities; paid runs clear net payroll payable.
+    payroll_runs = db.execute(
+        select(
+            PayrollRun.id,
+            PayrollRun.run_number,
+            PayrollRun.status,
+            PayrollRun.gross_total,
+            PayrollRun.deduction_total,
+            PayrollRun.tax_total,
+            PayrollRun.net_total,
+            PayrollRun.paid_account_id,
+        ).where(PayrollRun.organization_id == organization_id)
+    ).all()
+    report.stats["payroll_runs"] = len(payroll_runs)
+    for run_id, run_number, status, gross, deductions, tax, net, paid_account_id in payroll_runs:
+        if money(gross) != money(Decimal(net) + Decimal(deductions) + Decimal(tax)):
+            report.add(
+                "payroll_total_mismatch",
+                f"Payroll {run_number} gross={money(gross)} net={money(net)} deductions={money(deductions)} tax={money(tax)}",
+            )
+        has_accrual = ("payroll_accrual", run_id) in source_journals
+        has_payment = ("payroll_payment", run_id) in source_journals
+        if status == "approved" and not has_accrual:
+            report.add("payroll_accrual_missing_journal", f"Approved payroll {run_number} has no accrual journal")
+        if status == "paid":
+            if not has_payment:
+                report.add("payroll_payment_missing_journal", f"Paid payroll {run_number} has no payment journal")
+            if paid_account_id is None:
+                report.add("payroll_paid_account_missing", f"Paid payroll {run_number} has no paid financial account")
+            # Legacy paid payrolls may have a single payroll_payment journal that
+            # directly recognized expense. New runs always have a separate accrual.
+            if not has_accrual and has_payment:
+                report.stats["legacy_paid_payroll_journals"] = int(report.stats.get("legacy_paid_payroll_journals", 0)) + 1
+
+    withholding_payments = db.scalars(
+        select(PayrollWithholdingPayment.id).where(PayrollWithholdingPayment.organization_id == organization_id)
+    ).all()
+    report.stats["payroll_withholding_payments"] = len(withholding_payments)
+    for payment_id in withholding_payments:
+        if ("payroll_withholding_payment", payment_id) not in source_journals:
+            report.add(
+                "payroll_withholding_payment_missing_journal",
+                f"Payroll withholding payment {payment_id} has no posted journal",
+            )
+
+    # Tax settlements and owner equity are canonical financial movements and must
+    # always retain their source journals.
+    tax_settlements = db.scalars(
+        select(TaxSettlement.id).where(TaxSettlement.organization_id == organization_id)
+    ).all()
+    report.stats["tax_settlements"] = len(tax_settlements)
+    for settlement_id in tax_settlements:
+        if ("tax_settlement", settlement_id) not in source_journals:
+            report.add("tax_settlement_missing_journal", f"Tax settlement {settlement_id} has no posted journal")
+
+    owner_equity_rows = db.scalars(
+        select(OwnerEquityTransaction.id).where(OwnerEquityTransaction.organization_id == organization_id)
+    ).all()
+    report.stats["owner_equity_transactions"] = len(owner_equity_rows)
+    for transaction_id in owner_equity_rows:
+        if ("owner_equity", transaction_id) not in source_journals:
+            report.add("owner_equity_missing_journal", f"Owner equity transaction {transaction_id} has no posted journal")
 
     # 3) Financial-account transaction currency and mapped GL protection.
     transaction_rows = db.execute(
