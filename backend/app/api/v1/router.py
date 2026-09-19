@@ -96,6 +96,7 @@ from app.api.v1.workspace import router as workspace_router
 _SHADOWED_FINANCIAL_OPERATIONS = {
     ("POST", "/finance/accounts"),
     ("POST", "/accounting/money"),
+    ("POST", "/accounting/money/income-with-fee"),
     ("POST", "/accounting/customer-advances"),
     ("POST", "/accounting/customer-advances/{advance_id}/apply"),
     ("PATCH", "/finance/invoices/{invoice_id}/status"),
