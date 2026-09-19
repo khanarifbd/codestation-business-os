@@ -62,6 +62,7 @@ from app.api.v1.order_links import router as order_links_router
 from app.api.v1.order_settlements import router as order_settlements_router
 from app.api.v1.orders import router as orders_router
 from app.api.v1.organizations import router as organizations_router
+from app.api.v1.passkeys import profile_router as passkey_profile_router, public_router as passkey_public_router
 from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
 from app.api.v1.phase4_read_fast import router as phase4_read_fast_router
@@ -248,9 +249,11 @@ _remove_shadowed_report_read_routes(reports_router)
 api_router = APIRouter()
 api_router.include_router(health_router)
 api_router.include_router(auth_router)
+api_router.include_router(passkey_public_router)
 api_router.include_router(profile_router)
 api_router.include_router(profile_identity_router)
 api_router.include_router(profile_sessions_router)
+api_router.include_router(passkey_profile_router)
 api_router.include_router(invitation_router)
 api_router.include_router(client_invitation_public_router)
 api_router.include_router(organizations_router)
