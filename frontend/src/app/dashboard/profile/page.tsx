@@ -21,6 +21,7 @@ import {
 
 import { GoogleReauthButton } from "@/components/auth/google-reauth-button";
 import { PasswordField } from "@/components/auth/password-field";
+import { ProfilePasskeysSection } from "@/components/profile-passkeys-section";
 import { ProfileSessionsSection } from "@/components/profile-sessions-section";
 import { ProfileSignInIdentities } from "@/components/profile-sign-in-identities";
 import { SearchableSelect } from "@/components/searchable-select";
@@ -356,6 +357,7 @@ export default function ProfilePage() {
         {activeTab === "security" ? <div className="grid gap-6 xl:grid-cols-[1.35fr_0.85fr] xl:items-start">
           <div className="space-y-6">
             <ProfileSignInIdentities onProfileChanged={() => loadProfile(false)} />
+            <ProfilePasskeysSection hasPassword={profile.has_password} googleConnected={profile.google_connected} />
 
             <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
               <div className="flex items-start gap-3 border-b pb-5"><div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100"><LockKeyhole className="size-5" /></div><div><h2 className="font-semibold">Password & sign-in</h2><p className="mt-1 text-sm text-neutral-500">Manage the password attached to your global Business OS identity.</p></div></div>
