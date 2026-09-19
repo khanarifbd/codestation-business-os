@@ -30,6 +30,7 @@ DEFAULT_LEDGER_ACCOUNTS = [
     ("2200", "Taxes Payable", "liability", "taxes_payable", "credit", "taxes_payable", True),
     ("2300", "Customer Advances", "liability", "customer_advances", "credit", "customer_advances", False),
     ("2400", "Payroll Withholdings Payable", "liability", "payroll_withholdings", "credit", "payroll_withholdings", False),
+    ("2410", "Payroll Payable", "liability", "payroll_payable", "credit", "payroll_payable", False),
     ("2500", "Investor Funds Payable", "liability", "investor_funds_payable", "credit", "investor_funds_payable", False),
     ("3000", "Owner's Equity", "equity", "owners_equity", "credit", "owners_equity", True),
     ("3100", "Opening Balance Equity", "equity", "opening_balance_equity", "credit", "opening_balance_equity", True),
