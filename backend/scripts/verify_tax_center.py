@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from starlette.requests import Request
 
+from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.api.v1.payables import create_payable_bill
 from app.api.v1.tax import TaxCodeCreate, TaxSettlementCreate, create_code, create_settlement, tax_report
 from app.db.session import SessionLocal, engine
@@ -90,9 +91,25 @@ def main() -> None:
         ))
         if settlement_row is None or settlement_journal is None or settlement_cash is None or settlement_cash.direction != "debit":
             raise AssertionError("withholding tax settlement did not post journal/cash movement")
+
+        reverse_business_transaction(
+            CorrectionRequest(source_type="tax_settlement",source_id=settlement["id"],reason="CI tax settlement correction",reversal_date=date(2099,2,16)),
+            request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]
+        )
+        tax_reversal=db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id==tenant.organization_id,
+            JournalEntry.reversed_entry_id==settlement_journal.id,
+        ))
+        cash_reversal=db.scalar(select(FinancialTransaction).where(
+            FinancialTransaction.organization_id==tenant.organization_id,
+            FinancialTransaction.source_type=="tax_settlement_reversal",
+            FinancialTransaction.source_id==settlement["id"],
+        ))
+        if tax_reversal is None or cash_reversal is None or cash_reversal.direction!="credit":
+            raise AssertionError("tax settlement reversal did not restore liability/cash")
     finally:
         db.close()
-    print("tax center verification passed: tax codes -> input tax -> recoverability -> withholding -> net payable -> balanced journal -> report")
+    print("tax center verification passed: tax recognition -> settlement -> controlled reversal -> balanced journal -> report")
 
 
 if __name__ == "__main__":
