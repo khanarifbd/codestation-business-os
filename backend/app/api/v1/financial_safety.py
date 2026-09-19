@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
 from app.api.dependencies import DbSession
-from app.api.v1.accounting_money import _read as _money_entry_read, create_money_entry
+from app.api.v1.accounting_money import _read as _money_entry_read, create_income_with_fee, create_money_entry
 from app.api.v1.accounting_loans import (
     AccountingManager,
     LoanAccountingRepaymentCreate,
@@ -30,6 +30,7 @@ from app.api.v1.payables import pay_payable_bill
 from app.db.session import defer_commits
 from app.models.accounting import JournalEntry
 from app.models.accounting_money import AccountingMoneyEntry
+from app.models.activity_log import ActivityLog
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.customer_advances import CustomerAdvance
 from app.models.expenses import Expense
@@ -37,7 +38,12 @@ from app.models.finance import AccountTransfer, FinancialAccount, Invoice, Payme
 from app.models.loan_accounting import LoanDisbursement
 from app.models.payables import PayablePayment
 from app.schemas.accounting_loans import LoanDisbursementRead, LoanRepaymentRead
-from app.schemas.accounting_money import AccountingMoneyEntryCreate, AccountingMoneyEntryRead
+from app.schemas.accounting_money import (
+    AccountingIncomeWithFeeCreate,
+    AccountingIncomeWithFeeRead,
+    AccountingMoneyEntryCreate,
+    AccountingMoneyEntryRead,
+)
 from app.schemas.customer_advances import CustomerAdvanceApply, CustomerAdvanceCreate, CustomerAdvanceRead
 from app.schemas.expenses import ExpenseCreate, ExpenseDetail
 from app.schemas.finance import (
@@ -189,6 +195,70 @@ def safe_create_money_entry(
 
         result = create_money_entry(payload, request, db, tenant)
         complete_posting(db, guard, resource_type="accounting_money_entry", resource_id=result.id)
+    db.commit()
+    return result
+
+
+@router.post(
+    "/accounting/money/income-with-fee",
+    response_model=AccountingIncomeWithFeeRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def safe_create_income_with_fee(
+    payload: AccountingIncomeWithFeeCreate,
+    request: Request,
+    db: DbSession,
+    tenant: AccountingManager,
+):
+    with defer_commits(db):
+        guard, reused = reserve_posting(
+            db,
+            request,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            action="accounting.money.income_with_fee.create",
+            payload=payload,
+        )
+        if reused:
+            income_id = completed_resource(guard, "accounting_money_entry")
+            income = db.scalar(
+                select(AccountingMoneyEntry).where(
+                    AccountingMoneyEntry.id == income_id,
+                    AccountingMoneyEntry.organization_id == tenant.organization_id,
+                )
+            )
+            if income is None:
+                raise HTTPException(status_code=409, detail="The original income result is no longer available")
+            audit = db.scalar(
+                select(ActivityLog)
+                .where(
+                    ActivityLog.organization_id == tenant.organization_id,
+                    ActivityLog.action == "accounting.money.income_with_fee_created",
+                    ActivityLog.entity_type == "accounting_money_entry",
+                    ActivityLog.entity_id == income.id,
+                )
+                .order_by(ActivityLog.created_at.desc())
+            )
+            if audit is None:
+                raise HTTPException(status_code=409, detail="The original income-with-fee audit record is unavailable")
+            linked_fee_id = (audit.after_data or {}).get("linked_fee_entry_id")
+            fee = None
+            if linked_fee_id:
+                fee = db.scalar(
+                    select(AccountingMoneyEntry).where(
+                        AccountingMoneyEntry.id == str(linked_fee_id),
+                        AccountingMoneyEntry.organization_id == tenant.organization_id,
+                    )
+                )
+                if fee is None:
+                    raise HTTPException(status_code=409, detail="The original processing-fee result is unavailable")
+            return AccountingIncomeWithFeeRead(
+                income=_money_entry_read(db, tenant.organization_id, income),
+                fee=_money_entry_read(db, tenant.organization_id, fee) if fee is not None else None,
+            )
+
+        result = create_income_with_fee(payload, request, db, tenant)
+        complete_posting(db, guard, resource_type="accounting_money_entry", resource_id=result.income.id)
     db.commit()
     return result
 
