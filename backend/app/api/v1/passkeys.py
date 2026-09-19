@@ -226,6 +226,10 @@ def complete_registration(
         window_seconds=600,
         identity=current_user.id,
     )
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Passkey name is required.")
+
     challenge = claim_challenge(
         db,
         challenge_id=payload.challenge_id,
@@ -272,7 +276,6 @@ def complete_registration(
         db.commit()
         raise HTTPException(status_code=409, detail="This passkey is already registered.")
 
-    name = payload.name.strip()
     passkey = UserPasskey(
         user_id=current_user.id,
         name=name,
