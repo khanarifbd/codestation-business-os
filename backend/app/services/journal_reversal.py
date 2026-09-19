@@ -35,6 +35,14 @@ def reverse_source_journal(
         return None
     if original.source_type == "functional_currency_transition":
         raise HTTPException(status_code=409, detail="Functional-currency transition journals cannot be reversed as ordinary transactions")
+    if reversal_date < original.entry_date:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Reversal date {reversal_date.isoformat()} cannot be earlier than "
+                f"the original accounting date {original.entry_date.isoformat()}"
+            ),
+        )
 
     current_period = current_functional_currency_period(db, organization_id)
     if original.functional_currency != current_period.currency or original.entry_date < current_period.effective_from:
