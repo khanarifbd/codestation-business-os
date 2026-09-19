@@ -29,6 +29,7 @@ from app.api.v1.financial_corrections import CorrectionRequest, reverse_business
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
+from app.models.loan_accounting import LoanFee
 from app.schemas.finance import FinancialAccountCreate
 from app.services.accounting_integrity_audit import audit_organization_accounting
 from app.services.exchange_rates import record_rate_snapshot
@@ -389,6 +390,14 @@ def main() -> None:
             raise AssertionError("foreign loan repayment cash amount is incorrect")
         if fx_repayment["loan"]["outstanding_principal"] != Decimal("600.00"):
             raise AssertionError("foreign loan repayment changed principal incorrectly")
+        linked_repayment_fee = db.scalar(
+            select(LoanFee).where(
+                LoanFee.organization_id == tenant.organization_id,
+                LoanFee.repayment_id == fx_repayment["id"],
+            )
+        )
+        if linked_repayment_fee is None or Decimal(linked_repayment_fee.amount) != Decimal("10.00"):
+            raise AssertionError("loan repayment fee must be linked to its exact repayment")
         schedule_after_first_payment = get_schedule(fx_loan["id"], db, tenant)  # type: ignore[arg-type]
         if (
             schedule_after_first_payment[0]["status"] != "paid"
@@ -468,6 +477,9 @@ def main() -> None:
         )
         if reversed_history_item is None or reversed_history_item["status"] != "reversed":
             raise AssertionError("loan history must expose reversed repayment status")
+        db.refresh(linked_repayment_fee)
+        if linked_repayment_fee.payment_status != "reversed":
+            raise AssertionError("loan repayment reversal must reverse the fee linked to that exact repayment")
 
         schedule_after_reversal = get_schedule(fx_loan["id"], db, tenant)  # type: ignore[arg-type]
         if any(

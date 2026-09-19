@@ -836,14 +836,33 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
                 select(LoanFee)
                 .where(
                     LoanFee.organization_id == tenant.organization_id,
-                    LoanFee.loan_id == loan.id,
-                    LoanFee.account_id == repayment.account_id,
-                    LoanFee.fee_date == repayment.payment_date,
-                    LoanFee.amount == derived_fee,
+                    LoanFee.repayment_id == repayment.id,
                     LoanFee.payment_status == "paid",
                 )
-                .order_by(LoanFee.created_at.desc())
+                .with_for_update()
             )
+            if fee is not None and Decimal(fee.amount) != derived_fee:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Linked loan fee does not match the repayment cash split",
+                )
+            if fee is None:
+                # Existing pre-0079 rows do not have repayment_id. Keep a guarded
+                # compatibility lookup for those records only.
+                fee = db.scalar(
+                    select(LoanFee)
+                    .where(
+                        LoanFee.organization_id == tenant.organization_id,
+                        LoanFee.repayment_id.is_(None),
+                        LoanFee.loan_id == loan.id,
+                        LoanFee.account_id == repayment.account_id,
+                        LoanFee.fee_date == repayment.payment_date,
+                        LoanFee.amount == derived_fee,
+                        LoanFee.payment_status == "paid",
+                    )
+                    .order_by(LoanFee.created_at.desc())
+                    .with_for_update()
+                )
             if fee is not None:
                 fee.payment_status = "reversed"
                 fee.notes = f"{fee.notes + ' · ' if fee.notes else ''}Reversed: {reason}"

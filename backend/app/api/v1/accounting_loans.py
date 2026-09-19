@@ -683,6 +683,7 @@ def repay_loan(
             LoanFee(
                 organization_id=tenant.organization_id,
                 loan_id=loan.id,
+                repayment_id=repayment.id,
                 account_id=financial.id,
                 fee_date=payload.payment_date,
                 fee_type=payload.fee_type,

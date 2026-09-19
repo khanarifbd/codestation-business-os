@@ -31,10 +31,14 @@ class LoanDisbursement(TenantOwnedMixin, Base):
 
 class LoanFee(TenantOwnedMixin, Base):
     __tablename__ = "loan_fees"
-    __table_args__ = (Index("ix_loan_fees_org_loan_date", "organization_id", "loan_id", "fee_date"),)
+    __table_args__ = (
+        Index("ix_loan_fees_org_loan_date", "organization_id", "loan_id", "fee_date"),
+        Index("ux_loan_fees_org_repayment", "organization_id", "repayment_id", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     loan_id: Mapped[str] = mapped_column(String(36), ForeignKey("company_loans.id", ondelete="CASCADE"), nullable=False)
+    repayment_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("loan_repayments.id", ondelete="SET NULL"), nullable=True)
     account_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("financial_accounts.id", ondelete="RESTRICT"), nullable=True)
     fee_date: Mapped[date] = mapped_column(Date, nullable=False)
     fee_type: Mapped[str] = mapped_column(String(40), default="processing_fee", nullable=False)
