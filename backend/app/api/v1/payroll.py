@@ -7,6 +7,7 @@ from sqlalchemy import case, func, or_, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.company_settings import OrganizationDocumentSequence
+from app.models.accounting import JournalEntry, JournalLine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.membership import Membership
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, SalaryProfile
@@ -27,6 +28,7 @@ from app.schemas.payroll import (
     SalaryProfileRead,
     SalaryProfileUpdate,
 )
+from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.tenancy.context import TenantContext
@@ -211,6 +213,90 @@ def _recalculate_run(db: DbSession, run: PayrollRun) -> None:
     ).one()
     run.employee_count = int(row[0] or 0)
     run.gross_total, run.allowance_total, run.deduction_total, run.tax_total, run.net_total = map(_money, row[1:])
+
+
+def _payroll_journal(db: DbSession, organization_id: str, source_type: str, run_id: str) -> JournalEntry | None:
+    return db.scalar(
+        select(JournalEntry).where(
+            JournalEntry.organization_id == organization_id,
+            JournalEntry.source_type == source_type,
+            JournalEntry.source_id == run_id,
+            JournalEntry.status == "posted",
+        )
+    )
+
+
+def _ensure_payroll_accrual(
+    db: DbSession,
+    tenant: TenantContext,
+    run: PayrollRun,
+    period: PayrollPeriod,
+) -> JournalEntry:
+    existing = _payroll_journal(db, tenant.organization_id, "payroll_accrual", run.id)
+    if existing is not None:
+        return existing
+
+    gross = _money(run.gross_total)
+    withheld = _money(Decimal(run.deduction_total) + Decimal(run.tax_total))
+    net = _money(run.net_total)
+    if gross <= 0 or _money(net + withheld) != gross:
+        raise HTTPException(status_code=409, detail="Payroll totals do not reconcile: gross must equal net pay plus deductions and taxes")
+
+    expense = system_account(db, tenant.organization_id, "payroll_expense")
+    payable = system_account(db, tenant.organization_id, "payroll_payable")
+    withholdings = system_account(db, tenant.organization_id, "payroll_withholdings")
+
+    gross_base, rate = to_base_amount(
+        db,
+        tenant.organization_id,
+        tenant.organization.currency,
+        gross,
+        run.currency,
+        rate_date=period.period_end,
+    )
+    withheld_base = _money(withheld * rate)
+    net_base = _money(gross_base - withheld_base)
+    lines = [
+        PostingLine(
+            ledger_account_id=expense.id,
+            debit=gross_base,
+            currency=run.currency,
+            exchange_rate_to_base=rate,
+            original_amount=gross,
+            description=f"Payroll expense {run.run_number}",
+        ),
+        PostingLine(
+            ledger_account_id=payable.id,
+            credit=net_base,
+            currency=run.currency,
+            exchange_rate_to_base=rate,
+            original_amount=net,
+            description=f"Net payroll payable {run.run_number}",
+        ),
+    ]
+    if withheld > 0:
+        lines.append(
+            PostingLine(
+                ledger_account_id=withholdings.id,
+                credit=withheld_base,
+                currency=run.currency,
+                exchange_rate_to_base=rate,
+                original_amount=withheld,
+                description=f"Payroll deductions and taxes {run.run_number}",
+            )
+        )
+
+    return post_journal(
+        db,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        entry_date=period.period_end,
+        source_type="payroll_accrual",
+        source_id=run.id,
+        reference=run.run_number,
+        memo=f"Payroll accrual {run.run_number} · {period.name}",
+        lines=lines,
+    )
 
 
 @router.get("/meta", response_model=PayrollMeta)
@@ -586,6 +672,15 @@ def approve_run(run_id: str, request: Request, db: DbSession, tenant: PayrollMan
         raise HTTPException(status_code=409, detail="Only draft payroll can be approved")
     if run.employee_count == 0:
         raise HTTPException(status_code=409, detail="Payroll run has no employees")
+    period = db.scalar(
+        select(PayrollPeriod).where(
+            PayrollPeriod.id == run.period_id,
+            PayrollPeriod.organization_id == tenant.organization_id,
+        )
+    )
+    if period is None:
+        raise HTTPException(status_code=409, detail="Payroll period is unavailable")
+    _ensure_payroll_accrual(db, tenant, run, period)
     run.status = "approved"
     run.approved_at = datetime.now(timezone.utc)
     record_activity(
@@ -638,11 +733,91 @@ def pay_run(run_id: str, payload: PayrollPayRequest, request: Request, db: DbSes
         raise HTTPException(status_code=404, detail="Active financial account not found")
     if account.currency != run.currency:
         raise HTTPException(status_code=400, detail=f"Payroll currency is {run.currency}; select a {run.currency} account")
+    if account.account_type == "credit_card":
+        raise HTTPException(status_code=400, detail="Payroll cannot be paid from a credit-card liability account")
 
     balance = _account_balance(db, account)
     if run.net_total > balance:
         raise HTTPException(status_code=409, detail=f"Insufficient balance. Available {balance} {account.currency}")
 
+    accrual = _ensure_payroll_accrual(db, tenant, run, period)
+    payable_ledger = system_account(db, tenant.organization_id, "payroll_payable")
+    carrying_base = _money(
+        db.scalar(
+            select(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0)).where(
+                JournalLine.organization_id == tenant.organization_id,
+                JournalLine.journal_entry_id == accrual.id,
+                JournalLine.ledger_account_id == payable_ledger.id,
+            )
+        )
+        or 0
+    )
+    if carrying_base <= 0:
+        raise HTTPException(status_code=409, detail="Payroll payable carrying value is unavailable")
+
+    _, cash_ledger = financial_ledger_account(db, tenant.organization_id, account.id)
+    cash_base, cash_rate = to_base_amount(
+        db,
+        tenant.organization_id,
+        tenant.organization.currency,
+        Decimal(run.net_total),
+        run.currency,
+        rate_date=period.pay_date,
+    )
+    payable_rate = (carrying_base / Decimal(run.net_total)).quantize(Decimal("0.00000001"))
+    payment_lines = [
+        PostingLine(
+            ledger_account_id=payable_ledger.id,
+            debit=carrying_base,
+            currency=run.currency,
+            exchange_rate_to_base=payable_rate,
+            original_amount=run.net_total,
+            description=f"Payroll payable settlement {run.run_number}",
+        ),
+        PostingLine(
+            ledger_account_id=cash_ledger.id,
+            credit=cash_base,
+            currency=run.currency,
+            exchange_rate_to_base=cash_rate,
+            original_amount=run.net_total,
+            description=f"Payroll payment {run.run_number}",
+        ),
+    ]
+    fx_difference = _money(cash_base - carrying_base)
+    if fx_difference > 0:
+        fx_loss = system_account(db, tenant.organization_id, "realized_fx_loss")
+        payment_lines.append(
+            PostingLine(
+                ledger_account_id=fx_loss.id,
+                debit=fx_difference,
+                currency=tenant.organization.currency,
+                original_amount=fx_difference,
+                description=f"Realized FX loss on payroll {run.run_number}",
+            )
+        )
+    elif fx_difference < 0:
+        fx_gain = system_account(db, tenant.organization_id, "realized_fx_gain")
+        payment_lines.append(
+            PostingLine(
+                ledger_account_id=fx_gain.id,
+                credit=abs(fx_difference),
+                currency=tenant.organization.currency,
+                original_amount=abs(fx_difference),
+                description=f"Realized FX gain on payroll {run.run_number}",
+            )
+        )
+
+    post_journal(
+        db,
+        organization_id=tenant.organization_id,
+        user_id=tenant.user_id,
+        entry_date=period.pay_date,
+        source_type="payroll_payment",
+        source_id=run.id,
+        reference=run.run_number,
+        memo=f"Payroll payment {run.run_number} · {period.name}",
+        lines=payment_lines,
+    )
     db.add(
         FinancialTransaction(
             organization_id=tenant.organization_id,
