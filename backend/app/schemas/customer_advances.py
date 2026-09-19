@@ -8,7 +8,7 @@ class CustomerAdvanceCreate(BaseModel):
     client_id: str
     financial_account_id: str
     advance_date: date
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(ge=Decimal("0.01"))
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
 
@@ -16,7 +16,7 @@ class CustomerAdvanceCreate(BaseModel):
 class CustomerAdvanceApply(BaseModel):
     invoice_id: str
     application_date: date
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(ge=Decimal("0.01"))
 
 
 class CustomerAdvanceRead(BaseModel):
