@@ -70,7 +70,10 @@ def main() -> None:
     required_deploy_fragments = (
         'UPLOADS_VOLUME="codestation-business-os_business_os_uploads"',
         'resolve_compose_project() {',
-        'Refusing to risk switching to a different database volume.',
+        'Multiple Business OS PostgreSQL Compose projects were found',
+        'Preserving existing PostgreSQL Compose project',
+        'Deployment code changed to ${after_update}; re-executing the canonical script',
+        'BUSINESS_OS_DEPLOY_REEXEC',
         '-v "${UPLOADS_VOLUME}:/data/uploads"',
         'verify-production.sh" --config-only',
         'Refreshing singleton finance scheduler from candidate backend image',
@@ -83,8 +86,12 @@ def main() -> None:
         if fragment not in deploy:
             raise AssertionError(f"canonical deployment hardening missing: {fragment}")
 
-    if (ROOT / "deployment/safe-deploy.sh").exists():
-        raise AssertionError("duplicate safe-deploy.sh entrypoint must not return")
+    for deprecated_entrypoint in (
+        ROOT / "deployment/safe-deploy.sh",
+        ROOT / "infrastructure/deploy-staging.sh",
+    ):
+        if deprecated_entrypoint.exists():
+            raise AssertionError(f"duplicate deployment entrypoint must not return: {deprecated_entrypoint}")
 
     sync_call = deploy.index('sync_active_uploads_to_volume "${active_slot}"')
     inactive_removal = deploy.index('remove_legacy_blue_if_inactive "${active_slot}"')
@@ -105,7 +112,8 @@ def main() -> None:
 
     print(
         "Phase 5 architecture verification passed: route ownership, request IDs, "
-        "migration ownership, persistent/legacy uploads, scheduler rollout, Nginx keepalive"
+        "migration ownership, single deployment entrypoint, database project preservation, "
+        "persistent/legacy uploads, scheduler rollout, Nginx keepalive"
     )
 
 
