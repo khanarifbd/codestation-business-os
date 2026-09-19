@@ -231,30 +231,35 @@ project_has_state() {
 
 resolve_compose_project() {
   local configured candidate
+  local -a existing=()
   configured="$(env_value COMPOSE_PROJECT_NAME)"
 
   if [[ -n "${configured}" ]]; then
     [[ "${configured}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || fail "COMPOSE_PROJECT_NAME contains unsupported characters"
-    PROJECT_NAME="${configured}"
-    if ! project_has_state "${PROJECT_NAME}"; then
-      for candidate in codestation-business-os deployment; do
-        [[ "${candidate}" == "${PROJECT_NAME}" ]] && continue
-        if project_has_state "${candidate}"; then
-          fail "COMPOSE_PROJECT_NAME=${PROJECT_NAME} has no existing PostgreSQL state, but ${candidate} does. Refusing to risk switching to a different database volume."
-        fi
-      done
+  fi
+
+  for candidate in codestation-business-os deployment; do
+    if project_has_state "${candidate}"; then
+      existing+=("${candidate}")
+    fi
+  done
+  if [[ -n "${configured}" && "${configured}" != "codestation-business-os" && "${configured}" != "deployment" ]] \
+      && project_has_state "${configured}"; then
+    existing+=("${configured}")
+  fi
+
+  if (( ${#existing[@]} > 1 )); then
+    fail "Multiple Business OS PostgreSQL Compose projects were found (${existing[*]}). Refusing to guess which database is production."
+  fi
+
+  if (( ${#existing[@]} == 1 )); then
+    PROJECT_NAME="${existing[0]}"
+    if [[ "${configured}" != "${PROJECT_NAME}" ]]; then
+      log "Preserving existing PostgreSQL Compose project ${PROJECT_NAME} instead of configured ${configured:-<unset>}"
+      set_env_value COMPOSE_PROJECT_NAME "${PROJECT_NAME}"
     fi
   else
-    local found=""
-    for candidate in codestation-business-os deployment; do
-      if project_has_state "${candidate}"; then
-        if [[ -n "${found}" ]]; then
-          fail "Multiple Business OS PostgreSQL Compose projects were found (${found}, ${candidate}). Set COMPOSE_PROJECT_NAME explicitly in .env.staging before deploying."
-        fi
-        found="${candidate}"
-      fi
-    done
-    PROJECT_NAME="${found:-codestation-business-os}"
+    PROJECT_NAME="${configured:-codestation-business-os}"
     set_env_value COMPOSE_PROJECT_NAME "${PROJECT_NAME}"
   fi
 
@@ -564,8 +569,28 @@ for command_name in docker git curl nginx systemctl flock openssl; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "${command_name} is required"
 done
 
-exec 9>"${LOCK_FILE}"
-flock -n 9 || fail "Another Business OS deployment is already running"
+if [[ "${BUSINESS_OS_DEPLOY_REEXEC:-0}" == "1" ]]; then
+  [[ -e "/proc/$/fd/9" ]] || fail "Deployment re-exec lost its deployment lock"
+else
+  exec 9>"${LOCK_FILE}"
+  flock -n 9 || fail "Another Business OS deployment is already running"
+fi
+
+branch="${DEPLOY_BRANCH:-develop}"
+log "Updating deployment code from ${branch}"
+git fetch origin "${branch}"
+before_update="$(git rev-parse HEAD)"
+if [[ "$(git branch --show-current)" != "${branch}" ]]; then
+  git checkout "${branch}"
+fi
+git pull --ff-only origin "${branch}"
+after_update="$(git rev-parse HEAD)"
+
+if [[ "${BUSINESS_OS_DEPLOY_REEXEC:-0}" != "1" && "${before_update}" != "${after_update}" ]]; then
+  log "Deployment code changed to ${after_update}; re-executing the canonical script"
+  export BUSINESS_OS_DEPLOY_REEXEC=1
+  exec bash "${ROOT_DIR}/deployment/deploy.sh"
+fi
 
 if ! grep -q '^JWT_SECRET_KEY=' "${ENV_FILE}"; then
   echo "==> Generating JWT secret for this environment"
@@ -630,14 +655,7 @@ candidate_slot="$(other_slot "${active_slot}")"
 log "CodeStation Business OS canonical blue/green deployment"
 log "Active slot: ${active_slot}; candidate slot: ${candidate_slot}"
 
-branch="${DEPLOY_BRANCH:-develop}"
-git fetch origin "${branch}"
-if [[ "$(git branch --show-current)" != "${branch}" ]]; then
-  git checkout "${branch}"
-fi
-git pull --ff-only origin "${branch}"
-
-# Re-apply idempotent bootstrap/config guards after fast-forwarding the release.
+# The canonical script was updated/re-executed before any deployment mutation.
 ensure_project_credential_key
 ensure_backup_encryption_key
 ensure_nginx_upload_limit
