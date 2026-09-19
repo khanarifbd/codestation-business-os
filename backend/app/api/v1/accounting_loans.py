@@ -29,6 +29,7 @@ from app.services.accounting_posting import (
 )
 from app.services.activity_log import record_activity
 from app.services.functional_currency import functional_currency_for_date
+from app.services.loan_schedule import refresh_loan_schedule_payment_state
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/loans", tags=["Accounting - Loans"])
@@ -717,6 +718,12 @@ def repay_loan(
         reference=repayment.reference,
         description=f"Loan repayment to {loan.lender_name}",
     )
+    db.flush()
+    refresh_loan_schedule_payment_state(
+        db,
+        organization_id=tenant.organization_id,
+        loan_id=loan.id,
+    )
 
     loan.outstanding_principal = money(Decimal(loan.outstanding_principal) - principal)
     disbursed = _disbursed_total(db, loan)
@@ -852,6 +859,12 @@ def replace_schedule(
                 fee_due=money(source.fee_due),
             )
         )
+    db.flush()
+    refresh_loan_schedule_payment_state(
+        db,
+        organization_id=tenant.organization_id,
+        loan_id=loan.id,
+    )
     record_activity(
         db,
         action="accounting.loan.schedule_replaced",

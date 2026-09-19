@@ -13,10 +13,14 @@ from app.api.v1.accounting_loans import (
     AccountingLoanCreate,
     LoanAccountingRepaymentCreate,
     LoanDisbursementCreate,
+    LoanScheduleCreate,
+    ScheduleLineCreate,
     approve_loan,
     close_loan,
     create_accounting_loan,
     disburse_loan,
+    get_schedule,
+    replace_schedule,
     repay_loan,
 )
 from app.api.v1.accounting_reports import financial_statements
@@ -26,6 +30,7 @@ from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.schemas.finance import FinancialAccountCreate
+from app.services.accounting_integrity_audit import audit_organization_accounting
 from app.services.exchange_rates import record_rate_snapshot
 
 
@@ -344,6 +349,27 @@ def main() -> None:
         if fx_disbursement["loan"]["outstanding_principal"] != Decimal("1000.00"):
             raise AssertionError("foreign loan disbursement did not create principal liability")
 
+        replace_schedule(
+            fx_loan["id"],
+            LoanScheduleCreate(
+                items=[
+                    ScheduleLineCreate(
+                        installment_number=1,
+                        due_date=fx_first_repayment_date,
+                        principal_due=Decimal("400"),
+                    ),
+                    ScheduleLineCreate(
+                        installment_number=2,
+                        due_date=fx_final_repayment_date,
+                        principal_due=Decimal("600"),
+                    ),
+                ]
+            ),
+            request("PUT", f"/accounting/loans/{fx_loan['id']}/schedule"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+
         fx_repayment = repay_loan(
             fx_loan["id"],
             LoanAccountingRepaymentCreate(
@@ -363,6 +389,13 @@ def main() -> None:
             raise AssertionError("foreign loan repayment cash amount is incorrect")
         if fx_repayment["loan"]["outstanding_principal"] != Decimal("600.00"):
             raise AssertionError("foreign loan repayment changed principal incorrectly")
+        schedule_after_first_payment = get_schedule(fx_loan["id"], db, tenant)  # type: ignore[arg-type]
+        if (
+            schedule_after_first_payment[0]["status"] != "paid"
+            or schedule_after_first_payment[0]["principal_paid"] != Decimal("400.00")
+            or schedule_after_first_payment[1]["status"] != "pending"
+        ):
+            raise AssertionError("loan repayment schedule did not allocate the first principal payment")
 
         fx_repayment_journal = db.scalar(
             select(JournalEntry).where(
@@ -436,6 +469,23 @@ def main() -> None:
         if reversed_history_item is None or reversed_history_item["status"] != "reversed":
             raise AssertionError("loan history must expose reversed repayment status")
 
+        schedule_after_reversal = get_schedule(fx_loan["id"], db, tenant)  # type: ignore[arg-type]
+        if any(
+            item["status"] != "pending" or item["principal_paid"] != Decimal("0.00")
+            for item in schedule_after_reversal
+        ):
+            raise AssertionError("reversed loan repayment must be removed from schedule paid state")
+
+        integrity_after_reversal = audit_organization_accounting(db, tenant.organization_id)
+        loan_integrity_issues = [
+            issue for issue in integrity_after_reversal.issues if issue.code.startswith("loan_")
+        ]
+        if loan_integrity_issues:
+            raise AssertionError(
+                "loan integrity audit must understand controlled reversals: "
+                + "; ".join(f"{issue.code}: {issue.message}" for issue in loan_integrity_issues)
+            )
+
         final_repayment = repay_loan(
             fx_loan["id"],
             LoanAccountingRepaymentCreate(
@@ -452,6 +502,13 @@ def main() -> None:
             raise AssertionError("foreign loan final repayment did not clear principal")
         if final_repayment["loan"]["status"] != "paid":
             raise AssertionError("foreign loan must become paid after final principal settlement")
+        schedule_after_final_payment = get_schedule(fx_loan["id"], db, tenant)  # type: ignore[arg-type]
+        if (
+            any(item["status"] != "paid" for item in schedule_after_final_payment)
+            or schedule_after_final_payment[0]["principal_paid"] != Decimal("400.00")
+            or schedule_after_final_payment[1]["principal_paid"] != Decimal("600.00")
+        ):
+            raise AssertionError("final loan repayment did not complete the repayment schedule")
 
         final_journal = db.scalar(
             select(JournalEntry).where(

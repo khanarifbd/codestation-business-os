@@ -230,12 +230,27 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
     report.stats["loan_disbursements"] = len(disbursements)
     disbursed_by_loan: dict[str, Decimal] = {}
     for disbursement_id, loan_id, principal in disbursements:
-        disbursed_by_loan[loan_id] = money(disbursed_by_loan.get(loan_id, Decimal("0")) + Decimal(principal))
+        principal_value = Decimal(principal)
+        disbursed_by_loan[loan_id] = money(disbursed_by_loan.get(loan_id, Decimal("0")) + principal_value)
+        # Controlled disbursement reversal rows are negative subledger trackers.
+        # The accounting reversal journal points to the original positive source,
+        # so the negative tracker intentionally has no loan_disbursement journal.
+        if principal_value < 0:
+            continue
         if ("loan_disbursement", disbursement_id) not in source_journals:
             report.add(
                 "loan_disbursement_missing_journal",
                 f"Loan disbursement {disbursement_id} has no posted loan_disbursement journal",
             )
+
+    reversed_repayment_ids = set(
+        db.scalars(
+            select(FinancialTransaction.source_id).where(
+                FinancialTransaction.organization_id == organization_id,
+                FinancialTransaction.source_type.like("loan_repayment_reversal%"),
+            )
+        ).all()
+    )
 
     repayment_rows = db.execute(
         select(LoanRepayment.id, LoanRepayment.loan_id, LoanRepayment.principal_amount).where(
@@ -248,13 +263,15 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
         if loan_id not in disbursed_by_loan:
             # Legacy CompanyLoan repayments predate the accounting-loan lifecycle.
             continue
-        accounting_repayment_count += 1
-        repaid_by_loan[loan_id] = money(repaid_by_loan.get(loan_id, Decimal("0")) + Decimal(principal))
         if ("loan_repayment_accounting", repayment_id) not in source_journals:
             report.add(
                 "loan_repayment_missing_journal",
                 f"Accounting loan repayment {repayment_id} has no posted loan_repayment_accounting journal",
             )
+        if repayment_id in reversed_repayment_ids:
+            continue
+        accounting_repayment_count += 1
+        repaid_by_loan[loan_id] = money(repaid_by_loan.get(loan_id, Decimal("0")) + Decimal(principal))
     report.stats["accounting_loan_repayments"] = accounting_repayment_count
 
     if disbursed_by_loan:

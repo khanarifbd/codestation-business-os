@@ -20,6 +20,7 @@ from app.models.loan_accounting import LoanDisbursement, LoanFee
 from app.models.payables import PayableBill, PayablePayment
 from app.services.activity_log import record_activity
 from app.services.journal_reversal import reverse_source_journal
+from app.services.loan_schedule import refresh_loan_schedule_payment_state
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/corrections", tags=["Accounting - Corrections"])
@@ -846,6 +847,13 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
             if fee is not None:
                 fee.payment_status = "reversed"
                 fee.notes = f"{fee.notes + ' · ' if fee.notes else ''}Reversed: {reason}"
+
+        db.flush()
+        refresh_loan_schedule_payment_state(
+            db,
+            organization_id=tenant.organization_id,
+            loan_id=loan.id,
+        )
 
         reversed_number = repayment.reference or f"Repayment {repayment.id[:8].upper()}"
         before_status = "posted_repayment"
