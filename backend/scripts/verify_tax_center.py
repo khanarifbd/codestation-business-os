@@ -16,6 +16,7 @@ from app.models.payables import PayableBill
 from app.models.tax import TaxSettlement
 from app.schemas.payables import PayableBillCreate
 from app.services.accounting_posting import system_account
+from app.services.activity_log import record_activity
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,19 @@ def main() -> None:
             is_active=True,
             created_by_user_id=tenant.user_id,
         )
-        db.add(bank); db.commit()
+        db.add(bank); db.flush()
+        record_activity(
+            db,
+            action="ci.tax.fixture.bank_created",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="financial_account",
+            entity_id=bank.id,
+            after={"account_id":bank.id,"currency":bank.currency,"opening_balance":str(bank.opening_balance)},
+            request=request("POST", "/ci/tax-fixture"),
+        )
+        db.commit()
         settlement = create_settlement(
             TaxSettlementCreate(
                 settlement_type="withholding_tax_payment",
