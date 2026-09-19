@@ -31,6 +31,7 @@ from app.schemas.payroll import (
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.functional_currency import functional_currency_for_date
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/payroll", tags=["Payroll"])
@@ -246,10 +247,11 @@ def _ensure_payroll_accrual(
     payable = system_account(db, tenant.organization_id, "payroll_payable")
     withholdings = system_account(db, tenant.organization_id, "payroll_withholdings")
 
+    base_currency = functional_currency_for_date(db, tenant.organization_id, period.period_end)
     gross_base, rate = to_base_amount(
         db,
         tenant.organization_id,
-        tenant.organization.currency,
+        base_currency,
         gross,
         run.currency,
         rate_date=period.period_end,
@@ -756,10 +758,11 @@ def pay_run(run_id: str, payload: PayrollPayRequest, request: Request, db: DbSes
         raise HTTPException(status_code=409, detail="Payroll payable carrying value is unavailable")
 
     _, cash_ledger = financial_ledger_account(db, tenant.organization_id, account.id)
+    payment_base_currency = functional_currency_for_date(db, tenant.organization_id, period.pay_date)
     cash_base, cash_rate = to_base_amount(
         db,
         tenant.organization_id,
-        tenant.organization.currency,
+        payment_base_currency,
         Decimal(run.net_total),
         run.currency,
         rate_date=period.pay_date,
@@ -790,7 +793,7 @@ def pay_run(run_id: str, payload: PayrollPayRequest, request: Request, db: DbSes
             PostingLine(
                 ledger_account_id=fx_loss.id,
                 debit=fx_difference,
-                currency=tenant.organization.currency,
+                currency=payment_base_currency,
                 original_amount=fx_difference,
                 description=f"Realized FX loss on payroll {run.run_number}",
             )
@@ -801,7 +804,7 @@ def pay_run(run_id: str, payload: PayrollPayRequest, request: Request, db: DbSes
             PostingLine(
                 ledger_account_id=fx_gain.id,
                 credit=abs(fx_difference),
-                currency=tenant.organization.currency,
+                currency=payment_base_currency,
                 original_amount=abs(fx_difference),
                 description=f"Realized FX gain on payroll {run.run_number}",
             )
