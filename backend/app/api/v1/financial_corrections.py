@@ -431,7 +431,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
             reason=reason,
         )
         bill.amount_paid = max(Decimal("0"), Decimal(bill.amount_paid) - Decimal(payment.amount))
-        bill.balance_due = max(Decimal("0"), Decimal(bill.original_amount) - Decimal(bill.amount_paid))
+        bill.balance_due = max(Decimal("0"), Decimal(bill.net_payable_amount) - Decimal(bill.amount_paid))
         bill.status = "paid" if bill.balance_due == 0 else "partially_paid" if bill.amount_paid > 0 else "open"
         reversed_number = f"Payment for {bill.bill_number}"
         before_status = "paid_or_partially_paid"
