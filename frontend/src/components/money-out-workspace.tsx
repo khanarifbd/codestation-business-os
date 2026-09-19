@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -122,6 +122,11 @@ export function MoneyOutWorkspace() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [currencyFilter, setCurrencyFilter] = useState("all");
   const [form, setForm] = useState<ExpenseForm>(blankForm());
+  const postingKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    postingKeyRef.current = null;
+  }, [form]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -251,14 +256,17 @@ export function MoneyOutWorkspace() {
         reference: form.reference || null,
         notes: form.notes || null,
       };
+      const idempotencyKey = postingKeyRef.current ?? crypto.randomUUID();
+      postingKeyRef.current = idempotencyKey;
       const response = await fetch("/api/finance/expenses", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
         body: JSON.stringify(body),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not record expense"));
       setMessage(`Expense ${payload.expense_number} recorded. Account balance, project/client profitability and accounting records were updated.`);
+      postingKeyRef.current = null;
       setConfirmOpen(false);
       setForm(blankForm());
       await load();
