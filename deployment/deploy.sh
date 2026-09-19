@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${ROOT_DIR}/.env.staging"
+ENV_FILE="${BUSINESS_OS_ENV_FILE:-${ROOT_DIR}/.env.staging}"
 COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
 SCHEDULER_COMPOSE_FILE="${COMPOSE_FILE}"
 PROJECT_NAME=""
@@ -625,7 +625,7 @@ if [[ -f "${STATE_FILE}" ]]; then
 fi
 candidate_slot="$(other_slot "${active_slot}")"
 
-log "CodeStation Business OS safe deployment"
+log "CodeStation Business OS canonical blue/green deployment"
 log "Active slot: ${active_slot}; candidate slot: ${candidate_slot}"
 
 branch="${DEPLOY_BRANCH:-develop}"
