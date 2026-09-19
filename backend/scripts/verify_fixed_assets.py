@@ -55,6 +55,19 @@ def main() -> None:
         stored=db.scalar(select(FixedAsset).where(FixedAsset.id==asset["id"])); dep=db.scalar(select(AssetDepreciationEntry).where(AssetDepreciationEntry.asset_id==asset["id"])); dep_journal=db.scalar(select(JournalEntry).where(JournalEntry.id==dep.journal_entry_id)) if dep else None
         if stored is None or stored.accumulated_depreciation!=Decimal("1000.00") or dep_journal is None: raise AssertionError("depreciation persistence/journal failed")
 
+        opening=create_asset(AssetCreate(asset_code=f"FA-OPEN-{marker}",name="CI Opening Laptop",category="computer",currency=tenant.organization.currency,acquisition_cost=Decimal("12000"),salvage_value=Decimal("0"),acquisition_date=date(2097,1,1),in_service_date=date(2097,1,1),useful_life_months=12,record_mode="opening",opening_accumulated_depreciation=Decimal("9000"),opening_balance_date=date(2098,1,31),reference=f"FA-OPEN-{marker}"),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
+        if opening["accumulated_depreciation"]!=Decimal("9000.00") or opening["book_value"]!=Decimal("3000.00") or opening["record_mode"]!="opening":
+            raise AssertionError("opening fixed asset carrying values failed")
+        opening_journal=db.scalar(select(JournalEntry).where(JournalEntry.organization_id==tenant.organization_id,JournalEntry.source_type=="fixed_asset_acquisition",JournalEntry.source_id==opening["id"],JournalEntry.status=="posted"))
+        if opening_journal is None or opening_journal.entry_date!=date(2098,1,31):
+            raise AssertionError("opening fixed asset must post on its opening balance date")
+        opening_lines=db.execute(select(JournalLine).where(JournalLine.organization_id==tenant.organization_id,JournalLine.journal_entry_id==opening_journal.id)).scalars().all()
+        if sum((Decimal(x.debit) for x in opening_lines),Decimal("0"))!=Decimal("12000.00") or sum((Decimal(x.credit) for x in opening_lines),Decimal("0"))!=Decimal("12000.00"):
+            raise AssertionError("opening fixed asset journal is not balanced")
+        opening_skip=run_depreciation(DepreciationRun(period_date=date(2098,1,31)),request("POST","/accounting/assets/depreciation"),db,tenant)  # type: ignore[arg-type]
+        if not any(x["asset_id"]==opening["id"] and x["reason"]=="before_or_at_opening_balance" for x in opening_skip["skipped"]):
+            raise AssertionError("opening asset must not double-depreciate its opening balance month")
+
         credit_card=FinancialAccount(organization_id=tenant.organization_id,name=f"CI Asset Card {marker}",account_type="credit_card",currency=tenant.organization.currency,opening_balance=Decimal("0"),is_active=True,created_by_user_id=tenant.user_id)
         db.add(credit_card); db.flush()
         try:
