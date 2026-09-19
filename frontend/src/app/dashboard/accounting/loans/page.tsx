@@ -75,6 +75,7 @@ type Disbursement = {
   net_received_amount: string;
   reference: string | null;
   notes: string | null;
+  status: string;
 };
 
 type Repayment = {
@@ -85,6 +86,7 @@ type Repayment = {
   interest_amount: string;
   reference: string | null;
   notes: string | null;
+  status: string;
 };
 
 type LoanFee = {
@@ -265,11 +267,20 @@ export default function LoanAccountingPage() {
   );
   const nextInstallment = useMemo(() => schedule.find((item) => item.status !== "paid") ?? null, [schedule]);
   const totalInterestPaid = useMemo(
-    () => history.repayments.reduce((sum, item) => sum + Number(item.interest_amount || 0), 0),
+    () =>
+      history.repayments.reduce(
+        (sum, item) => (item.status === "posted" ? sum + Number(item.interest_amount || 0) : sum),
+        0,
+      ),
     [history.repayments],
   );
   const totalFeesRecorded = useMemo(
-    () => history.fees.reduce((sum, item) => sum + Number(item.amount || 0), 0),
+    () =>
+      history.fees.reduce((sum, item) => {
+        const feeAmount = Number(item.amount || 0);
+        if (item.payment_status === "reversed" && feeAmount >= 0) return sum;
+        return sum + feeAmount;
+      }, 0),
     [history.fees],
   );
   const activeLoanCount = useMemo(
@@ -837,7 +848,13 @@ export default function LoanAccountingPage() {
                         <HistoryRow
                           key={`d-${item.id}`}
                           kind="receive"
-                          title="Money received"
+                          title={
+                            item.status === "reversal"
+                              ? "Disbursement reversal"
+                              : item.status === "reversed"
+                                ? "Money received · Reversed"
+                                : "Money received"
+                          }
                           date={item.date}
                           meta={`${item.account_name} · Principal ${amount(item.principal_amount, selected.currency)} · Net ${amount(item.net_received_amount, selected.currency)}${Number(item.fee_withheld_amount) > 0 ? ` · Fee ${amount(item.fee_withheld_amount, selected.currency)}` : ""}`}
                           reference={item.reference}
@@ -848,7 +865,7 @@ export default function LoanAccountingPage() {
                         <HistoryRow
                           key={`r-${item.id}`}
                           kind="repay"
-                          title="Repayment"
+                          title={item.status === "reversed" ? "Repayment · Reversed" : "Repayment"}
                           date={item.date}
                           meta={`${item.account_name} · Principal ${amount(item.principal_amount, selected.currency)} · Interest ${amount(item.interest_amount, selected.currency)}`}
                           reference={item.reference}

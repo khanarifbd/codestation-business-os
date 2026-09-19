@@ -47,6 +47,12 @@ class AccountingLoanCreate(BaseModel):
     reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
 
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.maturity_date is not None and self.maturity_date < self.approval_date:
+            raise ValueError("Maturity date cannot be earlier than the approval date")
+        return self
+
 
 class LoanDisbursementCreate(BaseModel):
     account_id: str
@@ -200,6 +206,7 @@ def _loan_principal_carrying_base(
     current_repayment_id: str,
     loans_payable_account_id: str,
     principal_amount: Decimal,
+    repayment_date: date,
 ) -> Decimal:
     reversed_entry = JournalEntry.__table__.alias("reversed_entry")
 
@@ -222,6 +229,7 @@ def _loan_principal_carrying_base(
             LoanDisbursement.organization_id == organization_id,
             LoanDisbursement.loan_id == loan.id,
             LoanDisbursement.principal_amount > 0,
+            LoanDisbursement.disbursement_date <= repayment_date,
             ~select(reversed_entry.c.id)
             .where(
                 reversed_entry.c.organization_id == organization_id,
@@ -251,6 +259,7 @@ def _loan_principal_carrying_base(
             LoanRepayment.loan_id == loan.id,
             LoanRepayment.id != current_repayment_id,
             LoanRepayment.principal_amount > 0,
+            LoanRepayment.payment_date <= repayment_date,
             ~select(reversed_entry.c.id)
             .where(
                 reversed_entry.c.organization_id == organization_id,
@@ -392,6 +401,8 @@ def disburse_loan(
     loan = _loan(db, tenant.organization_id, loan_id, lock=True)
     if loan.status not in {"approved", "active"}:
         raise HTTPException(status_code=409, detail="Loan must be approved and open before disbursement")
+    if payload.disbursement_date < loan.loan_date:
+        raise HTTPException(status_code=409, detail="Loan disbursement cannot predate the approval date")
 
     financial, bank_ledger = financial_ledger_account(db, tenant.organization_id, payload.account_id)
     if financial.currency != loan.currency:
@@ -512,6 +523,36 @@ def repay_loan(
     if loan.status != "active":
         raise HTTPException(status_code=409, detail="Only an active disbursed loan can be repaid")
 
+    reversed_disbursement_entry = JournalEntry.__table__.alias("reversed_disbursement_entry")
+    active_disbursement_as_of = db.scalar(
+        select(LoanDisbursement.id)
+        .join(
+            JournalEntry,
+            (JournalEntry.organization_id == LoanDisbursement.organization_id)
+            & (JournalEntry.source_type == "loan_disbursement")
+            & (JournalEntry.source_id == LoanDisbursement.id)
+            & (JournalEntry.status == "posted"),
+        )
+        .where(
+            LoanDisbursement.organization_id == tenant.organization_id,
+            LoanDisbursement.loan_id == loan.id,
+            LoanDisbursement.principal_amount > 0,
+            LoanDisbursement.disbursement_date <= payload.payment_date,
+            ~select(reversed_disbursement_entry.c.id)
+            .where(
+                reversed_disbursement_entry.c.organization_id == tenant.organization_id,
+                reversed_disbursement_entry.c.reversed_entry_id == JournalEntry.id,
+            )
+            .exists(),
+        )
+        .limit(1)
+    )
+    if active_disbursement_as_of is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Loan repayment cannot predate the first active disbursement",
+        )
+
     principal = money(payload.principal_amount)
     interest = money(payload.interest_amount)
     fee = money(payload.fee_amount)
@@ -572,6 +613,7 @@ def repay_loan(
             current_repayment_id=repayment.id,
             loans_payable_account_id=loans_payable.id,
             principal_amount=principal,
+            repayment_date=repayment.payment_date,
         )
         principal_carrying_rate = (principal_carrying_base / principal).quantize(Decimal("0.00000001"))
         lines.insert(

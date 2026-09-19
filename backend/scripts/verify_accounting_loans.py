@@ -8,6 +8,7 @@ from sqlalchemy import func, select, text
 from starlette.requests import Request
 
 from app.api.v1.accounting import trial_balance
+from app.api.v1.accounting_loan_details import get_loan_history
 from app.api.v1.accounting_loans import (
     AccountingLoanCreate,
     LoanAccountingRepaymentCreate,
@@ -172,6 +173,23 @@ def main() -> None:
         if after_approval_cash_count != before_cash_count:
             raise AssertionError("loan approval must not change cash ledger")
 
+        expect_conflict(
+            lambda: disburse_loan(
+                loan["id"],
+                LoanDisbursementCreate(
+                    account_id=account.id,
+                    disbursement_date=date(2096, 12, 31),
+                    principal_amount=Decimal("1000"),
+                    reference=f"ALD-EARLY-{marker}",
+                ),
+                request("POST", f"/accounting/loans/{loan['id']}/disburse"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+            "loan disbursement before approval",
+        )
+        db.rollback()
+
         disbursement = disburse_loan(
             loan["id"], blocked_payload,
             request("POST", f"/accounting/loans/{loan['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
@@ -182,6 +200,23 @@ def main() -> None:
             raise AssertionError("loan disbursement must create outstanding principal")
         if disbursement["loan"]["status"] != "active":
             raise AssertionError("disbursement must activate the loan")
+
+        expect_conflict(
+            lambda: repay_loan(
+                loan["id"],
+                LoanAccountingRepaymentCreate(
+                    account_id=account.id,
+                    payment_date=date(2097, 1, 1),
+                    principal_amount=Decimal("1"),
+                    reference=f"ALR-EARLY-{marker}",
+                ),
+                request("POST", f"/accounting/loans/{loan['id']}/repay"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+            "loan repayment before first disbursement",
+        )
+        db.rollback()
 
         repayment = repay_loan(
             loan["id"],
@@ -392,6 +427,14 @@ def main() -> None:
         )
         if fx_loan_after_reversal is None:
             raise AssertionError("foreign loan repayment cash reversal is missing")
+
+        fx_history = get_loan_history(fx_loan["id"], db, tenant)  # type: ignore[arg-type]
+        reversed_history_item = next(
+            (item for item in fx_history["repayments"] if item["id"] == fx_repayment["id"]),
+            None,
+        )
+        if reversed_history_item is None or reversed_history_item["status"] != "reversed":
+            raise AssertionError("loan history must expose reversed repayment status")
 
         final_repayment = repay_loan(
             fx_loan["id"],

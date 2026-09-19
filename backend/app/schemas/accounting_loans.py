@@ -65,6 +65,7 @@ class LoanHistoryDisbursementRead(BaseModel):
     net_received_amount: Decimal
     reference: str | None = None
     notes: str | None = None
+    status: str
     created_at: datetime
 
 
@@ -77,6 +78,7 @@ class LoanHistoryRepaymentRead(BaseModel):
     interest_amount: Decimal
     reference: str | None = None
     notes: str | None = None
+    status: str
     created_at: datetime
 
 

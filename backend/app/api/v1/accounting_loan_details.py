@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.capital import CompanyLoan, LoanRepayment
-from app.models.finance import FinancialAccount
+from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.loan_accounting import LoanDisbursement, LoanFee
 from app.schemas.accounting_loans import LoanHistoryRead
 from app.tenancy.context import TenantContext
@@ -27,9 +27,30 @@ def get_loan_history(loan_id: str, db: DbSession, tenant: AccountingViewer):
     if loan is None:
         raise HTTPException(status_code=404, detail="Loan not found")
 
+    reversed_disbursement_ids = set(
+        db.scalars(
+            select(FinancialTransaction.source_id).where(
+                FinancialTransaction.organization_id == tenant.organization_id,
+                FinancialTransaction.source_type.like("loan_disbursement_reversal%"),
+            )
+        ).all()
+    )
+    reversed_repayment_ids = set(
+        db.scalars(
+            select(FinancialTransaction.source_id).where(
+                FinancialTransaction.organization_id == tenant.organization_id,
+                FinancialTransaction.source_type.like("loan_repayment_reversal%"),
+            )
+        ).all()
+    )
+
     disbursement_rows = db.execute(
         select(LoanDisbursement, FinancialAccount.name)
-        .join(FinancialAccount, FinancialAccount.id == LoanDisbursement.account_id)
+        .join(
+            FinancialAccount,
+            (FinancialAccount.id == LoanDisbursement.account_id)
+            & (FinancialAccount.organization_id == tenant.organization_id),
+        )
         .where(
             LoanDisbursement.organization_id == tenant.organization_id,
             LoanDisbursement.loan_id == loan.id,
@@ -39,7 +60,11 @@ def get_loan_history(loan_id: str, db: DbSession, tenant: AccountingViewer):
 
     repayment_rows = db.execute(
         select(LoanRepayment, FinancialAccount.name)
-        .join(FinancialAccount, FinancialAccount.id == LoanRepayment.account_id)
+        .join(
+            FinancialAccount,
+            (FinancialAccount.id == LoanRepayment.account_id)
+            & (FinancialAccount.organization_id == tenant.organization_id),
+        )
         .where(
             LoanRepayment.organization_id == tenant.organization_id,
             LoanRepayment.loan_id == loan.id,
@@ -68,6 +93,13 @@ def get_loan_history(loan_id: str, db: DbSession, tenant: AccountingViewer):
                 "net_received_amount": item.net_received_amount,
                 "reference": item.reference,
                 "notes": item.notes,
+                "status": (
+                    "reversal"
+                    if item.principal_amount < 0
+                    else "reversed"
+                    if item.id in reversed_disbursement_ids
+                    else "posted"
+                ),
                 "created_at": item.created_at,
             }
             for item, account_name in disbursement_rows
@@ -82,6 +114,7 @@ def get_loan_history(loan_id: str, db: DbSession, tenant: AccountingViewer):
                 "interest_amount": item.interest_amount,
                 "reference": item.reference,
                 "notes": item.notes,
+                "status": "reversed" if item.id in reversed_repayment_ids else "posted",
                 "created_at": item.created_at,
             }
             for item, account_name in repayment_rows
