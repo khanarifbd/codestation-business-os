@@ -515,7 +515,41 @@ flock -n 9 || fail "Another Business OS deployment is already running"
 if ! grep -q '^JWT_SECRET_KEY=' "${ENV_FILE}"; then
   echo "==> Generating JWT secret for this environment"
   printf '\nJWT_SECRET_KEY=%s\n' "$(openssl rand -hex 32)" >> "${ENV_FILE}"
-elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret
+elif grep -q '^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$' "${ENV_FILE}"; then
+  JWT_SECRET="$(openssl rand -hex 32)"
+  sed -i "s|^JWT_SECRET_KEY=replace_with_a_long_random_jwt_secret$|JWT_SECRET_KEY=${JWT_SECRET}|" "${ENV_FILE}"
+  unset JWT_SECRET
+fi
+
+ensure_project_credential_key
+ensure_backup_encryption_key
+
+if ! grep -q '^SUPER_ADMIN_EMAIL=' "${ENV_FILE}"; then
+  printf '\nSUPER_ADMIN_EMAIL=admin@codestationai.com\n' >> "${ENV_FILE}"
+fi
+
+if ! grep -q '^SUPER_ADMIN_NAME=' "${ENV_FILE}"; then
+  printf 'SUPER_ADMIN_NAME=CodeStation AI Super Admin\n' >> "${ENV_FILE}"
+fi
+
+if ! grep -q '^SUPER_ADMIN_PASSWORD=' "${ENV_FILE}"; then
+  echo "==> Generating initial super admin password"
+  printf 'SUPER_ADMIN_PASSWORD=%s\n' "$(openssl rand -hex 24)" >> "${ENV_FILE}"
+elif grep -q '^SUPER_ADMIN_PASSWORD=replace_with_a_long_random_super_admin_password$' "${ENV_FILE}"; then
+  SUPER_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+  sed -i "s|^SUPER_ADMIN_PASSWORD=replace_with_a_long_random_super_admin_password$|SUPER_ADMIN_PASSWORD=${SUPER_ADMIN_PASSWORD}|" "${ENV_FILE}"
+  unset SUPER_ADMIN_PASSWORD
+fi
+
+POSTGRES_USER="$(env_value POSTGRES_USER)"
+POSTGRES_DB="$(env_value POSTGRES_DB)"
+POSTGRES_PASSWORD="$(env_value POSTGRES_PASSWORD)"
+POSTGRES_USER="${POSTGRES_USER:-business_os}"
+POSTGRES_DB="${POSTGRES_DB:-codestation_business_os}"
+
+if [[ -z "${POSTGRES_PASSWORD}" || "${POSTGRES_PASSWORD}" == "replace_with_a_long_random_password" ]]; then
+  fail "Configure POSTGRES_PASSWORD in .env.staging first."
+fi
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
 
