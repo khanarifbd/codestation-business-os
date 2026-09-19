@@ -15,9 +15,11 @@ from app.api.v1.reports import (
     _currency_filter,
     _expense_scope,
     _invoice_scope,
+    _money_entry_scope,
     _period,
     _tenant_today,
 )
+from app.models.accounting_money import AccountingMoneyEntry
 from app.models.crm import Client, Lead, LeadStatus
 from app.models.expenses import Expense, ExpenseCategory
 from app.models.finance import AccountTransfer, Invoice, Payment
@@ -127,6 +129,30 @@ def _financials_and_trend_fast(
         financial_data[code]["platform"] += _money(platform)
         trend_data[(month, code)]["expenses"] += expense_amount
 
+    money_period = func.to_char(func.date_trunc("month", AccountingMoneyEntry.entry_date), "YYYY-MM")
+    direct_money_query = _money_entry_scope(
+        select(
+            money_period,
+            AccountingMoneyEntry.currency,
+            AccountingMoneyEntry.kind,
+            func.sum(AccountingMoneyEntry.amount),
+        ).group_by(money_period, AccountingMoneyEntry.currency, AccountingMoneyEntry.kind),
+        org_id,
+        start,
+        end,
+        currency,
+        client_id,
+        project_id,
+    )
+    for month, code, kind, amount in db.execute(direct_money_query).all():
+        direct_amount = _money(amount)
+        if kind == "income":
+            financial_data[code]["direct_income"] += direct_amount
+            trend_data[(month, code)]["direct_income"] += direct_amount
+        elif kind == "expense":
+            financial_data[code]["expenses"] += direct_amount
+            trend_data[(month, code)]["expenses"] += direct_amount
+
     if not client_id and not project_id:
         payroll_period = func.to_char(func.date_trunc("month", PayrollPeriod.period_end), "YYYY-MM")
         payroll_query = (
@@ -178,12 +204,13 @@ def _financials_and_trend_fast(
         ReportFinancialRow(
             currency=code,
             invoiced_revenue=_money(values["invoiced"]),
+            direct_income=_money(values["direct_income"]),
             collected_revenue=_money(values["collected"]),
             receivables=_money(values["receivable"]),
             expenses=_money(values["expenses"]),
             platform_fees=_money(values["platform"]),
             transfer_fees=_money(values["transfer"]),
-            net_profit=_money(values["invoiced"] - values["expenses"] - values["transfer"]),
+            net_profit=_money(values["invoiced"] + values["direct_income"] - values["expenses"] - values["transfer"]),
         )
         for code, values in sorted(financial_data.items())
     ]
@@ -192,10 +219,11 @@ def _financials_and_trend_fast(
             period=month,
             currency=code,
             invoiced_revenue=_money(values["invoiced"]),
+            direct_income=_money(values["direct_income"]),
             collected_revenue=_money(values["collected"]),
             expenses=_money(values["expenses"]),
             transfer_fees=_money(values["transfer"]),
-            net_profit=_money(values["invoiced"] - values["expenses"] - values["transfer"]),
+            net_profit=_money(values["invoiced"] + values["direct_income"] - values["expenses"] - values["transfer"]),
         )
         for (month, code), values in sorted(trend_data.items())
     ]
