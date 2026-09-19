@@ -275,6 +275,10 @@ def apply_advance(advance_id: str, payload: CustomerAdvanceApply, request: Reque
         raise HTTPException(status_code=409, detail="Advance can only be applied to an open invoice")
     if invoice.currency != advance.currency:
         raise HTTPException(status_code=409, detail="Advance and invoice must use the same currency")
+    if payload.application_date < advance.advance_date:
+        raise HTTPException(status_code=409, detail="Advance application date cannot be earlier than the advance receipt date")
+    if payload.application_date < invoice.issue_date:
+        raise HTTPException(status_code=409, detail="Advance application date cannot be earlier than the invoice issue date")
     amount = _money(payload.amount)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Applied advance amount must be at least 0.01")
