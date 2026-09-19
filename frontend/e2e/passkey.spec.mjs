@@ -26,7 +26,7 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
 
     await page.goto("/dashboard/profile", { waitUntil: "domcontentloaded" });
     await page.getByRole("tab", { name: /security/i }).click();
-    await expect(page.getByRole("heading", { name: "Passkeys" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Passkeys", exact: true })).toBeVisible();
 
     await page.getByLabel("Passkey name").fill("CI virtual passkey");
     await page.locator('input[name="passkey_current_password"]').fill(password);
