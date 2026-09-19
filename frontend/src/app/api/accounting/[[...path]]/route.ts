@@ -15,6 +15,7 @@ async function proxy(request: NextRequest, context: RouteContext, method: string
   const suffix = path.length ? `/${path.join("/")}` : "";
   const query = method === "GET" ? request.nextUrl.search : "";
   const body = method === "GET" || method === "DELETE" ? undefined : await request.text();
+  const idempotencyKey = request.headers.get("idempotency-key") ?? request.headers.get("x-idempotency-key");
 
   const { upstream, rotatedTokens } = await authenticatedBackendFetch(
     request,
@@ -23,6 +24,7 @@ async function proxy(request: NextRequest, context: RouteContext, method: string
       method,
       headers: {
         "X-Organization-ID": organizationId,
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
         ...(body ? { "Content-Type": request.headers.get("content-type") ?? "application/json" } : {}),
       },
       body,
