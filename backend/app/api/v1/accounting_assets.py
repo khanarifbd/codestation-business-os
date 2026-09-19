@@ -93,7 +93,7 @@ def list_assets(db: DbSession, tenant: Viewer):
 
 @router.get("/summary", response_model=AssetSummaryRead)
 def summary(db: DbSession, tenant: Viewer):
-    rows=db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id)).all()
+    rows=db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id,FixedAsset.status!="reversed")).all()
     currencies=sorted({r.currency for r in rows})
     return {"rows":[{"currency":c,"cost":money(sum((r.acquisition_cost for r in rows if r.currency==c),Decimal("0"))),"accumulated_depreciation":money(sum((r.accumulated_depreciation for r in rows if r.currency==c),Decimal("0"))),"book_value":money(sum((r.acquisition_cost-r.accumulated_depreciation for r in rows if r.currency==c),Decimal("0")))} for c in currencies],"active_assets":sum(1 for r in rows if r.status=="active")}
 
@@ -152,17 +152,17 @@ def run_depreciation(payload:DepreciationRun,request:Request,db:DbSession,tenant
         if row.record_mode=="opening" and row.opening_balance_date is not None:
             opening_period=date(row.opening_balance_date.year,row.opening_balance_date.month,1)
             if period<=opening_period: skipped.append({"asset_id":row.id,"reason":"before_or_at_opening_balance"}); continue
-        latest_period=db.scalar(select(func.max(AssetDepreciationEntry.period_date)).where(AssetDepreciationEntry.organization_id==tenant.organization_id,AssetDepreciationEntry.asset_id==row.id))
+        latest_period=db.scalar(select(func.max(AssetDepreciationEntry.period_date)).where(AssetDepreciationEntry.organization_id==tenant.organization_id,AssetDepreciationEntry.asset_id==row.id,AssetDepreciationEntry.status=="posted"))
         if latest_period is not None and period<latest_period:
             raise HTTPException(status_code=409,detail=f"Depreciation for {row.asset_code} cannot be posted before an already-posted later period")
-        exists=db.scalar(select(AssetDepreciationEntry.id).where(AssetDepreciationEntry.organization_id==tenant.organization_id,AssetDepreciationEntry.asset_id==row.id,AssetDepreciationEntry.period_date==period))
+        exists=db.scalar(select(AssetDepreciationEntry.id).where(AssetDepreciationEntry.organization_id==tenant.organization_id,AssetDepreciationEntry.asset_id==row.id,AssetDepreciationEntry.period_date==period,AssetDepreciationEntry.status=="posted"))
         if exists: skipped.append({"asset_id":row.id,"reason":"already_posted_this_month"}); continue
         maximum=money(row.acquisition_cost-row.salvage_value); remaining=money(max(maximum-row.accumulated_depreciation,Decimal("0")))
         if remaining<=0: row.status="fully_depreciated"; skipped.append({"asset_id":row.id,"reason":"fully_depreciated"}); continue
         monthly=money(maximum/Decimal(row.useful_life_months)); amount=money(min(monthly,remaining)); base,rate=to_base_amount(db,tenant.organization_id,tenant.organization.currency,amount,row.currency,rate_date=row.acquisition_date)
         source_id=str(uuid4()); description=f"Depreciation {row.asset_code} {row.name} for {period.strftime('%Y-%m')}"
         journal=post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=payload.period_date,source_type="asset_depreciation",source_id=source_id,reference=row.asset_code,memo=description,lines=[PostingLine(ledger_account_id=expense.id,debit=base,description=description,currency=row.currency,exchange_rate_to_base=rate,original_amount=amount),PostingLine(ledger_account_id=accumulated.id,credit=base,description=description,currency=row.currency,exchange_rate_to_base=rate,original_amount=amount)])
-        entry=AssetDepreciationEntry(id=source_id,organization_id=tenant.organization_id,asset_id=row.id,period_date=period,amount=amount,journal_entry_id=journal.id,created_by_user_id=tenant.user_id); db.add(entry); row.accumulated_depreciation=money(row.accumulated_depreciation+amount)
+        entry=AssetDepreciationEntry(id=source_id,organization_id=tenant.organization_id,asset_id=row.id,period_date=period,amount=amount,status="posted",journal_entry_id=journal.id,created_by_user_id=tenant.user_id); db.add(entry); row.accumulated_depreciation=money(row.accumulated_depreciation+amount)
         if row.accumulated_depreciation>=maximum: row.status="fully_depreciated"
         posted.append({"asset_id":row.id,"asset_code":row.asset_code,"amount":amount,"currency":row.currency,"book_value":money(row.acquisition_cost-row.accumulated_depreciation)})
     record_activity(db,action="accounting.asset.depreciation_run",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="asset_depreciation_run",entity_id=period.isoformat(),after={"period_date":period,"posting_date":payload.period_date,"posted":posted,"skipped":skipped},request=request); db.commit(); return {"period_date":period,"posting_date":payload.period_date,"posted":posted,"skipped":skipped}
@@ -173,4 +173,4 @@ def depreciation_history(asset_id:str,db:DbSession,tenant:Viewer):
     asset=db.scalar(select(FixedAsset).where(FixedAsset.id==asset_id,FixedAsset.organization_id==tenant.organization_id))
     if asset is None: raise HTTPException(status_code=404,detail="Fixed asset not found")
     rows=db.scalars(select(AssetDepreciationEntry).where(AssetDepreciationEntry.organization_id==tenant.organization_id,AssetDepreciationEntry.asset_id==asset.id).order_by(AssetDepreciationEntry.period_date.desc())).all()
-    return {"asset":asset_json(asset),"entries":[{"id":r.id,"period_date":r.period_date,"amount":r.amount,"journal_entry_id":r.journal_entry_id} for r in rows]}
+    return {"asset":asset_json(asset),"entries":[{"id":r.id,"period_date":r.period_date,"amount":r.amount,"status":r.status,"journal_entry_id":r.journal_entry_id} for r in rows]}
