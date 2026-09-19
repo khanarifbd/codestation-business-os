@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Fingerprint, KeyRound, Loader2, ShieldCheck, Trash2 } from "lucide-react";
 
-import { GoogleReauthButton } from "@/components/auth/google-reauth-button";
 import { PasswordField } from "@/components/auth/password-field";
 import { createPasskeyCredential, passkeysSupported, type PasskeyOptionsEnvelope } from "@/lib/passkeys";
 
@@ -176,12 +175,9 @@ export function ProfilePasskeysSection({
             </button>
           </form>
         ) : googleConnected ? (
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-              <p className="font-semibold">Verify with your connected Google account</p>
-              <p className="mt-1 text-blue-800">A fresh Google verification is required before this browser can add a new passkey.</p>
-            </div>
-            <GoogleReauthButton busy={working} busyLabel="Adding passkey…" onCredential={(credential) => registerPasskey({ google_credential: credential })} />
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+            <p className="font-semibold">Create a password first for this Google-only account</p>
+            <p className="mt-1 text-blue-800">Use the Password & sign-in section below to create a password with fresh Google verification. Then return here and verify that password once to add a passkey. This avoids running two competing Google re-authentication widgets on the same Security page.</p>
           </div>
         ) : (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">Add a password or connect Google before enrolling a passkey.</div>
