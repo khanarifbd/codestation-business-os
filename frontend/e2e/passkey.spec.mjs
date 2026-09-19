@@ -32,7 +32,18 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
     await page.locator('input[name="passkey_current_password"]').fill(password);
     await page.getByRole("button", { name: "Verify & add passkey" }).click();
 
-    await expect(page.getByText("Passkey added. You can now use it from the sign-in page.")).toBeVisible({ timeout: 15_000 });
+    // Surface WebAuthn browser failures in the CI log instead of reporting only
+    // a generic timeout when navigator.credentials.create() rejects.
+    await expect.poll(async () => {
+      if (await page.getByText("Passkey added. You can now use it from the sign-in page.").isVisible()) {
+        return "success";
+      }
+      const alert = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Passkeys", exact: true }),
+      }).locator('[role="alert"]').first();
+      if (await alert.isVisible()) return `browser error: ${await alert.innerText()}`;
+      return "pending";
+    }, { timeout: 15_000 }).toBe("success");
     await expect(page.getByText("CI virtual passkey")).toBeVisible();
 
     // Clear only browser cookies to prove the next authentication starts without
