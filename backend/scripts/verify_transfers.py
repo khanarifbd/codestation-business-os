@@ -279,6 +279,17 @@ def main() -> None:
             account=db.get(FinancialAccount, fx_source.id),
             entry_date=opening_date,
         )
+        record_activity(
+            db,
+            action="verification.transfer.opening_posted",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="financial_account",
+            entity_id=fx_source.id,
+            after={"currency": foreign_currency, "opening_balance": "100.00", "rate": "120"},
+            message="Posted foreign-currency opening balance for transfer verification",
+        )
         db.commit()
 
         accounting_transfer = record_transfer(
@@ -308,6 +319,17 @@ def main() -> None:
             organization_id=tenant.organization_id,
             user_id=tenant.user_id,
             transfer=transfer_row,
+        )
+        record_activity(
+            db,
+            action="verification.transfer.accounting_posted",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="account_transfer",
+            entity_id=transfer_row.id,
+            after={"journal_entry_id": transfer_journal.id, "reference": transfer_row.reference},
+            message="Posted cross-currency transfer accounting verification journal",
         )
         db.commit()
 
@@ -415,6 +437,17 @@ def main() -> None:
             account=db.get(FinancialAccount, same_source.id),
             entry_date=opening_date,
         )
+        record_activity(
+            db,
+            action="verification.transfer.opening_posted",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="financial_account",
+            entity_id=same_source.id,
+            after={"currency": foreign_currency, "opening_balance": "100.00", "rate": "120"},
+            message="Posted same-currency transfer opening balance verification journal",
+        )
         db.commit()
         same_transfer = record_transfer(
             AccountTransferCreate(
@@ -442,6 +475,17 @@ def main() -> None:
             organization_id=tenant.organization_id,
             user_id=tenant.user_id,
             transfer=same_transfer_row,
+        )
+        record_activity(
+            db,
+            action="verification.transfer.accounting_posted",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="account_transfer",
+            entity_id=same_transfer_row.id,
+            after={"journal_entry_id": same_journal.id, "reference": same_transfer_row.reference},
+            message="Posted same-currency transfer accounting verification journal",
         )
         db.commit()
         same_lines = db.execute(
