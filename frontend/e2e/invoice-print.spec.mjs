@@ -66,14 +66,14 @@ const payment = {
   invoice_number: "INV-E2E-0001",
   invoice_status: "sent",
   invoice_currency: "USD",
-  payment_method: "bank_transfer",
+  payment_method: "payoneer",
   payment_account_id: "account-1",
-  payment_account_name: "USD Operating Account",
-  payment_provider: "Example Bank",
+  payment_account_name: "USD Payoneer Wallet",
+  payment_provider: "Payoneer",
   payment_account_holder: "Seller Example Ltd",
   payment_account_reference: "US123456789",
   payment_currency: "USD",
-  payment_url: "https://pay.example.test/invoice/INV-E2E-0001",
+  payment_url: "https://payoneer.example.test/pay/INV-E2E-0001",
   payment_instructions: "Please include the invoice number as your payment reference.",
   locked: true,
 };
@@ -108,7 +108,7 @@ test("Invoice print page renders a tenant-safe professional client document", as
   await expect(page.getByText("SaaS implementation", { exact: true })).toBeVisible();
   await expect(page.getByText("SAAS-001")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Payment instructions" })).toBeVisible();
-  await expect(page.getByText("Example Bank")).toBeVisible();
+  await expect(page.getByText("Payoneer")).toBeVisible();
   await expect(page.getByText("US123456789")).toBeVisible();
   await expect(page.getByText("Scan to pay")).toBeVisible();
   await expect(page.getByText("Thank you for your business.")).toBeVisible();
@@ -121,6 +121,8 @@ test("Invoice print page renders a tenant-safe professional client document", as
   await page.setViewportSize({ width: 735, height: 1050 });
   await page.emulateMedia({ media: "print" });
   await expect(page.locator(".print-actions").first()).toBeHidden();
+  await expect(page.getByRole("link", { name: payment.payment_url })).toBeVisible();
+  await expect(page.locator('svg[aria-label="QR code for invoice payment link"]')).toBeVisible();
 
   const printMetrics = await page.evaluate(() => {
     const sheet = document.querySelector(".print-sheet");
@@ -146,4 +148,42 @@ test("Invoice print page renders a tenant-safe professional client document", as
   expect(printMetrics.qrWidth).toBeLessThanOrEqual(90);
   expect(printMetrics.summaryMarginTop).toBeLessThan(14);
   expect(printMetrics.paymentPaddingTop).toBeLessThan(16);
+});
+
+test("Client invoice PDF includes the saved Payoneer link and scannable QR", async ({ page }) => {
+  const portalInvoice = {
+    ...invoice,
+    seller_name: invoice.seller_name_snapshot,
+    seller_email: invoice.seller_email_snapshot,
+    seller_address: invoice.seller_address_snapshot,
+    client_name: invoice.client_name_snapshot,
+    client_contact: invoice.client_contact_snapshot,
+    client_email: invoice.client_email_snapshot,
+    client_address: invoice.client_address_snapshot,
+    payment_method: payment.payment_method,
+    payment_account_name: payment.payment_account_name,
+    payment_provider: payment.payment_provider,
+    payment_account_holder: payment.payment_account_holder,
+    payment_account_reference: payment.payment_account_reference,
+    payment_currency: payment.payment_currency,
+    payment_url: payment.payment_url,
+    payment_instructions: payment.payment_instructions,
+    items: invoice.items.map((item) => ({
+      ...item,
+      item_name: item.item_name_snapshot,
+      unit: item.unit_snapshot,
+    })),
+  };
+  await page.route("**/api/client-portal/invoices/e2e-invoice", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(portalInvoice) });
+  });
+
+  await page.goto("/dashboard/client/invoices/e2e-invoice/print", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Payment information" })).toBeVisible();
+  await expect(page.getByRole("link", { name: payment.payment_url })).toHaveAttribute("href", payment.payment_url);
+  await expect(page.locator('svg[aria-label="QR code for invoice payment link"]')).toBeVisible();
+
+  await page.emulateMedia({ media: "print" });
+  await expect(page.getByRole("link", { name: payment.payment_url })).toBeVisible();
+  await expect(page.locator('svg[aria-label="QR code for invoice payment link"]')).toBeVisible();
 });
