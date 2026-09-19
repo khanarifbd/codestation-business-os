@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.models.accounting import JournalEntry, JournalLine
 from app.models.expenses import Expense, ExpenseCategory
@@ -385,6 +385,83 @@ def post_expense(db, *, organization_id: str, user_id: str, expense: Expense) ->
     )
 
 
+def _financial_account_outflow_carrying_base(
+    db,
+    *,
+    organization_id: str,
+    account: FinancialAccount,
+    ledger_account_id: str,
+    source_id: str,
+    outflow_amount: Decimal,
+) -> Decimal:
+    """Return the functional-currency carrying value removed by a foreign-cash outflow.
+
+    FinancialTransaction stores the account-currency quantity, while the mapped
+    ledger stores its functional-currency carrying value.  A transfer created in
+    the current unit of work already has operational movements, so exclude the
+    current source id when reconstructing the quantity available immediately
+    before this posting.
+    """
+    prior_net = Decimal(
+        db.scalar(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (FinancialTransaction.direction == "credit", FinancialTransaction.amount),
+                            else_=-FinancialTransaction.amount,
+                        )
+                    ),
+                    0,
+                )
+            ).where(
+                FinancialTransaction.organization_id == organization_id,
+                FinancialTransaction.account_id == account.id,
+                FinancialTransaction.source_id != source_id,
+            )
+        )
+        or 0
+    )
+    quantity_before = money(Decimal(account.opening_balance) + prior_net)
+    outflow_amount = money(outflow_amount)
+    if quantity_before <= 0 or outflow_amount > quantity_before:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Financial account {account.name} does not have a usable accounting carrying value "
+                "for this transfer; reconcile the account before retrying"
+            ),
+        )
+
+    carrying_before = money(
+        Decimal(
+            db.scalar(
+                select(func.coalesce(func.sum(JournalLine.debit - JournalLine.credit), 0))
+                .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+                .where(
+                    JournalLine.organization_id == organization_id,
+                    JournalLine.ledger_account_id == ledger_account_id,
+                    JournalEntry.organization_id == organization_id,
+                    JournalEntry.status == "posted",
+                )
+            )
+            or 0
+        )
+    )
+    if carrying_before <= 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Financial account {account.name} has no positive GL carrying value "
+                "for this transfer; reconcile the account before retrying"
+            ),
+        )
+
+    if outflow_amount == quantity_before:
+        return carrying_before
+    return money(carrying_before * outflow_amount / quantity_before)
+
+
 def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTransfer) -> JournalEntry:
     existing = _posted_source(db, organization_id, "account_transfer", transfer.id)
     if existing is not None:
@@ -459,7 +536,148 @@ def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTr
                 currency=transfer.source_currency,
                 exchange_rate_to_base=source_rate,
                 original_amount=transfer.fee_amount,
+                description=f"Fee for {trandef post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTransfer) -> JournalEntry:
+    existing = _posted_source(db, organization_id, "account_transfer", transfer.id)
+    if existing is not None:
+        return existing
+
+    source, source_ledger = financial_ledger_account(db, organization_id, transfer.from_account_id)
+    destination, destination_ledger = financial_ledger_account(
+        db,
+        organization_id,
+        transfer.to_account_id,
+    )
+    if source.account_type == "credit_card" or destination.account_type == "credit_card":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Credit card settlement is not an account transfer. "
+                "Use a dedicated card payment/expense workflow so the liability direction remains correct."
+            ),
+        )
+
+    fee_ledger = system_account(db, organization_id, "bank_fees")
+    base_currency = functional_currency_for_date(db, organization_id, transfer.transfer_date)
+    source_carrying_base = _financial_account_outflow_carrying_base(
+        db,
+        organization_id=organization_id,
+        account=source,
+        ledger_account_id=source_ledger.id,
+        source_id=transfer.id,
+        outflow_amount=Decimal(transfer.source_amount),
+    )
+
+    source_current_base, source_rate = to_base_amount(
+        db,
+        organization_id,
+        base_currency,
+        Decimal(transfer.source_amount),
+        transfer.source_currency,
+        rate_date=transfer.transfer_date,
+    )
+    fee_base, _ = (
+        to_base_amount(
+            db,
+            organization_id,
+            base_currency,
+            Decimal(transfer.fee_amount),
+            transfer.source_currency,
+            rate_date=transfer.transfer_date,
+        )
+        if Decimal(transfer.fee_amount) > 0
+        else (Decimal("0"), source_rate)
+    )
+
+    # Moving the same foreign currency between two owned accounts must preserve
+    # the principal's carrying basis.  Only a fee actually disposes of currency
+    # and can therefore create a realized FX difference.
+    if transfer.source_currency == transfer.destination_currency:
+        net_source = Decimal(transfer.net_source_amount)
+        source_total = Decimal(transfer.source_amount)
+        destination_base = (
+            money(source_carrying_base * net_source / source_total)
+            if source_total > 0
+            else Decimal("0.00")
+        )
+        destination_rate = (
+            (destination_base / Decimal(transfer.destination_amount)).quantize(Decimal("0.00000001"))
+            if Decimal(transfer.destination_amount) > 0
+            else Decimal("1.00000000")
+        )
+    # Buying foreign currency with functional currency is initially measured at
+    # the actual functional-currency consideration paid, not an unrelated quote.
+    elif transfer.source_currency == base_currency:
+        destination_base = money(Decimal(transfer.net_source_amount))
+        destination_rate = (
+            (destination_base / Decimal(transfer.destination_amount)).quantize(Decimal("0.00000001"))
+            if Decimal(transfer.destination_amount) > 0
+            else Decimal("1.00000000")
+        )
+    else:
+        destination_base, destination_rate = to_base_amount(
+            db,
+            organization_id,
+            base_currency,
+            Decimal(transfer.destination_amount),
+            transfer.destination_currency,
+            rate_date=transfer.transfer_date,
+        )
+
+    lines = [
+        PostingLine(
+            ledger_account_id=destination_ledger.id,
+            debit=destination_base,
+            currency=transfer.destination_currency,
+            exchange_rate_to_base=destination_rate,
+            original_amount=transfer.destination_amount,
+            description=f"Transfer {transfer.transfer_number}",
+        ),
+        PostingLine(
+            ledger_account_id=source_ledger.id,
+            credit=source_carrying_base,
+            currency=transfer.source_currency,
+            exchange_rate_to_base=(
+                source_carrying_base / Decimal(transfer.source_amount)
+            ).quantize(Decimal("0.00000001")),
+            original_amount=transfer.source_amount,
+            description=f"Transfer {transfer.transfer_number}",
+        ),
+    ]
+    if fee_base > 0:
+        lines.append(
+            PostingLine(
+                ledger_account_id=fee_ledger.id,
+                debit=fee_base,
+                currency=transfer.source_currency,
+                exchange_rate_to_base=source_rate,
+                original_amount=transfer.fee_amount,
                 description=f"Fee for {transfer.transfer_number}",
+            )
+        )
+
+    difference = money(destination_base + fee_base - source_carrying_base)
+    if difference > 0:
+        gain = system_account(db, organization_id, "realized_fx_gain")
+        lines.append(
+            PostingLine(
+                ledger_account_id=gain.id,
+                credit=difference,
+                currency=base_currency,
+                exchange_rate_to_base=Decimal("1"),
+                original_amount=difference,
+                description=f"Realized FX gain on transfer {transfer.transfer_number}",
+            )
+        )
+    elif difference < 0:
+        loss = system_account(db, organization_id, "realized_fx_loss")
+        lines.append(
+            PostingLine(
+                ledger_account_id=loss.id,
+                debit=abs(difference),
+                currency=base_currency,
+                exchange_rate_to_base=Decimal("1"),
+                original_amount=abs(difference),
+                description=f"Realized FX loss on transfer {transfer.transfer_number}",
             )
         )
 
