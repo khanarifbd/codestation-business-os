@@ -89,9 +89,10 @@ def main() -> None:
     for deprecated_entrypoint in (
         ROOT / "deployment/safe-deploy.sh",
         ROOT / "infrastructure/deploy-staging.sh",
+        ROOT / "docker-compose.staging.yml",
     ):
         if deprecated_entrypoint.exists():
-            raise AssertionError(f"duplicate deployment entrypoint must not return: {deprecated_entrypoint}")
+            raise AssertionError(f"duplicate deployment path must not return: {deprecated_entrypoint}")
 
     sync_call = deploy.index('sync_active_uploads_to_volume "${active_slot}"')
     inactive_removal = deploy.index('remove_legacy_blue_if_inactive "${active_slot}"')
