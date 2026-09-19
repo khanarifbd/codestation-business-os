@@ -14,7 +14,9 @@ type Profile = { id: string; employee_id: string; employee_code: string; employe
 type Period = { id: string; name: string; period_start: string; period_end: string; pay_date: string; status: string };
 type Entry = { id: string; employee_id: string; employee_code: string; employee_name: string; currency: string; base_salary: string; allowances: ComponentItem[]; deductions: ComponentItem[]; allowance_total: string; deduction_total: string; tax_amount: string; gross_pay: string; net_pay: string; notes?: string | null };
 type Run = { id: string; run_number: string; period_id: string; period_name: string; currency: string; status: string; employee_count: number; gross_total: string; allowance_total: string; deduction_total: string; tax_total: string; net_total: string; paid_account_id: string | null; entries: Entry[] };
-type Tab = "runs" | "profiles" | "periods";
+type WithholdingMeta = { currency:string; liability_balance:string; accounts:{id:string;name:string;balance:string}[] };
+type WithholdingPayment = { id:string;account_id:string;account_name:string;payment_date:string;currency:string;amount:string;reference?:string|null;notes?:string|null;created_at:string };
+type Tab = "runs" | "profiles" | "periods" | "withholdings";
 
 type EntryDraft = { allowances: ComponentItem[]; deductions: ComponentItem[]; tax_amount: string; notes: string };
 
@@ -38,6 +40,10 @@ export default function PayrollPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const today = new Date().toISOString().slice(0,10);
+  const [withholdingDate,setWithholdingDate]=useState(today);
+  const [withholdingMeta,setWithholdingMeta]=useState<WithholdingMeta>({currency:"BDT",liability_balance:"0",accounts:[]});
+  const [withholdingPayments,setWithholdingPayments]=useState<WithholdingPayment[]>([]);
 
   useEffect(() => { void bootstrap(); }, []);
   async function bootstrap() {
@@ -51,6 +57,42 @@ export default function PayrollPage() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load payroll"); }
     finally { setLoading(false); }
   }
+  async function loadWithholdings() {
+    try {
+      const [metaData,payments] = await Promise.all([
+        api<WithholdingMeta>(`/api/payroll/withholdings/meta?payment_date=${withholdingDate}`),
+        api<WithholdingPayment[]>("/api/payroll/withholdings/payments"),
+      ]);
+      setWithholdingMeta(metaData);
+      setWithholdingPayments(payments);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load payroll withholdings");
+    }
+  }
+  useEffect(()=>{if(tab==="withholdings")void loadWithholdings();},[tab,withholdingDate]);
+
+  async function payWithholding(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setBusy(true); setError(null); setSuccess(null);
+    const formElement=event.currentTarget; const form=new FormData(formElement);
+    try {
+      await api<WithholdingPayment>("/api/payroll/withholdings/payments",{
+        method:"POST",
+        body:JSON.stringify({
+          account_id:form.get("account_id"),
+          payment_date:withholdingDate,
+          amount:Number(form.get("amount")),
+          reference:form.get("reference")||null,
+          notes:form.get("notes")||null,
+        }),
+      });
+      formElement.reset();
+      setSuccess("Payroll deductions / withholding liability payment posted.");
+      await loadWithholdings();
+    } catch(reason) {
+      setError(reason instanceof Error?reason.message:"Unable to pay payroll withholdings");
+    } finally { setBusy(false); }
+  }
+
   async function openRun(id: string) {
     setBusy(true); setError(null);
     try { setSelectedRun(await api<Run>(`/api/payroll/runs/${id}`)); }
@@ -130,7 +172,7 @@ export default function PayrollPage() {
     {error ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {success ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div> : null}
 
-    <div className="mt-6 flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">{(["runs", "profiles", "periods"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab === item ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}>{item === "runs" ? "Payroll Runs" : item === "profiles" ? "Salary Profiles" : "Payroll Periods"}</button>)}</div>
+    <div className="mt-6 flex flex-wrap gap-2 rounded-2xl border bg-white p-2 shadow-sm">{(["runs", "profiles", "periods", "withholdings"] as Tab[]).map((item) => <button key={item} onClick={() => setTab(item)} className={`rounded-xl px-4 py-2.5 text-sm font-medium ${tab === item ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}>{item === "runs" ? "Payroll Runs" : item === "profiles" ? "Salary Profiles" : item === "periods" ? "Payroll Periods" : "Withholdings"}</button>)}</div>
 
     {tab === "profiles" ? <section className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
       <form onSubmit={createProfile} className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">New salary profile</h2><div className="mt-4 space-y-4"><SearchableSelect label="Employee" name="employee_id" required options={employeeOptions} placeholder="Select employee"/><SearchableSelect label="Currency" name="currency" required options={currencyOptions} placeholder="Select currency"/><label className="block text-sm font-medium">Pay frequency<select name="pay_frequency" className="mt-2 h-11 w-full rounded-xl border bg-white px-3"><option value="monthly">Monthly</option><option value="biweekly">Biweekly</option><option value="weekly">Weekly</option></select></label><label className="block text-sm font-medium">Base salary<input name="base_salary" type="number" min="0.01" step="0.01" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">Effective from<input name="effective_from" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><button disabled={busy} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Plus className="size-4"/>Save profile</button></div></form>
@@ -141,6 +183,26 @@ export default function PayrollPage() {
       <form onSubmit={createPeriod} className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">New payroll period</h2><div className="mt-4 space-y-4"><label className="block text-sm font-medium">Period name<input name="name" required placeholder="August 2026" className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">Start date<input name="period_start" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">End date<input name="period_end" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><label className="block text-sm font-medium">Pay date<input name="pay_date" type="date" required className="mt-2 h-11 w-full rounded-xl border px-3"/></label><button disabled={busy} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Plus className="size-4"/>Create period</button></div></form>
       <div className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Payroll periods</h2><div className="mt-4 space-y-3">{periods.length ? periods.map((p) => <div key={p.id} className="flex items-center justify-between rounded-xl border p-4"><div><p className="font-medium">{p.name}</p><p className="mt-1 text-xs text-neutral-400">{p.period_start} — {p.period_end} · Pay {p.pay_date}</p></div><span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs capitalize">{p.status}</span></div>) : <Empty text="No payroll periods yet."/>}</div></div>
     </section> : null}
+
+    {tab === "withholdings" ? <section className="mt-5 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
+      <form onSubmit={payWithholding} className="rounded-2xl border bg-white p-5 shadow-sm">
+        <h2 className="font-semibold">Pay payroll withholdings</h2>
+        <p className="mt-1 text-sm text-neutral-500">Remit employee deductions and payroll tax liabilities without treating the payment as a new expense.</p>
+        <div className="mt-4 rounded-xl bg-neutral-50 p-4"><p className="text-xs text-neutral-400">Liability available as of {withholdingDate}</p><p className="mt-1 text-xl font-semibold">{money(withholdingMeta.liability_balance,withholdingMeta.currency)}</p></div>
+        <div className="mt-4 space-y-4">
+          <label className="block text-sm font-medium">Payment date<input type="date" value={withholdingDate} onChange={e=>setWithholdingDate(e.target.value)} required className="mt-2 h-11 w-full rounded-xl border px-3"/></label>
+          <SearchableSelect label="Pay from" name="account_id" required options={withholdingMeta.accounts.map(a=>({value:a.id,label:`${a.name} · ${withholdingMeta.currency} ${Number(a.balance).toFixed(2)}`}))} placeholder={`Select ${withholdingMeta.currency} account`}/>
+          <label className="block text-sm font-medium">Amount<input name="amount" type="number" min="0.01" step="0.01" max={Number(withholdingMeta.liability_balance||0)} required className="mt-2 h-11 w-full rounded-xl border px-3"/></label>
+          <label className="block text-sm font-medium">Reference<input name="reference" className="mt-2 h-11 w-full rounded-xl border px-3"/></label>
+          <label className="block text-sm font-medium">Notes<input name="notes" className="mt-2 h-11 w-full rounded-xl border px-3"/></label>
+          <button disabled={busy||Number(withholdingMeta.liability_balance)<=0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Banknote className="size-4"/>Post withholding payment</button>
+        </div>
+      </form>
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <h2 className="font-semibold">Withholding payment history</h2>
+        <div className="mt-4 space-y-3">{withholdingPayments.length?withholdingPayments.map(item=><div key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4"><div><p className="font-medium">{item.account_name}</p><p className="mt-1 text-xs text-neutral-400">{item.payment_date}{item.reference?` · ${item.reference}`:""}</p></div><p className="font-semibold">{money(item.amount,item.currency)}</p></div>):<Empty text="No withholding payments yet."/>}</div>
+      </div>
+    </section>:null}
 
     {tab === "runs" ? <section className="mt-5 space-y-5"><div className="grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
       <form onSubmit={createRun} className="rounded-2xl border bg-white p-5 shadow-sm"><h2 className="font-semibold">Generate payroll</h2><p className="mt-1 text-sm text-neutral-500">Drafts can be adjusted employee-by-employee before approval.</p><div className="mt-4 space-y-4"><SearchableSelect label="Payroll period" name="period_id" required options={periodOptions} placeholder="Select open period"/><SearchableSelect label="Currency" name="currency" required options={currencyOptions} placeholder="Select currency"/><button disabled={busy} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 text-sm font-semibold text-white disabled:opacity-50"><Play className="size-4"/>Generate draft</button></div></form>
