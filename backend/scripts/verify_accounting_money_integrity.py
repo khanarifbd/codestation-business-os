@@ -158,6 +158,18 @@ def main() -> None:
     else:
         raise AssertionError("sub-cent direct money amount must be rejected")
 
+    try:
+        CustomerAdvanceCreate(
+            client_id="fixture",
+            financial_account_id="fixture",
+            advance_date=date(2096, 7, 1),
+            amount=Decimal("0.001"),
+        )
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("sub-cent customer advance amount must be rejected")
+
     db = SessionLocal()
     marker = uuid4().hex[:8]
     try:
@@ -478,6 +490,25 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        try:
+            safe_apply_customer_advance(
+                advance.id,
+                CustomerAdvanceApply(
+                    invoice_id=sent.id,
+                    application_date=advance_date,
+                    amount=Decimal("10.00"),
+                ),
+                request("POST", f"/accounting/customer-advances/{advance.id}/apply", f"ci-advance-backdate-{marker}"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409 or "invoice issue date" not in str(exc.detail).lower():
+                raise AssertionError(f"unexpected backdated advance application error: {exc.detail}") from exc
+            db.rollback()
+        else:
+            raise AssertionError("customer advance application before invoice issue date must be blocked")
+
         application_payload = CustomerAdvanceApply(
             invoice_id=sent.id,
             application_date=application_date,
