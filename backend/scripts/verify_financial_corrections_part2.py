@@ -21,6 +21,7 @@ from app.models.payables import PayableBill, PayablePayment
 from app.schemas.finance import FinancialAccountCreate
 from app.schemas.payables import PayablePaymentCreate
 from app.services.accounting_posting import PostingLine, post_journal, system_account
+from app.services.activity_log import record_activity
 from app.services.exchange_rates import record_rate_snapshot
 from app.services.functional_currency import functional_currency_for_date
 
@@ -210,6 +211,24 @@ def main() -> None:
             ],
             reference=bill.reference,
             memo=bill.description,
+        )
+        record_activity(
+            db,
+            action="accounting.payable.bill_created",
+            scope="tenant",
+            actor_user_id=tenant.user_id,
+            organization_id=tenant.organization_id,
+            entity_type="payable_bill",
+            entity_id=bill.id,
+            after={
+                "supplier_name": bill.supplier_name,
+                "gross": str(bill.original_amount),
+                "net_payable": str(bill.net_payable_amount),
+                "withholding_tax": str(bill.withholding_tax_amount),
+                "currency": bill.currency,
+            },
+            message=f"CI payable fixture recorded: {bill.bill_number}",
+            request=request("POST", "/accounting/payables"),
         )
         db.commit()
         db.refresh(bill)
