@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from app.db.session import SessionLocal
 from app.main import app
 from app.models.passkey import PasskeyChallenge, UserPasskey
+from app.schemas.passkey import PasskeyAuthenticationVerifyRequest, PasskeyRegistrationVerifyRequest
 from app.services.passkeys import authentication_options, credential_id_hash, relying_party
 
 
@@ -46,6 +47,24 @@ def main() -> None:
 
     if credential_id_hash("AQID") != credential_id_hash("AQID"):
         raise AssertionError("passkey credential hashing must be deterministic")
+
+    valid_credential = {"id": "AQID", "response": {}}
+    PasskeyAuthenticationVerifyRequest(challenge_id="00000000-0000-0000-0000-000000000000", credential=valid_credential)
+    PasskeyRegistrationVerifyRequest(
+        challenge_id="00000000-0000-0000-0000-000000000000",
+        name="Test passkey",
+        credential=valid_credential,
+    )
+    oversized_rejected = False
+    try:
+        PasskeyAuthenticationVerifyRequest(
+            challenge_id="00000000-0000-0000-0000-000000000000",
+            credential={"id": "A" * 2_049, "response": {}},
+        )
+    except ValueError:
+        oversized_rejected = True
+    if not oversized_rejected:
+        raise AssertionError("oversized passkey credential identifiers must be rejected")
 
     with SessionLocal() as db:
         challenge, options = authentication_options(db)
