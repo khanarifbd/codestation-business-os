@@ -539,14 +539,6 @@ def main() -> None:
             raise AssertionError("applying customer credit incorrectly created a second cash movement")
 
         db.expire_all()
-        persisted_invoice = db.scalar(
-            select(text("amount_paid, balance_due")).select_from(text("invoices")).where(
-                text("id = :invoice_id")
-            ).params(invoice_id=sent.id)
-        )
-        if persisted_invoice is None:
-            raise AssertionError("advance settlement invoice disappeared")
-        # SQLAlchemy scalar on two columns returns the first column; verify both via execute.
         invoice_amounts = db.execute(
             text("SELECT amount_paid, balance_due, status FROM invoices WHERE id=:invoice_id AND organization_id=:org_id"),
             {"invoice_id": sent.id, "org_id": tenant.organization_id},
