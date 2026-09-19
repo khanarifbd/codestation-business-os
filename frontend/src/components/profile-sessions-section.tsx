@@ -56,6 +56,7 @@ function relativeTime(value: string) {
 function authMethodLabel(value: string) {
   if (value === "password") return "Password";
   if (value === "google") return "Google";
+  if (value === "passkey") return "Passkey";
   if (value === "legacy") return "Existing sign-in";
   return value.replaceAll("_", " ");
 }
