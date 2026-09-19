@@ -63,6 +63,8 @@ def relying_party() -> tuple[str, str]:
 
 
 def credential_id_hash(value: str) -> str:
+    if not value or len(value) > 2_048:
+        raise ValueError("Invalid passkey credential identifier")
     try:
         canonical = bytes_to_base64url(base64url_to_bytes(value))
     except Exception as exc:
@@ -210,10 +212,10 @@ def verify_registration_step_up(
 
 def registration_options(db: Session, user: User) -> tuple[PasskeyChallenge, dict]:
     rp_id, _ = relying_party()
-    challenge = create_challenge(db, purpose="registration", user_id=user.id)
     existing = db.scalars(select(UserPasskey).where(UserPasskey.user_id == user.id)).all()
     if len(existing) >= _MAX_PASSKEYS_PER_USER:
         raise HTTPException(status_code=400, detail="You can save up to 20 passkeys. Remove an old passkey before adding another.")
+    challenge = create_challenge(db, purpose="registration", user_id=user.id)
     exclude_credentials: list[PublicKeyCredentialDescriptor] = []
     for item in existing:
         try:
