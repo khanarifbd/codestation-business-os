@@ -49,6 +49,7 @@ BACKUP_ENCRYPTION_KEY="$(env_value BACKUP_ENCRYPTION_KEY)"
 POSTGRES_USER="${POSTGRES_USER:-business_os}"
 POSTGRES_DB="${POSTGRES_DB:-codestation_business_os}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-codestation-business-os}"
+[[ "${COMPOSE_PROJECT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || fail "COMPOSE_PROJECT_NAME contains unsupported characters"
 
 [[ "${POSTGRES_USER}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail "POSTGRES_USER must be a safe PostgreSQL identifier"
 [[ "${POSTGRES_DB}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail "POSTGRES_DB must be a safe PostgreSQL identifier"
