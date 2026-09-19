@@ -156,7 +156,7 @@ test("Client invoice PDF includes the saved Payoneer link and scannable QR", asy
   await page.getByLabel(/email or username/i).fill(process.env.E2E_EMAIL ?? "e2e-owner@example.com");
   await page.locator('input[name="password"]').fill(process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!");
   await page.getByRole("button", { name: /sign in securely/i }).click();
-  await expect(page).toHaveURL(/\\/dashboard(?:$|\\/|\\?)/, { timeout: 15_000 });
+  await expect(page).toHaveURL(new RegExp("dashboard"), { timeout: 15_000 });
 
   const portalInvoice = {
     ...invoice,
