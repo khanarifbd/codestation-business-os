@@ -57,8 +57,8 @@ class PayrollPeriodCreate(BaseModel):
     def validate_dates(self):
         if self.period_end < self.period_start:
             raise ValueError("Period end cannot be before period start")
-        if self.pay_date < self.period_start:
-            raise ValueError("Pay date cannot be before period start")
+        if self.pay_date < self.period_end:
+            raise ValueError("Pay date cannot be before period end")
         return self
 
 
@@ -143,3 +143,24 @@ class PayrollMeta(BaseModel):
     employees: list[PayrollEmployeeOption]
     accounts: list[PayrollAccountOption]
     currencies: list[str]
+
+
+
+class PayrollWithholdingPaymentCreate(BaseModel):
+    account_id: str
+    payment_date: date
+    amount: Decimal = Field(gt=0)
+    reference: str | None = Field(default=None, max_length=180)
+    notes: str | None = None
+
+
+class PayrollWithholdingPaymentRead(BaseModel):
+    id: str
+    account_id: str
+    account_name: str
+    payment_date: date
+    currency: str
+    amount: Decimal
+    reference: str | None = None
+    notes: str | None = None
+    created_at: datetime
