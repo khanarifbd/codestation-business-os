@@ -56,6 +56,7 @@ from app.models.loan_accounting import LoanDisbursement, LoanFee, LoanScheduleIt
 from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
+from app.models.passkey import PasskeyChallenge, UserPasskey
 from app.models.payables import PayableBill, PayablePayment
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
 from app.models.posting_idempotency import PostingIdempotency
@@ -93,12 +94,12 @@ __all__ = [
     "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InventoryBalance", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate",
     "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadInterest", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
     "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "OwnerEquityTransaction", "Order", "OrderFulfillment", "OrderFulfillmentItem", "OrderItem", "PayableBill",
-    "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
+    "PasskeyChallenge", "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
     "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PayrollWithholdingPayment", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectNote", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
-    "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "TaxSettlement", "User", "UserSession", "Vendor", "Warehouse",
+    "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "TaxSettlement", "User", "UserPasskey", "UserSession", "Vendor", "Warehouse",
 ]
 
 # Register snapshot listeners after all mapped classes above are loaded.
