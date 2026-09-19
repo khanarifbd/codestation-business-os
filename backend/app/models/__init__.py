@@ -11,6 +11,7 @@ from app.models.capital import (
     InvestmentReturn,
     InvestorPayout,
     LoanRepayment,
+    OwnerEquityTransaction,
     ProjectInvestor,
     ProjectInvestorFunding,
 )
@@ -56,7 +57,7 @@ from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
 from app.models.payables import PayableBill, PayablePayment
-from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, SalaryProfile
+from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
 from app.models.posting_idempotency import PostingIdempotency
 from app.models.projects import (
     Project,
@@ -78,7 +79,7 @@ from app.models.sales import (
     QuotationSection,
 )
 from app.models.subscription import Subscription
-from app.models.tax import TaxCode
+from app.models.tax import TaxCode, TaxSettlement
 from app.models.team import Department, Designation, Employee, EmployeeInvitation, OrganizationRole
 from app.models.user import User
 from app.models.user_session import UserSession
@@ -91,13 +92,13 @@ __all__ = [
     "Expense", "ExpenseCategory", "ExpenseDocument", "FinancialAccount", "FinancialTransaction", "FixedAsset", "HRAnnouncement",
     "HRAnnouncementAcknowledgement", "HRHoliday", "HRShift", "InventoryBalance", "InvestmentReturn", "InvestorPayout", "Invoice", "InvoiceItem", "JobCandidate",
     "JobOpening", "JournalEntry", "JournalLine", "Lead", "LeadInteraction", "LeadInterest", "LeadSource", "LeadStatus", "LeaveRequest", "LeaveType",
-    "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "Order", "OrderFulfillment", "OrderFulfillmentItem", "OrderItem", "PayableBill",
+    "LedgerAccount", "LoanDisbursement", "LoanFee", "LoanRepayment", "LoanScheduleItem", "Membership", "OwnerEquityTransaction", "Order", "OrderFulfillment", "OrderFulfillmentItem", "OrderItem", "PayableBill",
     "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
-    "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
+    "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PayrollWithholdingPayment", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectNote", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
-    "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "User", "UserSession", "Vendor", "Warehouse",
+    "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "TaxSettlement", "User", "UserSession", "Vendor", "Warehouse",
 ]
 
 # Register snapshot listeners after all mapped classes above are loaded.
