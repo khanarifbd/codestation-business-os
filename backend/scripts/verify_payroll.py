@@ -19,9 +19,11 @@ from app.api.v1.payroll import (
 )
 from app.api.v1.reports import reports_overview
 from app.db.session import SessionLocal, engine
+from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialTransaction
 from app.models.payroll import PayrollEntry, PayrollRun
-from app.schemas.payroll import PayrollPayRequest, PayrollPeriodCreate, PayrollRunCreate, SalaryProfileCreate
+from app.schemas.payroll import PayrollComponent, PayrollEntryUpdate, PayrollPayRequest, PayrollPeriodCreate, PayrollRunCreate, SalaryProfileCreate
+from app.api.v1.payroll import update_entry
 
 
 @dataclass(frozen=True)
@@ -104,7 +106,9 @@ def main() -> None:
 
         profile = create_salary_profile(
             SalaryProfileCreate(employee_id=str(employee_id), currency="BDT", pay_frequency="monthly", base_salary=Decimal("50000"),
-                default_allowances=[], default_deductions=[], effective_from=date(2098, 1, 1)),
+                default_allowances=[PayrollComponent(name="Housing", amount=Decimal("5000"))],
+                default_deductions=[PayrollComponent(name="Provident fund", amount=Decimal("3000"))],
+                effective_from=date(2098, 1, 1)),
             request("POST", "/api/v1/payroll/salary-profiles"), db, tenant,  # type: ignore[arg-type]
         )
         if profile.base_salary != Decimal("50000.00"):
@@ -115,15 +119,46 @@ def main() -> None:
             request("POST", "/api/v1/payroll/periods"), db, tenant,  # type: ignore[arg-type]
         )
         run = create_run(PayrollRunCreate(period_id=period.id, currency="BDT"), request("POST", "/api/v1/payroll/runs"), db, tenant)  # type: ignore[arg-type]
-        if run.employee_count != 1 or run.net_total != Decimal("50000.00"):
-            raise AssertionError(f"payroll generation mismatch: count={run.employee_count}, net={run.net_total}")
+        if run.employee_count != 1 or run.gross_total != Decimal("55000.00") or run.net_total != Decimal("52000.00"):
+            raise AssertionError(f"payroll generation mismatch: count={run.employee_count}, gross={run.gross_total}, net={run.net_total}")
         entry_count = db.scalar(select(PayrollEntry).where(PayrollEntry.run_id == run.id).with_only_columns(text("count(*)")))
         if int(entry_count or 0) != 1:
             raise AssertionError("payroll entry not generated")
+        entry_id = run.entries[0].id
+        run = update_entry(
+            run.id,
+            entry_id,
+            PayrollEntryUpdate(tax_amount=Decimal("2000")),
+            request("PATCH", f"/api/v1/payroll/runs/{run.id}/entries/{entry_id}"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if run.gross_total != Decimal("55000.00") or run.deduction_total != Decimal("3000.00") or run.tax_total != Decimal("2000.00") or run.net_total != Decimal("50000.00"):
+            raise AssertionError("payroll gross/deduction/tax/net totals do not reconcile")
 
         approved = approve_run(run.id, request("POST", f"/api/v1/payroll/runs/{run.id}/approve"), db, tenant)  # type: ignore[arg-type]
         if approved.status != "approved":
             raise AssertionError("payroll approval failed")
+        accrual = db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id == tenant.organization_id,
+            JournalEntry.source_type == "payroll_accrual",
+            JournalEntry.source_id == run.id,
+            JournalEntry.status == "posted",
+        ))
+        if accrual is None:
+            raise AssertionError("payroll approval did not create an accrual journal")
+        accrual_lines = db.execute(
+            select(JournalLine, LedgerAccount.system_key)
+            .join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id)
+            .where(JournalLine.organization_id == tenant.organization_id, JournalLine.journal_entry_id == accrual.id)
+        ).all()
+        by_key = {key: line for line, key in accrual_lines}
+        if Decimal(by_key["payroll_expense"].debit) != Decimal("55000.00"):
+            raise AssertionError("payroll expense accrual is incorrect")
+        if Decimal(by_key["payroll_payable"].credit) != Decimal("50000.00"):
+            raise AssertionError("net payroll payable accrual is incorrect")
+        if Decimal(by_key["payroll_withholdings"].credit) != Decimal("5000.00"):
+            raise AssertionError("payroll deductions/tax liability accrual is incorrect")
         paid = pay_run(run.id, PayrollPayRequest(account_id=account_id), request("POST", f"/api/v1/payroll/runs/{run.id}/pay"), db, tenant)  # type: ignore[arg-type]
         if paid.status != "paid":
             raise AssertionError("payroll payment failed")
@@ -133,6 +168,22 @@ def main() -> None:
         ))
         if ledger is None or ledger.direction != "debit" or ledger.amount != Decimal("50000.00"):
             raise AssertionError("payroll ledger debit missing or incorrect")
+        payment_journal = db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id == tenant.organization_id,
+            JournalEntry.source_type == "payroll_payment",
+            JournalEntry.source_id == run.id,
+            JournalEntry.status == "posted",
+        ))
+        if payment_journal is None:
+            raise AssertionError("payroll payment journal is missing")
+        payment_lines = db.execute(
+            select(JournalLine, LedgerAccount.system_key)
+            .join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id)
+            .where(JournalLine.organization_id == tenant.organization_id, JournalLine.journal_entry_id == payment_journal.id)
+        ).all()
+        payment_by_key = {key: line for line, key in payment_lines}
+        if Decimal(payment_by_key["payroll_payable"].debit) != Decimal("50000.00"):
+            raise AssertionError("payroll payment did not clear net payroll payable")
         persisted = db.scalar(select(PayrollRun).where(PayrollRun.id == run.id))
         if persisted is None or persisted.paid_account_id != account_id:
             raise AssertionError("payroll paid account was not persisted")
@@ -147,7 +198,7 @@ def main() -> None:
             project_id=None,
         )
         bdt = next((row for row in report.financials if row.currency == "BDT"), None)
-        if bdt is None or bdt.expenses < Decimal("50000.00"):
+        if bdt is None or bdt.expenses < Decimal("55000.00"):
             raise AssertionError("approved/paid payroll cost is missing from Reports expenses")
     finally:
         db.close()
