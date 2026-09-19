@@ -331,7 +331,10 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
                 AssetDepreciationEntry.asset_id,
                 func.coalesce(func.sum(AssetDepreciationEntry.amount), 0),
             )
-            .where(AssetDepreciationEntry.organization_id == organization_id)
+            .where(
+                AssetDepreciationEntry.organization_id == organization_id,
+                AssetDepreciationEntry.status == "posted",
+            )
             .group_by(AssetDepreciationEntry.asset_id)
         ).all()
     }
@@ -352,7 +355,10 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
             )
 
     depreciation_entries = db.scalars(
-        select(AssetDepreciationEntry.id).where(AssetDepreciationEntry.organization_id == organization_id)
+        select(AssetDepreciationEntry.id).where(
+            AssetDepreciationEntry.organization_id == organization_id,
+            AssetDepreciationEntry.status == "posted",
+        )
     ).all()
     report.stats["asset_depreciation_entries"] = len(depreciation_entries)
     for entry_id in depreciation_entries:
