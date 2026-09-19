@@ -34,6 +34,7 @@ from app.api.v1.capital_insights import insights
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry
 from app.models.company_defaults import OrganizationExchangeRate
+from app.models.loan_accounting import LoanDisbursement
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.projects import Project
 
@@ -79,10 +80,50 @@ def main() -> None:
                 db.add(OrganizationExchangeRate(organization_id=tenant.organization_id, base_currency=currency, quote_currency=tenant.organization.currency, reference_rate=Decimal("110"), manual_rate=Decimal("110"), effective_rate=Decimal("110"), source="capital_ci_fixture"))
                 db.flush()
 
-        # Legacy debt routes remain compatible while loans are managed from Accounting.
+        # Legacy debt endpoints are compatibility wrappers over the canonical Accounting
+        # loan workflow. They must never bypass Journal/Ledger posting.
         loan = create_loan(LoanCreate(lender_name=f"CI Bank {marker}", lender_type="bank", currency=currency, principal_amount=Decimal("100000"), annual_interest_rate=Decimal("10"), loan_date=date(2096, 1, 1), account_id=acc.id, reference=f"LN-{marker}"), request("POST", "/capital/loans"), db, tenant)  # type: ignore[arg-type]
         paid = repay(loan["id"], RepaymentCreate(account_id=acc.id, payment_date=date(2096, 2, 1), principal_amount=Decimal("10000"), interest_amount=Decimal("1000"), reference=f"LR-{marker}"), request("POST", f"/capital/loans/{loan['id']}/repay"), db, tenant)  # type: ignore[arg-type]
         if paid["outstanding_principal"] != Decimal("90000.00"): raise AssertionError("loan outstanding calculation failed")
+
+        legacy_disbursement = db.scalar(
+            select(LoanDisbursement).where(
+                LoanDisbursement.organization_id == tenant.organization_id,
+                LoanDisbursement.loan_id == loan["id"],
+                LoanDisbursement.principal_amount > 0,
+            )
+        )
+        if legacy_disbursement is None:
+            raise AssertionError("legacy loan compatibility create bypassed canonical disbursement tracking")
+        disbursement_journal = db.scalar(
+            select(JournalEntry.id).where(
+                JournalEntry.organization_id == tenant.organization_id,
+                JournalEntry.source_type == "loan_disbursement",
+                JournalEntry.source_id == legacy_disbursement.id,
+                JournalEntry.status == "posted",
+            )
+        )
+        repayment_journal = db.scalar(
+            select(JournalEntry.id).where(
+                JournalEntry.organization_id == tenant.organization_id,
+                JournalEntry.source_type == "loan_repayment_accounting",
+                JournalEntry.source_id == paid["id"],
+                JournalEntry.status == "posted",
+            )
+        )
+        if disbursement_journal is None or repayment_journal is None:
+            raise AssertionError("legacy loan compatibility routes must post canonical accounting journals")
+        legacy_bypass_sources = set(
+            db.scalars(
+                select(FinancialTransaction.source_type).where(
+                    FinancialTransaction.organization_id == tenant.organization_id,
+                    FinancialTransaction.reference.in_([f"LN-{marker}", f"LR-{marker}"]),
+                    FinancialTransaction.source_type.in_(["company_loan", "loan_repayment"]),
+                )
+            ).all()
+        )
+        if legacy_bypass_sources:
+            raise AssertionError(f"legacy loan compatibility route bypass detected: {sorted(legacy_bypass_sources)}")
 
         # Company invests externally. Initial and additional funding must reduce cash,
         # increase the investment asset and preserve carrying value history.

@@ -7,7 +7,17 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.v1.accounting_loans import (
+    AccountingLoanCreate,
+    LoanAccountingRepaymentCreate,
+    LoanDisbursementCreate,
+    approve_loan as approve_accounting_loan,
+    create_accounting_loan,
+    disburse_loan as disburse_accounting_loan,
+    repay_loan as repay_accounting_loan,
+)
 from app.models.accounting import LedgerAccount
+from app.models.loan_accounting import LoanDisbursement
 from app.models.capital import (
     CompanyInvestment,
     CompanyInvestmentFunding,
@@ -30,6 +40,7 @@ from app.tenancy.context import TenantContext
 router = APIRouter(prefix="/capital", tags=["Investments & Funding"])
 CapitalViewer = Annotated[TenantContext, Depends(require_tenant_permission("capital.view"))]
 CapitalManager = Annotated[TenantContext, Depends(require_tenant_permission("capital.manage"))]
+LoanAccountingManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
 MONEY = Decimal("0.01")
 
 
@@ -291,38 +302,118 @@ def dashboard(db: DbSession, tenant: CapitalViewer):
     return {"rows": rows, "active_company_investors": sum(1 for x in company_investors if x.status == "active"), "active_project_investors": sum(1 for x in project_investors if x.status == "active"), "active_investments": sum(1 for x in investments if x.status == "active")}
 
 
-# Legacy loan routes remain for backward compatibility. New loan accounting lives
-# under /accounting/loans and is intentionally not shown in the Investments UI.
+# Legacy loan routes remain as compatibility wrappers only. All new debt movements
+# must pass through the canonical Accounting loan workflow so the operational
+# financial account, loan subledger, Journal/Ledger and reports stay in sync.
 @router.get("/loans")
 def loans(db: DbSession, tenant: CapitalViewer):
     return [loan_json(x) for x in db.scalars(select(CompanyLoan).where(CompanyLoan.organization_id == tenant.organization_id).order_by(CompanyLoan.loan_date.desc(), CompanyLoan.created_at.desc())).all()]
 
 
 @router.post("/loans", status_code=201)
-def create_loan(payload: LoanCreate, request: Request, db: DbSession, tenant: CapitalManager):
+def create_loan(payload: LoanCreate, request: Request, db: DbSession, tenant: LoanAccountingManager):
     currency = payload.currency.upper()
-    acc = account(db, tenant.organization_id, payload.account_id, currency) if payload.account_id else None
-    row = CompanyLoan(organization_id=tenant.organization_id, lender_name=payload.lender_name.strip(), lender_type=payload.lender_type, currency=currency, principal_amount=money(payload.principal_amount), outstanding_principal=money(payload.principal_amount), annual_interest_rate=payload.annual_interest_rate, loan_date=payload.loan_date, maturity_date=payload.maturity_date, account_id=payload.account_id, status="active", reference=payload.reference, notes=payload.notes, created_by_user_id=tenant.user_id)
-    db.add(row); db.flush()
-    if acc:
-        cash_ledger(db, tenant, account_id=acc.id, tx_date=row.loan_date, direction="credit", amount=row.principal_amount, currency=currency, source_type="company_loan", source_id=row.id, reference=row.reference, description=f"Loan received from {row.lender_name}")
-    record_activity(db, action="capital.loan.create", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="company_loan", entity_id=row.id, after=loan_json(row), request=request)
-    db.commit(); return loan_json(row)
+    if payload.account_id:
+        # Preflight the destination before creating the agreement. The canonical
+        # disbursement path performs the authoritative tenant/currency/GL checks.
+        account(db, tenant.organization_id, payload.account_id, currency)
+
+    agreement = create_accounting_loan(
+        AccountingLoanCreate(
+            lender_name=payload.lender_name,
+            lender_type=payload.lender_type,
+            currency=currency,
+            approved_amount=payload.principal_amount,
+            annual_interest_rate=payload.annual_interest_rate,
+            approval_date=payload.loan_date,
+            maturity_date=payload.maturity_date,
+            reference=payload.reference,
+            notes=payload.notes,
+        ),
+        request,
+        db,
+        tenant,
+    )
+    approve_accounting_loan(agreement["id"], request, db, tenant)
+
+    if payload.account_id:
+        disburse_accounting_loan(
+            agreement["id"],
+            LoanDisbursementCreate(
+                account_id=payload.account_id,
+                disbursement_date=payload.loan_date,
+                principal_amount=payload.principal_amount,
+                fee_withheld_amount=Decimal("0"),
+                reference=payload.reference,
+                notes=payload.notes,
+            ),
+            request,
+            db,
+            tenant,
+        )
+
+    row = db.scalar(
+        select(CompanyLoan).where(
+            CompanyLoan.id == agreement["id"],
+            CompanyLoan.organization_id == tenant.organization_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(409, "Loan agreement could not be reloaded")
+    return loan_json(row)
 
 
 @router.post("/loans/{loan_id}/repay", status_code=201)
-def repay(loan_id: str, payload: RepaymentCreate, request: Request, db: DbSession, tenant: CapitalManager):
-    row = db.scalar(select(CompanyLoan).where(CompanyLoan.id == loan_id, CompanyLoan.organization_id == tenant.organization_id))
-    if row is None: raise HTTPException(404, "Loan not found")
-    principal, interest = money(payload.principal_amount), money(payload.interest_amount)
-    if principal > row.outstanding_principal: raise HTTPException(400, "Principal repayment exceeds outstanding balance")
-    acc = account(db, tenant.organization_id, payload.account_id, row.currency); total = money(principal + interest)
-    if balance(db, acc, tenant.organization_id) < total: raise HTTPException(409, "Insufficient account balance")
-    p = LoanRepayment(organization_id=tenant.organization_id, loan_id=row.id, account_id=acc.id, payment_date=payload.payment_date, principal_amount=principal, interest_amount=interest, reference=payload.reference, notes=payload.notes, created_by_user_id=tenant.user_id)
-    db.add(p); db.flush(); row.outstanding_principal = money(row.outstanding_principal - principal); row.status = "paid" if row.outstanding_principal == 0 else "active"
-    cash_ledger(db, tenant, account_id=acc.id, tx_date=p.payment_date, direction="debit", amount=total, currency=row.currency, source_type="loan_repayment", source_id=p.id, reference=p.reference, description=f"Loan repayment to {row.lender_name}")
-    record_activity(db, action="capital.loan.repay", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="loan_repayment", entity_id=p.id, after={"loan_id": row.id, "principal": principal, "interest": interest, "outstanding": row.outstanding_principal}, request=request)
-    db.commit(); return {"id": p.id, "loan_id": row.id, "principal_amount": principal, "interest_amount": interest, "outstanding_principal": row.outstanding_principal, "status": row.status}
+def repay(loan_id: str, payload: RepaymentCreate, request: Request, db: DbSession, tenant: LoanAccountingManager):
+    row = db.scalar(
+        select(CompanyLoan).where(
+            CompanyLoan.id == loan_id,
+            CompanyLoan.organization_id == tenant.organization_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(404, "Loan not found")
+
+    accounting_disbursement = db.scalar(
+        select(LoanDisbursement.id).where(
+            LoanDisbursement.organization_id == tenant.organization_id,
+            LoanDisbursement.loan_id == row.id,
+            LoanDisbursement.principal_amount > 0,
+        )
+    )
+    if accounting_disbursement is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This is a pre-accounting legacy loan without a canonical disbursement journal. "
+                "Reconcile/migrate the opening loan liability in Accounting before posting another repayment."
+            ),
+        )
+
+    result = repay_accounting_loan(
+        row.id,
+        LoanAccountingRepaymentCreate(
+            account_id=payload.account_id,
+            payment_date=payload.payment_date,
+            principal_amount=payload.principal_amount,
+            interest_amount=payload.interest_amount,
+            fee_amount=Decimal("0"),
+            fee_type="legacy_capital_wrapper",
+            reference=payload.reference,
+            notes=payload.notes,
+        ),
+        request,
+        db,
+        tenant,
+    )
+    return {
+        "id": result["id"],
+        "loan_id": result["loan"]["id"],
+        "principal_amount": result["principal_amount"],
+        "interest_amount": result["interest_amount"],
+        "outstanding_principal": result["loan"]["outstanding_principal"],
+        "status": result["loan"]["status"],
+    }
 
 
 @router.get("/company-investors")
