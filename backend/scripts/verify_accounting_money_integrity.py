@@ -18,6 +18,7 @@ from app.api.v1.financial_safety import (
     safe_change_invoice_status,
     safe_create_account,
     safe_create_customer_advance,
+    safe_create_income_with_fee,
     safe_create_money_entry,
 )
 from app.db.session import SessionLocal, engine
@@ -26,7 +27,7 @@ from app.models.accounting_money import AccountingMoneyEntry
 from app.models.customer_advances import CustomerAdvanceApplication
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
 from app.models.projects import Project
-from app.schemas.accounting_money import AccountingMoneyEntryCreate
+from app.schemas.accounting_money import AccountingIncomeWithFeeCreate, AccountingMoneyEntryCreate
 from app.schemas.crm import ClientCreate
 from app.schemas.customer_advances import CustomerAdvanceApply, CustomerAdvanceCreate
 from app.schemas.finance import FinancialAccountCreate, InvoiceCreate, InvoiceItemInput, InvoiceStatusAction
@@ -377,6 +378,42 @@ def main() -> None:
             raise AssertionError("reversed direct money entry remains a correction candidate")
         if ("money_entry", expense_row.id) not in candidate_keys:
             raise AssertionError("unreversed direct expense is missing from correction candidates")
+
+        bank_fees = system_account(db, tenant.organization_id, "bank_fees")
+        income_with_fee_payload = AccountingIncomeWithFeeCreate(
+            entry_date=date(2096, 6, 14),
+            financial_account_id=base_account.id,
+            income_category_ledger_account_id=income_ledger.id,
+            gross_amount=Decimal("50.00"),
+            fee_amount=Decimal("5.00"),
+            fee_category_ledger_account_id=bank_fees.id,
+            description="CI platform settlement income",
+            fee_description="CI platform processing fee",
+            reference=f"CI-INCOME-FEE-{marker}",
+        )
+        income_with_fee_key = f"ci-income-fee-{marker}"
+        income_with_fee = safe_create_income_with_fee(
+            income_with_fee_payload,
+            request("POST", "/accounting/money/income-with-fee", income_with_fee_key),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        replay_income_with_fee = safe_create_income_with_fee(
+            income_with_fee_payload,
+            request("POST", "/accounting/money/income-with-fee", income_with_fee_key),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if income_with_fee.income_entry.id != replay_income_with_fee.income_entry.id:
+            raise AssertionError("income-with-fee retry duplicated the gross receipt")
+        if income_with_fee.fee_entry is None or replay_income_with_fee.fee_entry is None:
+            raise AssertionError("income-with-fee verification requires a linked fee entry")
+        if income_with_fee.fee_entry.id != replay_income_with_fee.fee_entry.id:
+            raise AssertionError("income-with-fee retry duplicated the processing fee")
+        if income_with_fee.net_amount != Decimal("45.00"):
+            raise AssertionError("income-with-fee net amount is incorrect")
+        if account_balance(db, tenant.organization_id, base_account.id) != Decimal("50.00"):
+            raise AssertionError("income-with-fee did not reconcile gross receipt less fee to the account balance")
 
         # Foreign-currency advance application must clear both monetary balances
         # at their historical carrying values rather than application-date spot.
