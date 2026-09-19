@@ -6,9 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env.staging"
 COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
 SCHEDULER_COMPOSE_FILE="${COMPOSE_FILE}"
-PROJECT_NAME="codestation-business-os"
-NETWORK_NAME="${PROJECT_NAME}_default"
-UPLOADS_VOLUME="${PROJECT_NAME}_business_os_uploads"
+PROJECT_NAME=""
+NETWORK_NAME=""
+UPLOADS_VOLUME="codestation-business-os_business_os_uploads"
 STATE_DIR="/var/lib/codestation-business-os"
 STATE_FILE="${STATE_DIR}/active-slot"
 NGINX_SITE="/etc/nginx/sites-available/codestation-business-os"
@@ -206,6 +206,59 @@ ensure_nginx_client_ip_headers() {
   fi
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  if grep -q "^${key}=" "${ENV_FILE}"; then
+    sed -i "s|^${key}=.*$|${key}=${value}|" "${ENV_FILE}"
+  else
+    printf "\n%s=%s\n" "${key}" "${value}" >> "${ENV_FILE}"
+  fi
+}
+
+project_has_state() {
+  local project="$1"
+  if docker ps -a \
+      --filter "label=com.docker.compose.project=${project}" \
+      --filter "label=com.docker.compose.service=postgres" \
+      --format '{{.ID}}' | grep -q .; then
+    return 0
+  fi
+  docker volume inspect "${project}_business_os_postgres" >/dev/null 2>&1
+}
+
+resolve_compose_project() {
+  local configured candidate
+  configured="$(env_value COMPOSE_PROJECT_NAME)"
+
+  if [[ -n "${configured}" ]]; then
+    [[ "${configured}" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || fail "COMPOSE_PROJECT_NAME contains unsupported characters"
+    PROJECT_NAME="${configured}"
+    if ! project_has_state "${PROJECT_NAME}"; then
+      for candidate in codestation-business-os deployment; do
+        [[ "${candidate}" == "${PROJECT_NAME}" ]] && continue
+        if project_has_state "${candidate}"; then
+          fail "COMPOSE_PROJECT_NAME=${PROJECT_NAME} has no existing PostgreSQL state, but ${candidate} does. Refusing to risk switching to a different database volume."
+        fi
+      done
+    fi
+  else
+    local found=""
+    for candidate in codestation-business-os deployment; do
+      if project_has_state "${candidate}"; then
+        if [[ -n "${found}" ]]; then
+          fail "Multiple Business OS PostgreSQL Compose projects were found (${found}, ${candidate}). Set COMPOSE_PROJECT_NAME explicitly in .env.staging before deploying."
+        fi
+        found="${candidate}"
+      fi
+    done
+    PROJECT_NAME="${found:-codestation-business-os}"
+    set_env_value COMPOSE_PROJECT_NAME "${PROJECT_NAME}"
+  fi
+
+  NETWORK_NAME="${PROJECT_NAME}_default"
+  log "Docker Compose project: ${PROJECT_NAME}"
+}
 wait_url() {
   local url="$1"
   local label="$2"
@@ -550,6 +603,8 @@ POSTGRES_DB="${POSTGRES_DB:-codestation_business_os}"
 if [[ -z "${POSTGRES_PASSWORD}" || "${POSTGRES_PASSWORD}" == "replace_with_a_long_random_password" ]]; then
   fail "Configure POSTGRES_PASSWORD in .env.staging first."
 fi
+
+resolve_compose_project
 mkdir -p "${STATE_DIR}"
 chmod 700 "${STATE_DIR}"
 
