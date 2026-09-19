@@ -137,6 +137,8 @@ def sync_operational_accounting(db, *, organization_id: str, user_id: str, base_
             post_journal(db, organization_id=organization_id, user_id=user_id, entry_date=transfer.transfer_date, source_type="account_transfer", source_id=transfer.id, lines=lines, reference=transfer.reference, memo=f"Account transfer {transfer.transfer_number}"); counts["transfers"] += 1
         except HTTPException as exc: errors.append(f"Transfer {transfer.transfer_number}: {exc.detail}")
 
+    # Legacy recovery path: new payroll payments post their journal transactionally.
+    # This loop only backfills older paid runs that predate payroll accrual/payment journals.
     paid_payroll = db.execute(select(PayrollRun, PayrollPeriod).join(PayrollPeriod, PayrollPeriod.id == PayrollRun.period_id).where(PayrollRun.organization_id == organization_id, PayrollRun.status == "paid", PayrollRun.paid_account_id.is_not(None))).all()
     for run, period in paid_payroll:
         if after_cutoff(period.pay_date) or _already_posted(db, organization_id, "payroll_payment", run.id): continue
