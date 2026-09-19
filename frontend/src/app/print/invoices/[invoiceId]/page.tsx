@@ -553,9 +553,11 @@ export default function InvoicePrintPage() {
                     href={payment.payment_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="print-actions mt-4 inline-flex max-w-full items-center gap-2 break-all text-sm font-semibold text-blue-700 underline underline-offset-4"
+                    className="mt-4 inline-flex max-w-full items-center gap-2 break-all text-sm font-semibold text-blue-700 underline underline-offset-4 print:text-[10px]"
                   >
-                    Open payment link <ExternalLink className="size-4 shrink-0" />
+                    <span className="print:hidden">Open payment link</span>
+                    <span className="hidden print:inline">{payment.payment_url}</span>
+                    <ExternalLink className="size-4 shrink-0 print:hidden" />
                   </a>
                 ) : null}
               </div>
