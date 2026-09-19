@@ -7,17 +7,20 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.models.accounting import JournalEntry
+from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
-from app.models.capital import CompanyLoan, LoanRepayment
+from app.models.capital import CompanyLoan, LoanRepayment, OwnerEquityTransaction
 from app.models.customer_advances import CustomerAdvance, CustomerAdvanceApplication
 from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialTransaction, Invoice, Payment
+from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
 from app.models.loan_accounting import LoanDisbursement, LoanFee
 from app.models.payables import PayableBill, PayablePayment
+from app.models.payroll import PayrollPeriod, PayrollRun, PayrollWithholdingPayment
+from app.models.tax import TaxSettlement
 from app.services.activity_log import record_activity
 from app.services.journal_reversal import reverse_source_journal
 from app.services.loan_schedule import refresh_loan_schedule_payment_state
@@ -36,6 +39,12 @@ CorrectionType = Literal[
     "payable_payment",
     "loan_disbursement",
     "loan_repayment",
+    "fixed_asset",
+    "asset_depreciation",
+    "tax_settlement",
+    "payroll_withholding_payment",
+    "payroll_run",
+    "owner_equity",
 ]
 
 
@@ -163,6 +172,61 @@ def _source_cash_amount(db: DbSession, organization_id: str, source_type: str, s
     return Decimal(transaction.amount) if transaction is not None else Decimal("0")
 
 
+def _source_ledger_amount(
+    db: DbSession,
+    organization_id: str,
+    *,
+    source_type: str,
+    source_id: str,
+    system_key: str,
+    side: Literal["debit", "credit"],
+) -> Decimal:
+    value = db.scalar(
+        select(func.coalesce(func.sum(getattr(JournalLine, side)), 0))
+        .join(
+            JournalEntry,
+            (JournalEntry.id == JournalLine.journal_entry_id)
+            & (JournalEntry.organization_id == JournalLine.organization_id),
+        )
+        .join(
+            LedgerAccount,
+            (LedgerAccount.id == JournalLine.ledger_account_id)
+            & (LedgerAccount.organization_id == JournalLine.organization_id),
+        )
+        .where(
+            JournalLine.organization_id == organization_id,
+            JournalEntry.source_type == source_type,
+            JournalEntry.source_id == source_id,
+            JournalEntry.status == "posted",
+            LedgerAccount.system_key == system_key,
+        )
+    ) or Decimal("0")
+    return Decimal(value)
+
+
+def _active_payroll_withholding_payments_on_or_after(
+    db: DbSession,
+    organization_id: str,
+    period_end: date,
+) -> list[PayrollWithholdingPayment]:
+    rows = db.scalars(
+        select(PayrollWithholdingPayment).where(
+            PayrollWithholdingPayment.organization_id == organization_id,
+            PayrollWithholdingPayment.payment_date >= period_end,
+        )
+    ).all()
+    return [
+        item
+        for item in rows
+        if not _journal_reversed(
+            db,
+            organization_id,
+            "payroll_withholding_payment",
+            item.id,
+        )
+    ]
+
+
 @router.get("/candidates")
 def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 100):
     row_limit = min(max(limit, 1), 200)
@@ -225,6 +289,62 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
         .order_by(LoanDisbursement.disbursement_date.desc(), LoanDisbursement.created_at.desc())
         .limit(row_limit)
     ).all()
+    fixed_assets = db.scalars(
+        select(FixedAsset)
+        .where(
+            FixedAsset.organization_id == tenant.organization_id,
+            FixedAsset.status != "reversed",
+        )
+        .order_by(FixedAsset.acquisition_date.desc(), FixedAsset.created_at.desc())
+        .limit(row_limit)
+    ).all()
+    depreciation_rows = db.execute(
+        select(AssetDepreciationEntry, FixedAsset.asset_code, FixedAsset.name, FixedAsset.currency)
+        .join(
+            FixedAsset,
+            (FixedAsset.id == AssetDepreciationEntry.asset_id)
+            & (FixedAsset.organization_id == tenant.organization_id),
+        )
+        .where(
+            AssetDepreciationEntry.organization_id == tenant.organization_id,
+            AssetDepreciationEntry.status == "posted",
+        )
+        .order_by(AssetDepreciationEntry.period_date.desc(), AssetDepreciationEntry.created_at.desc())
+        .limit(row_limit)
+    ).all()
+    tax_settlements = db.scalars(
+        select(TaxSettlement)
+        .where(TaxSettlement.organization_id == tenant.organization_id)
+        .order_by(TaxSettlement.settlement_date.desc(), TaxSettlement.created_at.desc())
+        .limit(row_limit)
+    ).all()
+    payroll_withholding_payments = db.scalars(
+        select(PayrollWithholdingPayment)
+        .where(PayrollWithholdingPayment.organization_id == tenant.organization_id)
+        .order_by(PayrollWithholdingPayment.payment_date.desc(), PayrollWithholdingPayment.created_at.desc())
+        .limit(row_limit)
+    ).all()
+    payroll_runs = db.execute(
+        select(PayrollRun, PayrollPeriod)
+        .join(
+            PayrollPeriod,
+            (PayrollPeriod.id == PayrollRun.period_id)
+            & (PayrollPeriod.organization_id == tenant.organization_id),
+        )
+        .where(
+            PayrollRun.organization_id == tenant.organization_id,
+            PayrollRun.status.in_(["approved", "paid"]),
+        )
+        .order_by(PayrollPeriod.period_end.desc(), PayrollRun.created_at.desc())
+        .limit(row_limit)
+    ).all()
+    owner_equity_rows = db.scalars(
+        select(OwnerEquityTransaction)
+        .where(OwnerEquityTransaction.organization_id == tenant.organization_id)
+        .order_by(OwnerEquityTransaction.transaction_date.desc(), OwnerEquityTransaction.created_at.desc())
+        .limit(row_limit)
+    ).all()
+
     repayment_cash = FinancialTransaction.__table__.alias("repayment_cash")
     loan_repayments = db.execute(
         select(LoanRepayment, CompanyLoan.lender_name, CompanyLoan.currency, repayment_cash.c.amount)
@@ -358,6 +478,86 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
             "currency": currency,
             "title": f"Loan repayment · {lender_name}",
             "subtitle": f"Principal {currency} {repayment.principal_amount} · Interest {currency} {repayment.interest_amount}",
+        })
+
+    for asset in fixed_assets:
+        if _journal_reversed(db, tenant.organization_id, "fixed_asset_acquisition", asset.id):
+            continue
+        items.append({
+            "source_type": "fixed_asset",
+            "source_id": asset.id,
+            "number": asset.asset_code,
+            "date": asset.opening_balance_date if asset.record_mode == "opening" and asset.opening_balance_date else asset.acquisition_date,
+            "amount": asset.acquisition_cost,
+            "currency": asset.currency,
+            "title": f"{asset.asset_code} · {asset.name}",
+            "subtitle": "Fixed asset opening balance" if asset.record_mode == "opening" else "Fixed asset purchase",
+        })
+    for depreciation, asset_code, asset_name, currency in depreciation_rows:
+        if _journal_reversed(db, tenant.organization_id, "asset_depreciation", depreciation.id):
+            continue
+        items.append({
+            "source_type": "asset_depreciation",
+            "source_id": depreciation.id,
+            "number": f"{asset_code}-{depreciation.period_date.strftime('%Y-%m')}",
+            "date": depreciation.period_date,
+            "amount": depreciation.amount,
+            "currency": currency,
+            "title": f"Depreciation · {asset_code}",
+            "subtitle": f"{asset_name} · {depreciation.period_date.strftime('%Y-%m')}",
+        })
+    for settlement in tax_settlements:
+        if _journal_reversed(db, tenant.organization_id, "tax_settlement", settlement.id):
+            continue
+        items.append({
+            "source_type": "tax_settlement",
+            "source_id": settlement.id,
+            "number": settlement.reference or settlement.id[:8].upper(),
+            "date": settlement.settlement_date,
+            "amount": settlement.amount,
+            "currency": settlement.currency,
+            "title": f"Tax settlement · {settlement.settlement_type.replace('_', ' ').title()}",
+            "subtitle": "Tax liability / receivable settlement",
+        })
+    for payment in payroll_withholding_payments:
+        if _journal_reversed(db, tenant.organization_id, "payroll_withholding_payment", payment.id):
+            continue
+        items.append({
+            "source_type": "payroll_withholding_payment",
+            "source_id": payment.id,
+            "number": payment.reference or payment.id[:8].upper(),
+            "date": payment.payment_date,
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "title": "Payroll withholding payment",
+            "subtitle": "Employee deductions / payroll tax remittance",
+        })
+    for run, period in payroll_runs:
+        source_type = "payroll_payment" if run.status == "paid" else "payroll_accrual"
+        if _journal_reversed(db, tenant.organization_id, source_type, run.id):
+            continue
+        items.append({
+            "source_type": "payroll_run",
+            "source_id": run.id,
+            "number": run.run_number,
+            "date": period.pay_date if run.status == "paid" else period.period_end,
+            "amount": run.net_total,
+            "currency": run.currency,
+            "title": f"Payroll · {run.run_number}",
+            "subtitle": f"{period.name} · {run.status.title()}",
+        })
+    for item in owner_equity_rows:
+        if _journal_reversed(db, tenant.organization_id, "owner_equity", item.id):
+            continue
+        items.append({
+            "source_type": "owner_equity",
+            "source_id": item.id,
+            "number": item.reference or item.id[:8].upper(),
+            "date": item.transaction_date,
+            "amount": item.amount,
+            "currency": item.currency,
+            "title": f"Owner {item.transaction_type}",
+            "subtitle": "Owner contribution / drawing",
         })
     items.sort(key=lambda item: (str(item["date"]), item["number"]), reverse=True)
     return items[:row_limit]
@@ -781,7 +981,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         before_status = "active_disbursement"
         after_status = loan.status
 
-    else:
+    elif payload.source_type == "loan_repayment":
         repayment = db.scalar(
             select(LoanRepayment).where(
                 LoanRepayment.id == payload.source_id,
@@ -877,6 +1077,307 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         reversed_number = repayment.reference or f"Repayment {repayment.id[:8].upper()}"
         before_status = "posted_repayment"
         after_status = loan.status
+
+    elif payload.source_type == "asset_depreciation":
+        depreciation = db.scalar(
+            select(AssetDepreciationEntry)
+            .where(
+                AssetDepreciationEntry.id == payload.source_id,
+                AssetDepreciationEntry.organization_id == tenant.organization_id,
+                AssetDepreciationEntry.status == "posted",
+            )
+            .with_for_update()
+        )
+        if depreciation is None:
+            raise HTTPException(status_code=404, detail="Posted asset depreciation entry not found")
+        if _journal_reversed(db, tenant.organization_id, "asset_depreciation", depreciation.id):
+            raise HTTPException(status_code=409, detail="This depreciation entry was already reversed")
+        asset = db.scalar(
+            select(FixedAsset)
+            .where(
+                FixedAsset.id == depreciation.asset_id,
+                FixedAsset.organization_id == tenant.organization_id,
+            )
+            .with_for_update()
+        )
+        if asset is None:
+            raise HTTPException(status_code=409, detail="Fixed asset is no longer available")
+        later_entry = db.scalar(
+            select(AssetDepreciationEntry.id).where(
+                AssetDepreciationEntry.organization_id == tenant.organization_id,
+                AssetDepreciationEntry.asset_id == asset.id,
+                AssetDepreciationEntry.status == "posted",
+                AssetDepreciationEntry.period_date > depreciation.period_date,
+            )
+        )
+        if later_entry is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Reverse later depreciation periods first so the asset schedule remains chronological",
+            )
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="asset_depreciation",
+            source_id=depreciation.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        depreciation.status = "reversed"
+        minimum_accumulated = Decimal(asset.opening_accumulated_depreciation or 0)
+        asset.accumulated_depreciation = max(
+            minimum_accumulated,
+            Decimal(asset.accumulated_depreciation) - Decimal(depreciation.amount),
+        )
+        maximum = Decimal(asset.acquisition_cost) - Decimal(asset.salvage_value)
+        asset.status = "fully_depreciated" if Decimal(asset.accumulated_depreciation) >= maximum else "active"
+        reversed_number = f"{asset.asset_code}-{depreciation.period_date.strftime('%Y-%m')}"
+        before_status = "posted"
+        after_status = depreciation.status
+
+    elif payload.source_type == "fixed_asset":
+        asset = db.scalar(
+            select(FixedAsset)
+            .where(
+                FixedAsset.id == payload.source_id,
+                FixedAsset.organization_id == tenant.organization_id,
+                FixedAsset.status != "reversed",
+            )
+            .with_for_update()
+        )
+        if asset is None:
+            raise HTTPException(status_code=404, detail="Fixed asset not found")
+        if _journal_reversed(db, tenant.organization_id, "fixed_asset_acquisition", asset.id):
+            raise HTTPException(status_code=409, detail="This fixed asset acquisition was already reversed")
+        active_depreciation = db.scalar(
+            select(AssetDepreciationEntry.id).where(
+                AssetDepreciationEntry.organization_id == tenant.organization_id,
+                AssetDepreciationEntry.asset_id == asset.id,
+                AssetDepreciationEntry.status == "posted",
+            )
+        )
+        if active_depreciation is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Reverse all posted depreciation entries before reversing the fixed asset acquisition",
+            )
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="fixed_asset_acquisition",
+            source_id=asset.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        mirrored = _mirror_transactions(
+            db,
+            tenant=tenant,
+            source_types=["fixed_asset_acquisition"],
+            source_id=asset.id,
+            reversal_source_type="fixed_asset_reversal",
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        if asset.record_mode == "purchase" and mirrored != 1:
+            raise HTTPException(status_code=409, detail="Fixed asset purchase does not have exactly one cash movement to reverse")
+        if asset.record_mode == "opening" and mirrored != 0:
+            raise HTTPException(status_code=409, detail="Opening fixed asset unexpectedly has a cash movement")
+        before_status = asset.status
+        asset.status = "reversed"
+        reversed_number = asset.asset_code
+        after_status = asset.status
+
+    elif payload.source_type == "tax_settlement":
+        settlement = db.scalar(
+            select(TaxSettlement)
+            .where(
+                TaxSettlement.id == payload.source_id,
+                TaxSettlement.organization_id == tenant.organization_id,
+            )
+            .with_for_update()
+        )
+        if settlement is None:
+            raise HTTPException(status_code=404, detail="Tax settlement not found")
+        if _journal_reversed(db, tenant.organization_id, "tax_settlement", settlement.id):
+            raise HTTPException(status_code=409, detail="This tax settlement was already reversed")
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="tax_settlement",
+            source_id=settlement.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        _mirror_transactions(
+            db,
+            tenant=tenant,
+            source_types=["tax_settlement"],
+            source_id=settlement.id,
+            reversal_source_type="tax_settlement_reversal",
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        reversed_number = settlement.reference or f"Tax {settlement.id[:8].upper()}"
+        before_status = "posted"
+        after_status = "reversed"
+
+    elif payload.source_type == "payroll_withholding_payment":
+        payment = db.scalar(
+            select(PayrollWithholdingPayment)
+            .where(
+                PayrollWithholdingPayment.id == payload.source_id,
+                PayrollWithholdingPayment.organization_id == tenant.organization_id,
+            )
+            .with_for_update()
+        )
+        if payment is None:
+            raise HTTPException(status_code=404, detail="Payroll withholding payment not found")
+        if _journal_reversed(db, tenant.organization_id, "payroll_withholding_payment", payment.id):
+            raise HTTPException(status_code=409, detail="This payroll withholding payment was already reversed")
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="payroll_withholding_payment",
+            source_id=payment.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        mirrored = _mirror_transactions(
+            db,
+            tenant=tenant,
+            source_types=["payroll_withholding_payment"],
+            source_id=payment.id,
+            reversal_source_type="payroll_withholding_reversal",
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        if mirrored != 1:
+            raise HTTPException(status_code=409, detail="Payroll withholding payment does not have exactly one cash movement to reverse")
+        reversed_number = payment.reference or f"Payroll WH {payment.id[:8].upper()}"
+        before_status = "posted"
+        after_status = "reversed"
+
+    elif payload.source_type == "payroll_run":
+        run = db.scalar(
+            select(PayrollRun)
+            .where(
+                PayrollRun.id == payload.source_id,
+                PayrollRun.organization_id == tenant.organization_id,
+                PayrollRun.status.in_(["approved", "paid"]),
+            )
+            .with_for_update()
+        )
+        if run is None:
+            raise HTTPException(status_code=404, detail="Approved or paid payroll run not found")
+        period = db.scalar(
+            select(PayrollPeriod).where(
+                PayrollPeriod.id == run.period_id,
+                PayrollPeriod.organization_id == tenant.organization_id,
+            )
+        )
+        if period is None:
+            raise HTTPException(status_code=409, detail="Payroll period is no longer available")
+        active_remittances = _active_payroll_withholding_payments_on_or_after(
+            db,
+            tenant.organization_id,
+            period.period_end,
+        )
+        withheld = _source_ledger_amount(
+            db,
+            tenant.organization_id,
+            source_type="payroll_accrual",
+            source_id=run.id,
+            system_key="payroll_withholdings",
+            side="credit",
+        )
+        if withheld > 0 and active_remittances:
+            raise HTTPException(
+                status_code=409,
+                detail="Reverse payroll withholding remittance(s) dated on or after this payroll period before reversing the payroll run",
+            )
+
+        payment_reversal = None
+        if run.status == "paid":
+            if _journal_reversed(db, tenant.organization_id, "payroll_payment", run.id):
+                raise HTTPException(status_code=409, detail="This payroll payment was already reversed")
+            payment_reversal = reverse_source_journal(
+                db,
+                organization_id=tenant.organization_id,
+                user_id=tenant.user_id,
+                source_type="payroll_payment",
+                source_id=run.id,
+                reversal_date=reversal_date,
+                reason=reason,
+            )
+            mirrored = _mirror_transactions(
+                db,
+                tenant=tenant,
+                source_types=["payroll_run"],
+                source_id=run.id,
+                reversal_source_type="payroll_run_reversal",
+                reversal_date=reversal_date,
+                reason=reason,
+            )
+            if mirrored != 1:
+                raise HTTPException(status_code=409, detail="Paid payroll does not have exactly one cash movement to reverse")
+
+        if _journal_reversed(db, tenant.organization_id, "payroll_accrual", run.id):
+            raise HTTPException(status_code=409, detail="This payroll accrual was already reversed")
+        accrual_reversal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="payroll_accrual",
+            source_id=run.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        journal = payment_reversal or accrual_reversal
+        before_status = run.status
+        run.status = "reversed"
+        reversed_number = run.run_number
+        after_status = run.status
+
+    elif payload.source_type == "owner_equity":
+        item = db.scalar(
+            select(OwnerEquityTransaction)
+            .where(
+                OwnerEquityTransaction.id == payload.source_id,
+                OwnerEquityTransaction.organization_id == tenant.organization_id,
+            )
+            .with_for_update()
+        )
+        if item is None:
+            raise HTTPException(status_code=404, detail="Owner equity transaction not found")
+        if _journal_reversed(db, tenant.organization_id, "owner_equity", item.id):
+            raise HTTPException(status_code=409, detail="This owner equity transaction was already reversed")
+        journal = reverse_source_journal(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            source_type="owner_equity",
+            source_id=item.id,
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        mirrored = _mirror_transactions(
+            db,
+            tenant=tenant,
+            source_types=["owner_equity"],
+            source_id=item.id,
+            reversal_source_type="owner_equity_reversal",
+            reversal_date=reversal_date,
+            reason=reason,
+        )
+        if mirrored != 1:
+            raise HTTPException(status_code=409, detail="Owner equity transaction does not have exactly one cash movement to reverse")
+        reversed_number = item.reference or f"Owner equity {item.id[:8].upper()}"
+        before_status = "posted"
+        after_status = "reversed"
 
     db.flush()
     record_activity(
