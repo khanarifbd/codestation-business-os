@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from starlette.requests import Request
 
+from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.api.v1.payroll import (
     approve_run,
     create_period,
@@ -232,10 +233,58 @@ def main() -> None:
         bdt = next((row for row in report.financials if row.currency == "BDT"), None)
         if bdt is None or bdt.expenses < Decimal("55000.00"):
             raise AssertionError("approved/paid payroll cost is missing from Reports expenses")
+
+        reverse_business_transaction(
+            CorrectionRequest(
+                source_type="payroll_withholding_payment",
+                source_id=withholding_payment.id,
+                reason="CI reverse withholding remittance",
+                reversal_date=date(2098,2,2),
+            ),
+            request("POST","/accounting/corrections/reverse"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        reverse_business_transaction(
+            CorrectionRequest(
+                source_type="payroll_run",
+                source_id=run.id,
+                reason="CI reverse payroll",
+                reversal_date=date(2098,2,3),
+            ),
+            request("POST","/accounting/corrections/reverse"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        db.expire_all()
+        reversed_run=db.scalar(select(PayrollRun).where(PayrollRun.id==run.id))
+        payroll_cash_reversal=db.scalar(select(FinancialTransaction).where(
+            FinancialTransaction.organization_id==tenant.organization_id,
+            FinancialTransaction.source_type=="payroll_run_reversal",
+            FinancialTransaction.source_id==run.id,
+        ))
+        payment_reversal=db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id==tenant.organization_id,
+            JournalEntry.reversed_entry_id==payment_journal.id,
+        ))
+        accrual_reversal=db.scalar(select(JournalEntry).where(
+            JournalEntry.organization_id==tenant.organization_id,
+            JournalEntry.reversed_entry_id==accrual.id,
+        ))
+        if reversed_run is None or reversed_run.status!="reversed" or payroll_cash_reversal is None or payment_reversal is None or accrual_reversal is None:
+            raise AssertionError("payroll controlled reversal did not restore journals/cash/status")
+        replacement=create_run(
+            PayrollRunCreate(period_id=period.id,currency="BDT"),
+            request("POST","/api/v1/payroll/runs"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if replacement.id==run.id or replacement.status!="draft":
+            raise AssertionError("reversed payroll did not allow a replacement run")
     finally:
         db.close()
 
-    print("payroll verification passed: bootstrap -> profile -> period -> run -> approve -> pay -> ledger -> reports")
+    print("payroll verification passed: accrual -> pay -> withholdings -> reports -> controlled reversal -> replacement")
 
 
 if __name__ == "__main__":
