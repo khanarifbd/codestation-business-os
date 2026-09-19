@@ -139,6 +139,7 @@ def _business_source_currency(
     db: DbSession,
     organization_id: str,
     *,
+    client_id: str | None,
     order_id: str | None,
     project_id: str | None,
 ) -> str | None:
@@ -156,6 +157,13 @@ def _business_source_currency(
                 Order.organization_id == organization_id,
             )
         )
+    if client_id:
+        return db.scalar(
+            select(Client.currency).where(
+                Client.id == client_id,
+                Client.organization_id == organization_id,
+            )
+        )
     return None
 
 
@@ -164,12 +172,14 @@ def _require_source_currency_match(
     organization_id: str,
     *,
     financial_currency: str,
+    client_id: str | None,
     order_id: str | None,
     project_id: str | None,
 ) -> None:
     source_currency = _business_source_currency(
         db,
         organization_id,
+        client_id=client_id,
         order_id=order_id,
         project_id=project_id,
     )
@@ -221,6 +231,7 @@ def create_money_entry(payload: AccountingMoneyEntryCreate, request: Request, db
         db,
         tenant.organization_id,
         financial_currency=financial.currency,
+        client_id=client_id,
         order_id=order_id,
         project_id=project_id,
     )
@@ -417,6 +428,7 @@ def create_income_with_fee(
         db,
         tenant.organization_id,
         financial_currency=financial.currency,
+        client_id=client_id,
         order_id=order_id,
         project_id=project_id,
     )
