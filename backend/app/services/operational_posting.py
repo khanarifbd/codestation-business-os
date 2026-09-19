@@ -484,80 +484,6 @@ def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTr
 
     fee_ledger = system_account(db, organization_id, "bank_fees")
     base_currency = functional_currency_for_date(db, organization_id, transfer.transfer_date)
-    source_base, source_rate = to_base_amount(
-        db,
-        organization_id,
-        base_currency,
-        Decimal(transfer.source_amount),
-        transfer.source_currency,
-        rate_date=transfer.transfer_date,
-    )
-    fee_base, _ = (
-        to_base_amount(
-            db,
-            organization_id,
-            base_currency,
-            Decimal(transfer.fee_amount),
-            transfer.source_currency,
-            rate_date=transfer.transfer_date,
-        )
-        if Decimal(transfer.fee_amount) > 0
-        else (Decimal("0"), source_rate)
-    )
-    net_base = money(source_base - fee_base)
-    destination_rate = (
-        net_base / Decimal(transfer.destination_amount)
-        if Decimal(transfer.destination_amount)
-        else Decimal("1")
-    )
-    lines = [
-        PostingLine(
-            ledger_account_id=destination_ledger.id,
-            debit=net_base,
-            currency=transfer.destination_currency,
-            exchange_rate_to_base=destination_rate,
-            original_amount=transfer.destination_amount,
-            description=f"Transfer {transfer.transfer_number}",
-        ),
-        PostingLine(
-            ledger_account_id=source_ledger.id,
-            credit=source_base,
-            currency=transfer.source_currency,
-            exchange_rate_to_base=source_rate,
-            original_amount=transfer.source_amount,
-            description=f"Transfer {transfer.transfer_number}",
-        ),
-    ]
-    if fee_base > 0:
-        lines.append(
-            PostingLine(
-                ledger_account_id=fee_ledger.id,
-                debit=fee_base,
-                currency=transfer.source_currency,
-                exchange_rate_to_base=source_rate,
-                original_amount=transfer.fee_amount,
-                description=f"Fee for {trandef post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTransfer) -> JournalEntry:
-    existing = _posted_source(db, organization_id, "account_transfer", transfer.id)
-    if existing is not None:
-        return existing
-
-    source, source_ledger = financial_ledger_account(db, organization_id, transfer.from_account_id)
-    destination, destination_ledger = financial_ledger_account(
-        db,
-        organization_id,
-        transfer.to_account_id,
-    )
-    if source.account_type == "credit_card" or destination.account_type == "credit_card":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Credit card settlement is not an account transfer. "
-                "Use a dedicated card payment/expense workflow so the liability direction remains correct."
-            ),
-        )
-
-    fee_ledger = system_account(db, organization_id, "bank_fees")
-    base_currency = functional_currency_for_date(db, organization_id, transfer.transfer_date)
     source_carrying_base = _financial_account_outflow_carrying_base(
         db,
         organization_id=organization_id,
@@ -567,7 +493,7 @@ def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTr
         outflow_amount=Decimal(transfer.source_amount),
     )
 
-    source_current_base, source_rate = to_base_amount(
+    _, source_rate = to_base_amount(
         db,
         organization_id,
         base_currency,
@@ -588,9 +514,6 @@ def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTr
         else (Decimal("0"), source_rate)
     )
 
-    # Moving the same foreign currency between two owned accounts must preserve
-    # the principal's carrying basis.  Only a fee actually disposes of currency
-    # and can therefore create a realized FX difference.
     if transfer.source_currency == transfer.destination_currency:
         net_source = Decimal(transfer.net_source_amount)
         source_total = Decimal(transfer.source_amount)
@@ -604,8 +527,6 @@ def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTr
             if Decimal(transfer.destination_amount) > 0
             else Decimal("1.00000000")
         )
-    # Buying foreign currency with functional currency is initially measured at
-    # the actual functional-currency consideration paid, not an unrelated quote.
     elif transfer.source_currency == base_currency:
         destination_base = money(Decimal(transfer.net_source_amount))
         destination_rate = (
@@ -692,7 +613,6 @@ def post_transfer(db, *, organization_id: str, user_id: str, transfer: AccountTr
         reference=transfer.reference,
         memo=f"Account transfer {transfer.transfer_number}",
     )
-
 
 def post_financial_account_opening(
     db,
