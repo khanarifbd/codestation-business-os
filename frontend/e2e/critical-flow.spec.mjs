@@ -43,5 +43,13 @@ test("Login → Company → Client → Quote → Order → Project → Invoice �
     await expect(page.locator("main").first(), `${label} should render its application shell`).toBeVisible();
     await expect(page).toHaveURL(new RegExp(`${path.replaceAll("/", "\\/")}(?:$|\\?|\\/)`));
     await expect(page.locator("body")).not.toContainText(/Authentication required|Permission required:|Internal Server Error/i);
+    if (path === "/dashboard/accounting" || path === "/dashboard/accounting/reports" || path === "/dashboard/accounting/money-in") {
+      // Finance actions are available in the dashboard sidebar, not a second
+      // horizontal workspace menu that overflows the content area.
+      await expect(page.getByRole("navigation", { name: "Finance workspace navigation" })).toHaveCount(0);
+      const sidebar = page.getByRole("navigation", { name: "Workspace navigation" }).first();
+      await expect(sidebar.getByRole("link", { name: "Controls", exact: true })).toBeVisible();
+      await expect(sidebar.getByRole("link", { name: "Financial statements", exact: true })).toBeVisible();
+    }
   }
 });
