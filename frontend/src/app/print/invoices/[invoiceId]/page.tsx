@@ -272,17 +272,27 @@ export default function InvoicePrintPage() {
   const sellerContact = invoice.seller_email_snapshot || "";
 
   return (
-    <main className="min-h-screen bg-neutral-100 px-4 py-8 text-neutral-950 print:bg-white print:p-0">
+    <main className="min-h-screen overflow-x-auto bg-neutral-100 px-4 py-8 text-neutral-950 print:overflow-visible print:bg-white print:p-0">
       <style jsx global>{`
         @page {
           size: A4;
-          margin: 13mm 12mm 14mm;
+          margin: 9mm;
+        }
+
+        /* Match the A4 content box on screen with the printable A4 content area. */
+        .print-sheet {
+          box-sizing: border-box;
+          width: 210mm;
+          max-width: none;
+          min-height: 297mm;
+          padding: 9mm;
         }
 
         @media print {
           html,
           body {
             background: white !important;
+            min-width: 0 !important;
             print-color-adjust: exact !important;
             -webkit-print-color-adjust: exact !important;
           }
@@ -295,7 +305,8 @@ export default function InvoicePrintPage() {
             box-shadow: none !important;
             border: 0 !important;
             margin: 0 !important;
-            width: 100% !important;
+            /* @page reserves the same 9mm inset used by screen preview. */
+            width: 192mm !important;
             max-width: none !important;
             min-height: 0 !important;
             padding: 0 !important;
@@ -350,7 +361,7 @@ export default function InvoicePrintPage() {
         </div>
       </div>
 
-      <article className="print-sheet mx-auto min-h-[297mm] w-full max-w-[210mm] bg-white p-8 shadow-xl ring-1 ring-neutral-200 print:min-h-0">
+      <article className="print-sheet mx-auto bg-white shadow-xl ring-1 ring-neutral-200 print:min-h-0">
         <header className="avoid-break border-b border-neutral-200 pb-7">
           <div className="flex items-start justify-between gap-8">
             <div className="flex min-w-0 items-start gap-4">
@@ -449,7 +460,7 @@ export default function InvoicePrintPage() {
         />
 
         <section className="mt-4 overflow-hidden rounded-xl border border-neutral-200">
-          <table className="w-full border-collapse text-[11px] sm:text-xs">
+          <table className="w-full border-collapse text-xs">
             <thead className="print-muted-bg bg-neutral-50 uppercase tracking-wide text-neutral-500">
               <tr>
                 <th className="px-3 py-3 text-left">Item / service</th>
@@ -520,7 +531,7 @@ export default function InvoicePrintPage() {
               description="Use the invoice number as the payment reference unless a different reference is stated below."
               compact
             />
-            <div className="mt-5 grid gap-7 md:grid-cols-[1fr_auto]">
+            <div className="mt-5 grid grid-cols-[minmax(0,1fr)_auto] gap-7">
               <div>
                 <div className="flex items-center gap-2">
                   <Landmark className="size-4" />
@@ -553,10 +564,9 @@ export default function InvoicePrintPage() {
                     href={payment.payment_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="mt-4 inline-flex max-w-full items-center gap-2 break-all text-sm font-semibold text-blue-700 underline underline-offset-4 print:text-[10px]"
+                    className="mt-4 inline-flex max-w-full items-center gap-2 break-all text-sm font-semibold text-blue-700 underline underline-offset-4"
                   >
-                    <span className="print:hidden">Open payment link</span>
-                    <span className="hidden print:inline">{payment.payment_url}</span>
+                    <span>{payment.payment_url}</span>
                     <ExternalLink className="size-4 shrink-0 print:hidden" />
                   </a>
                 ) : null}
@@ -586,7 +596,7 @@ export default function InvoicePrintPage() {
         ) : null}
 
         {invoice.notes || invoice.terms_conditions ? (
-          <section className="notes-card mt-9 grid gap-4 md:grid-cols-2">
+          <section className="notes-card mt-9 grid grid-cols-2 gap-4">
             {invoice.notes ? (
               <div className="rounded-2xl border border-neutral-200 p-5">
                 <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Notes</p>
