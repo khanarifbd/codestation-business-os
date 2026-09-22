@@ -137,6 +137,7 @@ def _project_query(organization_id: str):
             Project,
             Client.display_name,
             Order.order_number,
+            Order.status,
             Quotation.quotation_number,
             manager_user.full_name,
             member_count,
@@ -152,7 +153,7 @@ def _project_query(organization_id: str):
 
 
 def _list_item(row, *, hide_financial: bool = False) -> ProjectListItem:
-    project, client_name, order_number, _quotation_number, manager_name, member_count = row
+    project, client_name, order_number, _order_status, _quotation_number, manager_name, member_count = row
     return ProjectListItem(
         id=project.id,
         project_number=project.project_number,
@@ -211,7 +212,7 @@ def _detail(db: DbSession, tenant: TenantContext, project_id: str) -> ProjectDet
     row = db.execute(_project_query(tenant.organization_id).where(Project.id == project_id)).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    project, client_name, order_number, quotation_number, manager_name, _member_count = row
+    project, client_name, order_number, order_status, quotation_number, manager_name, _member_count = row
     access = require_project_access(db, tenant, project)
     allowed_tabs = [tab for tab in ALL_PROJECT_TABS if tab in access.allowed_tabs]
     can_see_overview = "overview" in access.allowed_tabs
@@ -221,6 +222,7 @@ def _detail(db: DbSession, tenant: TenantContext, project_id: str) -> ProjectDet
         project_number=project.project_number,
         order_id=project.order_id,
         order_number=order_number,
+        order_status=order_status,
         quotation_id=project.quotation_id,
         quotation_number=quotation_number,
         client_id=project.client_id,
@@ -694,6 +696,18 @@ def change_project_status(
     }
     if payload.status not in allowed.get(project.status, set()):
         raise HTTPException(status_code=409, detail=f"Project cannot move from {project.status} to {payload.status}")
+
+    order = db.scalar(
+        select(Order)
+        .where(Order.id == project.order_id, Order.organization_id == tenant.organization_id)
+        .with_for_update()
+    )
+    if order is None:
+        raise HTTPException(status_code=409, detail="Linked order is no longer available")
+    if payload.status == "cancelled" and order.status != "cancelled":
+        raise HTTPException(status_code=409, detail="Cancel the linked order before cancelling this project")
+    if payload.status != "cancelled" and order.status == "cancelled":
+        raise HTTPException(status_code=409, detail="The linked order is cancelled; cancel this project instead")
 
     previous = project.status
     now = datetime.now(timezone.utc)
