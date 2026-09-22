@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
@@ -490,7 +489,7 @@ export function FinanceControlsWorkspace() {
         }
       />
 
-      <div className="mt-6"><AccountingNav /></div>
+      
 
       <Surface className="mt-6 p-1.5">
         <div className="flex min-w-max gap-1 overflow-x-auto">

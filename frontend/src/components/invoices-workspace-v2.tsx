@@ -4,7 +4,6 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ExternalLink, FileText, Plus, Search, Send, Share2, Trash2, X } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
@@ -208,7 +207,6 @@ export function InvoicesWorkspaceV2() {
 
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Invoices</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Create from a project/order or bill reusable catalog items and one-time custom work directly.</p></div><button onClick={() => { resetSource("project"); setPayment(blankPayment()); setShowForm(true); }} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Plus className="size-4" />New invoice</button></div>
-    <AccountingNav />
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 

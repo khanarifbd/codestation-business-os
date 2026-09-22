@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 import { CursorPager } from "@/components/cursor-pager";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
@@ -354,7 +353,6 @@ export default function TransfersPage() {
             </>
           }
         />
-        <AccountingNav />
 
         {error && !modalOpen ? (
           <div className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 sm:flex-row sm:items-center sm:justify-between">
