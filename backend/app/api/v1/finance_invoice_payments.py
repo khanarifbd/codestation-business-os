@@ -14,6 +14,7 @@ from app.schemas.invoice_payment import (
     PaymentDestinationSettingsUpdate,
 )
 from app.services.activity_log import record_activity
+from app.services.invoice_payment_instructions import apply_invoice_payment_instructions
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
@@ -152,48 +153,15 @@ def update_invoice_payment_instructions(
     if invoice.status != "draft":
         raise HTTPException(status_code=409, detail="Payment instructions are locked after an invoice is sent")
 
-    account = None
-    if payload.payment_account_id:
-        account = db.scalar(
-            select(FinancialAccount).where(
-                FinancialAccount.id == payload.payment_account_id,
-                FinancialAccount.organization_id == tenant.organization_id,
-                FinancialAccount.is_active.is_(True),
-                FinancialAccount.account_type != "credit_card",
-            )
-        )
-        if account is None:
-            raise HTTPException(status_code=404, detail="Active payment destination not found")
-
     before = {
         "payment_method": invoice.payment_method,
         "payment_account_id": invoice.payment_account_id,
         "payment_url_configured": bool(invoice.payment_url_snapshot),
         "payment_instructions_configured": bool(invoice.payment_instructions_snapshot),
     }
-
-    configured = bool(payload.payment_method or account or payload.payment_url or payload.payment_instructions)
-    if not configured:
-        invoice.payment_method = None
-        invoice.payment_account_id = None
-        invoice.payment_account_name_snapshot = None
-        invoice.payment_provider_snapshot = None
-        invoice.payment_account_holder_snapshot = None
-        invoice.payment_account_reference_snapshot = None
-        invoice.payment_currency_snapshot = None
-        invoice.payment_url_snapshot = None
-        invoice.payment_instructions_snapshot = None
-    else:
-        invoice.payment_method = payload.payment_method
-        invoice.payment_account_id = account.id if account else None
-        invoice.payment_account_name_snapshot = account.name if account else None
-        invoice.payment_provider_snapshot = account.provider_name if account else None
-        invoice.payment_account_holder_snapshot = account.account_holder_name if account else None
-        invoice.payment_account_reference_snapshot = account.account_reference if account else None
-        invoice.payment_currency_snapshot = account.currency if account else None
-        invoice.payment_url_snapshot = payload.payment_url
-        invoice.payment_instructions_snapshot = _clean(payload.payment_instructions)
-
+    apply_invoice_payment_instructions(
+        db, organization_id=tenant.organization_id, invoice=invoice, payload=payload
+    )
     db.flush()
     record_activity(
         db,
