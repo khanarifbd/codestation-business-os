@@ -515,7 +515,9 @@ export default function InvoicePrintPage() {
               </h2>
               <p className="mt-3 text-sm leading-6 text-neutral-300">
                 {isPaid
-                  ? "This invoice has been paid in full."
+                  ? invoice.paid_at
+                    ? `Paid in full on ${formatDate(invoice.paid_at.slice(0, 10))}.`
+                    : "This invoice has been paid in full."
                   : invoice.due_date
                     ? `Payment is due by ${formatDate(invoice.due_date)}.`
                     : "Please pay the outstanding balance according to the payment instructions below."}
@@ -656,18 +658,6 @@ export default function InvoicePrintPage() {
                 </div>
               ) : null}
             </div>
-          </section>
-        ) : null}
-
-        {isPaid ? (
-          <section className="avoid-break mt-9 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Payment status</p>
-            <h2 className="mt-2 text-xl font-semibold text-emerald-950">Paid in full</h2>
-            <p className="mt-2 text-sm text-emerald-800">
-              {invoice.paid_at
-                ? `Payment was completed on ${formatDate(invoice.paid_at.slice(0, 10))}.`
-                : "The outstanding balance for this invoice is zero."}
-            </p>
           </section>
         ) : null}
 
