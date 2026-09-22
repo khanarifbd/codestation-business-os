@@ -101,6 +101,7 @@ class ProjectDetail(BaseModel):
     project_number: str
     order_id: str
     order_number: str
+    order_status: str
     quotation_id: str | None
     quotation_number: str | None
     client_id: str
