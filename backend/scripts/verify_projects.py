@@ -213,6 +213,13 @@ def main() -> None:
             client_id=str(client_id),
             now=now,
         )
+        third_quotation_id = seed_accepted_quotation(
+            connection,
+            organization_id=organization_id,
+            user_id=user_id,
+            client_id=str(client_id),
+            now=now,
+        )
 
     tenant = FixtureTenant(
         organization_id=organization_id,
@@ -400,6 +407,28 @@ def main() -> None:
             ),
         )
         db.rollback()
+
+        # Downstream project-execution verification requires an active project fixture.
+        # Keep this separate from the cancelled-order/project regression fixture.
+        execution_order = create_order_from_quotation(
+            third_quotation_id,
+            make_request("POST", f"/api/v1/sales/orders/from-quotation/{third_quotation_id}"),
+            db, tenant,  # type: ignore[arg-type]
+        )
+        execution_order = change_order_status(
+            execution_order.id,
+            OrderStatusChange(status="in_progress"),
+            make_request("PATCH", f"/api/v1/sales/orders/{execution_order.id}/status"),
+            db, tenant,  # type: ignore[arg-type]
+        )
+        execution_project = create_project_from_order(
+            execution_order.id,
+            ProjectCreateFromOrder(name="CI Active Execution Project"),
+            make_request("POST", f"/api/v1/projects/from-order/{execution_order.id}"),
+            db, tenant,  # type: ignore[arg-type]
+        )
+        if execution_project.status != "active":
+            raise AssertionError("Project execution fixture must remain active")
     finally:
         db.close()
 
