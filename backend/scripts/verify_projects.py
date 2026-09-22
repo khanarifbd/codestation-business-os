@@ -335,6 +335,71 @@ def main() -> None:
         persisted = db.scalar(select(Project).where(Project.id == active_project.id))
         if persisted is None:
             raise AssertionError("Project row was not persisted")
+
+        # A project cannot be cancelled while its linked order is still active.
+        expect_http_error(
+            409,
+            lambda: change_project_status(
+                active_project.id,
+                ProjectStatusChange(status="cancelled"),
+                make_request("PATCH", f"/api/v1/projects/{active_project.id}/status"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+        )
+        db.rollback()
+
+        held_project = change_project_status(
+            active_project.id,
+            ProjectStatusChange(status="on_hold"),
+            make_request("PATCH", f"/api/v1/projects/{active_project.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if held_project.status != "on_hold":
+            raise AssertionError("Project was not placed on hold before order cancellation")
+
+        cancelled_order = change_order_status(
+            started_order.id,
+            OrderStatusChange(status="cancelled", reason="Client cancelled the order"),
+            make_request("PATCH", f"/api/v1/sales/orders/{started_order.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if cancelled_order.status != "cancelled":
+            raise AssertionError("Order cancellation failed")
+        expect_http_error(
+            409,
+            lambda: change_project_status(
+                active_project.id,
+                ProjectStatusChange(status="active"),
+                make_request("PATCH", f"/api/v1/projects/{active_project.id}/status"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+        )
+        db.rollback()
+
+        cancelled_project = change_project_status(
+            active_project.id,
+            ProjectStatusChange(status="cancelled"),
+            make_request("PATCH", f"/api/v1/projects/{active_project.id}/status"),
+            db,
+            tenant,  # type: ignore[arg-type]
+        )
+        if cancelled_project.status != "cancelled" or cancelled_project.order_status != "cancelled" or cancelled_project.cancelled_at is None:
+            raise AssertionError("Cancelled order did not allow its on-hold project to be cancelled")
+        expect_http_error(
+            409,
+            lambda: change_project_status(
+                active_project.id,
+                ProjectStatusChange(status="active"),
+                make_request("PATCH", f"/api/v1/projects/{active_project.id}/status"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            ),
+        )
+        db.rollback()
     finally:
         db.close()
 
