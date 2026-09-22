@@ -145,6 +145,13 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+      - name: Verify production frontend Docker build
+        run: >-
+          docker build
+          --build-arg NEXT_PUBLIC_API_URL=https://api-os.example.com/api/v1
+          --build-arg NEXT_PUBLIC_GOOGLE_CLIENT_ID=business-os-ci.apps.googleusercontent.com
+          --tag business-os-frontend:ci
+          .
 
   browser-smoke:
     runs-on: ubuntu-latest
