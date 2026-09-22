@@ -11,7 +11,6 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { CurrencySelect } from "@/components/currency-select";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { MoneyInput } from "@/components/money-input";
@@ -247,7 +246,6 @@ export default function AdjustmentPage() {
           }
         />
 
-        <AccountingNav />
 
         {error ? (
           <div className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

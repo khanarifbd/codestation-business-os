@@ -17,7 +17,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { SearchableSelect } from "@/components/searchable-select";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
@@ -197,7 +196,6 @@ export default function AccountsPage() {
           }
         />
 
-        <AccountingNav />
 
         {error ? (
           <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3.5 text-sm text-red-700">

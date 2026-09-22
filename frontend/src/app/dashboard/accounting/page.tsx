@@ -17,7 +17,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 
 type FinancialAccount = {
@@ -185,9 +184,7 @@ export default function AccountingPage() {
         }
       />
 
-      <div className="mt-6">
-        <AccountingNav />
-      </div>
+      
 
       {error ? (
         <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">

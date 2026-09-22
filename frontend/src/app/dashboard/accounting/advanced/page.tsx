@@ -23,7 +23,6 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
@@ -387,7 +386,6 @@ export default function AdvancedAccountingPage() {
           }
         />
 
-        <AccountingNav />
 
         {error ? (
           <div className="flex items-start justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

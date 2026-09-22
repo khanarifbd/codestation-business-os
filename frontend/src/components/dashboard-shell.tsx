@@ -27,6 +27,7 @@ import {
   Receipt,
   ReceiptText,
   Scale,
+  SlidersHorizontal,
   TrendingUp,
   UserRound,
   Users,
@@ -114,7 +115,6 @@ const financeNavigation: NavigationItem[] = [
   { label: "Money Out", icon: ArrowUpRight, href: "/dashboard/accounting/money-out", permissions: ["finance.view"] },
   { label: "Expenses", icon: ReceiptText, href: "/dashboard/expenses", permissions: ["finance.view"] },
   { label: "Transfers", icon: ArrowLeftRight, href: "/dashboard/accounting/transfers", permissions: ["finance.view"] },
-  { label: "Reconcile", icon: Scale, href: "/dashboard/accounting/reconciliation", permissions: ["finance.view"] },
   { label: "Loans", icon: HandCoins, href: "/dashboard/accounting/loans", permissions: ["finance.view"] },
   { label: "Investments", icon: TrendingUp, href: "/dashboard/capital", permissions: ["capital.view"] },
   { label: "Assets", icon: Boxes, href: "/dashboard/accounting/assets", permissions: ["finance.view"] },
@@ -122,7 +122,9 @@ const financeNavigation: NavigationItem[] = [
   { label: "Payables", icon: Building2, href: "/dashboard/accounting/payables", permissions: ["finance.view"] },
   { label: "Tax", icon: Landmark, href: "/dashboard/accounting/tax", permissions: ["finance.view"] },
   { label: "Financial statements", icon: BarChart3, href: "/dashboard/accounting/reports", permissions: ["finance.view"] },
-  { label: "Advanced", icon: BookOpenText, href: "/dashboard/accounting/advanced", permissions: ["finance.view"] },
+  { label: "Reconcile", icon: Scale, href: "/dashboard/accounting/reconciliation", permissions: ["finance.view"] },
+  { label: "Controls", icon: SlidersHorizontal, href: "/dashboard/accounting/controls", permissions: ["finance.view"] },
+  { label: "Accounting", icon: BookOpenText, href: "/dashboard/accounting/advanced", permissions: ["finance.view"] },
 ];
 
 const clientPortalItem: NavigationItem = {
@@ -166,6 +168,9 @@ function isFinanceItemActive(pathname: string, href: string) {
   if (href === "/dashboard/accounting") return pathname === href;
   if (href === "/dashboard/accounting/transfers") {
     return pathname.startsWith(href) || pathname.startsWith("/dashboard/finance/transfers");
+  }
+  if (href === "/dashboard/accounting/controls") {
+    return pathname.startsWith(href) || pathname.startsWith("/dashboard/finance/controls");
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 }

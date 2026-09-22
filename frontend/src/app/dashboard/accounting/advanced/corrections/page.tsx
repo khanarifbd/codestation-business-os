@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ExternalLink, History, RotateCcw, ShieldAlert } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -150,7 +149,6 @@ export default function FinancialCorrectionsPage() {
       <h1 className="mt-1 text-3xl font-semibold tracking-tight">Financial correction center</h1>
       <p className="mt-2 max-w-3xl text-sm text-neutral-500">Reverse an incorrect posted business transaction without deleting history. Business balances, accounting journal and audit trail are corrected together.</p>
     </div>
-    <AccountingNav />
 
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
