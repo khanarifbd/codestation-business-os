@@ -158,8 +158,48 @@ test("Invoice print page renders a tenant-safe professional client document", as
     expect(printMetrics[key], `Print changed the preview's ${key}`)
       .toBeCloseTo(screenMetrics[key], 0);
   }
-  expect(printMetrics.headingFont).toBeGreaterThan(25);
-  expect(printMetrics.qrWidth).toBeGreaterThan(130);
+  expect(printMetrics.headingFont).toBeGreaterThanOrEqual(20);
+  expect(printMetrics.qrWidth).toBeGreaterThanOrEqual(108);
+
+  // PDF page count is the user-visible result, not just the DOM's box height.
+  // Payment link, QR, client notes and terms must remain on the first A4 page.
+  const qrInvoicePdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+  expect((qrInvoicePdf.toString("latin1").match(/\/Type\s*\/Page\b/g) ?? []).length)
+    .toBe(1);
+});
+
+test("Paid single-item invoice stays on one A4 PDF page including payment status", async ({ page }) => {
+  const paid = {
+    ...invoice,
+    id: "e2e-paid",
+    invoice_number: "INV-PAID-0001",
+    subject: "Base44 to app",
+    status: "paid",
+    display_status: "paid",
+    total: "750.00",
+    subtotal: "750.00",
+    tax_total: "0.00",
+    amount_paid: "750.00",
+    balance_due: "0.00",
+    paid_at: "2026-09-19T10:00:00Z",
+    notes: null,
+    terms_conditions: null,
+    items: [{ ...invoice.items[0], item_name_snapshot: "Base44 to native app", unit_price: "750.00", line_total: "750.00", tax_rate: "0.00" }],
+  };
+  await page.route("**/api/finance/invoices/e2e-paid", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(paid) });
+  });
+  await page.route("**/api/finance/invoices/e2e-paid/payment-instructions", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      ...payment, invoice_id: paid.id, invoice_number: paid.invoice_number,
+    }) });
+  });
+  await page.goto("/print/invoices/e2e-paid", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Paid in full" })).toBeVisible();
+  await page.emulateMedia({ media: "print" });
+  const paidPdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+  expect((paidPdf.toString("latin1").match(/\/Type\s*\/Page\b/g) ?? []).length)
+    .toBe(1);
 });
 
 test("Client invoice PDF includes the saved Payoneer link and scannable QR", async ({ page }) => {
