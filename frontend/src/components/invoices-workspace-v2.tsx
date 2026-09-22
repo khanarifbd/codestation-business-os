@@ -10,6 +10,26 @@ import { getApiErrorMessage } from "@/lib/api-error";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type Source = "client" | "order" | "project";
+type PaymentMethod = "bank_transfer" | "cash" | "card" | "payoneer" | "wise" | "stripe" | "paypal" | "other";
+type PaymentDestination = { id: string; name: string; account_type: string; provider_name: string | null; account_holder_name: string | null; account_reference: string | null; currency: string; payment_url: string | null; payment_instructions: string | null };
+type PaymentForm = { method: PaymentMethod | ""; accountId: string; url: string; instructions: string };
+const blankPayment = (): PaymentForm => ({ method: "", accountId: "", url: "", instructions: "" });
+const paymentMethods: { value: PaymentMethod | ""; label: string }[] = [
+  { value: "", label: "No payment instructions" }, { value: "bank_transfer", label: "Bank transfer" },
+  { value: "payoneer", label: "Payoneer" }, { value: "wise", label: "Wise" },
+  { value: "stripe", label: "Stripe" }, { value: "paypal", label: "PayPal" },
+  { value: "card", label: "Card / payment link" }, { value: "cash", label: "Cash" }, { value: "other", label: "Other" },
+];
+function inferPaymentMethod(account: PaymentDestination): PaymentMethod {
+  const provider = `${account.provider_name ?? ""} ${account.name}`.toLowerCase();
+  if (provider.includes("payoneer")) return "payoneer";
+  if (provider.includes("wise")) return "wise";
+  if (provider.includes("stripe")) return "stripe";
+  if (provider.includes("paypal")) return "paypal";
+  if (account.account_type === "bank") return "bank_transfer";
+  if (account.account_type === "cash" || account.account_type === "petty_cash") return "cash";
+  return "other";
+}
 type Client = { id: string; code: string; name: string; currency: string | null };
 type Order = { id: string; number: string; client_id: string; client_name: string; currency: string; total: string | number; status: string };
 type Project = { id: string; number: string; order_id: string | null; client_id: string; name: string; currency: string; contract_value: string | number; status: string };
@@ -37,6 +57,10 @@ export function InvoicesWorkspaceV2() {
   const [showForm, setShowForm] = useState(false);
   const [source, setSource] = useState<Source>("project");
   const [form, setForm] = useState({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] });
+  const [payment, setPayment] = useState<PaymentForm>(blankPayment);
+  const [destinations, setDestinations] = useState<PaymentDestination[]>([]);
+  const [destinationsLoading, setDestinationsLoading] = useState(false);
+  const [destinationsError, setDestinationsError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [currencyFilter, setCurrencyFilter] = useState("all");
@@ -64,6 +88,25 @@ export function InvoicesWorkspaceV2() {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!showForm) return;
+    const controller = new AbortController();
+    setDestinationsLoading(true);
+    setDestinationsError(null);
+    void (async () => {
+      try {
+        const response = await fetch("/api/finance/payment-destinations", { cache: "no-store", signal: controller.signal });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not load payment destinations"));
+        if (!controller.signal.aborted) setDestinations(payload as PaymentDestination[]);
+      } catch (reason) {
+        if (!controller.signal.aborted) setDestinationsError(reason instanceof Error ? reason.message : "Could not load payment destinations");
+      } finally {
+        if (!controller.signal.aborted) setDestinationsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [showForm]);
 
   const projectOptions = useMemo(() => meta.projects.filter((p) => p.status !== "cancelled").map((p) => ({ value: p.id, label: `${p.number} · ${p.name} · ${money(p.contract_value, p.currency)}`, keywords: `${p.number} ${p.name} ${p.currency} ${p.contract_value}` })), [meta.projects]);
   const orderOptions = useMemo(() => meta.orders.filter((o) => o.status !== "cancelled").map((o) => ({ value: o.id, label: `${o.number} · ${o.client_name} · ${money(o.total, o.currency)}`, keywords: `${o.number} ${o.client_name} ${o.currency} ${o.total}` })), [meta.orders]);
@@ -90,6 +133,23 @@ export function InvoicesWorkspaceV2() {
   const overdueCount = useMemo(() => invoices.filter((invoice) => invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
   const outstandingCount = useMemo(() => invoices.filter((invoice) => Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
   const draftTotal = useMemo(() => form.lines.reduce((sum, line) => sum + lineTotal(line, form.tax_calculation_mode), 0), [form.lines, form.tax_calculation_mode]);
+  const selectedDestination = destinations.find((item) => item.id === payment.accountId) ?? null;
+  const invoiceCurrency = source === "client" ? form.currency : source === "order"
+    ? meta.orders.find((item) => item.id === form.source_id)?.currency
+    : meta.projects.find((item) => item.id === form.source_id)?.currency;
+  const paymentAccountOptions = [
+    { value: "", label: "No financial account", description: "Payment link or custom instructions only" },
+    ...destinations.map((account) => ({
+      value: account.id, label: `${account.name} · ${account.currency}`,
+      description: account.provider_name || account.account_reference || account.account_type.replaceAll("_", " "),
+      keywords: `${account.provider_name ?? ""} ${account.name} ${account.currency} ${account.account_reference ?? ""}`,
+    })),
+  ];
+  function selectPaymentDestination(accountId: string) {
+    const account = destinations.find((item) => item.id === accountId);
+    if (!account) { setPayment((current) => ({ ...current, accountId: "" })); return; }
+    setPayment({ method: inferPaymentMethod(account), accountId: account.id, url: account.payment_url ?? "", instructions: account.payment_instructions ?? "" });
+  }
 
   function resetSource(next: Source) { setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] }); setError(null); }
   function clearFilters() { setQuery(""); setStatusFilter("all"); setCurrencyFilter("all"); setDueFilter("all"); }
@@ -116,16 +176,21 @@ export function InvoicesWorkspaceV2() {
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setError(null); setMessage(null);
     try {
+      if (!payment.method && (payment.accountId || payment.url.trim() || payment.instructions.trim())) throw new Error("Choose a payment method or clear payment details.");
+      const paymentDetails = payment.method ? {
+        payment_method: payment.method, payment_account_id: payment.accountId || null,
+        payment_url: payment.url.trim() || null, payment_instructions: payment.instructions.trim() || null,
+      } : null;
       let response: Response;
-      if (source === "project") response = await fetch(`/api/finance/invoices/from-project/${form.source_id}`, { method: "POST" });
-      else if (source === "order") response = await fetch(`/api/finance/invoices/from-order/${form.source_id}`, { method: "POST" });
+      if (source === "project") response = await fetch(`/api/finance/invoices/from-project/${form.source_id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_details: paymentDetails }) });
+      else if (source === "order") response = await fetch(`/api/finance/invoices/from-order/${form.source_id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_details: paymentDetails }) });
       else {
         if (form.lines.some((line) => !(line.item_name || line.description).trim() || !line.description.trim() || Number(line.quantity) <= 0 || Number(line.unit_price) < 0)) throw new Error("Complete all invoice lines.");
-        response = await fetch("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: form.tax_calculation_mode, notes: form.notes || null, items: form.lines.map((line) => ({ product_id: line.product_id, item_name: line.item_name || line.description, item_type: line.item_type, unit: line.unit || "unit", description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
+        response = await fetch("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: form.tax_calculation_mode, notes: form.notes || null, payment_details: paymentDetails, items: form.lines.map((line) => ({ product_id: line.product_id, item_name: line.item_name || line.description, item_type: line.item_type, unit: line.unit || "unit", description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
       }
       const payload = await response.json();
       if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not create invoice"));
-      setMessage(`Invoice ${payload.invoice_number} created as draft. Open it to review or edit before sending.`); setShowForm(false); await load();
+      setMessage(`Invoice ${payload.invoice_number} created as draft with your selected payment instructions. Review it before sending.`); setPayment(blankPayment()); setShowForm(false); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create invoice"); }
     finally { setSaving(false); }
   }
@@ -165,6 +230,17 @@ export function InvoicesWorkspaceV2() {
           <div className="space-y-3">{form.lines.map((line, index) => { const sourceValue = line.product_id ? `catalog:${line.product_id}` : line.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="rounded-2xl border p-4"><div className="grid gap-3 lg:grid-cols-[1.4fr_1.4fr_.7fr_.7fr]"><SearchableSelect label="Source" value={sourceValue} onValueChange={(value) => selectLineSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input required disabled={Boolean(line.product_id)} value={line.item_name} onChange={(e) => updateLine(index, { item_name: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input type="number" min="0.0001" step="any" value={line.quantity} onChange={(e) => updateLine(index, { quantity: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={Boolean(line.product_id)} value={line.unit} onChange={(e) => updateLine(index, { unit: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="mt-3 grid gap-3 lg:grid-cols-[2fr_.8fr_.7fr_.7fr_auto]"><Field label="Description"><input required value={line.description} onChange={(e) => updateLine(index, { description: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><input type="number" min="0" step="any" value={line.unit_price} onChange={(e) => updateLine(index, { unit_price: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Discount %"><input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(e) => updateLine(index, { discount_percent: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input type="number" min="0" max="100" step="0.01" value={line.tax_rate} onChange={(e) => updateLine(index, { tax_rate: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="flex items-end gap-3"><div className="pb-2 text-right"><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{money(lineTotal(line, form.tax_calculation_mode), form.currency || "")}</p></div><button type="button" disabled={form.lines.length === 1} onClick={() => setForm((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== index) }))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" /></button></div></div></div>; })}</div>
           <div className="mt-4 flex justify-end rounded-xl bg-neutral-50 p-4"><div className="text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Estimated total</p><p className="mt-1 text-lg font-semibold">{money(draftTotal, form.currency || "")}</p></div></div>
         </div><Field label="Client notes"><textarea value={form.notes} onChange={(e) => setForm((v) => ({ ...v, notes: e.target.value }))} className="min-h-24 w-full rounded-xl border p-3 text-sm" /></Field></> : null}
+        <section className="space-y-4 rounded-2xl border bg-neutral-50/50 p-4 sm:p-5">
+          <div><h3 className="font-semibold">Payment instructions</h3><p className="mt-1 text-xs text-neutral-500">Set the payment method, destination and link now. These details are saved with the draft and locked when it is sent.</p></div>
+          {destinationsError ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{destinationsError} You can still enter a custom payment link.</p> : null}
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Payment method"><select value={payment.method} onChange={(event) => { const method = event.target.value as PaymentMethod | ""; setPayment((current) => method ? { ...current, method } : blankPayment()); }} className="h-11 w-full rounded-xl border bg-white px-3 text-sm">{paymentMethods.map((item) => <option key={item.value || "none"} value={item.value}>{item.label}</option>)}</select></Field>
+            <div><SearchableSelect label="Receive into" value={payment.accountId} onValueChange={selectPaymentDestination} options={paymentAccountOptions} placeholder={destinationsLoading ? "Loading accounts..." : "Select bank, wallet or gateway"} searchPlaceholder="Search account, provider, currency..." clearable /></div>
+            <div className="md:col-span-2"><Field label="Payment URL"><input type="url" maxLength={1000} value={payment.url} onChange={(event) => setPayment((current) => ({ ...current, url: event.target.value }))} className="h-11 w-full rounded-xl border bg-white px-3 text-sm" placeholder="https://payoneer.com/..." /></Field><p className="mt-1 text-xs text-neutral-500">A saved payment URL appears as a link and QR code on the client invoice.</p></div>
+            <div className="md:col-span-2"><Field label="Client payment instructions"><textarea maxLength={5000} value={payment.instructions} onChange={(event) => setPayment((current) => ({ ...current, instructions: event.target.value }))} className="min-h-24 w-full rounded-xl border bg-white p-3 text-sm" placeholder="Use the invoice number as the payment reference." /></Field></div>
+          </div>
+          {selectedDestination && invoiceCurrency && selectedDestination.currency !== invoiceCurrency ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Invoice currency is <strong>{invoiceCurrency}</strong>, while the payment destination is <strong>{selectedDestination.currency}</strong>. Enter the actual exchange rate when recording a payment; no conversion is assumed here.</p> : null}
+        </section>
         <div className="flex justify-end"><button disabled={saving || ((source === "project" || source === "order") && !form.source_id)} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50">{saving ? "Creating…" : "Create draft invoice"}</button></div>
       </form>
     </section> : null}
