@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import "./globals.css";
+import { SessionActivityTracker } from "@/components/session-activity-tracker";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -32,7 +33,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${inter.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full bg-background text-foreground">{children}</body>
+      <body className="min-h-full bg-background text-foreground"><SessionActivityTracker />{children}</body>
     </html>
   );
 }

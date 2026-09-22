@@ -18,6 +18,9 @@ export type TokenPair = {
 };
 
 const secure = process.env.NODE_ENV === "production";
+const persistAuthCookies = process.env.AUTH_COOKIE_PERSIST_BROWSER?.trim().toLowerCase() === "true";
+const accessTokenSeconds = Number(process.env.ACCESS_TOKEN_EXPIRE_MINUTES ?? 30) * 60;
+const refreshTokenSeconds = Number(process.env.REFRESH_TOKEN_EXPIRE_MINUTES ?? 240) * 60;
 const DEVICE_ID_COOKIE = "business_os_device_id";
 const DEVICE_ID_MAX_AGE = 400 * 24 * 60 * 60;
 const DEVICE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -44,14 +47,14 @@ export function setAuthCookies(response: NextResponse, tokens: TokenPair): void 
     secure,
     sameSite: "lax",
     path: "/",
-    maxAge: 30 * 60,
+    ...(persistAuthCookies ? { maxAge: accessTokenSeconds } : {}),
   });
   response.cookies.set("refresh_token", tokens.refresh_token, {
     httpOnly: true,
     secure,
     sameSite: "lax",
     path: "/",
-    maxAge: 30 * 24 * 60 * 60,
+    ...(persistAuthCookies ? { maxAge: refreshTokenSeconds } : {}),
   });
 }
 

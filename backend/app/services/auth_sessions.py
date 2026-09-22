@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -121,7 +121,8 @@ def create_user_session(
         legacy_refresh_fingerprint=legacy_refresh_fingerprint,
         created_at=now,
         last_seen_at=now,
-        expires_at=now + timedelta(days=settings.refresh_token_expire_days),
+        last_user_activity_at=now,
+        expires_at=now + timedelta(minutes=settings.session_idle_timeout_minutes),
     )
     db.add(session)
     db.flush()
@@ -184,6 +185,7 @@ def session_is_active(session: UserSession, *, user: User, now: datetime | None 
         session.user_id == user.id
         and session.revoked_at is None
         and session.expires_at > current
+        and session.last_user_activity_at > current - timedelta(minutes=settings.session_idle_timeout_minutes)
         and session.token_version == int(user.auth_token_version or 0)
     )
 
@@ -192,7 +194,6 @@ def touch_user_session(
     session: UserSession,
     request: Request,
     *,
-    extend_expiry: bool = False,
     force: bool = False,
 ) -> None:
     """Update security telemetry outside the caller's business transaction.
@@ -209,15 +210,39 @@ def touch_user_session(
         "last_seen_at": now,
         "ip_address": request_client_ip(request),
     }
-    if extend_expiry:
-        values["expires_at"] = now + timedelta(days=settings.refresh_token_expire_days)
-
     with engine.begin() as connection:
         connection.execute(
             update(UserSession)
             .where(UserSession.id == session.id, UserSession.revoked_at.is_(None))
             .values(**values)
         )
+
+
+def record_user_activity(session: UserSession, request: Request) -> None:
+    """Only a foreground interaction extends this session's idle deadline.
+
+    Background API polling and JWT refresh only update last_seen_at.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=settings.session_idle_timeout_minutes)
+    with engine.begin() as connection:
+        result = connection.execute(
+            update(UserSession)
+            .where(
+                UserSession.id == session.id,
+                UserSession.revoked_at.is_(None),
+                UserSession.expires_at > now,
+                UserSession.last_user_activity_at > cutoff,
+            )
+            .values(
+                last_user_activity_at=now,
+                last_seen_at=now,
+                expires_at=now + timedelta(minutes=settings.session_idle_timeout_minutes),
+                ip_address=request_client_ip(request),
+            )
+        )
+    if not result.rowcount:
+        raise HTTPException(status_code=401, detail="This session has expired. Sign in again.")
 
 
 def revoke_user_sessions(

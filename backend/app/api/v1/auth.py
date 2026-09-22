@@ -41,6 +41,7 @@ from app.services.auth_sessions import (
     create_user_session,
     get_or_create_legacy_user_session,
     revoke_user_sessions,
+    record_user_activity,
     session_is_active,
     touch_user_session,
 )
@@ -483,6 +484,22 @@ def google_login(payload: GoogleLoginRequest, request: Request, db: DbSession) -
     return _token_pair(user, user_session.id)
 
 
+@router.post("/session/activity", response_model=TokenPair)
+def register_user_activity(request: Request, db: DbSession, current_user: CurrentUser) -> TokenPair:
+    """Extend idle expiry exclusively after a foreground user interaction."""
+    enforce_auth_rate_limit(request, action="session_activity", limit=120, window_seconds=600)
+    session_id = getattr(request.state, "auth_session_id", None)
+    if not session_id:
+        raise HTTPException(status_code=401, detail="Sign in again to start a tracked session.")
+    session = db.scalar(
+        select(UserSession).where(UserSession.id == session_id, UserSession.user_id == current_user.id)
+    )
+    if session is None or not session_is_active(session, user=current_user):
+        raise HTTPException(status_code=401, detail="This session has expired. Sign in again.")
+    record_user_activity(session, request)
+    return _token_pair(current_user, session.id)
+
+
 @router.post("/refresh", response_model=TokenPair)
 def refresh(payload: RefreshTokenRequest, request: Request, db: DbSession) -> TokenPair:
     enforce_auth_rate_limit(request, action="refresh", limit=120, window_seconds=600)
@@ -518,7 +535,7 @@ def refresh(payload: RefreshTokenRequest, request: Request, db: DbSession) -> To
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="This session has been revoked or expired. Sign in again.",
             )
-        touch_user_session(user_session, request, extend_expiry=True, force=True)
+        touch_user_session(user_session, request, force=True)
         return _token_pair(user, user_session.id)
 
     # Graceful migration for refresh tokens issued before per-device sessions.
@@ -555,7 +572,7 @@ def refresh(payload: RefreshTokenRequest, request: Request, db: DbSession) -> To
         )
         db.commit()
     else:
-        touch_user_session(user_session, request, extend_expiry=True, force=True)
+        touch_user_session(user_session, request, force=True)
 
     return _token_pair(user, user_session.id)
 

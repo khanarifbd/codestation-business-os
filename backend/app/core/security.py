@@ -67,7 +67,7 @@ def create_refresh_token(user_id: str, token_version: int = 0, session_id: str |
     return _create_token(
         user_id,
         "refresh",
-        timedelta(days=settings.refresh_token_expire_days),
+        timedelta(minutes=settings.refresh_token_expire_minutes),
         token_version=token_version,
         session_id=session_id,
     )

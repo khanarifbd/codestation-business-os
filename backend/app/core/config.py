@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,8 +18,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     jwt_secret_key: str = "development-only-change-me"
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 30
+    access_token_expire_minutes: int = Field(default=30, ge=1, le=240)
+    refresh_token_expire_minutes: int = Field(default=240, ge=5, le=10080)
+    session_idle_timeout_minutes: int = Field(default=240, ge=5, le=10080)
     email_verification_token_expire_hours: int = 24
     password_reset_token_expire_minutes: int = 30
     passkey_challenge_expire_minutes: int = 5
