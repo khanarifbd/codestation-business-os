@@ -15,6 +15,7 @@ from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, 
 from app.models.orders import Order, OrderItem
 from app.models.projects import Project
 from app.models.team import Employee
+from app.schemas.invoice_payment import InvoicePaymentInstructionsUpdate
 from app.schemas.finance import (
     CurrencyInvoiceSummary,
     FinanceMeta,
@@ -30,6 +31,7 @@ from app.schemas.finance import (
     InvoiceItemRead,
     InvoiceListItem,
     InvoicePage,
+    InvoiceSourceCreate,
     InvoiceStatusAction,
     LedgerTransactionRead,
     PaymentCreate,
@@ -38,6 +40,7 @@ from app.schemas.finance import (
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.journal_reversal import reverse_source_journal
+from app.services.invoice_payment_instructions import apply_invoice_payment_instructions
 from app.services.order_commercial import staged_billing_enabled
 from app.services.sales import calculate_line, calculate_totals
 from app.services.sales_catalog import resolve_sales_line
@@ -357,6 +360,10 @@ def _create_manual_invoice(payload: InvoiceCreate, request: Request, db: DbSessi
             )
         )
     db.flush()
+    if payload.payment_details is not None:
+        apply_invoice_payment_instructions(
+            db, organization_id=tenant.organization_id, invoice=invoice, payload=payload.payment_details
+        )
     record_activity(
         db,
         action="finance.invoice.created",
@@ -365,7 +372,7 @@ def _create_manual_invoice(payload: InvoiceCreate, request: Request, db: DbSessi
         organization_id=tenant.organization_id,
         entity_type="invoice",
         entity_id=invoice.id,
-        after={"invoice_number": invoice.invoice_number, "client_id": client.id, "currency": currency, "total": str(invoice.total), "status": invoice.status},
+        after={"invoice_number": invoice.invoice_number, "client_id": client.id, "currency": currency, "total": str(invoice.total), "status": invoice.status, "payment_method": invoice.payment_method, "payment_account_id": invoice.payment_account_id, "payment_url_configured": bool(invoice.payment_url_snapshot)},
         message=f"Invoice {invoice.invoice_number} created for {client.display_name}",
         request=request,
     )
@@ -385,7 +392,7 @@ def _existing_source_invoice(db: DbSession, organization_id: str, *, order_id: s
     return db.scalar(query.order_by(Invoice.created_at.desc()).limit(1))
 
 
-def _create_invoice_from_order(order: Order, project_id: str | None, request: Request, db: DbSession, tenant: TenantContext) -> InvoiceDetail:
+def _create_invoice_from_order(order: Order, project_id: str | None, request: Request, db: DbSession, tenant: TenantContext, payment_details: InvoicePaymentInstructionsUpdate | None = None) -> InvoiceDetail:
     if order.status == "cancelled":
         raise HTTPException(status_code=409, detail="Cancelled orders cannot be invoiced")
     if staged_billing_enabled(db, tenant.organization_id, order.id):
@@ -471,6 +478,10 @@ def _create_invoice_from_order(order: Order, project_id: str | None, request: Re
             )
         )
     db.flush()
+    if payment_details is not None:
+        apply_invoice_payment_instructions(
+            db, organization_id=tenant.organization_id, invoice=invoice, payload=payment_details
+        )
     record_activity(
         db,
         action="finance.invoice.created_from_order",
@@ -479,7 +490,7 @@ def _create_invoice_from_order(order: Order, project_id: str | None, request: Re
         organization_id=tenant.organization_id,
         entity_type="invoice",
         entity_id=invoice.id,
-        after={"invoice_number": invoice.invoice_number, "order_id": order.id, "project_id": project_id, "currency": invoice.currency, "total": str(invoice.total)},
+        after={"invoice_number": invoice.invoice_number, "order_id": order.id, "project_id": project_id, "currency": invoice.currency, "total": str(invoice.total), "payment_method": invoice.payment_method, "payment_account_id": invoice.payment_account_id, "payment_url_configured": bool(invoice.payment_url_snapshot)},
         metadata={"source_order_id": order.id, "source_project_id": project_id},
         message=f"Invoice {invoice.invoice_number} created from order {order.order_number}",
         request=request,
@@ -668,15 +679,15 @@ def create_invoice(payload: InvoiceCreate, request: Request, db: DbSession, tena
 
 
 @router.post("/invoices/from-order/{order_id}", response_model=InvoiceDetail, status_code=status.HTTP_201_CREATED)
-def create_invoice_from_order(order_id: str, request: Request, db: DbSession, tenant: FinanceManager):
+def create_invoice_from_order(order_id: str, request: Request, db: DbSession, tenant: FinanceManager, payload: InvoiceSourceCreate | None = None):
     order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == tenant.organization_id))
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    return _create_invoice_from_order(order, None, request, db, tenant)
+    return _create_invoice_from_order(order, None, request, db, tenant, payment_details=payload.payment_details if payload else None)
 
 
 @router.post("/invoices/from-project/{project_id}", response_model=InvoiceDetail, status_code=status.HTTP_201_CREATED)
-def create_invoice_from_project(project_id: str, request: Request, db: DbSession, tenant: FinanceManager):
+def create_invoice_from_project(project_id: str, request: Request, db: DbSession, tenant: FinanceManager, payload: InvoiceSourceCreate | None = None):
     project = db.scalar(select(Project).where(Project.id == project_id, Project.organization_id == tenant.organization_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -685,7 +696,7 @@ def create_invoice_from_project(project_id: str, request: Request, db: DbSession
     order = db.scalar(select(Order).where(Order.id == project.order_id, Order.organization_id == tenant.organization_id))
     if order is None:
         raise HTTPException(status_code=409, detail="Project source order is not available")
-    return _create_invoice_from_order(order, project.id, request, db, tenant)
+    return _create_invoice_from_order(order, project.id, request, db, tenant, payment_details=payload.payment_details if payload else None)
 
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceDetail)
