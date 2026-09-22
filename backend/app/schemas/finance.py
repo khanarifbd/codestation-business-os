@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.invoice_payment import InvoicePaymentInstructionsUpdate
+
 AccountType = Literal["bank", "cash", "mobile_wallet", "credit_card", "payment_gateway", "petty_cash", "other"]
 InvoiceLifecycleAction = Literal["send", "cancel"]
 PaymentMethod = Literal["bank_transfer", "cash", "card", "payoneer", "wise", "stripe", "paypal", "other"]
@@ -135,7 +137,12 @@ class InvoiceCreate(BaseModel):
     notes: str | None = None
     terms_conditions: str | None = None
     internal_notes: str | None = None
+    payment_details: InvoicePaymentInstructionsUpdate | None = None
     items: list[InvoiceItemInput] = Field(min_length=1, max_length=200)
+
+
+class InvoiceSourceCreate(BaseModel):
+    payment_details: InvoicePaymentInstructionsUpdate | None = None
 
 
 class InvoiceStatusAction(BaseModel):
