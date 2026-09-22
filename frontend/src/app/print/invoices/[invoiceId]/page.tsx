@@ -276,7 +276,7 @@ export default function InvoicePrintPage() {
       <style jsx global>{`
         @page {
           size: A4;
-          margin: 9mm;
+          margin: 8mm;
         }
 
         /* Match the A4 content box on screen with the printable A4 content area. */
@@ -285,7 +285,83 @@ export default function InvoicePrintPage() {
           width: 210mm;
           max-width: none;
           min-height: 297mm;
-          padding: 9mm;
+          padding: 8mm;
+        }
+
+        /*
+         * Shared compact A4 typesetting. Apply to both screen preview and print
+         * rather than shrinking only in @media print (which caused mismatches).
+         * Preserve readable QR size and allow truly long invoices to paginate.
+         */
+        .print-sheet {
+          font-size: 11px;
+          line-height: 1.3;
+        }
+        .print-sheet .text-xs { font-size: 9px; }
+        .print-sheet .text-sm { font-size: 10.5px; line-height: 1.3; }
+        .print-sheet .text-base { font-size: 12px; }
+        .print-sheet .text-lg { font-size: 13px; }
+        .print-sheet .text-xl { font-size: 16px; }
+        .print-sheet .text-2xl { font-size: 18px; }
+        .print-sheet .text-3xl { font-size: 23px; }
+        .print-sheet .leading-6 { line-height: 1.4; }
+        .print-sheet .leading-5 { line-height: 1.35; }
+        .print-sheet .mt-9 { margin-top: 12px; }
+        .print-sheet .mt-7 { margin-top: 10px; }
+        .print-sheet .mt-5 { margin-top: 9px; }
+        .print-sheet .mt-4 { margin-top: 8px; }
+        .print-sheet .mt-3 { margin-top: 6px; }
+        .print-sheet .mt-2 { margin-top: 4px; }
+        .print-sheet .mt-1 { margin-top: 2px; }
+        .print-sheet .mt-1\.5 { margin-top: 3px; }
+        .print-sheet .pb-7 { padding-bottom: 11px; }
+        .print-sheet .pt-5 { padding-top: 8px; }
+        .print-sheet .p-6 { padding: 12px; }
+        .print-sheet .p-5 { padding: 11px; }
+        .print-sheet .p-3 { padding: 8px; }
+        .print-sheet .px-4 { padding-left: 10px; padding-right: 10px; }
+        .print-sheet .py-3 { padding-top: 7px; padding-bottom: 7px; }
+        .print-sheet .gap-8 { gap: 12px; }
+        .print-sheet .gap-7 { gap: 11px; }
+        .print-sheet .gap-6 { gap: 10px; }
+        .print-sheet .gap-5 { gap: 9px; }
+        .print-sheet .gap-4 { gap: 8px; }
+        .print-sheet .gap-y-4 { row-gap: 7px; }
+        .print-sheet [aria-label$="document mark"] {
+          width: 40px;
+          height: 40px;
+          border-radius: 11px;
+        }
+        .print-sheet .invoice-summary-card {
+          padding: 12px;
+        }
+        .print-sheet .invoice-summary-card > div.mt-4 {
+          margin-top: 9px;
+          padding-top: 9px;
+        }
+        .print-sheet .payment-card {
+          padding: 12px;
+        }
+        .print-sheet .payment-card a {
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+        .print-sheet .payment-card div:has(> svg[aria-label="QR code for invoice payment link"]) {
+          width: 112px;
+          height: 112px;
+          flex-shrink: 0;
+        }
+        .print-sheet .payment-card svg[aria-label="QR code for invoice payment link"] {
+          width: 112px;
+          height: 112px;
+        }
+        .print-sheet .notes-card > div { padding: 11px; }
+        .print-sheet .avoid-break,
+        .print-sheet .invoice-summary-card,
+        .print-sheet .payment-card,
+        .print-sheet .notes-card {
+          break-inside: avoid;
+          page-break-inside: avoid;
         }
 
         @media print {
@@ -305,8 +381,8 @@ export default function InvoicePrintPage() {
             box-shadow: none !important;
             border: 0 !important;
             margin: 0 !important;
-            /* @page reserves the same 9mm inset used by screen preview. */
-            width: 192mm !important;
+            /* @page reserves the same 8mm inset used by screen preview. */
+            width: 194mm !important;
             max-width: none !important;
             min-height: 0 !important;
             padding: 0 !important;
