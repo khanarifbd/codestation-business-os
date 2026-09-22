@@ -1,5 +1,7 @@
 FROM node:22-alpine AS deps
 
+# Keep the exact package-manager binary available to subsequent build stages.
+ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable
 WORKDIR /app
 
@@ -8,7 +10,9 @@ RUN pnpm install --frozen-lockfile
 
 FROM node:22-alpine AS builder
 
+ENV COREPACK_HOME=/opt/corepack
 RUN corepack enable
+COPY --from=deps /opt/corepack /opt/corepack
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
