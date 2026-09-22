@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Edit3, Plus, RotateCcw, Save, Send, X } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { SearchableSelect } from "@/components/searchable-select";
@@ -236,7 +235,6 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
         {editing ? <button disabled={saving} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Save className="size-4" />{saving ? "Saving…" : "Save changes"}</button> : null}
       </div>
     </div>
-    <AccountingNav />
 
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}

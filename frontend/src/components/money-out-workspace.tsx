@@ -19,7 +19,6 @@ import {
   X,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { MoneyInput } from "@/components/money-input";
 import { SearchableSelect } from "@/components/searchable-select";
@@ -313,7 +312,6 @@ export function MoneyOutWorkspace() {
             </>
           }
         />
-        <AccountingNav />
 
         {error ? (
           <div className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 sm:flex-row sm:items-center sm:justify-between">
