@@ -10,7 +10,7 @@ import { ProjectReviewTips } from "@/components/project-review-tips";
 type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "notes" | "credentials" | "team" | "review_tips";
 type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null; tab_permissions: Tab[] };
 type ProjectAccess = { allowed_tabs: Tab[]; can_manage_project: boolean; is_project_manager: boolean; current_employee_id: string | null };
-type ProjectDetail = { id: string; project_number: string; order_number: string; quotation_number: string | null; client_name: string; name: string; status: string; priority: string; planned_start_date: string | null; due_date: string | null; currency: string; contract_value: string | number; project_manager_employee_id: string | null; project_manager_name: string | null; description: string | null; notes: string | null; members: ProjectMember[]; access: ProjectAccess };
+type ProjectDetail = { id: string; project_number: string; order_number: string; order_status: string; quotation_number: string | null; client_name: string; name: string; status: string; priority: string; planned_start_date: string | null; due_date: string | null; currency: string; contract_value: string | number; project_manager_employee_id: string | null; project_manager_name: string | null; description: string | null; notes: string | null; members: ProjectMember[]; access: ProjectAccess };
 type Summary = { progress_percent: number; milestone_count: number; task_count: number; open_task_count: number; overdue_task_count: number; blocked_task_count: number; document_count: number; credential_count: number };
 type MilestoneRow = { id: string; title: string; description: string | null; status: string; sort_order: number; progress_percent: number; due_date: string | null };
 type TaskRow = { id: string; task_code: string; milestone_id: string | null; milestone_title: string | null; title: string; description: string | null; status: string; priority: string; progress_percent: number; assignee_employee_id: string | null; assignee_name: string | null; planned_start_date: string | null; due_date: string | null; estimated_minutes: number | null };
@@ -100,6 +100,7 @@ export default function ProjectWorkspacePage() {
   const canManageTeam = Boolean(project?.access.can_manage_project && meta.can_manage_projects);
 
   async function changeProjectStatus(status: string) {
+    if (status === "cancelled" && !window.confirm("Cancel this project? The cancelled order and project history will remain available, but execution will be locked.")) return;
     setSaving(true); setError(null);
     try {
       await api(`/${projectId}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
@@ -269,12 +270,16 @@ export default function ProjectWorkspacePage() {
         </div>
         {project.access.can_manage_project ? (
           <div className="flex flex-wrap gap-2">
-            {project.status === "planned" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Start Project" primary /> : null}
-            {project.status === "active" ? <><Action disabled={saving} onClick={() => void changeProjectStatus("on_hold")} label="Put on Hold" /><Action disabled={saving} onClick={() => void changeProjectStatus("completed")} label="Complete" primary /></> : null}
-            {project.status === "on_hold" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Resume" primary /> : null}
+            {project.order_status === "cancelled" && ["planned", "active", "on_hold"].includes(project.status)
+              ? <Action disabled={saving} onClick={() => void changeProjectStatus("cancelled")} label="Cancel Project" />
+              : null}
+            {project.order_status !== "cancelled" && project.status === "planned" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Start Project" primary /> : null}
+            {project.order_status !== "cancelled" && project.status === "active" ? <><Action disabled={saving} onClick={() => void changeProjectStatus("on_hold")} label="Put on Hold" /><Action disabled={saving} onClick={() => void changeProjectStatus("completed")} label="Complete" primary /></> : null}
+            {project.order_status !== "cancelled" && project.status === "on_hold" ? <Action disabled={saving} onClick={() => void changeProjectStatus("active")} label="Resume" primary /> : null}
           </div>
         ) : null}
       </div>
+      {project.order_status === "cancelled" && project.status !== "cancelled" ? <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">The linked order was cancelled. Cancel this project to close its execution record.</p> : null}
       <div className="mt-6"><div className="mb-2 flex items-center justify-between text-sm"><span className="font-medium">Overall progress</span><span className="font-semibold">{workspace.summary.progress_percent}%</span></div><Progress value={workspace.summary.progress_percent} /></div>
       <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{canSeeTasks ? <><Metric label="Open tasks" value={workspace.summary.open_task_count} /><Metric label="Overdue" value={workspace.summary.overdue_task_count} danger={workspace.summary.overdue_task_count > 0} /><Metric label="Blocked" value={workspace.summary.blocked_task_count} danger={workspace.summary.blocked_task_count > 0} /></> : null}{canSeeMilestones ? <Metric label="Milestones" value={workspace.summary.milestone_count} /> : null}{project.access.allowed_tabs.includes("documents") ? <Metric label="Documents" value={workspace.summary.document_count} /> : null}{project.access.allowed_tabs.includes("credentials") ? <Metric label="Credentials" value={workspace.summary.credential_count} /> : null}</div>
     </section>
