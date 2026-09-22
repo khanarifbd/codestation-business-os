@@ -4,20 +4,23 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from starlette.requests import Request
 
 from app.api.v1.finance import (
     change_invoice_status,
     create_account,
+    create_invoice,
     create_invoice_from_order,
     finance_summary,
     record_payment,
 )
+from app.api.v1.finance_invoice_payments import get_invoice_payment_instructions, update_invoice_payment_instructions
 from app.db.session import SessionLocal, engine
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
 from app.models.orders import Order
-from app.schemas.finance import FinancialAccountCreate, InvoiceStatusAction, PaymentCreate
+from app.schemas.finance import FinancialAccountCreate, InvoiceCreate, InvoiceItemInput, InvoiceSourceCreate, InvoiceStatusAction, PaymentCreate
+from app.schemas.invoice_payment import InvoicePaymentInstructionsUpdate
 
 
 @dataclass(frozen=True)
@@ -147,11 +150,75 @@ def main() -> None:
             make_request("POST", "/api/v1/finance/accounts"), db, tenant,  # type: ignore[arg-type]
         )
 
+        initial_link = "https://payoneer.example.com/ci-invoice"
+        payment_configuration = InvoicePaymentInstructionsUpdate(
+            payment_method="payoneer",
+            payment_account_id=usd_account.id,
+            payment_url=initial_link,
+            payment_instructions="Pay using the listed Payoneer link.",
+        )
         invoice = create_invoice_from_order(
             order.id, make_request("POST", f"/api/v1/finance/invoices/from-order/{order.id}"), db, tenant,  # type: ignore[arg-type]
+            InvoiceSourceCreate(payment_details=payment_configuration),
         )
         if invoice.status != "draft" or invoice.balance_due != invoice.total or not invoice.invoice_number.startswith("INV-"):
             raise AssertionError("order invoice draft/balance/numbering is incorrect")
+        order_instructions = get_invoice_payment_instructions(invoice.id, db, tenant)  # type: ignore[arg-type]
+        if (
+            order_instructions.payment_method != "payoneer"
+            or order_instructions.payment_url != initial_link
+            or order_instructions.payment_account_id != usd_account.id
+            or order_instructions.payment_account_name != "CI USD Bank"
+            or order_instructions.locked
+        ):
+            raise AssertionError("order invoice payment link and destination were not snapshotted at creation")
+        updated_instructions = update_invoice_payment_instructions(
+            invoice.id,
+            InvoicePaymentInstructionsUpdate(
+                payment_method="payoneer", payment_account_id=usd_account.id,
+                payment_url="https://payoneer.example.com/ci-invoice-edited",
+                payment_instructions="Updated payment reference",
+            ),
+            make_request("PATCH", f"/api/v1/finance/invoices/{invoice.id}/payment-instructions"),
+            db, tenant,  # type: ignore[arg-type]
+        )
+        if updated_instructions.payment_url != "https://payoneer.example.com/ci-invoice-edited":
+            raise AssertionError("draft invoice edit no longer preserves payment-instruction validation")
+        direct_invoice = create_invoice(
+            InvoiceCreate(
+                client_id=order.client_id,
+                subject="CI Direct Invoice Payment Link",
+                currency=order.currency,
+                items=[InvoiceItemInput(item_name="CI service", description="CI billable service", quantity=Decimal("1"), unit_price=Decimal("15"))],
+                payment_details=InvoicePaymentInstructionsUpdate(
+                    payment_method="payoneer",
+                    payment_url="https://payoneer.example.com/ci-direct-invoice",
+                ),
+            ),
+            make_request("POST", "/api/v1/finance/invoices"), db, tenant,  # type: ignore[arg-type]
+        )
+        direct_instructions = get_invoice_payment_instructions(direct_invoice.id, db, tenant)  # type: ignore[arg-type]
+        if direct_instructions.payment_method != "payoneer" or direct_instructions.payment_url != "https://payoneer.example.com/ci-direct-invoice" or direct_instructions.payment_account_id is not None:
+            raise AssertionError("direct client invoice creation did not preserve custom payment link")
+        invalid_invoice_number_count = db.scalar(select(func.count(Invoice.id)).where(Invoice.organization_id == tenant.organization_id))
+        expect_http_error(
+            404,
+            lambda: create_invoice(
+                InvoiceCreate(
+                    client_id=order.client_id,
+                    subject="CI invalid payment destination",
+                    currency=order.currency,
+                    items=[InvoiceItemInput(item_name="CI service", description="CI service", quantity=Decimal("1"), unit_price=Decimal("10"))],
+                    payment_details=InvoicePaymentInstructionsUpdate(
+                        payment_method="bank_transfer", payment_account_id="unowned-financial-account",
+                    ),
+                ),
+                make_request("POST", "/api/v1/finance/invoices"), db, tenant,  # type: ignore[arg-type]
+            ),
+        )
+        db.rollback()
+        if db.scalar(select(func.count(Invoice.id)).where(Invoice.organization_id == tenant.organization_id)) != invalid_invoice_number_count:
+            raise AssertionError("invalid payment destination left a partially created invoice")
 
         expect_http_error(409, lambda: record_payment(
             PaymentCreate(invoice_id=invoice.id, account_id=usd_account.id, invoice_amount=Decimal("1.00")),
