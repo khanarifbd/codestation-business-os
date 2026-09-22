@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Edit3, Plus, Save, Send, X } from "lucide-react";
+import { ArrowLeft, Edit3, Plus, RotateCcw, Save, Send, X } from "lucide-react";
 
 import { AccountingNav } from "@/components/accounting-nav";
+import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
+import { useDashboardSession } from "@/components/dashboard-session-context";
 import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
@@ -47,6 +49,9 @@ type Payment = {
   account_name: string;
   invoice_amount: string | number;
   invoice_currency: string;
+  account_amount: string | number;
+  account_currency: string;
+  status: string;
   method: string;
   reference: string | null;
 };
@@ -88,12 +93,18 @@ function toForm(invoice: Invoice): EditForm {
 const blankLine = (): EditLine => ({ description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
 
 export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
+  const { tenant } = useDashboardSession();
+  const canReversePayment = Boolean(tenant?.permissions.includes("*") || tenant?.permissions.includes("finance.manage"));
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+  const [reversalReason, setReversalReason] = useState("");
+  const [confirmingReversal, setConfirmingReversal] = useState(false);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [form, setForm] = useState<EditForm | null>(null);
   const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [reversing, setReversing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -172,6 +183,38 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
     } finally { setSaving(false); }
   }
 
+  async function reversePayment() {
+    if (!selectedPayment || selectedPayment.status !== "confirmed" || reversing || reversalReason.trim().length < 3) return;
+    const paymentToReverse = selectedPayment;
+    setReversing(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/accounting/corrections/reverse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source_type: "payment",
+          source_id: paymentToReverse.id,
+          reason: reversalReason.trim(),
+        }),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(apiError(payload, "Could not reverse invoice payment"));
+      setSelectedPayment(null);
+      setConfirmingReversal(false);
+      setReversalReason("");
+      await load();
+      setMessage(`Payment ${paymentToReverse.payment_number} reversed. The invoice balance and accounting records have been updated.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not reverse invoice payment");
+      setSelectedPayment(null);
+      setConfirmingReversal(false);
+    } finally {
+      setReversing(false);
+    }
+  }
+
   if (loading && !invoice) return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl text-sm text-neutral-500">Loading invoice…</div></main>;
   if (!invoice || !form) return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl"><p className="text-red-600">{error ?? "Invoice not found"}</p></div></main>;
 
@@ -239,8 +282,55 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
 
     <section className="overflow-hidden rounded-2xl border bg-white">
       <div className="border-b p-5"><h2 className="font-semibold">Payment history</h2><p className="mt-1 text-sm text-neutral-500">All collections linked to this invoice.</p></div>
-      {payments.length ? <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Payment</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Account</th><th className="px-4 py-3">Method</th><th className="px-4 py-3">Amount</th><th className="px-4 py-3">Reference</th></tr></thead><tbody>{payments.map((payment) => <tr key={payment.id} className="border-b last:border-0"><td className="px-4 py-3 font-medium">{payment.payment_number}</td><td className="px-4 py-3">{payment.payment_date}</td><td className="px-4 py-3">{payment.account_name}</td><td className="px-4 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td><td className="px-4 py-3 font-semibold">{money(payment.invoice_amount, payment.invoice_currency)}</td><td className="px-4 py-3">{payment.reference || "—"}</td></tr>)}</tbody></table></div> : <p className="p-8 text-center text-sm text-neutral-400">No payments recorded yet.</p>}
+      {payments.length ? <div className="overflow-x-auto"><table className="min-w-full text-sm">
+        <thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Payment</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Account</th><th className="px-4 py-3">Method</th><th className="px-4 py-3">Amount</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Reference</th>{canReversePayment ? <th className="px-4 py-3 text-right">Action</th> : null}</tr></thead>
+        <tbody>{payments.map((payment) => <tr key={payment.id} className="border-b last:border-0">
+          <td className="px-4 py-3 font-medium">{payment.payment_number}</td>
+          <td className="px-4 py-3">{payment.payment_date}</td>
+          <td className="px-4 py-3">{payment.account_name}{payment.account_currency !== payment.invoice_currency ? <span className="mt-1 block text-xs font-normal text-neutral-500">Received {money(payment.account_amount, payment.account_currency)}</span> : null}</td>
+          <td className="px-4 py-3 capitalize">{payment.method.replaceAll("_", " ")}</td>
+          <td className="px-4 py-3 font-semibold">{money(payment.invoice_amount, payment.invoice_currency)}</td>
+          <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${payment.status === "reversed" ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>{payment.status === "reversed" ? "Reversed" : payment.status === "confirmed" ? "Confirmed" : payment.status}</span></td>
+          <td className="px-4 py-3">{payment.reference || "—"}</td>
+          {canReversePayment ? <td className="px-4 py-3 text-right">{payment.status === "confirmed" ? <button type="button" disabled={saving || reversing} onClick={() => { setSelectedPayment(payment); setReversalReason(""); setConfirmingReversal(false); setError(null); }} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-50"><RotateCcw className="size-3.5" />Reverse payment</button> : <span className="text-xs text-neutral-400">—</span>}</td> : null}
+        </tr>)}</tbody></table></div> : <p className="p-8 text-center text-sm text-neutral-400">No payments recorded yet.</p>}
+      {canReversePayment ? <p className="border-t bg-neutral-50 px-5 py-3 text-xs text-neutral-500">Recorded by mistake? Reverse the payment instead of changing the invoice status. This does not issue a refund or move real money.</p> : null}
     </section>
+    {selectedPayment && !confirmingReversal ? <div className="fixed inset-0 z-[69] flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true" aria-labelledby="payment-reversal-title">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+        <h2 id="payment-reversal-title" className="text-xl font-semibold">Reverse payment {selectedPayment.payment_number}</h2>
+        <p className="mt-2 text-sm leading-6 text-neutral-600">Use this only when a payment was recorded incorrectly. The original record remains in history; its financial movement and journal are reversed. This does not refund money to the client.</p>
+        <div className="mt-4 space-y-2 rounded-xl border bg-neutral-50 p-4 text-sm">
+          <p><span className="text-neutral-500">Invoice:</span> <strong>{invoice.invoice_number}</strong></p>
+          <p><span className="text-neutral-500">Original date:</span> {selectedPayment.payment_date}</p>
+          <p><span className="text-neutral-500">Invoice payment:</span> <strong>{money(selectedPayment.invoice_amount, selectedPayment.invoice_currency)}</strong></p>
+          <p><span className="text-neutral-500">Financial account:</span> {selectedPayment.account_name} · {money(selectedPayment.account_amount, selectedPayment.account_currency)}</p>
+        </div>
+        <label htmlFor="payment-reversal-reason" className="mt-4 block text-sm font-medium">Reason for reversal <span className="text-red-600">*</span></label>
+        <textarea id="payment-reversal-reason" rows={3} maxLength={500} value={reversalReason} onChange={(event) => setReversalReason(event.target.value)} placeholder="E.g. Payment recorded by mistake; no funds were received." className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm" />
+        <p className="mt-1 text-xs text-neutral-500">A reason of at least 3 characters is required and is kept in the audit trail.</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" disabled={reversing} onClick={() => setSelectedPayment(null)} className="rounded-xl border px-4 py-2.5 text-sm font-medium disabled:opacity-50">Cancel</button>
+          <button type="button" disabled={reversalReason.trim().length < 3 || reversing} onClick={() => setConfirmingReversal(true)} className="inline-flex items-center gap-2 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"><RotateCcw className="size-4" />Review reversal</button>
+        </div>
+      </div>
+    </div> : null}
+    <FinancialConfirmationDialog
+      open={Boolean(selectedPayment && reversalReason.trim().length >= 3 && confirmingReversal)}
+      title={`Reverse ${selectedPayment?.payment_number ?? "payment"}?`}
+      description="This action is recorded in the accounting journal and audit trail. It cannot be undone by deleting the record."
+      confirmLabel="Confirm reversal"
+      warning="Only reverse an incorrectly recorded payment. If the client actually paid and you returned funds, use a refund workflow instead."
+      details={selectedPayment ? [
+        { label: "Invoice", value: invoice.invoice_number },
+        { label: "Original payment", value: money(selectedPayment.invoice_amount, selectedPayment.invoice_currency), emphasis: true },
+        { label: "Receiving account", value: `${selectedPayment.account_name} · ${money(selectedPayment.account_amount, selectedPayment.account_currency)}` },
+        { label: "Reason", value: reversalReason.trim() },
+      ] : []}
+      loading={reversing}
+      onCancel={() => setConfirmingReversal(false)}
+      onConfirm={() => void reversePayment()}
+    />
   </div></main>;
 }
 

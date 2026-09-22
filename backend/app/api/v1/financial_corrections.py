@@ -592,6 +592,23 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         if invoice is None:
             raise HTTPException(status_code=409, detail="Payment invoice is no longer available")
 
+        if reversal_date < payment.payment_date:
+            raise HTTPException(status_code=409, detail="Reversal date cannot be earlier than the payment date")
+        if Decimal(invoice.amount_paid) < Decimal(payment.invoice_amount):
+            raise HTTPException(status_code=409, detail="Invoice paid amount does not reconcile with this payment")
+        # Never silently reverse just the operational status when the
+        # accounting posting is missing. Reconcile the payment first.
+        original_journal = db.scalar(
+            select(JournalEntry.id).where(
+                JournalEntry.organization_id == tenant.organization_id,
+                JournalEntry.source_type == "invoice_payment",
+                JournalEntry.source_id == payment.id,
+                JournalEntry.status == "posted",
+            )
+        )
+        if original_journal is None:
+            raise HTTPException(status_code=409, detail="Payment accounting journal is missing; reconcile the payment before reversing it")
+
         journal = reverse_source_journal(
             db,
             organization_id=tenant.organization_id,
@@ -601,7 +618,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
             reversal_date=reversal_date,
             reason=reason,
         )
-        _mirror_transactions(
+        mirrored = _mirror_transactions(
             db,
             tenant=tenant,
             source_types=["payment"],
@@ -610,16 +627,22 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
             reversal_date=reversal_date,
             reason=reason,
         )
+        if mirrored != 1:
+            raise HTTPException(
+                status_code=409,
+                detail="Payment must have exactly one financial-account receipt to reverse",
+            )
         payment.status = "reversed"
-        invoice.amount_paid = max(Decimal("0"), Decimal(invoice.amount_paid) - Decimal(payment.invoice_amount))
+        invoice.amount_paid = Decimal(invoice.amount_paid) - Decimal(payment.invoice_amount)
         invoice.balance_due = max(Decimal("0"), Decimal(invoice.total) - Decimal(invoice.amount_paid))
-        invoice.paid_at = None
         if invoice.balance_due == 0:
             invoice.status = "paid"
         elif invoice.amount_paid > 0:
             invoice.status = "partially_paid"
+            invoice.paid_at = None
         else:
             invoice.status = "sent"
+            invoice.paid_at = None
         reversed_number = payment.payment_number
 
     elif payload.source_type == "expense":

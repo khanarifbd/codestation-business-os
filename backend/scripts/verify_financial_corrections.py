@@ -266,6 +266,31 @@ def main() -> None:
         invoice_after = db.scalar(select(Invoice).where(Invoice.id == invoice_id))
         if payment_after is None or payment_after.status != "reversed":
             raise AssertionError("payment reversal did not mark payment reversed")
+        # A duplicate reverse request must never mutate the original payment
+        # or post an extra journal / bank movement.
+        rejected_duplicate = False
+        try:
+            reverse_business_transaction(
+                CorrectionRequest(
+                    source_type="payment",
+                    source_id=payment_id,
+                    reason="CI duplicate payment reversal must be rejected",
+                    reversal_date=reversal_date,
+                ),
+                request("POST", "/accounting/corrections/reverse"),
+                db,
+                tenant,  # type: ignore[arg-type]
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise AssertionError(f"unexpected duplicate reversal response: {exc.status_code}") from exc
+            db.rollback()
+            rejected_duplicate = True
+        if not rejected_duplicate:
+            raise AssertionError("duplicate payment reversal was accepted")
+        db.expire_all()
+        payment_after = db.scalar(select(Payment).where(Payment.id == payment_id))
+        invoice_after = db.scalar(select(Invoice).where(Invoice.id == invoice_id))
         if invoice_after is None or Decimal(invoice_after.amount_paid) != max(Decimal("0"), before_paid - payment_amount):
             raise AssertionError("payment reversal did not restore invoice paid amount")
         expected_due = max(Decimal("0"), Decimal(invoice_after.total) - Decimal(invoice_after.amount_paid))
