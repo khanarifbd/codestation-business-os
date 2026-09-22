@@ -168,7 +168,7 @@ test("Invoice print page renders a tenant-safe professional client document", as
     .toBe(1);
 });
 
-test("Paid single-item invoice stays on one A4 PDF page including payment status", async ({ page }) => {
+test("Paid single-item invoice keeps paid date on one A4 PDF page", async ({ page }) => {
   const paid = {
     ...invoice,
     id: "e2e-paid",
@@ -195,7 +195,7 @@ test("Paid single-item invoice stays on one A4 PDF page including payment status
     }) });
   });
   await page.goto("/print/invoices/e2e-paid", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "Paid in full" })).toBeVisible();
+  await expect(page.getByText("Paid in full on Sep 19, 2026.")).toBeVisible();
   await page.emulateMedia({ media: "print" });
   const paidPdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
   expect((paidPdf.toString("latin1").match(/\/Type\s*\/Page\b/g) ?? []).length)
