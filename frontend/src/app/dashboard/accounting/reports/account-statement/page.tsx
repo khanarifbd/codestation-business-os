@@ -14,7 +14,6 @@ import {
   WalletCards,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { SearchableSelect } from "@/components/searchable-select";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -191,7 +190,6 @@ export default function AccountStatementPage() {
           }
         />
 
-        <AccountingNav />
 
         {error ? (
           <div className="flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between">

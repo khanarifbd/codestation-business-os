@@ -12,7 +12,6 @@ import {
   WalletCards,
 } from "lucide-react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
@@ -312,9 +311,7 @@ export default function ReconciliationPage() {
         }
       />
 
-      <div className="mt-6">
-        <AccountingNav />
-      </div>
+      
 
       {error ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
       {success ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div> : null}

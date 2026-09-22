@@ -2,7 +2,6 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-import { AccountingNav } from "@/components/accounting-nav";
 
 type TaxCode = {
   id: string;
@@ -170,7 +169,6 @@ export default function TaxPage() {
 
   return (
     <div className="space-y-6">
-      <AccountingNav />
       <div>
         <h1 className="text-2xl font-semibold">Tax Center</h1>
         <p className="text-sm text-neutral-500">Country-agnostic VAT, GST, sales-tax and withholding controls.</p>
