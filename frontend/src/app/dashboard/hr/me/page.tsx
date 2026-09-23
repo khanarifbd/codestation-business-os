@@ -41,6 +41,17 @@ type SelfData = {
 
 type Meta = { leave_types: { id: string; name: string; code: string; annual_allowance_days: string; is_paid: boolean }[] };
 type PolicyAck = Record<string, string>;
+type AttendanceRequest = {
+  id: string; request_type: string; work_date: string; reason: string; status: string;
+  requested_mode: string | null; review_notes: string | null;
+};
+type AttendancePlan = {
+  date: string; timezone: string; mode: "office" | "remote" | "field" | "off" | "unconfigured";
+  weekly_modes: string[] | null; office_name: string | null;
+  attendance: { check_in_at: string | null; check_out_at: string | null; attendance_mode: string | null; status: string } | null;
+  requests: AttendanceRequest[];
+};
+const WORK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 type LeaveBalance = {
   year: number;
   items: {
@@ -135,6 +146,7 @@ export default function MyHRPage() {
   const [acks, setAcks] = useState<PolicyAck>({});
   const [leaveBalance, setLeaveBalance] = useState<LeaveBalance | null>(null);
   const [monthlyAttendance, setMonthlyAttendance] = useState<MonthlyAttendance | null>(null);
+  const [attendancePlan, setAttendancePlan] = useState<AttendancePlan | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -146,18 +158,20 @@ export default function MyHRPage() {
     setError(null);
     try {
       const monthQuery = selectedMonth ? `?month=${encodeURIComponent(selectedMonth)}` : "";
-      const [self, selfMeta, acknowledgements, balances, attendance] = await Promise.all([
+      const [self, selfMeta, acknowledgements, balances, attendance, plan] = await Promise.all([
         api<SelfData>("/api/hr/self"),
         api<Meta>("/api/hr/self-meta"),
         api<PolicyAck>("/api/hr/self/policy-acknowledgements"),
         api<LeaveBalance>("/api/hr/self/leave-balance"),
         api<MonthlyAttendance>(`/api/hr/self/attendance/monthly${monthQuery}`),
+        api<AttendancePlan>("/api/hr/self/attendance-plan"),
       ]);
       setData(self);
       setMeta(selfMeta);
       setAcks(acknowledgements);
       setLeaveBalance(balances);
       setMonthlyAttendance(attendance);
+      setAttendancePlan(plan);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load My HR & Pay");
     } finally {
@@ -174,11 +188,61 @@ export default function MyHRPage() {
     setError(null);
     setSuccess(null);
     try {
-      await api(`/api/hr/${path}`, { method: "POST" });
+      let body: string | undefined;
+      if (path === "self/check-in" && attendancePlan?.mode === "office") {
+        if (!navigator.geolocation) throw new Error("GPS is unavailable in this browser. Open Business OS in your mobile browser.");
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true, maximumAge: 0, timeout: 15000,
+          });
+        });
+        body = JSON.stringify({
+          latitude: position.coords.latitude, longitude: position.coords.longitude,
+          accuracy_meters: position.coords.accuracy, location_timestamp_ms: position.timestamp,
+        });
+      } else if (path === "self/check-in" && attendancePlan?.mode === "field") {
+        const location = window.prompt("Which assigned client site or field location are you working at?");
+        if (location === null) return;
+        if (location.trim().length < 3) throw new Error("Enter your assigned field location.");
+        body = JSON.stringify({ field_location: location.trim() });
+      }
+      await api(`/api/hr/${path}`, { method: "POST", body });
       setSuccess(message);
       await load(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Attendance action failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitAttendanceRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    const kind = String(values.get("request_type") || "");
+    setBusy(true); setError(null); setSuccess(null);
+    try {
+      const payload: Record<string, string> = {
+        request_type: kind, work_date: String(values.get("work_date") || ""),
+        reason: String(values.get("reason") || "").trim(),
+      };
+      if (kind === "correction") {
+        const start = String(values.get("check_in") || "");
+        const end = String(values.get("check_out") || "");
+        if (!start || !end) throw new Error("Enter both check-in and check-out times.");
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) throw new Error("Invalid correction times.");
+        payload.proposed_check_in_at = startDate.toISOString();
+        payload.proposed_check_out_at = endDate.toISOString();
+      }
+      await api("/api/hr/self/attendance-requests", { method: "POST", body: JSON.stringify(payload) });
+      form.reset();
+      setSuccess("Attendance request submitted to HR.");
+      await load(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to submit attendance request");
     } finally {
       setBusy(false);
     }
@@ -277,11 +341,40 @@ export default function MyHRPage() {
   return <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-[1400px]">
     <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
       <div><p className="text-sm text-neutral-500">Employee self-service</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">My HR & Pay</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-500">Manage your workday, leave, HR records, performance reviews, policies and approved payslips from one private workspace.</p></div>
-      <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} onClick={() => void load(false)} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40"><RefreshCw className="size-4" />Refresh</button><button type="button" disabled={busy} onClick={() => void attendanceAction("self/check-in", "Checked in successfully.")} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40"><LogIn className="size-4" />Check in</button><button type="button" disabled={busy} onClick={() => void attendanceAction("self/check-out", "Checked out successfully.")} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-40"><LogOut className="size-4" />Check out</button></div>
+      <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} onClick={() => void load(false)} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40"><RefreshCw className="size-4" />Refresh</button><button type="button" disabled={busy || attendancePlan?.mode === "off" || Boolean(attendancePlan?.attendance?.check_in_at)} onClick={() => void attendanceAction("self/check-in", "Checked in successfully.")} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40"><LogIn className="size-4" />Check in</button><button type="button" disabled={busy} onClick={() => void attendanceAction("self/check-out", "Checked out successfully.")} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-40"><LogOut className="size-4" />Check out</button></div>
     </header>
 
     {error ? <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {success ? <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div> : null}
+
+    {attendancePlan && <section className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div>
+        <h2 className="text-lg font-semibold">Today’s attendance plan</h2>
+        <p className="mt-1 text-sm text-neutral-500">{attendancePlan.date} · {attendancePlan.timezone} · <span className="font-semibold capitalize text-neutral-800">{attendancePlan.mode}</span>{attendancePlan.office_name ? ` · ${attendancePlan.office_name}` : ""}</p>
+        <p className="mt-2 text-xs text-neutral-500">{attendancePlan.mode === "office" ? "Check in from your assigned office using a mobile web browser. Allow precise GPS access when prompted." : attendancePlan.mode === "remote" ? "Today is a remote workday. Your location is not requested." : attendancePlan.mode === "field" ? "Enter your assigned client-site or field location when checking in; GPS is not required." : attendancePlan.mode === "off" ? "Today is scheduled as a day off. Ask HR if you need a workday exception." : "HR has not assigned a weekly mode yet. Legacy self check-in remains available until your attendance policy is configured."}</p>
+      </div>{attendancePlan.attendance?.check_in_at && <p className="text-xs text-emerald-700">Checked in {dateTime(attendancePlan.attendance.check_in_at)}</p>}</div>
+      {attendancePlan.weekly_modes && <div className="mt-4 grid grid-cols-4 gap-2 sm:grid-cols-7">{attendancePlan.weekly_modes.map((mode, index) => <div key={WORK_DAYS[index]} className={`rounded-xl border px-2 py-2 text-center text-xs ${index === new Date(`${attendancePlan.date}T12:00:00Z`).getUTCDay() - 1 || (index === 6 && new Date(`${attendancePlan.date}T12:00:00Z`).getUTCDay() === 0) ? "border-neutral-900" : ""}`}><p className="font-semibold">{WORK_DAYS[index]}</p><p className="mt-1 capitalize text-neutral-500">{mode}</p></div>)}</div>}
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <form onSubmit={submitAttendanceRequest} className="rounded-xl border p-4">
+          <h3 className="font-semibold">Request a remote workday</h3>
+          <p className="mt-1 text-xs text-neutral-500">For a scheduled office day only; HR approval is required before remote check-in.</p>
+          <input type="hidden" name="request_type" value="mode" />
+          <label className="mt-3 block text-sm">Requested work date<input name="work_date" type="date" required min={attendancePlan.date} className="mt-1 w-full rounded-lg border px-3 py-2" /></label>
+          <label className="mt-3 block text-sm">Reason<textarea name="reason" required minLength={5} maxLength={1000} className="mt-1 min-h-16 w-full rounded-lg border p-3" /></label>
+          <button disabled={busy} className="mt-3 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50">Submit remote request</button>
+        </form>
+        <form onSubmit={submitAttendanceRequest} className="rounded-xl border p-4">
+          <h3 className="font-semibold">Missed attendance correction</h3>
+          <p className="mt-1 text-xs text-neutral-500">Provide actual times in your device’s timezone. The date must match the company’s timezone. HR reviews changes; posted payroll is not changed automatically.</p>
+          <input type="hidden" name="request_type" value="correction" />
+          <label className="mt-3 block text-sm">Work date<input name="work_date" type="date" required max={attendancePlan.date} className="mt-1 w-full rounded-lg border px-3 py-2" /></label>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="block text-sm">Actual check-in<input name="check_in" type="datetime-local" required className="mt-1 w-full rounded-lg border px-3 py-2" /></label><label className="block text-sm">Actual check-out<input name="check_out" type="datetime-local" required className="mt-1 w-full rounded-lg border px-3 py-2" /></label></div>
+          <label className="mt-3 block text-sm">Reason<textarea name="reason" required minLength={5} maxLength={1000} className="mt-1 min-h-16 w-full rounded-lg border p-3" /></label>
+          <button disabled={busy} className="mt-3 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50">Submit correction</button>
+        </form>
+      </div>
+      {attendancePlan.requests.length > 0 && <div className="mt-5"><h3 className="text-sm font-semibold">Recent attendance requests</h3><div className="mt-2 space-y-2">{attendancePlan.requests.map((row) => <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs"><span className="capitalize">{row.request_type === "mode" ? "Remote day" : "Correction"} · {row.work_date}{row.review_notes ? ` · ${row.review_notes}` : ""}</span><span className="font-semibold capitalize">{row.status}</span></div>)}</div></div>}
+    </section>}
 
     <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
       <MetricCard icon={UserRound} label="Employee" value={data.employee.employee_code} />
