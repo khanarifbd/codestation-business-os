@@ -16,7 +16,7 @@ type AttendanceRequest = {
 type Mode = "office" | "remote" | "field" | "off";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const MODES: Mode[] = ["office", "remote", "field", "off"];
-const initialModes: Mode[] = ["office", "office", "office", "office", "office", "off", "off"];
+const initialModes: Mode[] = ["office", "office", "office", "office", "office", "office", "office"];
 const input = "mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-sm";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -126,8 +126,12 @@ export default function AttendanceSettingsPage() {
         officeEditId ? `/attendance/offices/${encodeURIComponent(officeEditId)}` : "/attendance/offices",
         { method: officeEditId ? "PATCH" : "POST", body: JSON.stringify(payload) },
       );
-      chooseOffice("");
       setOfficeEditId(result.id);
+      setOfficeName(result.name);
+      setLatitude(String(result.latitude));
+      setLongitude(String(result.longitude));
+      setRadius(result.radius_meters);
+      setActive(result.is_active);
     }, officeEditId ? "Office geofence updated." : "Office geofence created.");
   }
 
@@ -178,7 +182,7 @@ export default function AttendanceSettingsPage() {
         </section>
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold">Employee weekly schedule</h2>
-          <p className="mt-1 text-sm text-neutral-500">Select a work mode for each day. Office days require an assigned active office. Keep weekly off days aligned with the employee's HR shift.</p>
+          <p className="mt-1 text-sm text-neutral-500">Select a work mode for each day. Office days require an assigned active office. Set weekly off days explicitly and align them with the employee's HR shift.</p>
           <form onSubmit={savePolicy} className="mt-4 space-y-4">
             <label className="block text-sm">Employee<select value={employeeId} onChange={(event) => chooseEmployee(event.target.value)} required className={input}><option value="">Choose employee</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.employee_code}</option>)}</select></label>
             <label className="block text-sm">Assigned office<select value={officeId} onChange={(event) => setOfficeId(event.target.value)} className={input}><option value="">No assigned office</option>{offices.filter((office) => office.is_active).map((office) => <option key={office.id} value={office.id}>{office.name}</option>)}</select></label>
