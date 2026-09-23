@@ -182,7 +182,7 @@ export default function AttendanceSettingsPage() {
         </section>
         <section className="rounded-2xl border bg-white p-5 shadow-sm">
           <h2 className="text-lg font-semibold">Employee weekly schedule</h2>
-          <p className="mt-1 text-sm text-neutral-500">Select a work mode for each day. Office days require an assigned active office. Set weekly off days explicitly and align them with the employee's HR shift.</p>
+          <p className="mt-1 text-sm text-neutral-500">Select a work mode for each day. Office days require an assigned active office. Set weekly off days explicitly and align them with the employee&apos;s HR shift.</p>
           <form onSubmit={savePolicy} className="mt-4 space-y-4">
             <label className="block text-sm">Employee<select value={employeeId} onChange={(event) => chooseEmployee(event.target.value)} required className={input}><option value="">Choose employee</option>{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name} · {employee.employee_code}</option>)}</select></label>
             <label className="block text-sm">Assigned office<select value={officeId} onChange={(event) => setOfficeId(event.target.value)} className={input}><option value="">No assigned office</option>{offices.filter((office) => office.is_active).map((office) => <option key={office.id} value={office.id}>{office.name}</option>)}</select></label>
