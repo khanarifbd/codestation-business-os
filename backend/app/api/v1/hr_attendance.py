@@ -118,12 +118,8 @@ def update_office(office_id: str, payload: OfficePayload, request: Request, db: 
         assigned = db.scalar(select(func.count(EmployeeAttendancePolicy.id)).where(
             EmployeeAttendancePolicy.organization_id == tenant.organization_id,
             EmployeeAttendancePolicy.office_id == office.id,
-            EmployeeAttendancePolicy.weekly_modes.contains(["office"]),  # fallback count below handles mixed weekdays
         ))
-        if assigned or db.scalar(select(func.count(EmployeeAttendancePolicy.id)).where(
-            EmployeeAttendancePolicy.organization_id == tenant.organization_id,
-            EmployeeAttendancePolicy.office_id == office.id,
-        )):
+        if assigned:
             raise HTTPException(status_code=409, detail="Reassign employee policies before disabling this office")
     before = _office_data(office)
     for key, value in payload.model_dump().items():
@@ -379,6 +375,12 @@ def review_request(request_id: str, payload: AttendanceRequestReview, request: R
             record.overtime_minutes = max(0, work_minutes - scheduled_presence_minutes(shift, item.work_date))
             record.status = attendance_status_for_check_in(shift, start.astimezone(ZoneInfo(tenant.organization.timezone)))
             record.source = "correction"
+            # Amended timestamps are HR-approved, not GPS verified.
+            record.verification_method = "hr_correction"
+            record.check_in_latitude = None
+            record.check_in_longitude = None
+            record.check_in_accuracy_meters = None
+            record.office_id = None
             record.approved_by_user_id = tenant.user_id
             db.flush()
             _audit(db, request, tenant, "hr.attendance.corrected", "attendance_record", record.id,
