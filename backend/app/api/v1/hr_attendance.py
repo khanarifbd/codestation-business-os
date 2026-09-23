@@ -247,7 +247,13 @@ def list_requests(db: DbSession, tenant: HRManager):
 
 @router.post("/self/attendance-requests", status_code=201)
 def create_request(payload: AttendanceRequestCreate, request: Request, db: DbSession, tenant: HRSelf):
-    employee = _self_employee(db, tenant)
+    # Synchronize today's exception creation against self check-in on the same employee.
+    employee = db.scalar(select(Employee).where(
+        Employee.organization_id == tenant.organization_id,
+        Employee.membership_id == tenant.membership_id,
+    ).with_for_update())
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee profile not found")
     today = _local_date(tenant)
     if employee.employment_status != "active" or (employee.join_date and payload.work_date < employee.join_date) or (
         employee.end_date and payload.work_date > employee.end_date
@@ -325,7 +331,12 @@ def review_request(request_id: str, payload: AttendanceRequestReview, request: R
         raise HTTPException(status_code=404, detail="Request not found")
     if item.status != "pending":
         raise HTTPException(status_code=409, detail="Request has already been reviewed")
-    employee = _employee(db, tenant, item.employee_id)
+    employee = db.scalar(select(Employee).where(
+        Employee.organization_id == tenant.organization_id,
+        Employee.id == item.employee_id,
+    ).with_for_update())
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
     if employee.membership_id == tenant.membership_id:
         raise HTTPException(status_code=403, detail="A different HR manager must review your request")
     today = _local_date(tenant)
