@@ -247,6 +247,7 @@ def self_home(db: DbSession, tenant: HRSelf):
         if attendance is None
         else {
             "status": attendance.status,
+            "attendance_mode": attendance.attendance_mode,
             "check_in_at": attendance.check_in_at,
             "check_out_at": attendance.check_out_at,
             "work_minutes": attendance.work_minutes,
@@ -397,6 +398,7 @@ def self_attendance_monthly(db: DbSession, tenant: HRSelf, month: str | None = N
             {
                 "date": current,
                 "status": day_status,
+                "attendance_mode": record.attendance_mode if record else None,
                 "check_in_at": record.check_in_at if record else None,
                 "check_out_at": record.check_out_at if record else None,
                 "work_minutes": record.work_minutes if record else 0,
