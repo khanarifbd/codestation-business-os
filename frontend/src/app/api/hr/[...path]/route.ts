@@ -5,7 +5,7 @@ import { authenticatedBackendFetch } from "@/lib/authenticated-backend";
 
 type Context = { params: Promise<{ path: string[] }> };
 
-async function proxy(request: NextRequest, method: "GET" | "POST" | "PATCH", context: Context) {
+async function proxy(request: NextRequest, method: "GET" | "POST" | "PATCH" | "PUT", context: Context) {
   const organizationId = request.cookies.get("organization_id")?.value;
   if (!organizationId) return NextResponse.json({ detail: "No active workspace selected" }, { status: 409 });
   const { path } = await context.params;
@@ -26,3 +26,4 @@ async function proxy(request: NextRequest, method: "GET" | "POST" | "PATCH", con
 export async function GET(request: NextRequest, context: Context) { return proxy(request, "GET", context); }
 export async function POST(request: NextRequest, context: Context) { return proxy(request, "POST", context); }
 export async function PATCH(request: NextRequest, context: Context) { return proxy(request, "PATCH", context); }
+export async function PUT(request: NextRequest, context: Context) { return proxy(request, "PUT", context); }
