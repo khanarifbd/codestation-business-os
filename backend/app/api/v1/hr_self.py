@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.hr import AttendanceRecord, LeaveRequest, LeaveType, PerformanceReview
+from app.models.hr_attendance import EmployeeAttendancePolicy
 from app.services.hr_attendance import effective_attendance_mode, verify_office_location
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.membership import Membership
@@ -321,6 +322,10 @@ def self_attendance_monthly(db: DbSession, tenant: HRSelf, month: str | None = N
         .order_by(AttendanceRecord.attendance_date)
     ).all()
     attendance_by_date = {item.attendance_date: item for item in attendance_rows}
+    weekly_policy = db.scalar(select(EmployeeAttendancePolicy).where(
+        EmployeeAttendancePolicy.organization_id == tenant.organization_id,
+        EmployeeAttendancePolicy.employee_id == employee.id,
+    ))
 
     holidays = db.scalars(
         select(HRHoliday).where(
@@ -380,6 +385,9 @@ def self_attendance_monthly(db: DbSession, tenant: HRSelf, month: str | None = N
         elif leave is not None:
             day_status = "leave"
             summary["leave"] += 1
+        elif weekly_policy is not None and weekly_policy.weekly_modes[current.weekday()] == "off":
+            day_status = "off"
+            summary["off"] += 1
         else:
             shift = shift_for_date(
                 db,
