@@ -76,6 +76,7 @@ class ProjectListItem(BaseModel):
     order_number: str
     client_id: str
     client_name: str
+    client_contact_name: str | None = None
     name: str
     status: str
     priority: str
