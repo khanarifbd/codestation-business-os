@@ -136,13 +136,14 @@ def _project_query(organization_id: str):
         select(
             Project,
             Client.display_name,
+            Client.contact_name,
             Order.order_number,
             Order.status,
             Quotation.quotation_number,
             manager_user.full_name,
             member_count,
         )
-        .join(Client, Client.id == Project.client_id)
+        .join(Client, and_(Client.id == Project.client_id, Client.organization_id == organization_id))
         .join(Order, Order.id == Project.order_id)
         .outerjoin(Quotation, Quotation.id == Project.quotation_id)
         .outerjoin(manager_employee, manager_employee.id == Project.project_manager_employee_id)
@@ -153,7 +154,7 @@ def _project_query(organization_id: str):
 
 
 def _list_item(row, *, hide_financial: bool = False) -> ProjectListItem:
-    project, client_name, order_number, _order_status, _quotation_number, manager_name, member_count = row
+    project, client_name, client_contact_name, order_number, _order_status, _quotation_number, manager_name, member_count = row
     return ProjectListItem(
         id=project.id,
         project_number=project.project_number,
@@ -161,6 +162,7 @@ def _list_item(row, *, hide_financial: bool = False) -> ProjectListItem:
         order_number=order_number,
         client_id=project.client_id,
         client_name=client_name,
+        client_contact_name=client_contact_name,
         name=project.name,
         status=project.status,
         priority=project.priority,
@@ -212,7 +214,7 @@ def _detail(db: DbSession, tenant: TenantContext, project_id: str) -> ProjectDet
     row = db.execute(_project_query(tenant.organization_id).where(Project.id == project_id)).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    project, client_name, order_number, order_status, quotation_number, manager_name, _member_count = row
+    project, client_name, _client_contact_name, order_number, order_status, quotation_number, manager_name, _member_count = row
     access = require_project_access(db, tenant, project)
     allowed_tabs = [tab for tab in ALL_PROJECT_TABS if tab in access.allowed_tabs]
     can_see_overview = "overview" in access.allowed_tabs
@@ -378,6 +380,7 @@ def list_projects(
                 Project.project_number.ilike(needle),
                 Project.name.ilike(needle),
                 Client.display_name.ilike(needle),
+                Client.contact_name.ilike(needle),
                 Order.order_number.ilike(needle),
             )
         )
