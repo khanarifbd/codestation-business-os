@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, FileText, Plus, Search, Send, Share2, Trash2, X } from "lucide-react";
+import { FileText, Plus, Search, Trash2, X } from "lucide-react";
 
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -64,9 +64,6 @@ export function InvoicesWorkspaceV2() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [currencyFilter, setCurrencyFilter] = useState("all");
   const [dueFilter, setDueFilter] = useState<"all" | "overdue" | "outstanding" | "paid">("all");
-  const [invoiceToCancel, setInvoiceToCancel] = useState<Invoice | null>(null);
-  const [cancelReason, setCancelReason] = useState("");
-  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -165,16 +162,6 @@ export function InvoicesWorkspaceV2() {
     updateLine(index, { product_id: product.id, item_name: product.name, item_type: product.item_type === "non_stock_item" ? "non_stock_item" : "service", unit: product.unit, description: product.description || product.name, unit_price: String(product.selling_price), tax_rate: String(tax?.rate ?? 0) });
   }
 
-  async function shareInvoice(invoice: Invoice) {
-    setError(null); setMessage(null);
-    const relativeUrl = `/dashboard/finance/invoices/${invoice.id}/print`;
-    const shareUrl = `${window.location.origin}${relativeUrl}`;
-    try {
-      if (navigator.share) { await navigator.share({ title: `Invoice ${invoice.invoice_number}`, text: `${invoice.invoice_number} · ${invoice.client_name}`, url: shareUrl }); return; }
-      await navigator.clipboard.writeText(shareUrl); setMessage(`Invoice ${invoice.invoice_number} link copied to clipboard.`);
-    } catch (reason) { if (reason instanceof DOMException && reason.name === "AbortError") return; setError("Could not share this invoice. Open PDF View and use your browser share or copy the URL."); }
-  }
-
   async function submit(event: FormEvent) {
     event.preventDefault(); setSaving(true); setError(null); setMessage(null);
     try {
@@ -195,40 +182,6 @@ export function InvoicesWorkspaceV2() {
       setMessage(`Invoice ${payload.invoice_number} created as draft with your selected payment instructions. Review it before sending.`); setPayment(blankPayment()); setShowForm(false); await load();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not create invoice"); }
     finally { setSaving(false); }
-  }
-
-  async function sendInvoice(invoice: Invoice) {
-    setSaving(true); setError(null); setMessage(null);
-    try {
-      const response = await fetch(`/api/finance/invoices/${invoice.id}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "send" }) });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not send invoice"));
-      setMessage(`Invoice ${invoice.invoice_number} sent. It is now locked for editing.`); await load();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not send invoice"); }
-    finally { setSaving(false); }
-  }
-
-  async function cancelInvoice() {
-    if (!invoiceToCancel || cancelReason.trim().length < 3 || cancelling) return;
-    const target = invoiceToCancel;
-    setCancelling(true); setError(null); setMessage(null);
-    try {
-      const response = await fetch(`/api/finance/invoices/${target.id}/status`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "cancel", reason: cancelReason.trim() }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not cancel invoice"));
-      setInvoiceToCancel(null);
-      setCancelReason("");
-      setMessage(`Invoice ${target.invoice_number} cancelled. The reason is preserved in the audit trail and any posted invoice journal was reversed.`);
-      await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not cancel invoice");
-    } finally {
-      setCancelling(false);
-    }
   }
 
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
@@ -270,7 +223,7 @@ export function InvoicesWorkspaceV2() {
     </section> : null}
 
     <section className="overflow-hidden rounded-2xl border bg-white">
-      <div className="border-b p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">Invoice list</h2><p className="mt-1 text-sm text-neutral-500">Search, filter and open any invoice. Drafts remain editable until Send.</p></div><div className="flex flex-wrap gap-2 text-xs text-neutral-500"><span className="rounded-full bg-neutral-100 px-3 py-1.5">{invoices.length} total</span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-amber-700">{outstandingCount} outstanding</span><span className="rounded-full bg-red-50 px-3 py-1.5 text-red-700">{overdueCount} overdue</span></div></div></div>
+      <div className="border-b p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">Invoice list</h2><p className="mt-1 text-sm text-neutral-500">Search and filter invoices. Open an invoice from its number to view actions and payment details.</p></div><div className="flex flex-wrap gap-2 text-xs text-neutral-500"><span className="rounded-full bg-neutral-100 px-3 py-1.5">{invoices.length} total</span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-amber-700">{outstandingCount} outstanding</span><span className="rounded-full bg-red-50 px-3 py-1.5 text-red-700">{overdueCount} overdue</span></div></div></div>
       <div className="border-b bg-neutral-50/60 p-4"><div className="grid gap-3 lg:grid-cols-[minmax(260px,1.6fr)_repeat(3,minmax(150px,0.7fr))_auto]">
         <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search invoice, client, subject..." className="h-11 w-full rounded-xl border bg-white pl-10 pr-3 text-sm outline-none focus:border-neutral-500"/></label>
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All statuses</option>{statusOptions.filter((status) => status !== "all").map((status) => <option key={status} value={status}>{pretty(status)}</option>)}</select>
@@ -278,18 +231,8 @@ export function InvoicesWorkspaceV2() {
         <select value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All balances</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select>
         <button type="button" onClick={clearFilters} disabled={!query && statusFilter === "all" && currencyFilter === "all" && dueFilter === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button>
       </div><p className="mt-3 text-xs text-neutral-400">Showing {filteredInvoices.length} of {invoices.length} invoices</p></div>
-      <div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th><th className="px-4 py-3 text-right">Actions</th></tr></thead><tbody>{filteredInvoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className={`text-xs ${invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 ? "font-medium text-red-600" : "text-neutral-400"}`}>Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td><td className="px-4 py-3"><div className="flex min-w-max justify-end gap-2"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><ExternalLink className="size-3.5" />{invoice.status === "draft" ? "Open / Edit" : "Open"}</Link><Link href={`/dashboard/finance/invoices/${invoice.id}/print`} target="_blank" className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><FileText className="size-3.5" />PDF View</Link><button type="button" onClick={() => void shareInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs font-medium"><Share2 className="size-3.5" />Share</button>{invoice.status === "cancelled" ? <span className="px-3 py-2 text-xs text-red-400">Cancelled</span> : invoice.status === "draft" ? <button disabled={saving} onClick={() => void sendInvoice(invoice)} className="inline-flex items-center gap-1 rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white"><Send className="size-3.5" />Send</button> : Number(invoice.balance_due) > 0 ? <Link href={`/dashboard/accounting/money-in?invoice_id=${invoice.id}`} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-medium text-white">Collect</Link> : <span className="px-3 py-2 text-xs text-neutral-400">Paid</span>}{!["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0 ? <button type="button" disabled={saving || cancelling} onClick={() => { setInvoiceToCancel(invoice); setCancelReason(""); setError(null); }} className="inline-flex items-center gap-1 rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-3.5" />Cancel</button> : null}</div></td></tr>)}</tbody></table>{!loading && !filteredInvoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No matching invoices</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
+      <div className="overflow-x-auto"><table className="min-w-[760px] w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th></tr></thead><tbody>{filteredInvoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold text-neutral-950 hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className={`text-xs ${invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 ? "font-medium text-red-600" : "text-neutral-400"}`}>Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td></tr>)}</tbody></table>{!loading && !filteredInvoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No matching invoices</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
     </section>
-    {invoiceToCancel ? <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true" aria-labelledby="cancel-invoice-title">
-      <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
-        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">Cancel invoice</p><h2 id="cancel-invoice-title" className="mt-1 text-xl font-semibold">{invoiceToCancel.invoice_number}</h2><p className="mt-2 text-sm leading-6 text-neutral-600">The invoice stays in history. If an invoice issue journal exists, Business OS reverses it instead of deleting accounting records.</p></div><button type="button" disabled={cancelling} onClick={() => setInvoiceToCancel(null)} className="rounded-lg p-2 hover:bg-neutral-100 disabled:opacity-40" aria-label="Close cancellation"><X className="size-5" /></button></div>
-        <div className="mt-4 grid gap-2 rounded-xl border bg-neutral-50 p-4 text-sm"><p><span className="text-neutral-500">Client:</span> <strong>{invoiceToCancel.client_name}</strong></p><p><span className="text-neutral-500">Total:</span> <strong>{money(invoiceToCancel.total, invoiceToCancel.currency)}</strong></p><p><span className="text-neutral-500">Paid:</span> {money(invoiceToCancel.amount_paid, invoiceToCancel.currency)}</p></div>
-        <label htmlFor="invoice-cancel-reason" className="mt-4 block text-sm font-medium">Cancellation reason <span className="text-red-600">*</span></label>
-        <textarea id="invoice-cancel-reason" rows={3} maxLength={500} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="E.g. Invoice created for the wrong scope / client cancelled before payment." className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm" />
-        <p className="mt-1 text-xs text-neutral-500">At least 3 characters required. The reason is preserved in the audit trail.</p>
-        <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={cancelling} onClick={() => setInvoiceToCancel(null)} className="rounded-xl border px-4 py-2.5 text-sm font-medium disabled:opacity-50">Go back</button><button type="button" disabled={cancelling || cancelReason.trim().length < 3} onClick={() => void cancelInvoice()} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50"><Trash2 className="size-4" />{cancelling ? "Cancelling…" : "Cancel invoice"}</button></div>
-      </div>
-    </div> : null}
   </div></main>;
 }
 
