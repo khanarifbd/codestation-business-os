@@ -147,6 +147,7 @@ class InvoiceSourceCreate(BaseModel):
 
 class InvoiceStatusAction(BaseModel):
     action: InvoiceLifecycleAction
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class InvoiceItemRead(BaseModel):
@@ -210,6 +211,7 @@ class InvoiceDetail(InvoiceListItem):
     sent_at: datetime | None
     paid_at: datetime | None
     cancelled_at: datetime | None
+    cancel_reason: str | None = None
     items: list[InvoiceItemRead]
 
 
