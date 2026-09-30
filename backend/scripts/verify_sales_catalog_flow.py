@@ -350,7 +350,7 @@ def main() -> None:
 
         cancelled_invoice = change_invoice_status(
             invoice.id,
-            InvoiceStatusAction(action="cancel"),
+            InvoiceStatusAction(action="cancel", reason="Verify invoice cancellation reversal"),
             req("PATCH", f"/finance/invoices/{invoice.id}/status"),
             db,
             tenant,  # type: ignore[arg-type]
