@@ -10,6 +10,8 @@ from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.hr import AttendanceRecord, LeaveRequest, LeaveType, PerformanceReview
+from app.models.hr_attendance import EmployeeAttendancePolicy
+from app.services.hr_attendance import effective_attendance_mode, verify_office_location
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.membership import Membership
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun
@@ -25,6 +27,15 @@ HRSelf = Annotated[TenantContext, Depends(require_tenant_permission("hr.self"))]
 
 class SelfReviewUpdate(BaseModel):
     self_review: str
+
+
+class CheckInPayload(BaseModel):
+    # Coordinates are accepted only for an OFFICE day and must be checked server-side.
+    latitude: float | None = None
+    longitude: float | None = None
+    accuracy_meters: float | None = None
+    location_timestamp_ms: int | None = None
+    field_location: str | None = None
 
 
 def _employee(db: DbSession, tenant: TenantContext) -> Employee:
@@ -237,6 +248,7 @@ def self_home(db: DbSession, tenant: HRSelf):
         if attendance is None
         else {
             "status": attendance.status,
+            "attendance_mode": attendance.attendance_mode,
             "check_in_at": attendance.check_in_at,
             "check_out_at": attendance.check_out_at,
             "work_minutes": attendance.work_minutes,
@@ -310,6 +322,10 @@ def self_attendance_monthly(db: DbSession, tenant: HRSelf, month: str | None = N
         .order_by(AttendanceRecord.attendance_date)
     ).all()
     attendance_by_date = {item.attendance_date: item for item in attendance_rows}
+    weekly_policy = db.scalar(select(EmployeeAttendancePolicy).where(
+        EmployeeAttendancePolicy.organization_id == tenant.organization_id,
+        EmployeeAttendancePolicy.employee_id == employee.id,
+    ))
 
     holidays = db.scalars(
         select(HRHoliday).where(
@@ -369,6 +385,9 @@ def self_attendance_monthly(db: DbSession, tenant: HRSelf, month: str | None = N
         elif leave is not None:
             day_status = "leave"
             summary["leave"] += 1
+        elif weekly_policy is not None and weekly_policy.weekly_modes[current.weekday()] == "off":
+            day_status = "off"
+            summary["off"] += 1
         else:
             shift = shift_for_date(
                 db,
@@ -387,6 +406,7 @@ def self_attendance_monthly(db: DbSession, tenant: HRSelf, month: str | None = N
             {
                 "date": current,
                 "status": day_status,
+                "attendance_mode": record.attendance_mode if record else None,
                 "check_in_at": record.check_in_at if record else None,
                 "check_out_at": record.check_out_at if record else None,
                 "work_minutes": record.work_minutes if record else 0,
@@ -465,49 +485,84 @@ def self_payslip(entry_id: str, db: DbSession, tenant: HRSelf):
 
 
 @router.post("/self/check-in")
-def check_in(request: Request, db: DbSession, tenant: HRSelf):
-    employee = _employee(db, tenant)
+def check_in(request: Request, db: DbSession, tenant: HRSelf, payload: CheckInPayload | None = None):
+    # Employee row lock serializes simultaneous first check-ins (unique org/employee/date).
+    employee = db.scalar(select(Employee).where(
+        Employee.organization_id == tenant.organization_id,
+        Employee.membership_id == tenant.membership_id,
+    ).with_for_update())
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee profile not found")
     now, local = _now(tenant)
+    if employee.employment_status != "active" or (
+        employee.join_date and local.date() < employee.join_date
+    ) or (employee.end_date and local.date() > employee.end_date):
+        raise HTTPException(status_code=403, detail="Employee is not eligible for attendance today")
 
     open_record = _open_attendance(db, tenant, employee, local)
     if open_record is not None and open_record.attendance_date != local.date():
         raise HTTPException(status_code=409, detail="Check out your previous shift first")
-
     item = db.scalar(
-        select(AttendanceRecord)
-        .where(
+        select(AttendanceRecord).where(
             AttendanceRecord.organization_id == tenant.organization_id,
             AttendanceRecord.employee_id == employee.id,
             AttendanceRecord.attendance_date == local.date(),
-        )
-        .with_for_update()
+        ).with_for_update()
     )
+    if item is not None and item.check_in_at is not None:
+        raise HTTPException(status_code=409, detail="Already checked in today")
+
+    mode, policy, office = effective_attendance_mode(
+        db, organization_id=tenant.organization_id, employee_id=employee.id, work_date=local.date(),
+    )
+    if mode == "off":
+        raise HTTPException(status_code=403, detail="Today is scheduled as a day off; contact HR")
+    supplied = payload or CheckInPayload()
+    method = "legacy" if policy is None else "schedule"
+    distance = None
+    if mode == "office":
+        # A configured office shift has no remote fallback when GPS is denied or inaccurate.
+        if supplied.location_timestamp_ms is None or abs(
+            int(now.timestamp() * 1000) - supplied.location_timestamp_ms
+        ) > 120000:
+            raise HTTPException(status_code=400, detail="A fresh browser location is required for office attendance")
+        distance = verify_office_location(
+            office, latitude=supplied.latitude, longitude=supplied.longitude,
+            accuracy_meters=supplied.accuracy_meters,
+        )
+        method = "browser_gps"
+    elif mode == "field":
+        if not supplied.field_location or len(supplied.field_location.strip()) < 3:
+            raise HTTPException(status_code=400, detail="Describe your assigned field/client-site location")
+        if len(supplied.field_location.strip()) > 180:
+            raise HTTPException(status_code=400, detail="Field location description is too long")
+
     shift = shift_for_date(
-        db,
-        organization_id=tenant.organization_id,
-        employee_id=employee.id,
-        work_date=local.date(),
+        db, organization_id=tenant.organization_id,
+        employee_id=employee.id, work_date=local.date(),
     )
     attendance_status = attendance_status_for_check_in(shift, local)
-
     if item is None:
         item = AttendanceRecord(
-            organization_id=tenant.organization_id,
-            employee_id=employee.id,
-            attendance_date=local.date(),
-            check_in_at=now,
-            status=attendance_status,
-            source="self",
+            organization_id=tenant.organization_id, employee_id=employee.id,
+            attendance_date=local.date(), check_in_at=now,
+            status=attendance_status, source="self",
         )
         db.add(item)
-        db.flush()
-    elif item.check_in_at is not None:
-        raise HTTPException(status_code=409, detail="Already checked in today")
     else:
         item.check_in_at = now
         item.status = attendance_status
         item.source = "self"
-
+    item.attendance_mode = mode
+    item.office_id = office.id if office else None
+    item.verification_method = method
+    # Never store GPS for remote/field work; do not continuously track employees.
+    item.check_in_latitude = supplied.latitude if mode == "office" else None
+    item.check_in_longitude = supplied.longitude if mode == "office" else None
+    item.check_in_accuracy_meters = supplied.accuracy_meters if mode == "office" else None
+    if mode == "field":
+        item.notes = supplied.field_location.strip()
+    db.flush()
     record_activity(
         db,
         action="hr.attendance.checked_in",
@@ -517,15 +572,15 @@ def check_in(request: Request, db: DbSession, tenant: HRSelf):
         entity_type="attendance_record",
         entity_id=item.id,
         after={
-            "employee_id": employee.id,
-            "date": str(local.date()),
-            "status": attendance_status,
-            "shift_id": shift.id if shift else None,
+            "employee_id": employee.id, "date": str(local.date()),
+            "status": attendance_status, "shift_id": shift.id if shift else None,
+            "attendance_mode": mode, "office_id": office.id if office else None,
+            "verification_method": method, "distance_meters": round(distance, 1) if distance is not None else None,
         },
         request=request,
     )
     db.commit()
-    return {"id": item.id, "check_in_at": item.check_in_at, "status": item.status}
+    return {"id": item.id, "check_in_at": item.check_in_at, "status": item.status, "attendance_mode": mode}
 
 
 @router.post("/self/check-out")

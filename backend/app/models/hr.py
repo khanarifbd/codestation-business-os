@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Time, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Float, Index, Integer, Numeric, String, Text, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -47,6 +47,12 @@ class AttendanceRecord(TenantOwnedMixin, Base):
     overtime_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(24), default="manual", nullable=False)
+    attendance_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    office_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("hr_office_locations.id", ondelete="SET NULL"), nullable=True)
+    check_in_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    check_in_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    check_in_accuracy_meters: Mapped[float | None] = mapped_column(Float, nullable=True)
+    verification_method: Mapped[str | None] = mapped_column(String(24), nullable=True)
     approved_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)

@@ -193,7 +193,7 @@ def hr_dashboard(db: DbSession, tenant: HRViewer):
 def list_attendance(db: DbSession, tenant: HRViewer):
     names = _employee_names(db, tenant.organization_id)
     rows = db.scalars(select(AttendanceRecord).where(AttendanceRecord.organization_id == tenant.organization_id).order_by(AttendanceRecord.attendance_date.desc(), AttendanceRecord.created_at.desc()).limit(200)).all()
-    return [{"id": x.id, "employee_id": x.employee_id, "employee_name": names.get(x.employee_id), "attendance_date": x.attendance_date, "status": x.status, "check_in_at": x.check_in_at, "check_out_at": x.check_out_at, "work_minutes": x.work_minutes, "overtime_minutes": x.overtime_minutes, "notes": x.notes} for x in rows]
+    return [{"id": x.id, "employee_id": x.employee_id, "employee_name": names.get(x.employee_id), "attendance_date": x.attendance_date, "status": x.status, "attendance_mode": x.attendance_mode, "check_in_at": x.check_in_at, "check_out_at": x.check_out_at, "work_minutes": x.work_minutes, "overtime_minutes": x.overtime_minutes, "notes": x.notes} for x in rows]
 
 
 @router.post("/attendance", status_code=status.HTTP_201_CREATED)
@@ -367,7 +367,7 @@ def self_service(db: DbSession, tenant: HRSelf):
     return {
         "employee": {"id": employee.id, "employee_code": employee.employee_code, "employment_status": employee.employment_status, "join_date": employee.join_date, "work_location": employee.work_location},
         "leave_requests": [{"id": x.id, "leave_type": leave_types.get(x.leave_type_id), "start_date": x.start_date, "end_date": x.end_date, "days": str(x.days), "status": x.status} for x in leaves],
-        "attendance": [{"date": x.attendance_date, "status": x.status, "check_in_at": x.check_in_at, "check_out_at": x.check_out_at, "work_minutes": x.work_minutes} for x in attendance],
+        "attendance": [{"date": x.attendance_date, "status": x.status, "attendance_mode": x.attendance_mode, "check_in_at": x.check_in_at, "check_out_at": x.check_out_at, "work_minutes": x.work_minutes} for x in attendance],
         "documents": [{"id": x.id, "title": x.title, "document_type": x.document_type, "expires_on": x.expires_on, "file_url": x.file_url} for x in documents],
         "performance": [{"id": x.id, "period_start": x.period_start, "period_end": x.period_end, "status": x.status, "rating": str(x.rating) if x.rating is not None else None, "self_review": x.self_review, "manager_review": x.manager_review} for x in reviews],
         "announcements": [{"id": x.id, "title": x.title, "body": x.body, "is_policy": x.is_policy, "published_at": x.published_at} for x in announcements],
