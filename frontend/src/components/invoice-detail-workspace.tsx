@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Edit3, Plus, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
+import { ArrowLeft, FileText, Plus, RotateCcw, Save, Send, Share2, Trash2, X, Edit3 } from "lucide-react";
 
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -186,6 +186,29 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
     } finally { setSaving(false); }
   }
 
+  async function shareInvoice() {
+    if (!invoice) return;
+    setError(null);
+    setMessage(null);
+    const relativeUrl = `/print/invoices/${invoice.id}`;
+    const shareUrl = `${window.location.origin}${relativeUrl}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Invoice ${invoice.invoice_number}`,
+          text: `${invoice.invoice_number} · ${invoice.client_name}`,
+          url: shareUrl,
+        });
+        return;
+      }
+      await navigator.clipboard.writeText(shareUrl);
+      setMessage(`Invoice ${invoice.invoice_number} link copied to clipboard.`);
+    } catch (reason) {
+      if (reason instanceof DOMException && reason.name === "AbortError") return;
+      setError("Could not share this invoice. Open PDF View and use your browser share or copy the URL.");
+    }
+  }
+
   async function cancelInvoice() {
     if (!invoice || cancelReason.trim().length < 3 || cancellingInvoice) return;
     setCancellingInvoice(true);
@@ -248,6 +271,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
 
   const draft = invoice.status === "draft";
   const canCancelInvoice = !["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0;
+  const canCollectPayment = !["draft", "cancelled", "paid"].includes(invoice.status) && Number(invoice.balance_due) > 0;
   const sourceLabel = invoice.project_id ? "Project invoice" : invoice.order_id ? "Order invoice" : "Manual client invoice";
 
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
@@ -258,9 +282,12 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
         <h1 className="mt-1 text-3xl font-semibold tracking-tight">{invoice.invoice_number}</h1>
         <p className="mt-2 text-sm text-neutral-500">{sourceLabel} · {invoice.client_name}</p>
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
+        {!editing ? <Link href={`/print/invoices/${invoice.id}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium"><FileText className="size-4" />PDF View</Link> : null}
+        {!editing ? <button type="button" onClick={() => void shareInvoice()} className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium"><Share2 className="size-4" />Share</button> : null}
         {draft && !editing ? <button onClick={() => setEditing(true)} className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium"><Edit3 className="size-4" />Edit draft</button> : null}
         {draft && !editing ? <button disabled={saving} onClick={() => void sendInvoice()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Send className="size-4" />Send invoice</button> : null}
+        {canCollectPayment && !editing ? <Link href={`/dashboard/accounting/money-in?invoice_id=${invoice.id}`} className="inline-flex items-center rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white">Collect payment</Link> : null}
         {canCancelInvoice && !editing ? <button type="button" disabled={saving || cancellingInvoice} onClick={() => { setCancelReason(""); setCancelOpen(true); setError(null); }} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-4" />Cancel invoice</button> : null}
         {editing ? <button onClick={() => { setForm(toForm(invoice)); setEditing(false); }} className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium"><X className="size-4" />Cancel edit</button> : null}
         {editing ? <button disabled={saving} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Save className="size-4" />{saving ? "Saving…" : "Save changes"}</button> : null}
