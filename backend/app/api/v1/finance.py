@@ -737,6 +737,7 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
     previous = invoice.status
     now = datetime.now(timezone.utc)
     reversal_journal = None
+    cancel_reason = None
     if payload.action == "send":
         if invoice.status != "draft":
             raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
