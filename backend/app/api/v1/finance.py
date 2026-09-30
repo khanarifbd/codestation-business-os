@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.models.activity_log import ActivityLog
 from app.models.company_settings import OrganizationAddress, OrganizationFinancialSettings, OrganizationIdentifier, OrganizationProfile
 from app.models.crm import Client
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, InvoiceItem, Payment
@@ -169,6 +170,26 @@ def _invoice_list_item(invoice: Invoice, timezone_name: str) -> InvoiceListItem:
     )
 
 
+def _invoice_cancel_reason(db: DbSession, invoice: Invoice) -> str | None:
+    if invoice.status != "cancelled":
+        return None
+    after_data = db.scalar(
+        select(ActivityLog.after_data)
+        .where(
+            ActivityLog.organization_id == invoice.organization_id,
+            ActivityLog.entity_type == "invoice",
+            ActivityLog.entity_id == invoice.id,
+            ActivityLog.action == "finance.invoice.status_changed",
+        )
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .limit(1)
+    )
+    if not isinstance(after_data, dict):
+        return None
+    reason = after_data.get("cancel_reason")
+    return reason.strip() if isinstance(reason, str) and reason.strip() else None
+
+
 def _invoice_detail(db: DbSession, invoice: Invoice, timezone_name: str) -> InvoiceDetail:
     base = _invoice_list_item(invoice, timezone_name)
     items = db.scalars(
@@ -198,6 +219,7 @@ def _invoice_detail(db: DbSession, invoice: Invoice, timezone_name: str) -> Invo
         sent_at=invoice.sent_at,
         paid_at=invoice.paid_at,
         cancelled_at=invoice.cancelled_at,
+        cancel_reason=_invoice_cancel_reason(db, invoice),
         items=[
             InvoiceItemRead(
                 id=item.id,
@@ -715,14 +737,18 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
     previous = invoice.status
     now = datetime.now(timezone.utc)
     reversal_journal = None
+    cancel_reason = None
     if payload.action == "send":
         if invoice.status != "draft":
             raise HTTPException(status_code=409, detail="Only draft invoices can be sent")
         invoice.status = "sent"
         invoice.sent_at = now
     elif payload.action == "cancel":
+        cancel_reason = _clean(payload.reason)
+        if cancel_reason is None or len(cancel_reason) < 3:
+            raise HTTPException(status_code=400, detail="A cancellation reason of at least 3 characters is required")
         if invoice.status in {"paid", "cancelled"} or invoice.amount_paid > 0:
-            raise HTTPException(status_code=409, detail="Invoices with payments cannot be cancelled; use a payment reversal workflow")
+            raise HTTPException(status_code=409, detail="Invoices with payments cannot be cancelled; reverse incorrect payments first")
         reversal_journal = reverse_source_journal(
             db,
             organization_id=tenant.organization_id,
@@ -730,7 +756,7 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
             source_type="invoice_issue",
             source_id=invoice.id,
             reversal_date=_tenant_today(tenant.organization.timezone),
-            reason=f"Invoice {invoice.invoice_number} cancelled",
+            reason=f"Invoice {invoice.invoice_number} cancelled: {cancel_reason}",
         )
         invoice.status = "cancelled"
         invoice.cancelled_at = now
@@ -744,7 +770,11 @@ def change_invoice_status(invoice_id: str, payload: InvoiceStatusAction, request
         entity_type="invoice",
         entity_id=invoice.id,
         before={"status": previous},
-        after={"status": invoice.status, "reversal_journal_entry_id": reversal_journal.id if reversal_journal else None},
+        after={
+            "status": invoice.status,
+            "cancel_reason": cancel_reason if payload.action == "cancel" else None,
+            "reversal_journal_entry_id": reversal_journal.id if reversal_journal else None,
+        },
         message=f"Invoice {invoice.invoice_number} changed from {previous} to {invoice.status}",
         request=request,
     )

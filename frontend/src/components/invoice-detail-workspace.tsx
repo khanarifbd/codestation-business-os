@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Edit3, Plus, RotateCcw, Save, Send, X } from "lucide-react";
+import { ArrowLeft, Edit3, Plus, RotateCcw, Save, Send, Trash2, X } from "lucide-react";
 
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -38,6 +38,7 @@ type Invoice = {
   notes: string | null;
   terms_conditions: string | null;
   internal_notes: string | null;
+  cancel_reason: string | null;
   items: Item[];
 };
 
@@ -104,6 +105,9 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [reversing, setReversing] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancellingInvoice, setCancellingInvoice] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -182,6 +186,31 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
     } finally { setSaving(false); }
   }
 
+  async function cancelInvoice() {
+    if (!invoice || cancelReason.trim().length < 3 || cancellingInvoice) return;
+    setCancellingInvoice(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/finance/invoices/${invoice.id}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", reason: cancelReason.trim() }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(apiError(payload, "Could not cancel invoice"));
+      setCancelOpen(false);
+      setCancelReason("");
+      setEditing(false);
+      await load();
+      setMessage("Invoice cancelled. The reason is preserved in the audit trail and any posted invoice journal was reversed.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not cancel invoice");
+    } finally {
+      setCancellingInvoice(false);
+    }
+  }
+
   async function reversePayment() {
     if (!selectedPayment || selectedPayment.status !== "confirmed" || reversing || reversalReason.trim().length < 3) return;
     const paymentToReverse = selectedPayment;
@@ -218,6 +247,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
   if (!invoice || !form) return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl"><p className="text-red-600">{error ?? "Invoice not found"}</p></div></main>;
 
   const draft = invoice.status === "draft";
+  const canCancelInvoice = !["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0;
   const sourceLabel = invoice.project_id ? "Project invoice" : invoice.order_id ? "Order invoice" : "Manual client invoice";
 
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
@@ -231,6 +261,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
       <div className="flex flex-wrap gap-2">
         {draft && !editing ? <button onClick={() => setEditing(true)} className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium"><Edit3 className="size-4" />Edit draft</button> : null}
         {draft && !editing ? <button disabled={saving} onClick={() => void sendInvoice()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Send className="size-4" />Send invoice</button> : null}
+        {canCancelInvoice && !editing ? <button type="button" disabled={saving || cancellingInvoice} onClick={() => { setCancelReason(""); setCancelOpen(true); setError(null); }} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-4" />Cancel invoice</button> : null}
         {editing ? <button onClick={() => { setForm(toForm(invoice)); setEditing(false); }} className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium"><X className="size-4" />Cancel edit</button> : null}
         {editing ? <button disabled={saving} onClick={() => void saveDraft()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Save className="size-4" />{saving ? "Saving…" : "Save changes"}</button> : null}
       </div>
@@ -238,6 +269,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
 
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
+    {invoice.status === "cancelled" ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"><strong>Cancelled invoice.</strong>{invoice.cancel_reason ? <> Reason: {invoice.cancel_reason}</> : <> Cancellation reason is available in the audit trail for newer cancellations.</>}</div> : null}
 
     <section className="grid gap-4 md:grid-cols-4">
       <Summary label="Status" value={invoice.display_status.replaceAll("_", " ")} />
@@ -311,6 +343,16 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
           <button type="button" disabled={reversing} onClick={() => setSelectedPayment(null)} className="rounded-xl border px-4 py-2.5 text-sm font-medium disabled:opacity-50">Cancel</button>
           <button type="button" disabled={reversalReason.trim().length < 3 || reversing} onClick={() => setConfirmingReversal(true)} className="inline-flex items-center gap-2 rounded-xl bg-amber-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-800 disabled:opacity-50"><RotateCcw className="size-4" />Review reversal</button>
         </div>
+      </div>
+    </div> : null}
+    {cancelOpen ? <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4" role="dialog" aria-modal="true" aria-labelledby="detail-cancel-invoice-title">
+      <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+        <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">Cancel invoice</p><h2 id="detail-cancel-invoice-title" className="mt-1 text-xl font-semibold">{invoice.invoice_number}</h2><p className="mt-2 text-sm leading-6 text-neutral-600">The invoice remains in history. Business OS reverses the invoice issue journal if one exists; nothing is deleted from the ledger.</p></div><button type="button" disabled={cancellingInvoice} onClick={() => setCancelOpen(false)} className="rounded-lg p-2 hover:bg-neutral-100 disabled:opacity-40" aria-label="Close cancellation"><X className="size-5" /></button></div>
+        <div className="mt-4 space-y-2 rounded-xl border bg-neutral-50 p-4 text-sm"><p><span className="text-neutral-500">Client:</span> <strong>{invoice.client_name}</strong></p><p><span className="text-neutral-500">Total:</span> <strong>{money(invoice.total, invoice.currency)}</strong></p><p><span className="text-neutral-500">Paid:</span> {money(invoice.amount_paid, invoice.currency)}</p></div>
+        <label htmlFor="detail-invoice-cancel-reason" className="mt-4 block text-sm font-medium">Cancellation reason <span className="text-red-600">*</span></label>
+        <textarea id="detail-invoice-cancel-reason" rows={3} maxLength={500} value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} placeholder="E.g. Client cancelled before payment / invoice issued for the wrong scope." className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm" />
+        <p className="mt-1 text-xs text-neutral-500">At least 3 characters required. If a payment exists, reverse the incorrect payment first.</p>
+        <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={cancellingInvoice} onClick={() => setCancelOpen(false)} className="rounded-xl border px-4 py-2.5 text-sm font-medium disabled:opacity-50">Go back</button><button type="button" disabled={cancellingInvoice || cancelReason.trim().length < 3} onClick={() => void cancelInvoice()} className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-800 disabled:opacity-50"><Trash2 className="size-4" />{cancellingInvoice ? "Cancelling…" : "Cancel invoice"}</button></div>
       </div>
     </div> : null}
     <FinancialConfirmationDialog

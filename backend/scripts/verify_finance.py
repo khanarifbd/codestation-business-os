@@ -200,6 +200,20 @@ def main() -> None:
         direct_instructions = get_invoice_payment_instructions(direct_invoice.id, db, tenant)  # type: ignore[arg-type]
         if direct_instructions.payment_method != "payoneer" or direct_instructions.payment_url != "https://payoneer.example.com/ci-direct-invoice" or direct_instructions.payment_account_id is not None:
             raise AssertionError("direct client invoice creation did not preserve custom payment link")
+        expect_http_error(
+            400,
+            lambda: change_invoice_status(
+                direct_invoice.id, InvoiceStatusAction(action="cancel"),
+                make_request("PATCH", f"/api/v1/finance/invoices/{direct_invoice.id}/status"), db, tenant,  # type: ignore[arg-type]
+            ),
+        )
+        cancellation_reason = "CI client cancelled before payment"
+        cancelled_direct = change_invoice_status(
+            direct_invoice.id, InvoiceStatusAction(action="cancel", reason=cancellation_reason),
+            make_request("PATCH", f"/api/v1/finance/invoices/{direct_invoice.id}/status"), db, tenant,  # type: ignore[arg-type]
+        )
+        if cancelled_direct.status != "cancelled" or cancelled_direct.cancelled_at is None or cancelled_direct.cancel_reason != cancellation_reason:
+            raise AssertionError("invoice cancellation did not require and preserve the reason")
         invalid_invoice_number_count = db.scalar(select(func.count(Invoice.id)).where(Invoice.organization_id == tenant.organization_id))
         expect_http_error(
             404,
@@ -257,6 +271,13 @@ def main() -> None:
         paid = db.scalar(select(Invoice).where(Invoice.id == sent.id))
         if paid is None or paid.status != "paid" or paid.balance_due != Decimal("0.00") or paid.paid_at is None:
             raise AssertionError("final payment did not fully settle invoice")
+        expect_http_error(
+            409,
+            lambda: change_invoice_status(
+                paid.id, InvoiceStatusAction(action="cancel", reason="CI paid invoice must stay posted"),
+                make_request("PATCH", f"/api/v1/finance/invoices/{paid.id}/status"), db, tenant,  # type: ignore[arg-type]
+            ),
+        )
 
         expect_http_error(409, lambda: record_payment(
             PaymentCreate(invoice_id=sent.id, account_id=usd_account.id, invoice_amount=Decimal("1.00")),
