@@ -260,7 +260,7 @@ def _review_full_refund(db: DbSession, connection: PaymentGatewayConnection, eve
             db.info.pop("stripe_verified_reversal_payment", None)
         else:
             db.info["stripe_verified_reversal_payment"] = previous
-    return "full_payment_reversed"
+    return "full_payment_reversed" if event_type == "charge.refunded" else "reversed_fee_review"
 
 
 @router.post("/webhook/{connection_id}", include_in_schema=False)
@@ -323,4 +323,4 @@ async def review_live_stripe_event(connection_id: str, request: Request, db: DbS
     )
     db.commit()
     # Stripe retry is inappropriate for intentionally quarantined, valid events.
-    return {"received": True, "duplicate": False, "review_required": result == "review_required", "result": result}
+    return {"received": True, "duplicate": False, "review_required": result in {"review_required", "reversed_fee_review"}, "result": result}
