@@ -97,7 +97,24 @@ def confirm_live_payout(payload: PayoutConfirm, request: Request, db: DbSession,
                 or previous.bank_account_id != payload.bank_account_id
                 or previous.bank_statement_reference != reference):
             raise HTTPException(status_code=409, detail="Stripe payout was already reconciled with different bank details")
+        linked_transfer = db.scalar(select(AccountTransfer).where(
+            AccountTransfer.id == previous.transfer_id,
+            AccountTransfer.organization_id == tenant.organization_id,
+        ))
+        if linked_transfer is None or linked_transfer.status != "confirmed":
+            raise HTTPException(status_code=409, detail="Previously reconciled Stripe payout transfer requires accounting review")
         return _as_json(previous)
+
+    # A legacy or manually recorded transfer may already have settled this payout.
+    # Do not create a second transfer just because no Stripe linkage row exists.
+    manually_recorded = db.scalar(select(AccountTransfer.id).where(
+        AccountTransfer.organization_id == tenant.organization_id,
+        AccountTransfer.from_account_id == payload.source_account_id,
+        AccountTransfer.reference == payload.stripe_payout_id,
+        AccountTransfer.status == "confirmed",
+    ))
+    if manually_recorded is not None:
+        raise HTTPException(status_code=409, detail="A transfer with this Stripe payout reference already exists; review and reconcile it manually")
 
     bank = db.scalar(select(FinancialAccount).where(
         FinancialAccount.id == payload.bank_account_id,
