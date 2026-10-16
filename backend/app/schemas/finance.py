@@ -31,6 +31,7 @@ class FinancialAccountCreate(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     opening_balance: Decimal = Field(default=Decimal("0"))
     notes: str | None = None
+    gateway_connection_id: str | None = None
 
     @field_validator("account_type", mode="before")
     @classmethod
@@ -46,6 +47,7 @@ class FinancialAccountUpdate(BaseModel):
     account_reference: str | None = Field(default=None, max_length=180)
     notes: str | None = None
     is_active: bool | None = None
+    gateway_connection_id: str | None = None
 
     @field_validator("account_type", mode="before")
     @classmethod
@@ -60,6 +62,7 @@ class FinancialAccountRead(BaseModel):
     provider_name: str | None
     account_holder_name: str | None
     account_reference: str | None
+    gateway_connection_id: str | None = None
     currency: str
     opening_balance: Decimal
     current_balance: Decimal
