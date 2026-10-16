@@ -17,6 +17,7 @@ from urllib.request import Request as HttpRequest, urlopen
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -26,11 +27,31 @@ from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.payment_gateways import GatewayOAuthState, PaymentGatewayConnection
 from app.services.activity_log import record_activity
+from app.services.payment_gateway_secrets import encrypt_gateway_secret
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance/payment-gateways/stripe", tags=["Payment Gateways"])
 GatewayViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]
 STATE_LIFETIME = timedelta(minutes=10)
+
+class StripeManualConnectionCreate(BaseModel):
+    mode: str = Field(pattern="^(test|live)$")
+    secret_key: SecretStr
+    webhook_secret: SecretStr | None = None
+    replace_existing: bool = False
+
+    @model_validator(mode="after")
+    def validate_keys(self):
+        secret = self.secret_key.get_secret_value().strip()
+        if not secret.startswith("sk_" + self.mode + "_") or len(secret) < 24 or len(secret) > 256:
+            raise ValueError("Use the Stripe secret key matching the selected Test/Live mode")
+        if self.webhook_secret is not None:
+            webhook = self.webhook_secret.get_secret_value().strip()
+            if webhook and (not webhook.startswith("whsec_") or len(webhook) < 20 or len(webhook) > 256):
+                raise ValueError("Use the Stripe webhook signing secret beginning with whsec_")
+        return self
+
+
 
 
 def _credentials(mode: str) -> tuple[str, str]:
@@ -76,6 +97,10 @@ def _connection_read(row: PaymentGatewayConnection | None, *, mode: str) -> dict
         "charges_enabled": bool(row and row.is_active and row.charges_enabled),
         "payouts_enabled": bool(row and row.is_active and row.payouts_enabled),
         "details_submitted": bool(row and row.is_active and row.details_submitted),
+        "connection_method": row.connection_method if row and row.is_active else None,
+        "account_label": row.account_label if row and row.is_active else None,
+        "credential_hint": row.credential_hint if row and row.is_active else None,
+        "webhook_configured": bool(row and row.is_active and row.webhook_secret_ciphertext),
         "checkout_available": False,  # Never pretend payments are live before webhook reconciliation exists.
     }
 
@@ -88,9 +113,115 @@ def _connection(db: DbSession, organization_id: str, mode: str) -> PaymentGatewa
     ))
 
 
+@router.post("/manual")
+def connect_stripe_manually(
+    payload: StripeManualConnectionCreate, request: Request,
+    db: DbSession, tenant: CurrentTenantAdmin,
+):
+    """Self-service BYO Stripe account for companies not using platform OAuth.
+
+    Validate ownership by performing a server-only Stripe account request using
+    the supplied key. Never echo or audit the key; store only encrypted secrets.
+    """
+    # Refuse before asking Stripe if server-side encrypted storage is unavailable.
+    secret = payload.secret_key.get_secret_value().strip()
+    encrypted = encrypt_gateway_secret(secret)
+    supplied_webhook = payload.webhook_secret.get_secret_value().strip() if payload.webhook_secret else ""
+    encrypted_webhook = encrypt_gateway_secret(supplied_webhook) if supplied_webhook else None
+    try:
+        account = _stripe_request("https://api.stripe.com/v1/account", api_key=secret)
+    except HTTPException as exc:
+        raise HTTPException(status_code=400, detail="Stripe could not verify this secret key or its account permissions") from exc
+    account_id = account.get("id")
+    if not isinstance(account_id, str) or not account_id.startswith("acct_"):
+        raise HTTPException(status_code=400, detail="Stripe returned an invalid account identifier")
+    # Prevent one Stripe merchant account from being used by different tenants.
+    duplicate = db.scalar(select(PaymentGatewayConnection.id).where(
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == payload.mode,
+        PaymentGatewayConnection.provider_account_id == account_id,
+        PaymentGatewayConnection.organization_id != tenant.organization_id,
+    ))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="This Stripe account is already connected to another company")
+    current = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.organization_id == tenant.organization_id,
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == payload.mode,
+    ).with_for_update())
+    if current is not None and current.is_active and not payload.replace_existing:
+        raise HTTPException(status_code=409, detail="A Stripe connection already exists; explicitly confirm replacement")
+    before_data = _connection_read(current, mode=payload.mode) if current else None
+    name = account.get("business_profile") or {}
+    if not isinstance(name, dict):
+        name = {}
+    label = name.get("name") or account.get("business_name") or account.get("email")
+    if current is None:
+        current = PaymentGatewayConnection(
+            organization_id=tenant.organization_id, provider="stripe", mode=payload.mode,
+            provider_account_id=account_id, connected_by_user_id=tenant.user_id,
+        )
+        db.add(current)
+    current.provider_account_id = account_id
+    current.account_label = str(label)[:180] if label else None
+    current.connection_method = "api_key"
+    current.secret_key_ciphertext = encrypted
+    current.webhook_secret_ciphertext = encrypted_webhook
+    current.credential_hint = "••••" + secret[-4:]
+    current.charges_enabled = bool(account.get("charges_enabled"))
+    current.payouts_enabled = bool(account.get("payouts_enabled"))
+    current.details_submitted = bool(account.get("details_submitted"))
+    current.connected_by_user_id = tenant.user_id
+    current.is_active = True
+    db.flush()
+    record_activity(
+        db, action="payment_gateway.stripe.manual_connected", scope="tenant",
+        organization_id=tenant.organization_id, actor_user_id=tenant.user_id,
+        entity_type="payment_gateway_connection", entity_id=current.id,
+        before=before_data,
+        after={"provider": "stripe", "mode": payload.mode, "stripe_account_id": account_id,
+               "connection_method": "api_key", "webhook_configured": bool(encrypted_webhook),
+               "charges_enabled": current.charges_enabled},
+        request=request,
+    )
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Stripe account is already assigned to another company") from exc
+    return _connection_read(current, mode=payload.mode)
+
+
+@router.post("/disable")
+def disable_stripe_connection(
+    request: Request, db: DbSession, tenant: CurrentTenantAdmin,
+    mode: str = Query(default="test", pattern="^(test|live)$"),
+):
+    row = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.organization_id == tenant.organization_id,
+        PaymentGatewayConnection.provider == "stripe", PaymentGatewayConnection.mode == mode,
+    ).with_for_update())
+    if row is None or not row.is_active:
+        raise HTTPException(status_code=404, detail="No active Stripe connection to disable")
+    before = _connection_read(row, mode=mode)
+    row.is_active = False
+    row.secret_key_ciphertext = None
+    row.webhook_secret_ciphertext = None
+    row.credential_hint = None
+    record_activity(
+        db, action="payment_gateway.stripe.disabled", scope="tenant",
+        organization_id=tenant.organization_id, actor_user_id=tenant.user_id,
+        entity_type="payment_gateway_connection", entity_id=row.id,
+        before=before, after=_connection_read(row, mode=mode), request=request,
+    )
+    db.commit()
+    return _connection_read(row, mode=mode)
+
+
 @router.get("")
 def stripe_connections(db: DbSession, tenant: GatewayViewer):
-    return {"configured_modes": [m for m in ("test", "live")
+    return {"manual_setup_available": bool(settings.payment_gateway_encryption_key.strip()),
+            "configured_modes": [m for m in ("test", "live")
              if bool(getattr(settings, "stripe_connect_client_id_" + m, "")) and bool(getattr(settings, "stripe_secret_key_" + m, ""))],
             "connections": [_connection_read(_connection(db, tenant.organization_id, mode), mode=mode)
                             for mode in ("test", "live")]}
@@ -183,6 +314,10 @@ def stripe_oauth_callback(
         current.provider_account_id = account_id
         current.connected_by_user_id = row.requested_by_user_id
     current.is_active = True
+    current.connection_method = "oauth"
+    current.secret_key_ciphertext = None
+    current.webhook_secret_ciphertext = None
+    current.credential_hint = None
     current.charges_enabled = bool(account.get("charges_enabled"))
     current.payouts_enabled = bool(account.get("payouts_enabled"))
     current.details_submitted = bool(account.get("details_submitted"))
@@ -208,10 +343,16 @@ def stripe_oauth_callback(
 @router.post("/refresh")
 def refresh_stripe_connection(request: Request, db: DbSession, tenant: CurrentTenantAdmin,
                               mode: str = Query(default="test")):
-    _, secret = _credentials(mode)
     row = _connection(db, tenant.organization_id, mode)
     if row is None or not row.is_active:
         raise HTTPException(status_code=404, detail="Stripe account not connected to this company")
+    if row.connection_method == "api_key":
+        from app.services.payment_gateway_secrets import decrypt_gateway_secret
+        if not row.secret_key_ciphertext:
+            raise HTTPException(status_code=409, detail="Encrypted Stripe credentials are missing; reconnect Stripe")
+        secret = decrypt_gateway_secret(row.secret_key_ciphertext)
+    else:
+        _, secret = _credentials(mode)
     account = _stripe_request("https://api.stripe.com/v1/accounts/" + row.provider_account_id, api_key=secret)
     if account.get("id") != row.provider_account_id:
         raise HTTPException(status_code=502, detail="Stripe account verification failed")

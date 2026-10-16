@@ -1,7 +1,7 @@
 """Stripe Connect linkage. No tenant Stripe secret keys are stored."""
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -20,6 +20,12 @@ class PaymentGatewayConnection(TenantOwnedMixin, Base):
     provider: Mapped[str] = mapped_column(String(32), default="stripe", nullable=False)
     mode: Mapped[str] = mapped_column(String(8), nullable=False)  # test | live
     provider_account_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    # OAuth is preferred. Company-owned API credentials are an optional connection method.
+    connection_method: Mapped[str] = mapped_column(String(24), default="oauth", nullable=False)
+    account_label: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    secret_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    webhook_secret_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    credential_hint: Mapped[str | None] = mapped_column(String(16), nullable=True)
     charges_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     payouts_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     details_submitted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
