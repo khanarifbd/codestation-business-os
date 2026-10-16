@@ -220,7 +220,8 @@ def disable_stripe_connection(
 
 @router.get("")
 def stripe_connections(db: DbSession, tenant: GatewayViewer):
-    return {"configured_modes": [m for m in ("test", "live")
+    return {"manual_setup_available": bool(settings.payment_gateway_encryption_key.strip()),
+            "configured_modes": [m for m in ("test", "live")
              if bool(getattr(settings, "stripe_connect_client_id_" + m, "")) and bool(getattr(settings, "stripe_secret_key_" + m, ""))],
             "connections": [_connection_read(_connection(db, tenant.organization_id, mode), mode=mode)
                             for mode in ("test", "live")]}
