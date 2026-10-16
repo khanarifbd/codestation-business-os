@@ -114,6 +114,7 @@ jobs:
       - run: uv run python scripts/verify_hr_security.py
       - run: uv run python scripts/verify_hr_extended.py
       - run: uv run python scripts/verify_hr_workspace.py
+      - run: uv run python scripts/verify_hr_attendance.py
       - run: uv run python scripts/verify_capital.py
       - run: uv run python scripts/verify_accounting_loans.py
       - run: uv run python scripts/verify_accounting_multicurrency.py
