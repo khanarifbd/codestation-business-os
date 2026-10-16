@@ -33,12 +33,16 @@ export function StripeSandboxSettlementPreview({
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setSettlement(null);
-    void refresh().catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "Settlement unavailable"); })
+    void fetch(path, { cache: "no-store" })
+      .then(async response => {
+        const result = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(getApiErrorMessage(result, "Could not read Stripe settlement"));
+        if (active) setSettlement(result as Settlement);
+      })
+      .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "Settlement unavailable"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [refresh]);
+  }, [path]);
 
   async function reconcile() {
     setBusy(true); setError(null);
@@ -56,7 +60,7 @@ export function StripeSandboxSettlementPreview({
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h3 className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="size-4" />Stripe Fee & Settlement Reconciliation</h3>
-        <p className="mt-1 text-xs text-neutral-500">Verified against Stripe's actual balance transaction. No estimated processing fee.</p>
+        <p className="mt-1 text-xs text-neutral-500">Verified against Stripe&apos;s actual balance transaction. No estimated processing fee.</p>
       </div>
       <button type="button" disabled={busy || loading} onClick={() => void refresh().catch(reason => setError(reason instanceof Error ? reason.message : "Could not refresh settlement"))} className="inline-flex items-center gap-1 rounded-lg border bg-white px-3 py-2 text-xs disabled:opacity-40"><RefreshCw className="size-3.5" />Refresh</button>
     </div>
