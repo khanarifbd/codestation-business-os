@@ -48,6 +48,14 @@ class FinancialAccountUpdate(BaseModel):
     notes: str | None = None
     is_active: bool | None = None
     gateway_connection_id: str | None = None
+    payment_url: str | None = Field(default=None, max_length=1000)
+    payment_instructions: str | None = Field(default=None, max_length=5000)
+
+    @field_validator("payment_url")
+    @classmethod
+    def validate_payment_url(cls, value):
+        from app.schemas.invoice_payment import normalize_payment_url
+        return normalize_payment_url(value)
 
     @field_validator("account_type", mode="before")
     @classmethod
