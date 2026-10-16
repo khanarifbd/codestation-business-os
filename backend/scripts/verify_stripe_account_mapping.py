@@ -8,6 +8,9 @@ from uuid import uuid4
 from decimal import Decimal
 
 from fastapi import HTTPException
+from pydantic import SecretStr, ValidationError
+
+from app.api.v1.payment_gateways_stripe import StripeManualConnectionCreate
 from sqlalchemy import select
 
 from app.db.session import SessionLocal
@@ -91,7 +94,32 @@ def expect_error(status: int, fn):
         raise AssertionError(f"Expected {status} gateway mapping rejection")
 
 
+
+def restricted_merchant_key_validation() -> None:
+    # No actual API keys: confirm prefix/mode isolation before network usage.
+    for mode in ("test", "live"):
+        for prefix in ("sk", "rk"):
+            key = f"{prefix}_{mode}_" + "a" * 32
+            payload = StripeManualConnectionCreate(
+                mode=mode, secret_key=SecretStr(key),
+            )
+            assert payload.secret_key.get_secret_value() == key
+        for invalid_key in (
+            f"pk_{mode}_" + "a" * 32,
+            f"sk_{'live' if mode == 'test' else 'test'}_" + "a" * 32,
+            f"rk_{'live' if mode == 'test' else 'test'}_" + "a" * 32,
+            f"rk_{mode}_short",
+        ):
+            try:
+                StripeManualConnectionCreate(mode=mode, secret_key=SecretStr(invalid_key))
+            except ValidationError:
+                pass
+            else:
+                raise AssertionError(f"Expected restricted key/mode rejection for {mode}")
+
+
 def main() -> None:
+    restricted_merchant_key_validation()
     checkout_uses_dynamic_payment_methods()
     rejected_status(401, 409)
     rejected_status(403, 409)
