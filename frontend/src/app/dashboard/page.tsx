@@ -5,7 +5,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
+  ArrowDownLeft,
+  ArrowLeftRight,
   ArrowRight,
+  ArrowUpRight,
   BarChart3,
   CircleDollarSign,
   FileText,
@@ -302,7 +305,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <AppPage width="wide">
-        <div className="space-y-5">
+        <div className="space-y-5" role="status" aria-label="Loading dashboard">
           <div className="h-28 animate-pulse rounded-2xl bg-white" />
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
             {Array.from({ length: 6 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl bg-white" />)}
@@ -342,44 +345,35 @@ export default function DashboardPage() {
           description="A single view of operations, collections, delivery and profitability without mixing currencies."
           meta={
             <>
-              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-1">{rangeLabel} · {data.date_from} — {data.date_to}</span>
-              <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-1">Reporting currency · {company.currency}</span>
+              <span className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600">{rangeLabel} · {data.date_from} — {data.date_to}</span>
+              <span className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600">Reporting currency · {company.currency}</span>
             </>
           }
           actions={
             <>
               <select
                 value={preset}
+                aria-label="Reporting period"
                 disabled={reportLoading}
                 onChange={(event) => void changePreset(event.target.value as Preset)}
-                className="h-11 rounded-xl border border-neutral-200 bg-white px-3 text-sm font-medium outline-none transition focus:border-neutral-400 disabled:opacity-60"
+                className="h-10 min-w-36 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-700 shadow-sm outline-none transition hover:border-neutral-300 focus-visible:border-neutral-500 focus-visible:ring-2 focus-visible:ring-neutral-200 disabled:opacity-60"
               >
                 <option value="month">This month</option>
                 <option value="last_month">Last month</option>
                 <option value="quarter">This quarter</option>
                 <option value="year">This year</option>
               </select>
-              <Link prefetch={false} href="/dashboard/reports" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white transition hover:bg-neutral-800">
+              <Link prefetch={false} href="/dashboard/reports" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 focus-visible:ring-offset-2">
                 <BarChart3 className="size-4" /> Open reports
               </Link>
             </>
           }
         />
 
-        {reportLoading ? <div className="h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
+        {reportLoading ? <div role="status" aria-label="Updating dashboard reports" className="h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
         {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-        <Surface className="p-4 sm:p-5">
-          <SectionHeader title="Quick actions" description="Start the most common operational and financial workflows." />
-          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-            <WorkspaceLink href="/dashboard/orders/new" label="Create order" />
-            <WorkspaceLink href="/dashboard/accounting/money-in" label="Receive money" />
-            <WorkspaceLink href="/dashboard/accounting/money-out" label="Pay money" />
-            <WorkspaceLink href="/dashboard/accounting/transfers" label="Transfer funds" />
-          </div>
-        </Surface>
-
-        <section className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+        <section aria-label="Key business metrics" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <MetricCard label="Active clients" value={data.operations.active_clients} note="Current client base" href="/dashboard/clients" icon={Users} />
           <MetricCard label="Open orders" value={data.operations.open_orders} note="Delivery not closed" href="/dashboard/orders" icon={ReceiptText} />
           <MetricCard label="Active projects" value={data.operations.active_projects} note="Planned, active or on hold" href="/dashboard/projects" icon={FolderKanban} />
@@ -387,6 +381,16 @@ export default function DashboardPage() {
           <MetricCard label="Overdue tasks" value={data.operations.overdue_tasks} note="Past due and still open" href="/dashboard/projects" icon={AlertTriangle} attention />
           <MetricCard label="Due follow-ups" value={data.operations.due_followups} note="CRM follow-up required" href="/dashboard/crm" icon={TrendingUp} attention />
         </section>
+
+        <Surface className="p-4 sm:p-5">
+          <SectionHeader title="Quick actions" description="Start the most common operational and financial workflows." />
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <WorkspaceLink href="/dashboard/orders/new" label="Create order" icon={ReceiptText} />
+            <WorkspaceLink href="/dashboard/accounting/money-in" label="Receive money" icon={ArrowDownLeft} />
+            <WorkspaceLink href="/dashboard/accounting/money-out" label="Pay money" icon={ArrowUpRight} />
+            <WorkspaceLink href="/dashboard/accounting/transfers" label="Transfer funds" icon={ArrowLeftRight} />
+          </div>
+        </Surface>
 
         {hasPulse ? (
           <Surface className="p-5 sm:p-6">
@@ -566,7 +570,26 @@ export default function DashboardPage() {
 }
 
 function MetricCard({ label, value, note, href, icon: Icon, attention = false }: { label: string; value: number; note: string; href: string; icon: LucideIcon; attention?: boolean }) {
-  return <Link prefetch={false} href={href} className="group min-w-0 rounded-2xl border border-neutral-200/90 bg-white p-3.5 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-md sm:p-4"><div className="flex items-start justify-between gap-2"><p className="min-w-0 text-xs leading-4 text-neutral-500 sm:text-sm">{label}</p><Icon className={`size-4 shrink-0 ${attention && value > 0 ? "text-amber-500" : "text-neutral-300"}`} /></div><p className="mt-3 text-2xl font-semibold tracking-tight sm:mt-4 sm:text-3xl">{value}</p><div className="mt-2 flex items-end justify-between gap-2"><p className="min-w-0 text-[11px] leading-4 text-neutral-400 sm:text-xs">{note}</p><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></div></Link>;
+  const needsAttention = attention && value > 0;
+  return (
+    <Link
+      prefetch={false}
+      href={href}
+      className="group flex min-w-0 flex-col justify-between rounded-xl border border-neutral-200 bg-white p-4 shadow-[0_1px_3px_rgba(15,23,42,0.035)] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-[0_8px_24px_rgba(15,23,42,0.07)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 motion-reduce:transform-none sm:min-h-40 sm:p-5"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 pt-1 text-xs font-medium leading-5 text-neutral-500 sm:text-[13px]">{label}</p>
+        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${needsAttention ? "bg-amber-50 text-amber-700" : "bg-neutral-100 text-neutral-600"}`}>
+          <Icon className="size-[18px]" aria-hidden="true" />
+        </span>
+      </div>
+      <p className="mt-3 text-[28px] font-semibold leading-none tracking-[-0.035em] tabular-nums text-neutral-950 sm:text-[32px]">{value.toLocaleString()}</p>
+      <div className="mt-4 flex items-end justify-between gap-2 border-t border-neutral-100 pt-3">
+        <p className="min-w-0 text-[11px] leading-4 text-neutral-500 sm:text-xs">{note}</p>
+        <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" />
+      </div>
+    </Link>
+  );
 }
 
 function PulseCard({ title, note, href, icon: Icon, children }: { title: string; note: string; href: string; icon: LucideIcon; children: React.ReactNode }) {
@@ -603,8 +626,20 @@ function AlertRow({ label, value, href }: { label: string; value: number; href: 
   return <Link prefetch={false} href={href} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-3 transition hover:bg-neutral-50 sm:px-4"><div className="flex min-w-0 items-center gap-2.5 sm:gap-3"><AlertTriangle className={`size-4 shrink-0 ${value ? "text-amber-500" : "text-neutral-300"}`} /><span className="min-w-0 text-sm font-medium">{label}</span></div><div className="flex shrink-0 items-center gap-2"><span className="text-sm font-semibold">{value}</span><ArrowRight className="size-3.5 text-neutral-300" /></div></Link>;
 }
 
-function WorkspaceLink({ href, label }: { href: string; label: string }) {
-  return <Link prefetch={false} href={href} className="group flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5 text-sm font-medium transition hover:bg-neutral-100"><span className="min-w-0 leading-4">{label}</span><ArrowRight className="size-3.5 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5" /></Link>;
+function WorkspaceLink({ href, label, icon: Icon }: { href: string; label: string; icon: LucideIcon }) {
+  return (
+    <Link
+      prefetch={false}
+      href={href}
+      className="group flex min-h-14 min-w-0 items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50/60 px-3 py-2.5 text-sm font-medium text-neutral-700 transition-[border-color,background-color,box-shadow] hover:border-neutral-300 hover:bg-white hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 sm:px-4"
+    >
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white text-neutral-600 shadow-[0_0_0_1px_rgba(0,0,0,0.06)]">
+        <Icon className="size-[18px]" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1 leading-5">{label}</span>
+      <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" />
+    </Link>
+  );
 }
 
 function SectionHeading({ title, note, href, icon: Icon }: { title: string; note: string; href: string; icon: LucideIcon }) {

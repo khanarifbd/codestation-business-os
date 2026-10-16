@@ -214,7 +214,7 @@ function Navigation({
                 aria-expanded={financeOpen}
                 onClick={() => setFinanceOpen((value) => !value)}
                 className={cn(
-                  "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition",
+                  "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
                   financeActive
                     ? "bg-neutral-950 text-white shadow-sm"
                     : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950",
@@ -245,7 +245,7 @@ function Navigation({
                         onClick={onNavigate}
                         aria-current={childActive ? "page" : undefined}
                         className={cn(
-                          "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition",
+                          "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[12.5px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
                           childActive
                             ? "bg-neutral-100 font-semibold text-neutral-950"
                             : "text-neutral-500 hover:bg-neutral-50 hover:text-neutral-900",
@@ -272,7 +272,7 @@ function Navigation({
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition",
+              "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
               active
                 ? "bg-neutral-950 text-white shadow-sm"
                 : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950",
@@ -308,7 +308,7 @@ function ProfileLink({
       href="/dashboard/profile"
       onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-xl border p-2.5 transition",
+        "flex items-center gap-3 rounded-xl border p-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
         active
           ? "border-neutral-950 bg-neutral-950 text-white"
           : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
@@ -370,7 +370,7 @@ function MobileBottomNavigation({
               href={href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex min-w-0 flex-col items-center justify-center gap-1 px-1 py-1.5 text-[10px] font-semibold transition",
+                "flex min-w-0 flex-col items-center justify-center gap-1 px-1 py-1.5 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-inset",
                 active ? "text-neutral-950" : "text-neutral-400 hover:text-neutral-700",
               )}
             >
@@ -392,7 +392,7 @@ function MobileBottomNavigation({
           aria-expanded={drawerOpen}
           onClick={onOpenDrawer}
           className={cn(
-            "flex min-w-0 flex-col items-center justify-center gap-1 px-1 py-1.5 text-[10px] font-semibold transition",
+            "flex min-w-0 flex-col items-center justify-center gap-1 px-1 py-1.5 text-[10px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-inset",
             moreActive ? "text-neutral-950" : "text-neutral-400 hover:text-neutral-700",
           )}
         >
@@ -564,7 +564,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           aria-label="Open app drawer"
           aria-expanded={mobileOpen}
           onClick={() => setMobileOpen(true)}
-          className="flex size-10 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+          className="flex size-10 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400"
         >
           <Menu className="size-4.5" />
         </button>
