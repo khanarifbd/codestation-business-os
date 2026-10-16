@@ -104,8 +104,8 @@ def _connection_read(row: PaymentGatewayConnection | None, *, mode: str) -> dict
         "webhook_configured": bool(row and row.is_active and row.webhook_secret_ciphertext),
         "webhook_url": (
             settings.public_api_url.rstrip("/") +
-            f"/api/v1/finance/stripe-checkout/webhook/{row.id}"
-        ) if row and row.is_active and mode == "test" and (settings.environment.lower().strip() not in {"production", "staging"} or settings.public_api_url.startswith("https://")) else None,
+            f"/api/v1/finance/{'stripe-checkout' if mode == 'test' else 'stripe-lifecycle'}/webhook/{row.id}"
+        ) if row and row.is_active and (settings.environment.lower().strip() not in {"production", "staging"} or settings.public_api_url.startswith("https://")) else None,
         "checkout_available": False,  # Never pretend payments are live before webhook reconciliation exists.
     }
 

@@ -115,8 +115,6 @@ def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer
 
 @router.post("/webhook-secret")
 def save_webhook_secret(payload: WebhookSecretRequest, request: Request, db: DbSession, tenant: CurrentTenantAdmin):
-    if payload.mode != "test":
-        raise HTTPException(status_code=409, detail="Only Stripe Sandbox webhook setup is available at this stage")
     raw = payload.signing_secret.get_secret_value().strip()
     if not raw.startswith("whsec_") or len(raw) < 20 or len(raw) > 256:
         raise HTTPException(status_code=400, detail="Enter a valid Stripe webhook signing secret (whsec_...)")
@@ -127,7 +125,7 @@ def save_webhook_secret(payload: WebhookSecretRequest, request: Request, db: DbS
         PaymentGatewayConnection.is_active.is_(True),
     ).with_for_update())
     if connection is None:
-        raise HTTPException(status_code=404, detail="No active Stripe test account found")
+        raise HTTPException(status_code=404, detail="No active Stripe account found")
     before = bool(connection.webhook_secret_ciphertext)
     connection.webhook_secret_ciphertext = encrypt_gateway_secret(raw)
     record_activity(

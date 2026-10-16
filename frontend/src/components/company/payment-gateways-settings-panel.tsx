@@ -5,6 +5,7 @@ import { CreditCard, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unplug } fro
 import Link from "next/link";
 import { StripeManualConnectForm } from "@/components/company/stripe-manual-connect-form";
 import { StripeWebhookSetup } from "@/components/company/stripe-webhook-setup";
+import { StripeLiveLifecycleReview } from "@/components/company/stripe-live-lifecycle-review";
 
 type StripeConnection = {
   provider: "stripe"; mode: "test" | "live"; connected: boolean;
@@ -104,7 +105,8 @@ export function PaymentGatewaysSettingsPanel() {
           </div>
           <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => void refresh(mode)} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium disabled:opacity-50"><RefreshCw className="size-4" />Refresh status</button><button type="button" onClick={() => void disconnect(mode)} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50"><Unplug className="size-4" />Disable</button></div>
           <StripeManualConnectForm mode={mode} connected enabled={Boolean(data?.manual_setup_available)} onConnected={async () => { await load(); setNotice("Company Stripe connection verified and stored securely. Checkout is not enabled yet."); }} />
-          {mode === "test" && row.connection_method === "api_key" ? <StripeWebhookSetup url={row.webhook_url ?? null} configured={Boolean(row.webhook_configured)} onSaved={load}/> : null}
+          {row.connection_method === "api_key" ? <StripeWebhookSetup key={mode} mode={mode} url={row.webhook_url ?? null} configured={Boolean(row.webhook_configured)} onSaved={load}/> : null}
+          {mode === "live" ? <StripeLiveLifecycleReview /> : null}
         </> : <>
           <p className="mt-3 text-sm text-neutral-500">Authorize this workspace to use its Stripe account. Only a company admin can initiate the connection.</p>
           <StripeManualConnectForm mode={mode} connected={false} enabled={Boolean(data?.manual_setup_available)} onConnected={async () => { await load(); setNotice("Company Stripe connection verified and stored securely. Checkout is not enabled yet."); }} />
