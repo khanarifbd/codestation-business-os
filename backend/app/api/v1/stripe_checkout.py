@@ -139,6 +139,8 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
         raise HTTPException(status_code=409, detail="Connect your Stripe Test API Key in Company Settings first")
     if not connection.charges_enabled or not connection.webhook_secret_ciphertext:
         raise HTTPException(status_code=409, detail="Enable Stripe charges and save a Webhook Signing Secret first")
+    if settings.environment.lower().strip() in {"production", "staging"} and not settings.public_api_url.startswith("https://"):
+        raise HTTPException(status_code=503, detail="Platform webhook public HTTPS API URL is not configured")
     now = datetime.now(timezone.utc)
     existing = db.scalar(select(StripeCheckoutAttempt).where(
         StripeCheckoutAttempt.organization_id == tenant.organization_id,
