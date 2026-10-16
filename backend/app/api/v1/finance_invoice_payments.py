@@ -15,6 +15,7 @@ from app.schemas.invoice_payment import (
 )
 from app.services.activity_log import record_activity
 from app.services.invoice_payment_instructions import apply_invoice_payment_instructions
+from app.services.invoice_stripe_payment_link import effective_invoice_payment_url
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
@@ -43,7 +44,7 @@ def _destination_read(account: FinancialAccount) -> PaymentDestinationRead:
     )
 
 
-def _invoice_payment_read(invoice: Invoice) -> InvoicePaymentInstructionsRead:
+def _invoice_payment_read(db, invoice: Invoice) -> InvoicePaymentInstructionsRead:
     return InvoicePaymentInstructionsRead(
         invoice_id=invoice.id,
         invoice_number=invoice.invoice_number,
@@ -56,7 +57,7 @@ def _invoice_payment_read(invoice: Invoice) -> InvoicePaymentInstructionsRead:
         payment_account_holder=invoice.payment_account_holder_snapshot,
         payment_account_reference=invoice.payment_account_reference_snapshot,
         payment_currency=invoice.payment_currency_snapshot,
-        payment_url=invoice.payment_url_snapshot,
+        payment_url=effective_invoice_payment_url(db, invoice),
         payment_instructions=invoice.payment_instructions_snapshot,
         locked=invoice.status != "draft",
     )
@@ -132,7 +133,7 @@ def get_invoice_payment_instructions(invoice_id: str, db: DbSession, tenant: Fin
     )
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
-    return _invoice_payment_read(invoice)
+    return _invoice_payment_read(db, invoice)
 
 
 @router.patch("/invoices/{invoice_id}/payment-instructions", response_model=InvoicePaymentInstructionsRead)
@@ -184,4 +185,4 @@ def update_invoice_payment_instructions(
     )
     db.commit()
     db.refresh(invoice)
-    return _invoice_payment_read(invoice)
+    return _invoice_payment_read(db, invoice)
