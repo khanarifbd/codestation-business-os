@@ -127,20 +127,6 @@ def _verify_live_checkout_and_post(db: DbSession, connection: PaymentGatewayConn
     if not isinstance(pi_id, str) or not pi_id.startswith("pi_"):
         raise HTTPException(status_code=409, detail="Live PaymentIntent missing")
 
-    invoice = db.scalar(select(Invoice).where(
-        Invoice.organization_id == connection.organization_id,
-        Invoice.id == attempt.invoice_id,
-    ))
-    if invoice is None or invoice.status not in {"sent", "partially_paid"}:
-        if attempt.status == "live_paid" and existing is None:
-            return "review_required", attempt.id
-        # The same invoice may have been paid outside this Checkout before
-        # Stripe delivered its event. Keep the event in the review queue;
-        # never book a duplicate invoice receipt.
-        attempt.status = "live_paid_unapplied"
-        attempt.stripe_payment_intent_id = pi_id
-        attempt.completed_at = datetime.now(timezone.utc)
-        return "review_required", attempt.id
     existing = db.scalar(select(StripeSettlementSnapshot).where(
         StripeSettlementSnapshot.organization_id == connection.organization_id,
         StripeSettlementSnapshot.attempt_id == attempt.id,
@@ -154,6 +140,18 @@ def _verify_live_checkout_and_post(db: DbSession, connection: PaymentGatewayConn
         ))
         if posted:
             return "live_paid_posted", attempt.id
+
+    invoice = db.scalar(select(Invoice).where(
+        Invoice.organization_id == connection.organization_id,
+        Invoice.id == attempt.invoice_id,
+    ))
+    if invoice is None or invoice.status not in {"sent", "partially_paid"}:
+        # Paid Stripe funds without an eligible Invoice need manual allocation
+        # or verified refund. Do not post duplicate customer receipts.
+        attempt.status = "live_paid_unapplied"
+        attempt.stripe_payment_intent_id = pi_id
+        attempt.completed_at = datetime.now(timezone.utc)
+        return "review_required", attempt.id
 
     if not connection.secret_key_ciphertext or connection.connection_method != "api_key":
         raise HTTPException(status_code=409, detail="Live Stripe API key is required")
