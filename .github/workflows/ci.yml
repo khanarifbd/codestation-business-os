@@ -83,6 +83,7 @@ jobs:
       - run: uv run python scripts/verify_stripe_manual_credentials.py
       - run: uv run python scripts/verify_stripe_sandbox_checkout.py
       - run: uv run python scripts/verify_stripe_account_mapping.py
+      - run: uv run python scripts/verify_stripe_settlement.py
       - run: uv run python scripts/verify_finance_performance.py
       - run: uv run python scripts/verify_transfers.py
       - run: uv run python scripts/verify_expenses.py

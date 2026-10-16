@@ -56,6 +56,7 @@ from app.models import (  # noqa: F401
     PaymentGatewayConnection,
     StripeCheckoutAttempt,
     StripeWebhookEvent,
+    StripeSettlementSnapshot,
     PerformanceReview,
     PostingIdempotency,
     Project,
