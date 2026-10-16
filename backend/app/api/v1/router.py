@@ -66,6 +66,7 @@ from app.api.v1.passkeys import profile_router as passkey_profile_router, public
 from app.api.v1.payment_gateways_stripe import router as payment_gateways_stripe_router
 from app.api.v1.stripe_checkout import router as stripe_checkout_router
 from app.api.v1.stripe_settlement import router as stripe_settlement_router
+from app.api.v1.stripe_payouts import router as stripe_payouts_router
 from app.api.v1.payables import router as payables_router
 from app.api.v1.payroll import router as payroll_router
 from app.api.v1.phase4_read_fast import router as phase4_read_fast_router
@@ -323,6 +324,7 @@ api_router.include_router(finance_invoice_payments_router)
 api_router.include_router(payment_gateways_stripe_router)
 api_router.include_router(stripe_checkout_router)
 api_router.include_router(stripe_settlement_router)
+api_router.include_router(stripe_payouts_router)
 api_router.include_router(finance_pagination_router)
 api_router.include_router(finance_transfers_router)
 api_router.include_router(finance_expenses_router)
