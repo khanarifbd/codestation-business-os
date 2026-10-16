@@ -119,6 +119,18 @@ def main():
             status="open", created_by_user_id=user.id,
         )
         db.add(attempt);db.flush()
+        from app.api.v1 import stripe_checkout
+        # Returning from Stripe never marks the invoice paid.
+        assert stripe_checkout.public_checkout_return_status(session_id, db) == {
+            "mode": "live", "status": "processing",
+        }
+        from fastapi import HTTPException
+        try:
+            stripe_checkout.public_checkout_return_status("cs_live_unknownsession0123456789", db)
+        except HTTPException as exc:
+            assert exc.status_code == 404
+        else:
+            raise AssertionError("Unknown Checkout Session should not leak invoice data")
 
         checkout_event = {
             "id": "evt_"+uuid4().hex, "type": "checkout.session.completed",
@@ -145,6 +157,9 @@ def main():
                 connection.id,make_request(checkout_event),db))
             assert result["result"] == "live_paid_posted", result
             assert invoice.status == "paid" and Decimal(invoice.balance_due) == 0
+            assert stripe_checkout.public_checkout_return_status(session_id, db) == {
+                "mode": "live", "status": "posted",
+            }
             assert _account_balance(db,account) == Decimal("9.41")
             snapshot=db.scalar(select(StripeSettlementSnapshot).where(
                 StripeSettlementSnapshot.organization_id == org.id,
@@ -194,6 +209,9 @@ def main():
                     connection.id,make_request(refund_event),db))
                 assert done["result"] == "full_payment_reversed", done
             assert payment.status == "reversed"
+            assert stripe_checkout.public_checkout_return_status(session_id, db) == {
+                "mode": "live", "status": "reversed",
+            }
             assert invoice.status == "sent"
             assert Decimal(invoice.balance_due) == Decimal("10")
             assert _account_balance(db,account) == Decimal("-0.59")

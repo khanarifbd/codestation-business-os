@@ -76,6 +76,52 @@ def _attempt_json(row: StripeCheckoutAttempt) -> dict:
     }
 
 
+@router.get("/return-status/{session_id}", include_in_schema=False)
+def public_checkout_return_status(session_id: str, db: DbSession):
+    """Read-only receipt status for an opaque Stripe Session returned to the browser.
+
+    A return redirect cannot verify a charge. Only a committed, provider-verified
+    Stripe Accounting Posting counts as a paid LIVE invoice. Never return PII,
+    invoice identifiers, amounts, gateway IDs, or accounting metadata.
+    """
+    if not isinstance(session_id, str) or len(session_id) > 120 or not session_id.startswith(("cs_live_", "cs_test_")):
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    attempt = db.scalar(select(StripeCheckoutAttempt).where(
+        StripeCheckoutAttempt.stripe_session_id == session_id,
+    ))
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    if attempt.mode == "test":
+        return {
+            "mode": "test",
+            "status": "sandbox_paid" if attempt.status == "sandbox_paid" else "pending",
+        }
+    if attempt.mode != "live":
+        raise HTTPException(status_code=404, detail="Checkout session not found")
+    if attempt.status == "live_paid_unapplied":
+        return {"mode": "live", "status": "review_required"}
+    from app.models.stripe_settlement import StripeSettlementSnapshot
+    from app.models.stripe_accounting import StripeAccountingPosting
+    payment_id = db.scalar(
+        select(StripeAccountingPosting.payment_id)
+        .join(StripeSettlementSnapshot, StripeSettlementSnapshot.id == StripeAccountingPosting.snapshot_id)
+        .where(
+            StripeSettlementSnapshot.organization_id == attempt.organization_id,
+            StripeSettlementSnapshot.attempt_id == attempt.id,
+            StripeAccountingPosting.organization_id == attempt.organization_id,
+        )
+        .limit(1)
+    )
+    if payment_id:
+        from app.models.finance import Payment
+        payment_status = db.scalar(select(Payment.status).where(
+            Payment.organization_id == attempt.organization_id,
+            Payment.id == payment_id,
+        ))
+        return {"mode": "live", "status": "reversed" if payment_status == "reversed" else "posted"}
+    return {"mode": "live", "status": "processing"}
+
+
 @router.get("/invoices/{invoice_id}")
 def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer):
     invoice = db.scalar(select(Invoice).where(
