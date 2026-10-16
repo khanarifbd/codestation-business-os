@@ -70,6 +70,8 @@ def _read(db: DbSession, account: FinancialAccount) -> FinancialAccountRead:
         account_holder_name=account.account_holder_name,
         account_reference=account.account_reference,
         gateway_connection_id=account.gateway_connection_id,
+        payment_url=account.payment_url,
+        payment_instructions=account.payment_instructions,
         currency=account.currency,
         opening_balance=account.opening_balance,
         current_balance=_balance(db, account),
