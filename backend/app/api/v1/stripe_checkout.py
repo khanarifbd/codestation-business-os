@@ -79,7 +79,7 @@ def _attempt_json(row: StripeCheckoutAttempt) -> dict:
 @router.get("/invoices/{invoice_id}")
 def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer):
     invoice = db.scalar(select(Invoice).where(
-        Invoice.organization_id == organization_id, Invoice.id == invoice_id,
+        Invoice.organization_id == tenant.organization_id, Invoice.id == invoice_id,
     ))
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
