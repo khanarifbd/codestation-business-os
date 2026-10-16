@@ -42,6 +42,7 @@ from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.journal_reversal import reverse_source_journal
 from app.services.invoice_payment_instructions import apply_invoice_payment_instructions
+from app.services.payment_gateway_mapping import validate_gateway_mapping
 from app.services.order_commercial import staged_billing_enabled
 from app.services.sales import calculate_line, calculate_totals
 from app.services.sales_catalog import resolve_sales_line
@@ -95,6 +96,7 @@ def _account_read(db: DbSession, account: FinancialAccount) -> FinancialAccountR
         provider_name=account.provider_name,
         account_holder_name=account.account_holder_name,
         account_reference=account.account_reference,
+        gateway_connection_id=account.gateway_connection_id,
         currency=account.currency,
         opening_balance=account.opening_balance,
         current_balance=_account_balance(db, account),
@@ -129,6 +131,7 @@ def _account_reads(db: DbSession, organization_id: str) -> list[FinancialAccount
             provider_name=account.provider_name,
             account_holder_name=account.account_holder_name,
             account_reference=account.account_reference,
+            gateway_connection_id=account.gateway_connection_id,
             currency=account.currency,
             opening_balance=account.opening_balance,
             current_balance=_money(Decimal(account.opening_balance) + Decimal(net or 0)),
@@ -609,6 +612,7 @@ def create_account(payload: FinancialAccountCreate, request: Request, db: DbSess
         provider_name=_clean(payload.provider_name),
         account_holder_name=_clean(payload.account_holder_name),
         account_reference=_clean(payload.account_reference),
+        gateway_connection_id=validate_gateway_mapping(db, organization_id=tenant.organization_id, gateway_connection_id=payload.gateway_connection_id, account_type=payload.account_type, currency=payload.currency),
         currency=payload.currency.upper(),
         opening_balance=_money(payload.opening_balance),
         notes=payload.notes,
