@@ -91,6 +91,7 @@ def _stripe_request(url: str, *, api_key: str, form: dict[str, str] | None = Non
 
 def _connection_read(row: PaymentGatewayConnection | None, *, mode: str) -> dict:
     return {
+        "id": row.id if row and row.is_active else None,
         "provider": "stripe", "mode": mode,
         "connected": bool(row and row.is_active),
         "stripe_account_id": row.provider_account_id if row and row.is_active else None,
