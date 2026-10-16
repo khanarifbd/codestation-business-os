@@ -22,6 +22,7 @@ class FinancialAccount(TenantOwnedMixin, Base):
     provider_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     account_holder_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
     account_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    gateway_connection_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("payment_gateway_connections.id", ondelete="RESTRICT"), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     opening_balance: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
