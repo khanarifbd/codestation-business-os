@@ -71,6 +71,8 @@ class FinancialAccountRead(BaseModel):
     account_holder_name: str | None
     account_reference: str | None
     gateway_connection_id: str | None = None
+    payment_url: str | None = None
+    payment_instructions: str | None = None
     currency: str
     opening_balance: Decimal
     current_balance: Decimal
