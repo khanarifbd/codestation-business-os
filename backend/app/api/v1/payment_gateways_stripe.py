@@ -101,6 +101,10 @@ def _connection_read(row: PaymentGatewayConnection | None, *, mode: str) -> dict
         "account_label": row.account_label if row and row.is_active else None,
         "credential_hint": row.credential_hint if row and row.is_active else None,
         "webhook_configured": bool(row and row.is_active and row.webhook_secret_ciphertext),
+        "webhook_url": (
+            settings.public_api_url.rstrip("/") +
+            f"/api/v1/finance/stripe-checkout/webhook/{row.id}"
+        ) if row and row.is_active and mode == "test" else None,
         "checkout_available": False,  # Never pretend payments are live before webhook reconciliation exists.
     }
 
