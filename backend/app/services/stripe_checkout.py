@@ -104,7 +104,6 @@ def stripe_checkout_request(
     cancel_url = app_url + "/payments/stripe/return?result=cancelled"
     form: dict[str, str] = {
         "mode": "payment",
-        "payment_method_types[0]": "card",
         "client_reference_id": attempt_id,
         "line_items[0][price_data][currency]": currency.lower(),
         "line_items[0][price_data][unit_amount]": str(amount_minor),
