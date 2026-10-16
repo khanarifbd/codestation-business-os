@@ -43,8 +43,11 @@ class StripeManualConnectionCreate(BaseModel):
     @model_validator(mode="after")
     def validate_keys(self):
         secret = self.secret_key.get_secret_value().strip()
-        if not secret.startswith("sk_" + self.mode + "_") or len(secret) < 24 or len(secret) > 256:
-            raise ValueError("Use the Stripe secret key matching the selected Test/Live mode")
+        # Organization-owned Stripe keys may be standard (sk_*) or restricted
+        # (rk_*). Both are server-side secrets; never confuse them with pk_*.
+        valid_prefixes = ("sk_" + self.mode + "_", "rk_" + self.mode + "_")
+        if not secret.startswith(valid_prefixes) or not (24 <= len(secret) <= 256):
+            raise ValueError("Use a Stripe secret or restricted API key matching the selected Test/Live mode")
         if self.webhook_secret is not None:
             webhook = self.webhook_secret.get_secret_value().strip()
             if webhook and (not webhook.startswith("whsec_") or len(webhook) < 20 or len(webhook) > 256):
