@@ -3,6 +3,7 @@ import io
 import json
 from unittest.mock import patch
 from urllib.error import HTTPError
+from urllib.parse import parse_qs
 from uuid import uuid4
 from decimal import Decimal
 
@@ -16,6 +17,47 @@ from app.models.membership import Membership
 from app.models.payment_gateways import PaymentGatewayConnection
 from app.services.payment_gateway_mapping import validate_gateway_mapping
 from app.services.stripe_checkout import stripe_checkout_request
+
+
+def checkout_uses_dynamic_payment_methods() -> None:
+    """Stripe API 2026-09-30.endive rejects legacy payment_method_types."""
+    attempt_id = str(uuid4())
+
+    def fake_stripe(request, timeout=15):
+        assert request.full_url == "https://api.stripe.com/v1/checkout/sessions"
+        assert request.get_method() == "POST"
+        form = parse_qs(request.data.decode())
+        assert "payment_method_types[0]" not in form
+        assert not any(key.startswith("payment_method_types") for key in form)
+        assert form["mode"] == ["payment"]
+        assert form["line_items[0][price_data][currency]"] == ["usd"]
+        assert form["line_items[0][price_data][unit_amount]"] == ["1000"]
+        assert form["client_reference_id"] == [attempt_id]
+        assert form["metadata[checkout_attempt_id]"] == [attempt_id]
+        assert form["success_url"][0].startswith("https://os.example.com/payments/stripe/return")
+        response = {
+            "id": "cs_test_CI_checkout_dynamic_methods",
+            "url": "https://checkout.stripe.com/c/pay/ci-dynamic-test",
+            "livemode": False,
+            "currency": "usd",
+            "amount_total": 1000,
+            "client_reference_id": attempt_id,
+            "payment_method_types": ["card"],
+        }
+        return io.BytesIO(json.dumps(response).encode())
+
+    with patch("app.services.stripe_checkout.urlopen", fake_stripe):
+        result = stripe_checkout_request(
+            api_key="sk_test_CI_dummy_not_real",
+            attempt_id=attempt_id,
+            invoice_number="INV-00017",
+            currency="USD",
+            amount_minor=1000,
+            client_email=None,
+            public_app_url="https://os.example.com",
+        )
+    # Response may still contain payment_method_types as read-only data.
+    assert result["payment_method_types"] == ["card"]
 
 
 def rejected_status(code: int, expected: int, param=None):
@@ -50,6 +92,7 @@ def expect_error(status: int, fn):
 
 
 def main() -> None:
+    checkout_uses_dynamic_payment_methods()
     rejected_status(401, 409)
     rejected_status(403, 409)
     rejected_status(400, 422, "customer_email")
