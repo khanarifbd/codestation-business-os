@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, CreditCard, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { getApiErrorMessage } from "@/lib/api-error";
 
 type Attempt = {
   id: string;
@@ -39,7 +40,7 @@ export function InvoiceStripeSandboxPanel({
   const reload = useCallback(async () => {
     const response = await fetch(`/api/finance/stripe-checkout/invoices/${encodeURIComponent(invoiceId)}`, { cache: "no-store" });
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(typeof body?.detail === "string" ? body.detail : "Could not load Stripe test sessions");
+    if (!response.ok) throw new Error(getApiErrorMessage(body, "Could not load Stripe test sessions"));
     setData(body as SandboxStatus);
   }, [invoiceId]);
 
@@ -57,7 +58,7 @@ export function InvoiceStripeSandboxPanel({
     try {
       const response = await fetch(`/api/finance/stripe-checkout/invoices/${encodeURIComponent(invoiceId)}`, { method: "POST" });
       const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(typeof body?.detail === "string" ? body.detail : "Could not create Stripe Checkout");
+      if (!response.ok) throw new Error(getApiErrorMessage(body, "Could not create Stripe Checkout"));
       await reload();
       const attempt = body as Attempt;
       if (attempt.checkout_url) {
