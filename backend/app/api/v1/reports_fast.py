@@ -28,6 +28,7 @@ from app.models.payroll import PayrollPeriod, PayrollRun
 from app.models.projects import Project, ProjectTask
 from app.schemas.reports import (
     ReportClientRow,
+    DashboardDetails,
     ReportFinancialRow,
     ReportOperationalSummary,
     ReportProjectRow,
@@ -481,6 +482,26 @@ def _client_rows_fast(
             )
         )
     return rows
+
+
+@router.get("/dashboard-details", response_model=DashboardDetails)
+def reports_dashboard_details(
+    db: DbSession,
+    tenant: ReportsViewer,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> DashboardDetails:
+    """Load existing dashboard details without delaying initial report delivery.
+
+    The canonical reporting queries enforce organization scoping and preserve
+    separate amounts for each currency.
+    """
+    start, end = _period(date_from, date_to, tenant.organization.timezone)
+    return DashboardDetails(
+        accounts=_account_balances(db, tenant.organization_id, None),
+        projects=_project_rows_fast(db, tenant.organization_id, start, end, None, None, None),
+        clients=_client_rows_fast(db, tenant.organization_id, start, end, None, None),
+    )
 
 
 @router.get("/dashboard", response_model=ReportsOverview)

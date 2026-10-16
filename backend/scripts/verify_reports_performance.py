@@ -10,12 +10,13 @@ from app.api.v1.dashboard_pulse import (
     people_pulse,
     project_pulse,
 )
-from app.api.v1.reports import _financials, _operations, _trend
+from app.api.v1.reports import _account_balances, _financials, _operations, _trend
 from app.api.v1.reports_fast import (
     _client_rows_fast,
     _financials_and_trend_fast,
     _operations_fast,
     _project_rows_fast,
+    reports_dashboard_details,
     reports_dashboard_fast,
 )
 from app.db.session import SessionLocal, engine
@@ -132,6 +133,24 @@ def main() -> None:
             )
         if dashboard_report.accounts or dashboard_report.projects or dashboard_report.clients:
             raise AssertionError("dashboard report must not materialize unused detail collections")
+
+        details, details_queries = count_selects(
+            lambda: reports_dashboard_details(db, tenant, date_from=start, date_to=end)
+        )
+        if details_queries > 9:
+            raise AssertionError(
+                f"dashboard details query regression: expected <=9 SELECTs, got {details_queries}"
+            )
+        if _dump_rows(details.accounts) != _dump_rows(_account_balances(db, organization.id, None)):
+            raise AssertionError("dashboard account balances differ from canonical reports")
+        if _dump_rows(details.projects) != _dump_rows(
+            _project_rows_fast(db, organization.id, start, end, None, None, None)
+        ):
+            raise AssertionError("dashboard project economics differ from canonical reports")
+        if _dump_rows(details.clients) != _dump_rows(
+            _client_rows_fast(db, organization.id, start, end, None, None)
+        ):
+            raise AssertionError("dashboard client economics differ from canonical reports")
 
         _, combined_pulse_queries = count_selects(lambda: dashboard_pulse_overview(db, tenant))
         if combined_pulse_queries > 5:

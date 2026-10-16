@@ -69,6 +69,14 @@ class ReportClientRow(BaseModel):
     margin_percent: Decimal | None
 
 
+class DashboardDetails(BaseModel):
+    """Read-only, tenant-scoped details loaded after the dashboard summary."""
+
+    accounts: list[ReportAccountBalance]
+    projects: list[ReportProjectRow]
+    clients: list[ReportClientRow]
+
+
 class ReportsOverview(BaseModel):
     date_from: date
     date_to: date

@@ -95,6 +95,12 @@ type Overview = {
   clients: ClientProfitRow[];
 };
 
+type DashboardDetails = {
+  accounts: AccountRow[];
+  projects: ProjectProfitRow[];
+  clients: ClientProfitRow[];
+};
+
 type CurrencyValue = {
   currency: string;
   amount: string | number;
@@ -187,6 +193,9 @@ export default function DashboardPage() {
   const router = useRouter();
   const { tenant } = useDashboardSession();
   const [data, setData] = useState<Overview | null>(null);
+  const [details, setDetails] = useState<DashboardDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState(false);
   const [orderPulse, setOrderPulse] = useState<OrderPulse | null>(null);
   const [projectPulse, setProjectPulse] = useState<ProjectPulse | null>(null);
   const [crmPulse, setCrmPulse] = useState<CrmPulse | null>(null);
@@ -244,10 +253,42 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [tenant]);
 
+  const activeOrganizationId = tenant?.organization.id;
+  const periodStart = data?.date_from;
+  const periodEnd = data?.date_to;
+
+  useEffect(() => {
+    if (!activeOrganizationId || !periodStart || !periodEnd) return;
+    const controller = new AbortController();
+    setDetails(null);
+    setDetailsLoading(true);
+    setDetailsError(false);
+    void (async () => {
+      try {
+        const params = new URLSearchParams({ date_from: periodStart, date_to: periodEnd });
+        const response = await fetch(`/api/reports/dashboard-details?${params}`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (response.status === 401) {
+          if (!controller.signal.aborted) router.replace("/login");
+          return;
+        }
+        if (!response.ok) throw new Error("Dashboard details unavailable");
+        const payload = (await response.json()) as DashboardDetails;
+        if (!controller.signal.aborted) setDetails(payload);
+      } catch {
+        if (!controller.signal.aborted) setDetailsError(true);
+      } finally {
+        if (!controller.signal.aborted) setDetailsLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [activeOrganizationId, periodStart, periodEnd, router]);
+
   async function changePreset(next: Preset) {
     if (next === preset) return;
     const range = presetRange(next);
-    setPreset(next);
     setReportLoading(true);
     setError(null);
     const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
@@ -259,6 +300,7 @@ export default function DashboardPage() {
       }
       if (!response.ok) throw new Error("Unable to load dashboard metrics");
       setData((await response.json()) as Overview);
+      setPreset(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load dashboard metrics");
     } finally {
@@ -520,10 +562,10 @@ export default function DashboardPage() {
 
         <div className="grid gap-5 xl:grid-cols-2">
           <Surface className="p-5 sm:p-6">
-            <SectionHeading title="Financial accounts" note={`${data.accounts.length} active account${data.accounts.length === 1 ? "" : "s"}`} href="/dashboard/accounting/accounts" icon={Landmark} />
-            {data.accounts.length ? (
+            <SectionHeading title="Financial accounts" note={details ? `${details.accounts.length} active account${details.accounts.length === 1 ? "" : "s"}` : "Account balances"} href="/dashboard/accounting/accounts" icon={Landmark} />
+            {detailsLoading ? <DetailPlaceholder /> : detailsError ? <DetailUnavailable /> : details?.accounts.length ? (
               <div className="mt-4 divide-y">
-                {data.accounts.slice(0, 8).map((row) => (
+                {details.accounts.slice(0, 8).map((row) => (
                   <Link prefetch={false} key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="flex flex-col items-start gap-2 py-3 text-sm hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-2">
                     <div className="min-w-0"><p className="break-words font-medium sm:truncate">{row.account_name}</p><p className="mt-0.5 text-xs capitalize text-neutral-400">{row.account_type.replaceAll("_", " ")} · {row.currency}</p></div>
                     <p className="max-w-full break-all font-semibold tabular-nums sm:shrink-0 sm:text-right">{money(row.balance, row.currency)}</p>
@@ -535,9 +577,9 @@ export default function DashboardPage() {
 
           <Surface className="p-5 sm:p-6">
             <SectionHeading title="Recent project economics" note={`${rangeLabel} profitability`} href="/dashboard/reports" icon={FolderKanban} />
-            {data.projects.length ? (
+            {detailsLoading ? <DetailPlaceholder /> : detailsError ? <DetailUnavailable /> : details?.projects.length ? (
               <div className="mt-4 divide-y">
-                {data.projects.slice(0, 6).map((row) => (
+                {details.projects.slice(0, 6).map((row) => (
                   <Link prefetch={false} key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="block py-3 hover:bg-neutral-50 sm:px-2">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <div className="min-w-0"><p className="break-words text-sm font-medium sm:truncate">{row.project_number} · {row.project_name}</p><p className="mt-0.5 break-words text-xs text-neutral-400 sm:truncate">{row.client_name}</p></div>
@@ -553,9 +595,9 @@ export default function DashboardPage() {
 
         <Surface className="p-5 sm:p-6">
           <SectionHeading title="Client economics" note={`${rangeLabel} client performance`} href="/dashboard/clients" icon={Users} />
-          {data.clients.length ? (
+          {detailsLoading ? <DetailPlaceholder /> : detailsError ? <DetailUnavailable /> : details?.clients.length ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {data.clients.slice(0, 9).map((row) => (
+              {details.clients.slice(0, 9).map((row) => (
                 <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="rounded-xl border border-neutral-200 p-4 transition hover:border-neutral-300 hover:bg-neutral-50">
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-semibold sm:truncate">{row.client_name}</p><p className="mt-1 text-xs text-neutral-400">{row.currency} · {percent(row.margin_percent)} margin</p></div><ArrowRight className="size-4 shrink-0 text-neutral-300" /></div>
                   <div className="mt-4 grid grid-cols-2 gap-2 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Direct cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
@@ -648,4 +690,16 @@ function SectionHeading({ title, note, href, icon: Icon }: { title: string; note
 
 function EmptyState({ title, note }: { title: string; note: string }) {
   return <div className="mt-5 rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-4 py-7 text-center sm:py-8"><CircleDollarSign className="mx-auto size-6 text-neutral-300" /><p className="mt-3 text-sm font-medium">{title}</p><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div>;
+}
+
+function DetailPlaceholder() {
+  return (
+    <div role="status" aria-label="Loading dashboard details" className="mt-5 space-y-2">
+      {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded-xl bg-neutral-100" />)}
+    </div>
+  );
+}
+
+function DetailUnavailable() {
+  return <div role="alert" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Dashboard details are temporarily unavailable. Other business metrics remain accessible.</div>;
 }
