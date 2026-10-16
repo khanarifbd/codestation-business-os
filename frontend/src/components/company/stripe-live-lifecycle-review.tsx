@@ -40,7 +40,15 @@ export function StripeLiveLifecycleReview() {
     {events.length > 0 && <div className="mt-3 max-h-72 divide-y overflow-auto rounded-lg border bg-white">
       {events.slice(0, 20).map(event => <div key={event.id} className="flex flex-wrap items-center justify-between gap-2 p-3 text-xs">
         <div><p className="font-medium">{event.event_type}</p><p className="mt-1 break-all text-neutral-500">{event.event_id}</p></div>
-        <span className={event.result === "review_required" ? "font-medium text-amber-700" : "text-neutral-400"}>{event.result === "review_required" ? "Review Required" : "Ignored"}</span>
+        <span className={["review_required", "reversed_fee_review"].includes(event.result) ? "font-medium text-amber-700" : event.result === "live_paid_posted" || event.result === "full_payment_reversed" ? "font-medium text-emerald-700" : "text-neutral-500"}>{({
+          review_required: "Review Required",
+          reversed_fee_review: "Reversed · Dispute Fee Review",
+          live_paid_posted: "Payment Posted",
+          full_payment_reversed: "Full Refund Reversed",
+          already_reversed: "Already Reversed",
+          pending_payment: "Pending Payment",
+          ignored: "Ignored",
+        } as Record<string, string>)[event.result] ?? event.result.replaceAll("_", " ")}</span>
       </div>)}
     </div>}
   </div>;
