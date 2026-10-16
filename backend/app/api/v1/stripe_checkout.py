@@ -102,8 +102,8 @@ def public_checkout_return_status(session_id: str, db: DbSession):
         return {"mode": "live", "status": "review_required"}
     from app.models.stripe_settlement import StripeSettlementSnapshot
     from app.models.stripe_accounting import StripeAccountingPosting
-    posting_id = db.scalar(
-        select(StripeAccountingPosting.id)
+    payment_id = db.scalar(
+        select(StripeAccountingPosting.payment_id)
         .join(StripeSettlementSnapshot, StripeSettlementSnapshot.id == StripeAccountingPosting.snapshot_id)
         .where(
             StripeSettlementSnapshot.organization_id == attempt.organization_id,
@@ -112,7 +112,14 @@ def public_checkout_return_status(session_id: str, db: DbSession):
         )
         .limit(1)
     )
-    return {"mode": "live", "status": "posted" if posting_id else "processing"}
+    if payment_id:
+        from app.models.finance import Payment
+        payment_status = db.scalar(select(Payment.status).where(
+            Payment.organization_id == attempt.organization_id,
+            Payment.id == payment_id,
+        ))
+        return {"mode": "live", "status": "reversed" if payment_status == "reversed" else "posted"}
+    return {"mode": "live", "status": "processing"}
 
 
 @router.get("/invoices/{invoice_id}")
