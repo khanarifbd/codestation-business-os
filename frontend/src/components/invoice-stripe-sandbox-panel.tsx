@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, CreditCard, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { StripeSandboxSettlementPreview } from "@/components/stripe-sandbox-settlement-preview";
 
 type Attempt = {
   id: string;
@@ -96,6 +97,7 @@ export function InvoiceStripeSandboxPanel({
         <button type="button" onClick={() => void navigator.clipboard.writeText(latest.checkout_url!)} className="inline-flex items-center gap-1 rounded-lg border px-3 py-2 text-xs"><Copy className="size-3.5"/>Copy Payment Link</button>
       </div>}
       {latest.status === "sandbox_paid" && <p className="mt-2 flex items-center gap-2 text-xs text-emerald-700"><Check className="size-4" />Stripe Sandbox payment verified by signed webhook. Real invoice is unchanged.</p>}
+      {latest.status === "sandbox_paid" && <StripeSandboxSettlementPreview invoiceId={invoiceId} attemptId={latest.id} canManage={canManage} />}
     </div>}
   </section>;
 }
