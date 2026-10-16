@@ -114,13 +114,13 @@ def _verify_live_checkout_and_post(db: DbSession, connection: PaymentGatewayConn
     if attempt is None:
         raise HTTPException(status_code=409, detail="Unknown Live Checkout for this merchant")
     if (obj.get("livemode") is not True
-            or obj.get("status") != "complete"
-            or obj.get("payment_status") != "paid"
             or obj.get("currency") != attempt.currency.lower()
             or obj.get("amount_total") != attempt.amount_minor
             or obj.get("client_reference_id") != attempt.id
             or (obj.get("metadata") or {}).get("checkout_attempt_id") != attempt.id):
         raise HTTPException(status_code=409, detail="Stripe Live Checkout identity or amount mismatch")
+    if obj.get("payment_status") != "paid" or obj.get("status") != "complete":
+        return "pending_payment", attempt.id
     pi_id = obj.get("payment_intent")
     if isinstance(pi_id, dict):
         pi_id = pi_id.get("id")
