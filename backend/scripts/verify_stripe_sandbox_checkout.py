@@ -21,7 +21,7 @@ from app.api.v1 import stripe_checkout as api
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.crm import Client
-from app.models.finance import Invoice, Payment
+from app.models.finance import FinancialAccount, Invoice, Payment
 from app.models.membership import Membership
 from app.models.organization import Organization
 from app.models.payment_gateways import PaymentGatewayConnection
@@ -113,9 +113,20 @@ def main():
                 charges_enabled=True, connected_by_user_id=user.id,
             )
             db.add(connection)
+            db.flush()
+            financial_account = FinancialAccount(
+                organization_id=org.id,
+                name="CI Stripe Sandbox " + uuid4().hex[:8],
+                account_type="payment_gateway", provider_name="Stripe",
+                currency="USD", opening_balance=Decimal("0.00"),
+                gateway_connection_id=connection.id, created_by_user_id=user.id,
+            )
+            db.add(financial_account)
+            db.flush()
             invoice = Invoice(
                 organization_id=org.id, invoice_number="CI-STRIPE-" + uuid4().hex[:8],
                 client_id=client.id, created_by_user_id=user.id, status="sent",
+                payment_method="stripe", payment_account_id=financial_account.id,
                 issue_date=date.today(), currency="USD",
                 seller_name_snapshot=org.name, client_name_snapshot="Sandbox Client",
                 subtotal=Decimal("1.00"), total=Decimal("1.00"),
@@ -137,6 +148,10 @@ def main():
             with patch.object(db, "commit", db.flush), patch.object(api, "stripe_checkout_request", fake_checkout):
                 before = api.stripe_checkout_status(invoice.id, db, tenant)
                 assert before["checkout_available"] and before["webhook_configured"]
+                assert before["financial_account_linked"]
+                invoice.payment_account_id = None
+                _expect(409, lambda: api.create_sandbox_checkout(invoice.id, _request("/sandbox/create"), db, tenant))
+                invoice.payment_account_id = financial_account.id
                 result = api.create_sandbox_checkout(invoice.id, _request("/sandbox/create"), db, tenant)
                 assert result["currency"] == "USD" and result["status"] == "open"
                 again = api.create_sandbox_checkout(invoice.id, _request("/sandbox/create"), db, tenant)
