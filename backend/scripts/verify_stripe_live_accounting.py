@@ -160,6 +160,20 @@ def main():
             assert db.scalar(select(func.count()).select_from(Payment).where(
                 Payment.organization_id == org.id,Payment.id == link.payment_id)) == 1
 
+            from app.api.v1 import stripe_checkout
+            with (
+                patch("app.api.v1.stripe_checkout.decrypt_gateway_secret", return_value="sk_live_ci_only"),
+                patch("app.services.stripe_settlement.stripe_retrieve", side_effect=lambda _, kind, object_id: {
+                    **checkout_event["data"]["object"], "id": session_id
+                } if kind == "checkout_session" and object_id == session_id else retrieved(_, kind, object_id)),
+            ):
+                recovered = stripe_checkout.reconcile_live_checkout(
+                    invoice.id, attempt.id, make_request(checkout_event), db,
+                    stripe_lifecycle._system_tenant(db, connection),
+                )
+                assert recovered["accounting_posted"] is True
+                assert _account_balance(db,account) == Decimal("9.41")
+
             refund_event={
                 "id": "evt_"+uuid4().hex, "type": "charge.refunded", "livemode": True,
                 "data": {"object": {"id":charge}},
