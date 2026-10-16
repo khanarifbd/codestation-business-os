@@ -21,6 +21,7 @@ _ID_RULES = {
     "charge": re.compile(r"^ch_[A-Za-z0-9]{8,110}$"),
     "transaction": re.compile(r"^txn_[A-Za-z0-9]{8,110}$"),
     "payout": re.compile(r"^po_[A-Za-z0-9]{8,110}$"),
+    "dispute": re.compile(r"^dp_[A-Za-z0-9]{8,110}$"),
 }
 
 
@@ -53,7 +54,7 @@ def stripe_retrieve(api_key: str, resource: str, resource_id: str) -> dict:
     if resource not in _ID_RULES:
         raise ValueError("Unsupported Stripe resource")
     valid_id = _stripe_id(resource_id, resource)
-    segment = {"intent": "payment_intents", "charge": "charges", "transaction": "balance_transactions", "payout": "payouts"}[resource]
+    segment = {"intent": "payment_intents", "charge": "charges", "transaction": "balance_transactions", "payout": "payouts", "dispute": "disputes"}[resource]
     auth = base64.b64encode((api_key + ":").encode()).decode()
     request = UrlRequest(
         f"https://api.stripe.com/v1/{segment}/{valid_id}",
