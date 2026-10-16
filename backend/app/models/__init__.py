@@ -58,6 +58,7 @@ from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
 from app.models.passkey import PasskeyChallenge, UserPasskey
 from app.models.payment_gateways import GatewayOAuthState, PaymentGatewayConnection
+from app.models.stripe_checkout import StripeCheckoutAttempt, StripeWebhookEvent
 from app.models.payables import PayableBill, PayablePayment
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
 from app.models.posting_idempotency import PostingIdempotency
