@@ -122,8 +122,10 @@ def main():
                     StripeCheckoutAttempt.invoice_id == invoice.id,
                 ))
                 session.expires_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+                db.flush()
                 third = stripe_checkout.open_public_live_invoice_checkout(org_id, inv_id, mac, request(), db)
-                assert count == 2 and third.headers["location"] != first.headers["location"]
+                assert count == 2, f"Expected new session after expiry, got {count}"
+                assert third.headers["location"] != first.headers["location"], "Checkout URL was not refreshed"
                 assert effective_invoice_payment_url(db, invoice) == stable
 
                 invoice.status = "paid"; invoice.balance_due = Decimal("0")
