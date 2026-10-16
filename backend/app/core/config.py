@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     password_reset_token_expire_minutes: int = 30
     passkey_challenge_expire_minutes: int = 5
     public_app_url: str = "http://localhost:3000"
+    public_api_url: str = "http://localhost:8000"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CreditCard, ExternalLink, Loader2, RefreshCw, ShieldCheck, Unplug } from "lucide-react";
 import Link from "next/link";
 import { StripeManualConnectForm } from "@/components/company/stripe-manual-connect-form";
+import { StripeWebhookSetup } from "@/components/company/stripe-webhook-setup";
 
 type StripeConnection = {
   provider: "stripe"; mode: "test" | "live"; connected: boolean;
@@ -14,6 +15,7 @@ type StripeConnection = {
   account_label?: string | null;
   credential_hint?: string | null;
   webhook_configured?: boolean;
+  webhook_url?: string | null;
 };
 type ResponseData = { configured_modes: string[]; manual_setup_available: boolean; connections: StripeConnection[] };
 
@@ -102,6 +104,7 @@ export function PaymentGatewaysSettingsPanel() {
           </div>
           <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={() => void refresh(mode)} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium disabled:opacity-50"><RefreshCw className="size-4" />Refresh status</button><button type="button" onClick={() => void disconnect(mode)} disabled={Boolean(busy)} className="inline-flex items-center gap-2 rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-700 disabled:opacity-50"><Unplug className="size-4" />Disable</button></div>
           <StripeManualConnectForm mode={mode} connected enabled={Boolean(data?.manual_setup_available)} onConnected={async () => { await load(); setNotice("Company Stripe connection verified and stored securely. Checkout is not enabled yet."); }} />
+          {mode === "test" && row.connection_method === "api_key" ? <StripeWebhookSetup url={row.webhook_url ?? null} configured={Boolean(row.webhook_configured)} onSaved={load}/> : null}
         </> : <>
           <p className="mt-3 text-sm text-neutral-500">Authorize this workspace to use its Stripe account. Only a company admin can initiate the connection.</p>
           <StripeManualConnectForm mode={mode} connected={false} enabled={Boolean(data?.manual_setup_available)} onConnected={async () => { await load(); setNotice("Company Stripe connection verified and stored securely. Checkout is not enabled yet."); }} />
@@ -112,7 +115,7 @@ export function PaymentGatewaysSettingsPanel() {
     <div className="rounded-2xl border p-5"><h4 className="font-semibold">Other payment methods</h4><p className="mt-1 text-sm text-neutral-500">Gateway providers can coexist for each company. Automated PayPal integration is planned; bank and Payoneer payment destinations are already available via Financial Accounts.</p><div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border p-3 text-sm"><strong>PayPal</strong><p className="mt-1 text-xs text-neutral-500">Coming later</p></div><div className="rounded-xl border p-3 text-sm"><strong>Payoneer / Wise</strong><p className="mt-1 text-xs text-neutral-500">Manual payment links</p></div><div className="rounded-xl border p-3 text-sm"><strong>Bank Transfer</strong><p className="mt-1 text-xs text-neutral-500"><Link href="/dashboard/accounting/accounts" className="underline">Manage Financial Accounts</Link></p></div></div></div>
     <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
       <ShieldCheck className="mt-0.5 size-5 shrink-0" />
-      <p><strong>Payment collection is not active yet.</strong> Linking a Stripe account does not automatically create Checkout Sessions or mark invoices paid. The next integration stage must ship verified webhooks, idempotent invoice posting and reconciliation before live payments are enabled. Do not use manual Stripe receipts to mark an invoice paid twice.</p>
+      <p><strong>Only Sandbox Checkout is available for testing.</strong> After configuring the test Webhook Signing Secret, you can generate Stripe Sandbox Checkout links for issued USD invoices. Sandbox payments are recorded in test history and never change actual invoice balances, accounting journals or reports. Live payment collection remains disabled.</p>
     </div>
   </div>;
 }
