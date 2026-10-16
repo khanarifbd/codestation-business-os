@@ -134,10 +134,6 @@ def main():
             db, organization_id=str(uuid4()), actor=actor,
             snapshot_id=snapshot.id, request=req(),
         ))
-        must_reject(409, lambda: post_verified_live_stripe_settlement(
-            db, organization_id=org.id, actor=actor,
-            snapshot_id=sandbox_snapshot.id, request=req(),
-        ))
         assert invoice.balance_due == Decimal("10") and invoice.amount_paid == Decimal("0")
 
         with patch.object(db, "commit", db.flush):
@@ -186,6 +182,12 @@ def main():
                 StripeAccountingPosting.snapshot_id == snapshot.id,
             )) == 1
             assert _account_balance(db, account) == Decimal("9.41")
+            # This intentional failure calls rollback(): place it last so it
+            # cannot wipe the earlier in-transaction CI fixtures prematurely.
+            must_reject(409, lambda: post_verified_live_stripe_settlement(
+                db, organization_id=org.id, actor=actor,
+                snapshot_id=sandbox_snapshot.id, request=req(),
+            ))
     finally:
         db.rollback()
         db.close()
