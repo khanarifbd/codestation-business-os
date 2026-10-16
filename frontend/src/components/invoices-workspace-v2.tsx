@@ -10,7 +10,7 @@ import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type Source = "client" | "order" | "project";
 type PaymentMethod = "bank_transfer" | "cash" | "card" | "payoneer" | "wise" | "stripe" | "paypal" | "other";
-type PaymentDestination = { id: string; name: string; account_type: string; provider_name: string | null; account_holder_name: string | null; account_reference: string | null; currency: string; payment_url: string | null; payment_instructions: string | null };
+type PaymentDestination = { id: string; name: string; account_type: string; provider_name: string | null; account_holder_name: string | null; account_reference: string | null; currency: string; payment_url: string | null; payment_instructions: string | null; gateway_connection_id?: string | null };
 type PaymentForm = { method: PaymentMethod | ""; accountId: string; url: string; instructions: string };
 const blankPayment = (): PaymentForm => ({ method: "", accountId: "", url: "", instructions: "" });
 const paymentMethods: { value: PaymentMethod | ""; label: string }[] = [
@@ -216,6 +216,7 @@ export function InvoicesWorkspaceV2() {
             <div className="md:col-span-2"><Field label="Payment URL"><input type="url" maxLength={1000} value={payment.url} onChange={(event) => setPayment((current) => ({ ...current, url: event.target.value }))} className="h-11 w-full rounded-xl border bg-white px-3 text-sm" placeholder="https://payoneer.com/..." /></Field><p className="mt-1 text-xs text-neutral-500">A saved payment URL appears as a link and QR code on the client invoice.</p></div>
             <div className="md:col-span-2"><Field label="Client payment instructions"><textarea maxLength={5000} value={payment.instructions} onChange={(event) => setPayment((current) => ({ ...current, instructions: event.target.value }))} className="min-h-24 w-full rounded-xl border bg-white p-3 text-sm" placeholder="Use the invoice number as the payment reference." /></Field></div>
           </div>
+          {payment.method === "stripe" && selectedDestination && !selectedDestination.gateway_connection_id ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">This Stripe financial account is not linked to a connected Stripe Gateway. You can create the draft, but automatic Stripe Checkout will be unavailable until you open <Link href={`/dashboard/accounting/accounts/${selectedDestination.id}`} className="font-semibold underline">this Financial Account</Link> and choose <strong>Edit account & gateway</strong>.</p> : null}
           {selectedDestination && invoiceCurrency && selectedDestination.currency !== invoiceCurrency ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Invoice currency is <strong>{invoiceCurrency}</strong>, while the payment destination is <strong>{selectedDestination.currency}</strong>. Enter the actual exchange rate when recording a payment; no conversion is assumed here.</p> : null}
         </section>
         <div className="flex justify-end"><button disabled={saving || ((source === "project" || source === "order") && !form.source_id)} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50">{saving ? "Creating…" : "Create draft invoice"}</button></div>
