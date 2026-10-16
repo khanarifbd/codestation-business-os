@@ -25,6 +25,7 @@ from app.models.stripe_checkout import StripeCheckoutAttempt
 from app.models.stripe_settlement import StripeSettlementSnapshot
 from app.models.user import User
 from app.services.stripe_accounting import post_verified_live_stripe_settlement
+from app.services.exchange_rates import record_rate_snapshot
 from app.tenancy.context import TenantContext
 
 
@@ -61,6 +62,15 @@ def main():
         client = db.scalar(select(Client).where(Client.organization_id == org.id))
         assert user is not None and client is not None
         actor = TenantContext(organization=org, membership=membership, user=user)
+        # Isolated CI-only historical FX fixture; production posting always
+        # requires an organization-configured effective-dated exchange rate.
+        record_rate_snapshot(
+            db, organization_id=org.id,
+            base_currency="USD", quote_currency="BDT",
+            effective_date=date.today(),
+            effective_rate=Decimal("120.00"), reference_rate=None,
+            source="ci_test_only", user_id=user.id,
+        )
         connection = PaymentGatewayConnection(
             organization_id=org.id, provider="stripe", mode="live",
             provider_account_id="acct_CI_" + uuid4().hex[:13],
