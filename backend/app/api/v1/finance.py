@@ -642,8 +642,17 @@ def update_account(account_id: str, payload: FinancialAccountUpdate, request: Re
     account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == account_id, FinancialAccount.organization_id == tenant.organization_id).with_for_update())
     if account is None:
         raise HTTPException(status_code=404, detail="Financial account not found")
-    before = {"name": account.name, "account_type": account.account_type, "is_active": account.is_active}
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    before = {"name": account.name, "account_type": account.account_type, "is_active": account.is_active, "gateway_connection_id": account.gateway_connection_id}
+    changes = payload.model_dump(exclude_unset=True)
+    if "gateway_connection_id" in changes or "account_type" in changes:
+        effective_gateway = changes.get("gateway_connection_id", account.gateway_connection_id)
+        if effective_gateway != account.gateway_connection_id or changes.get("account_type", account.account_type) != account.account_type:
+            changes["gateway_connection_id"] = validate_gateway_mapping(
+                db, organization_id=tenant.organization_id, gateway_connection_id=effective_gateway,
+                account_type=changes.get("account_type", account.account_type),
+                currency=account.currency, exclude_account_id=account.id,
+            )
+    for field, value in changes.items():
         if isinstance(value, str):
             value = _clean(value)
         if field == "name" and not value:
@@ -659,7 +668,7 @@ def update_account(account_id: str, payload: FinancialAccountUpdate, request: Re
         entity_type="financial_account",
         entity_id=account.id,
         before=before,
-        after={"name": account.name, "account_type": account.account_type, "is_active": account.is_active},
+        after={"name": account.name, "account_type": account.account_type, "is_active": account.is_active, "gateway_connection_id": account.gateway_connection_id},
         message=f"Financial account updated: {account.name}",
         request=request,
     )
