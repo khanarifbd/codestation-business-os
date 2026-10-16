@@ -29,6 +29,7 @@ type Account = {
   provider_name: string | null;
   account_holder_name: string | null;
   account_reference: string | null;
+  gateway_connection_id: string | null;
   currency: string;
   opening_balance: string;
   current_balance: string;
@@ -37,6 +38,8 @@ type Account = {
 };
 
 type AccountType = "bank" | "cash" | "mobile_wallet" | "credit_card" | "payment_gateway" | "petty_cash" | "other";
+type Gateway = { id: string | null; provider: string; mode: "test" | "live"; connected: boolean; stripe_account_id: string | null; account_label: string | null; };
+
 
 type AccountTypeOption = {
   value: AccountType;
@@ -62,6 +65,7 @@ const blankForm = () => ({
   name: "",
   account_type: "bank" as AccountType,
   provider_name: "",
+  gateway_connection_id: "",
   account_holder_name: "",
   account_reference: "",
   currency: "BDT",
@@ -98,6 +102,7 @@ export default function AccountsPage() {
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(blankForm);
+  const [gateways, setGateways] = useState<Gateway[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +122,13 @@ export default function AccountsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    void fetch("/api/finance/payment-gateways/stripe", { cache: "no-store" })
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((payload) => setGateways((payload?.connections ?? []).filter((row: Gateway) => row.connected && row.id)))
+      .catch(() => setGateways([]));
+  }, []);
+
 
   const activeAccounts = useMemo(() => accounts.filter((account) => account.is_active), [accounts]);
 
@@ -148,6 +160,7 @@ export default function AccountsPage() {
           ...form,
           opening_balance: Number(form.opening_balance || 0),
           provider_name: form.provider_name || null,
+          gateway_connection_id: form.account_type === "payment_gateway" ? (form.gateway_connection_id || null) : null,
           account_holder_name: form.account_holder_name || null,
           account_reference: form.account_reference || null,
           notes: form.notes || null,
@@ -277,7 +290,7 @@ export default function AccountsPage() {
                 <Field label="Account type" hint={accountTypes.find((item) => item.value === form.account_type)?.help}>
                   <select
                     value={form.account_type}
-                    onChange={(event) => setForm((value) => ({ ...value, account_type: event.target.value as AccountType }))}
+                    onChange={(event) => setForm((value) => ({ ...value, account_type: event.target.value as AccountType, gateway_connection_id: "" }))}
                     className={inputClass}
                   >
                     {accountTypes.map((item) => (
@@ -341,6 +354,24 @@ export default function AccountsPage() {
                   />
                 </Field>
               </FormSection>
+
+              {form.account_type === "payment_gateway" ? <FormSection
+                title="Connected payment gateway"
+                description="Link this ledger account to this company's connected provider. Linking does not import balances or book Sandbox payments."
+              >
+                <Field label="Payment gateway connection" hint="Optional. You can connect or change this later without changing account balances.">
+                  <select value={form.gateway_connection_id}
+                    onChange={(event) => { const id = event.target.value; const gateway = gateways.find((row) => row.id === id); setForm((value) => ({ ...value, gateway_connection_id: id, provider_name: gateway ? "Stripe" : value.provider_name })); }}
+                    className={inputClass}>
+                    <option value="">Not linked to a connected gateway</option>
+                    {gateways.map((gateway) => <option key={gateway.id} value={gateway.id ?? ""}>
+                      Stripe {gateway.mode === "test" ? "(Sandbox)" : "(Live)"} · {gateway.account_label || gateway.stripe_account_id}
+                    </option>)}
+                  </select>
+                </Field>
+                {form.gateway_connection_id && gateways.find((row) => row.id === form.gateway_connection_id)?.mode === "test" && form.currency !== "USD" ? <p className="text-sm text-amber-700">Stripe Sandbox currently supports USD accounts only.</p> : null}
+                {!gateways.length ? <p className="text-sm text-neutral-500">No connected gateways. Configure one in <Link href="/dashboard/company?tab=payments" className="underline">Company Settings → Payment Gateways</Link>.</p> : null}
+              </FormSection> : null}
 
               <FormSection
                 title="Opening position"
