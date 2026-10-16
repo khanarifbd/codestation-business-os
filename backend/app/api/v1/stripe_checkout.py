@@ -262,6 +262,55 @@ def create_live_checkout(invoice_id: str, request: Request, db: DbSession, tenan
     return _create_checkout(invoice_id, request, db, tenant, mode="live")
 
 
+@router.post("/live/invoices/{invoice_id}/attempts/{attempt_id}/reconcile")
+def reconcile_live_checkout(
+    invoice_id: str, attempt_id: str, request: Request, db: DbSession, tenant: FinanceManager,
+):
+    """Recover a paid Live Checkout when a signed webhook was lost or held.
+
+    Re-read the exact original Checkout from the company's Stripe account,
+    validate amount, ownership, PaymentIntent, captured Charge and fee before
+    invoking established GL services. Never use client-supplied payment truth.
+    """
+    if not settings.stripe_live_collection_enabled:
+        raise HTTPException(status_code=409, detail="Live Stripe reconciliation is not enabled")
+    attempt = db.scalar(select(StripeCheckoutAttempt).where(
+        StripeCheckoutAttempt.organization_id == tenant.organization_id,
+        StripeCheckoutAttempt.invoice_id == invoice_id,
+        StripeCheckoutAttempt.id == attempt_id,
+        StripeCheckoutAttempt.mode == "live",
+    ).with_for_update())
+    if attempt is None or not attempt.stripe_session_id:
+        raise HTTPException(status_code=404, detail="Live Stripe Checkout session not found")
+    connection = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.id == attempt.connection_id,
+        PaymentGatewayConnection.organization_id == tenant.organization_id,
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == "live",
+        PaymentGatewayConnection.is_active.is_(True),
+    ))
+    if connection is None or not connection.secret_key_ciphertext or connection.connection_method != "api_key":
+        raise HTTPException(status_code=409, detail="Verified connected Stripe Live API credentials are required")
+    from app.services.stripe_settlement import stripe_retrieve
+    from app.api.v1.stripe_lifecycle import _verify_live_checkout_and_post
+    from app.db.session import defer_commits
+    session = stripe_retrieve(
+        decrypt_gateway_secret(connection.secret_key_ciphertext),
+        "checkout_session", attempt.stripe_session_id,
+    )
+    with defer_commits(db):
+        result, related_attempt_id = _verify_live_checkout_and_post(db, connection, session)
+        record_activity(
+            db, action="stripe.live_checkout_manual_reconciliation", scope="tenant",
+            organization_id=tenant.organization_id, actor_user_id=tenant.user_id,
+            entity_type="stripe_checkout_attempt", entity_id=attempt.id,
+            after={"result": result, "attempt_id": related_attempt_id, "invoice_id": invoice_id},
+            request=request,
+        )
+    db.commit()
+    return {"result": result, "attempt_id": attempt.id, "accounting_posted": result == "live_paid_posted"}
+
+
 @router.post("/webhook/{connection_id}", include_in_schema=False)
 async def stripe_sandbox_webhook(connection_id: str, request: Request, db: DbSession):
     """Public webhook: the secret binds it to the specific registered tenant account."""
