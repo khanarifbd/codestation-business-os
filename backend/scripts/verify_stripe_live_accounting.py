@@ -136,7 +136,7 @@ def main():
 
         with (patch.object(db,"commit",db.flush),
               patch("app.api.v1.stripe_lifecycle.settings.stripe_live_collection_enabled",True),
-              patch("app.api.v1.stripe_lifecycle.decrypt_gateway_secret",return_value="mock"),
+              patch("app.api.v1.stripe_lifecycle.decrypt_gateway_secret",return_value="whsec_test_ci_live_events"),
               patch("app.api.v1.stripe_lifecycle.verified_sandbox_settlement",
                     side_effect=lambda **_: __import__("app.services.stripe_settlement", fromlist=["verified_sandbox_settlement"]).verified_sandbox_settlement(
                         api_key="mock",payment_intent_id=intent,currency="USD",amount_minor=1000,mode="live")),
