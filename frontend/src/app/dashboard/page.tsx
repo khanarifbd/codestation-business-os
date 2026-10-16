@@ -194,9 +194,9 @@ export default function DashboardPage() {
   const { tenant } = useDashboardSession();
   const activeOrganizationId = tenant?.organization.id;
   const [reportResult, setReportResult] = useState<{ organizationId: string; value: Overview } | null>(null);
-  const data = reportResult?.organizationId === activeOrganizationId ? reportResult.value : null;
+  const data = reportResult && reportResult.organizationId === activeOrganizationId ? reportResult.value : null;
   const [detailsResult, setDetails] = useState<{ organizationId: string; from: string; to: string; value: DashboardDetails } | null>(null);
-  const details = detailsResult?.organizationId === activeOrganizationId &&
+  const details = detailsResult && detailsResult.organizationId === activeOrganizationId &&
     detailsResult.from === data?.date_from && detailsResult.to === data?.date_to ? detailsResult.value : null;
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState(false);
