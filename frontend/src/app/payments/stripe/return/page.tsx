@@ -1,19 +1,38 @@
 import Link from "next/link";
-import { CreditCard, ShieldCheck } from "lucide-react";
+import { CreditCard } from "lucide-react";
+import { StripeCheckoutReturnStatus } from "@/components/stripe-checkout-return-status";
 
 export const metadata = {
-  title: "Stripe Sandbox Checkout | Business OS",
+  title: "Stripe Checkout Return | Business OS",
   robots: { index: false, follow: false },
 };
 
-export default function StripeSandboxReturnPage() {
+type ReturnPageProps = {
+  searchParams: Promise<{ result?: string; session_id?: string }>;
+};
+
+export default async function StripeCheckoutReturnPage({ searchParams }: ReturnPageProps) {
+  const params = await searchParams;
+  const id = typeof params.session_id === "string" && /^cs_(live|test)_[A-Za-z0-9]{8,110}$/.test(params.session_id)
+    ? params.session_id : null;
+  const mode = id?.startsWith("cs_live_") ? "live" : id?.startsWith("cs_test_") ? "test" : "unknown";
+  const outcome = params.result === "cancelled" ? "cancelled" : "success";
+
   return <main className="flex min-h-screen items-center justify-center bg-neutral-100 p-4">
     <section className="w-full max-w-xl rounded-2xl border bg-white p-8 shadow-sm">
       <CreditCard className="size-8 text-violet-700" />
-      <h1 className="mt-4 text-2xl font-semibold">Stripe Sandbox Checkout</h1>
-      <p className="mt-3 text-sm leading-6 text-neutral-600">The Stripe test checkout has returned to Business OS. A browser redirect alone does not confirm payment. The organization must receive and verify a signed Stripe webhook before the test session is marked paid.</p>
-      <p className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><ShieldCheck className="mt-0.5 size-4 shrink-0" />Sandbox transactions never change real invoice balances or accounting records.</p>
-      <Link href="/" className="mt-6 inline-flex rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">Return to Business OS</Link>
+      <h1 className="mt-4 text-2xl font-semibold">
+        {mode === "live" ? "Stripe Live Checkout" : mode === "test" ? "Stripe Sandbox Checkout" : "Stripe Checkout"}
+      </h1>
+      <p className="mt-3 text-sm leading-6 text-neutral-600">
+        {outcome === "cancelled"
+          ? "You have returned from Stripe Checkout. A cancellation redirect does not confirm a payment."
+          : "You have returned from Stripe Checkout. A successful browser redirect alone does not confirm that Business OS has verified and recorded your payment."}
+      </p>
+      <StripeCheckoutReturnStatus mode={mode} sessionId={id} result={outcome} />
+      <Link href="/dashboard/accounting/invoices" className="mt-6 inline-flex rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">
+        Return to Invoices
+      </Link>
     </section>
   </main>;
 }
