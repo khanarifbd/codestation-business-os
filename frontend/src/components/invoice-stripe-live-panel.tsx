@@ -84,6 +84,9 @@ export function InvoiceStripeLivePanel({invoiceId, currency, status, canManage}:
       setNotice(data.accounting_posted ? "Verified payment posted to Invoice, Clearing and Journal. Refresh the invoice to see updated balances." : "Stripe payment is pending or needs financial review.");
       const updated = await fetch(`/api/finance/stripe-checkout/live/invoices/${encodeURIComponent(invoiceId)}`, {cache:"no-store"});
       if (updated.ok) setState(await updated.json());
+      // This workspace holds invoice balances in client state; re-read them only
+      // after the backend confirms an actual ledger posting, never on redirect.
+      if (data.accounting_posted) window.location.reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Stripe payment verification failed");
     } finally { setBusy(false); }
