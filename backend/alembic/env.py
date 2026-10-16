@@ -57,6 +57,7 @@ from app.models import (  # noqa: F401
     StripeCheckoutAttempt,
     StripeWebhookEvent,
     StripeSettlementSnapshot,
+    StripeAccountingPosting,
     PerformanceReview,
     PostingIdempotency,
     Project,

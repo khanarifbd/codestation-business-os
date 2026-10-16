@@ -246,6 +246,7 @@ class ExpenseCurrencySummary(BaseModel):
     currency: str
     posted_expenses: Decimal
     transfer_fees: Decimal
+    stripe_processing_fees: Decimal = Decimal("0")
 
 
 class ExpenseSummary(BaseModel):
@@ -263,6 +264,7 @@ class ProfitLossCurrencyRow(BaseModel):
     invoice_revenue: Decimal
     operating_expenses: Decimal
     transfer_fees: Decimal
+    stripe_processing_fees: Decimal = Decimal("0")
     net_profit: Decimal
 
 

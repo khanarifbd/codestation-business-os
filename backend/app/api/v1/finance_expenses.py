@@ -373,7 +373,7 @@ def expense_summary(db: DbSession, tenant: FinanceViewer) -> ExpenseSummary:
         .group_by(Expense.expense_currency)
     ).all()
     currency_rows: dict[str, dict[str, Decimal]] = {
-        currency: {"expenses": Decimal(amount or 0), "fees": Decimal("0")}
+        currency: {"expenses": Decimal(amount or 0), "fees": Decimal("0"), "stripe_fees": Decimal("0")}
         for currency, amount in expense_rows
     }
     fee_rows = db.execute(
@@ -386,8 +386,20 @@ def expense_summary(db: DbSession, tenant: FinanceViewer) -> ExpenseSummary:
         .group_by(FinancialTransaction.currency)
     ).all()
     for currency, amount in fee_rows:
-        row = currency_rows.setdefault(currency, {"expenses": Decimal("0"), "fees": Decimal("0")})
+        row = currency_rows.setdefault(currency, {"expenses": Decimal("0"), "fees": Decimal("0"), "stripe_fees": Decimal("0")})
         row["fees"] += Decimal(amount or 0)
+    stripe_rows = db.execute(
+        select(FinancialTransaction.currency, func.coalesce(func.sum(FinancialTransaction.amount), 0))
+        .where(
+            FinancialTransaction.organization_id == tenant.organization_id,
+            FinancialTransaction.source_type == "stripe_processing_fee",
+            FinancialTransaction.direction == "debit",
+        )
+        .group_by(FinancialTransaction.currency)
+    ).all()
+    for currency, amount in stripe_rows:
+        row = currency_rows.setdefault(currency, {"expenses": Decimal("0"), "fees": Decimal("0"), "stripe_fees": Decimal("0")})
+        row["stripe_fees"] += Decimal(amount or 0)
     return ExpenseSummary(
         expense_count=int(counts[0] or 0),
         posted_count=int(counts[1] or 0),
@@ -400,6 +412,7 @@ def expense_summary(db: DbSession, tenant: FinanceViewer) -> ExpenseSummary:
                 currency=currency,
                 posted_expenses=_money(values["expenses"]),
                 transfer_fees=_money(values["fees"]),
+                stripe_processing_fees=_money(values["stripe_fees"]),
             )
             for currency, values in sorted(currency_rows.items())
         ],
@@ -1000,10 +1013,10 @@ def profitability_report(db: DbSession, tenant: FinanceViewer) -> ProfitabilityR
 
     company: dict[str, dict[str, Decimal]] = {}
     for invoice in invoices:
-        row = company.setdefault(invoice.currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0")})
+        row = company.setdefault(invoice.currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0"), "stripe_fees": Decimal("0")})
         row["revenue"] += invoice.total
     for expense in expenses:
-        row = company.setdefault(expense.expense_currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0")})
+        row = company.setdefault(expense.expense_currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0"), "stripe_fees": Decimal("0")})
         row["expenses"] += expense.expense_amount
     fee_rows = db.execute(
         select(FinancialTransaction.currency, func.coalesce(func.sum(FinancialTransaction.amount), 0))
@@ -1015,15 +1028,28 @@ def profitability_report(db: DbSession, tenant: FinanceViewer) -> ProfitabilityR
         .group_by(FinancialTransaction.currency)
     ).all()
     for currency, amount in fee_rows:
-        row = company.setdefault(currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0")})
+        row = company.setdefault(currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0"), "stripe_fees": Decimal("0")})
         row["fees"] += Decimal(amount)
+    stripe_fee_rows = db.execute(
+        select(FinancialTransaction.currency, func.coalesce(func.sum(FinancialTransaction.amount), 0))
+        .where(
+            FinancialTransaction.organization_id == tenant.organization_id,
+            FinancialTransaction.source_type == "stripe_processing_fee",
+            FinancialTransaction.direction == "debit",
+        )
+        .group_by(FinancialTransaction.currency)
+    ).all()
+    for currency, amount in stripe_fee_rows:
+        row = company.setdefault(currency, {"revenue": Decimal("0"), "expenses": Decimal("0"), "fees": Decimal("0"), "stripe_fees": Decimal("0")})
+        row["stripe_fees"] += Decimal(amount)
     pnl = [
         ProfitLossCurrencyRow(
             currency=currency,
             invoice_revenue=_money(values["revenue"]),
             operating_expenses=_money(values["expenses"]),
             transfer_fees=_money(values["fees"]),
-            net_profit=_money(values["revenue"] - values["expenses"] - values["fees"]),
+            stripe_processing_fees=_money(values["stripe_fees"]),
+            net_profit=_money(values["revenue"] - values["expenses"] - values["fees"] - values["stripe_fees"]),
         )
         for currency, values in sorted(company.items())
     ]

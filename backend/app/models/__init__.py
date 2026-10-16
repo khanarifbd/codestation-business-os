@@ -60,6 +60,7 @@ from app.models.passkey import PasskeyChallenge, UserPasskey
 from app.models.payment_gateways import GatewayOAuthState, PaymentGatewayConnection
 from app.models.stripe_checkout import StripeCheckoutAttempt, StripeWebhookEvent
 from app.models.stripe_settlement import StripeSettlementSnapshot
+from app.models.stripe_accounting import StripeAccountingPosting
 from app.models.payables import PayableBill, PayablePayment
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
 from app.models.posting_idempotency import PostingIdempotency
