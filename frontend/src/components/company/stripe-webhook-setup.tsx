@@ -4,9 +4,10 @@ import { FormEvent, useState } from "react";
 import { Check, Copy, ShieldCheck } from "lucide-react";
 
 export function StripeWebhookSetup({
-  url, configured, onSaved,
+  url, configured, onSaved, mode = "test",
 }: {
   url: string | null; configured: boolean; onSaved: () => Promise<void>;
+  mode?: "test" | "live";
 }) {
   const [secret, setSecret] = useState("");
   const [showInput, setShowInput] = useState(false);
@@ -22,13 +23,13 @@ export function StripeWebhookSetup({
       const response = await fetch("/api/finance/stripe-checkout/webhook-secret", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "test", signing_secret: secret.trim() }),
+        body: JSON.stringify({ mode, signing_secret: secret.trim() }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(typeof data?.detail === "string" ? data.detail : "Webhook setup failed");
       setSecret("");
       setShowInput(false);
-      setMessage("Sandbox webhook secret saved securely.");
+      setMessage(`${mode === "test" ? "Sandbox" : "Live"} webhook secret saved securely.`);
       await onSaved();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Cannot save Stripe webhook secret");
@@ -36,8 +37,8 @@ export function StripeWebhookSetup({
   }
 
   return <div className="mt-4 rounded-xl border bg-neutral-50 p-4 text-sm">
-    <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4" />Sandbox Checkout Webhook</div>
-    <p className="mt-1 text-xs text-neutral-500">Register this endpoint in Stripe Sandbox → Developers → Webhooks. Listen for checkout.session.completed and checkout.session.async_payment_succeeded.</p>
+    <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4" />{mode === "test" ? "Sandbox Checkout Webhook" : "Live Lifecycle Review Webhook"}</div>
+    <p className="mt-1 text-xs text-neutral-500">{mode === "test" ? "Register this endpoint in Stripe Sandbox → Developers → Webhooks. Listen for checkout.session.completed and checkout.session.async_payment_succeeded." : "Register this separate endpoint in Stripe Live → Developers → Webhooks. Select checkout.session.completed, charge.refunded, charge.dispute.created, charge.dispute.closed, payout.paid and payout.failed. Events are recorded for review; no automatic Live accounting posting is enabled."}</p>
     {!url && <p className="mt-2 text-xs text-red-700">The platform administrator must configure PUBLIC_API_URL before you can register the webhook.</p>}
     {url && <div className="mt-3 flex flex-col gap-2 sm:flex-row">
       <code className="min-w-0 flex-1 break-all rounded-lg border bg-white px-3 py-2 text-xs">{url}</code>
@@ -52,6 +53,6 @@ export function StripeWebhookSetup({
     </form>}
     {message && <p role="status" className="mt-2 text-xs text-emerald-700">{message}</p>}
     {error && <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}
-    <p className="mt-3 text-xs text-amber-800">Sandbox payment confirmation is recorded for testing only. No Invoice, Financial Account, Journal or Reports balance changes.</p>
+    <p className="mt-3 text-xs text-amber-800">{mode === "test" ? "Sandbox payment confirmation is recorded for testing only. No Invoice, Financial Account, Journal or Reports balance changes." : "Live event delivery is review-only. Refund/dispute posting remains blocked; bank payouts require Stripe verification and bank statement evidence."}</p>
   </div>;
 }
