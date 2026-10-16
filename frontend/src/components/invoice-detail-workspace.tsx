@@ -6,6 +6,7 @@ import { ArrowLeft, FileText, Plus, RotateCcw, Save, Send, Share2, Trash2, X, Ed
 
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
 import { InvoiceStripeSandboxPanel } from "@/components/invoice-stripe-sandbox-panel";
+import { InvoiceStripeLivePanel } from "@/components/invoice-stripe-live-panel";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
@@ -307,6 +308,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
     </section>
 
     {!editing && <InvoiceStripeSandboxPanel invoiceId={invoice.id} currency={invoice.currency} status={invoice.status} canManage={canReversePayment} />}
+    {!editing && <InvoiceStripeLivePanel invoiceId={invoice.id} currency={invoice.currency} status={invoice.status} canManage={canReversePayment} />}
 
     <section className="rounded-2xl border bg-white p-5">
       <div className="flex items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">Invoice details</h2><p className="mt-1 text-sm text-neutral-500">{draft ? "Draft invoices can be changed until they are sent." : "Sent invoices are locked to preserve the commercial record."}</p></div>{invoice.project_id ? <Link href={`/dashboard/projects/${invoice.project_id}`} className="text-sm font-medium">Open project →</Link> : null}</div>
