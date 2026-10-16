@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     stripe_connect_client_id_live: str = ""
     stripe_secret_key_test: str = ""
     stripe_secret_key_live: str = ""
+    stripe_oauth_redirect_uri: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
