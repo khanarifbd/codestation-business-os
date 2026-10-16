@@ -57,6 +57,7 @@ from app.models.membership import Membership
 from app.models.orders import Order, OrderItem
 from app.models.organization import Organization
 from app.models.passkey import PasskeyChallenge, UserPasskey
+from app.models.payment_gateways import GatewayOAuthState, PaymentGatewayConnection
 from app.models.payables import PayableBill, PayablePayment
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
 from app.models.posting_idempotency import PostingIdempotency
@@ -97,7 +98,7 @@ __all__ = [
     "PasskeyChallenge", "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
-    "OrganizationRole", "OrganizationSystemDefaults", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PayrollWithholdingPayment", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
+    "OrganizationRole", "OrganizationSystemDefaults", "GatewayOAuthState", "PaymentGatewayConnection", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PayrollWithholdingPayment", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectNote", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
     "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "TaxSettlement", "User", "UserPasskey", "UserSession", "Vendor", "Warehouse",
 ]

@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     local_storage_path: str = "./data/uploads"
     max_document_upload_mb: int = 20
     project_credential_encryption_key: str = "development-only-project-credential-key"
+    stripe_connect_client_id_test: str = ""
+    stripe_connect_client_id_live: str = ""
+    stripe_secret_key_test: str = ""
+    stripe_secret_key_live: str = ""
+    stripe_oauth_redirect_uri: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
