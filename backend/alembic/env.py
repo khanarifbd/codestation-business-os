@@ -52,6 +52,8 @@ from app.models import (  # noqa: F401
     OrganizationRole,
     OrganizationSystemDefaults,
     Payment,
+    GatewayOAuthState,
+    PaymentGatewayConnection,
     PerformanceReview,
     PostingIdempotency,
     Project,
