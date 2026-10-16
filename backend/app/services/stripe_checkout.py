@@ -90,8 +90,11 @@ def verify_stripe_signature(body: bytes, signature_header: str | None, secret: s
 def stripe_checkout_request(
     *, api_key: str, attempt_id: str, invoice_number: str, currency: str,
     amount_minor: int, client_email: str | None, public_app_url: str,
+    mode: str = "test",
 ) -> dict:
     """Create one Stripe-hosted Checkout Session with deterministic retry key."""
+    if mode not in {"test", "live"}:
+        raise HTTPException(status_code=422, detail="Unsupported Stripe Checkout mode")
     if not currency.isalpha() or len(currency) != 3 or currency.upper() != "USD":
         raise HTTPException(status_code=422, detail="Stripe sandbox Checkout initially supports USD invoices only")
     if not 1 <= amount_minor <= 99_999_999:
@@ -122,7 +125,7 @@ def stripe_checkout_request(
         headers={
             "Authorization": "Basic " + token,
             "Content-Type": "application/x-www-form-urlencoded",
-            "Idempotency-Key": "business-os-checkout-" + attempt_id,
+            "Idempotency-Key": f"business-os-{mode}-checkout-" + attempt_id,
             "Accept": "application/json",
         },
     )
@@ -139,10 +142,10 @@ def stripe_checkout_request(
     url = result.get("url")
     parsed_checkout = urlparse(url) if isinstance(url, str) else None
     if not (
-        str(result.get("id", "")).startswith("cs_test_")
+        str(result.get("id", "")).startswith("cs_test_" if mode == "test" else "cs_live_")
         and parsed_checkout and parsed_checkout.scheme == "https"
         and parsed_checkout.hostname in {"checkout.stripe.com", "stripe.com"}
-        and result.get("livemode") is False
+        and result.get("livemode") is (mode == "live")
         and result.get("currency") == currency.lower()
         and result.get("amount_total") == amount_minor
         and result.get("client_reference_id") == attempt_id
