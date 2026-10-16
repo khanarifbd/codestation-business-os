@@ -103,8 +103,10 @@ def main():
         def bad_data(status):
             return {"id": payout_id, "livemode": True, "status": status,
                     "currency": "usd", "amount": 941}
-        with patch("app.api.v1.stripe_payouts.decrypt_gateway_secret", return_value="sk_live_ci"),
-             patch("app.api.v1.stripe_payouts.stripe_retrieve", side_effect=lambda *args: bad_data("pending")):
+        with (
+            patch("app.api.v1.stripe_payouts.decrypt_gateway_secret", return_value="sk_live_ci"),
+            patch("app.api.v1.stripe_payouts.stripe_retrieve", side_effect=lambda *args: bad_data("pending")),
+        ):
             denied(409, lambda: stripe_payouts.confirm_live_payout(payload, request(), db, actor))
         assert db.scalar(select(func.count()).select_from(StripePayoutReconciliation).where(
             StripePayoutReconciliation.organization_id == org.id)) == 0
