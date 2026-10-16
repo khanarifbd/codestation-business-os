@@ -127,6 +127,20 @@ def _verify_live_checkout_and_post(db: DbSession, connection: PaymentGatewayConn
     if not isinstance(pi_id, str) or not pi_id.startswith("pi_"):
         raise HTTPException(status_code=409, detail="Live PaymentIntent missing")
 
+    invoice = db.scalar(select(Invoice).where(
+        Invoice.organization_id == connection.organization_id,
+        Invoice.id == attempt.invoice_id,
+    ))
+    if invoice is None or invoice.status not in {"sent", "partially_paid"}:
+        if attempt.status == "live_paid" and existing is None:
+            return "review_required", attempt.id
+        # The same invoice may have been paid outside this Checkout before
+        # Stripe delivered its event. Keep the event in the review queue;
+        # never book a duplicate invoice receipt.
+        attempt.status = "live_paid_unapplied"
+        attempt.stripe_payment_intent_id = pi_id
+        attempt.completed_at = datetime.now(timezone.utc)
+        return "review_required", attempt.id
     existing = db.scalar(select(StripeSettlementSnapshot).where(
         StripeSettlementSnapshot.organization_id == connection.organization_id,
         StripeSettlementSnapshot.attempt_id == attempt.id,
@@ -234,12 +248,20 @@ def _review_full_refund(db: DbSession, connection: PaymentGatewayConnection, eve
         return "already_reversed"
     actor = _system_tenant(db, connection)
     # Fee expense remains in place: Stripe does not promise processing-fee reimbursement.
-    reverse_business_transaction(
-        CorrectionRequest(
-            source_type="payment", source_id=payment.id,
-            reason="Verified Stripe full refund" if event_type == "charge.refunded" else "Verified Stripe lost chargeback",
-        ), None, db, actor,
-    )
+    previous = db.info.get("stripe_verified_reversal_payment")
+    db.info["stripe_verified_reversal_payment"] = payment.id
+    try:
+        reverse_business_transaction(
+            CorrectionRequest(
+                source_type="payment", source_id=payment.id,
+                reason="Verified Stripe full refund" if event_type == "charge.refunded" else "Verified Stripe lost chargeback",
+            ), None, db, actor,
+        )
+    finally:
+        if previous is None:
+            db.info.pop("stripe_verified_reversal_payment", None)
+        else:
+            db.info["stripe_verified_reversal_payment"] = previous
     return "full_payment_reversed"
 
 
