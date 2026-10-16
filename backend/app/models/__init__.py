@@ -49,6 +49,7 @@ from app.models.hr import (
     LeaveType,
     PerformanceReview,
 )
+from app.models.hr_attendance import EmployeeAttendancePolicy, HRAttendanceRequest, HROfficeLocation
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, PurchaseReceiptItem, StockMovement, Warehouse
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
