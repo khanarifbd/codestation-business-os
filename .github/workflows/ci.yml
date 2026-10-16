@@ -86,6 +86,7 @@ jobs:
       - run: uv run python scripts/verify_stripe_settlement.py
       - run: uv run python scripts/verify_stripe_accounting_posting.py
       - run: uv run python scripts/verify_stripe_payout_lifecycle.py
+      - run: uv run python scripts/verify_stripe_live_accounting.py
       - run: uv run python scripts/verify_finance_performance.py
       - run: uv run python scripts/verify_transfers.py
       - run: uv run python scripts/verify_expenses.py
