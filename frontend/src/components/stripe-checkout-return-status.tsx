@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Clock3, ShieldCheck, AlertTriangle } from "lucide-react";
 
 type CheckoutMode = "live" | "test" | "unknown";
-type PaymentState = "checking" | "processing" | "posted" | "review_required" | "sandbox_paid" | "pending" | "unavailable";
+type PaymentState = "checking" | "processing" | "posted" | "reversed" | "review_required" | "sandbox_paid" | "pending" | "unavailable";
 
 export function StripeCheckoutReturnStatus({
   mode, sessionId, result,
@@ -27,9 +27,9 @@ export function StripeCheckoutReturnStatus({
         );
         const data = await response.json().catch(() => null);
         if (!active) return;
-        if (response.ok && ["posted", "review_required", "processing", "sandbox_paid", "pending"].includes(data?.status)) {
+        if (response.ok && ["posted", "reversed", "review_required", "processing", "sandbox_paid", "pending"].includes(data?.status)) {
           setState(data.status as PaymentState);
-          if (data.status === "posted" || data.status === "review_required" || data.status === "sandbox_paid") return;
+          if (data.status === "posted" || data.status === "reversed" || data.status === "review_required" || data.status === "sandbox_paid") return;
         } else {
           setState("unavailable");
         }
@@ -62,6 +62,13 @@ export function StripeCheckoutReturnStatus({
     return <div role="status" className="mt-5 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
       <CheckCircle2 className="mt-0.5 size-5 shrink-0"/>
       <span><strong>Payment verified and posted to Business OS.</strong> The company can now review the Invoice, Stripe Clearing Account, processing fee, and Journal.</span>
+    </div>;
+  }
+
+  if (state === "reversed") {
+    return <div role="status" className="mt-5 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+      <span><strong>This Stripe payment was reversed.</strong> The seller can review the refund or chargeback in Business OS. Do not rely on the original checkout redirect as proof of a current paid balance.</span>
     </div>;
   }
 
