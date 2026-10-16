@@ -11,6 +11,7 @@ from app.api.v1.sales import change_quotation_status
 from app.models.client_access import ClientMembership
 from app.models.crm import Client
 from app.models.finance import Invoice, InvoiceItem, Payment
+from app.services.invoice_stripe_payment_link import effective_invoice_payment_url
 from app.models.orders import Order, OrderItem
 from app.models.projects import Project, ProjectMilestone
 from app.models.sales import Quotation, QuotationItem
@@ -596,7 +597,7 @@ def get_client_portal_invoice(invoice_id: str, db: DbSession, tenant: CurrentTen
         payment_account_holder=invoice.payment_account_holder_snapshot,
         payment_account_reference=invoice.payment_account_reference_snapshot,
         payment_currency=invoice.payment_currency_snapshot,
-        payment_url=invoice.payment_url_snapshot,
+        payment_url=effective_invoice_payment_url(db, invoice),
         payment_instructions=invoice.payment_instructions_snapshot,
         subtotal=invoice.subtotal,
         discount_total=invoice.discount_total,

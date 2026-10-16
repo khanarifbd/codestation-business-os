@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
 
@@ -26,6 +27,7 @@ from app.services.stripe_checkout import (
     stripe_checkout_request, to_usd_minor_units, verify_stripe_signature,
 )
 from app.tenancy.context import TenantContext
+from app.services.invoice_stripe_payment_link import verify_public_invoice_link
 
 router = APIRouter(prefix="/finance/stripe-checkout", tags=["Stripe Checkout"])
 FinanceManager = Annotated[TenantContext, Depends(require_tenant_permission("finance.manage"))]
@@ -175,17 +177,27 @@ def save_webhook_secret(payload: WebhookSecretRequest, request: Request, db: DbS
     return {"webhook_configured": True}
 
 
-def _create_checkout(invoice_id: str, request: Request, db: DbSession, tenant: FinanceManager, *, mode: str):
+def _create_checkout(
+    invoice_id: str, request: Request, db: DbSession,
+    tenant: TenantContext | None, *, mode: str, authorized_organization_id: str | None = None,
+):
+    # For an authenticated manager, derive organization scope from their verified
+    # context. For a public pay link, the caller MUST verify a signed capability
+    # before explicitly passing authorized_organization_id.
+    organization_id = tenant.organization_id if tenant is not None else authorized_organization_id
+    if not organization_id:
+        raise HTTPException(status_code=403, detail="Organization context required")
+    actor_user_id = tenant.user_id if tenant is not None else None
     """Create or reuse a tenant-owned USD Stripe Checkout with explicit mode."""
     invoice = db.scalar(select(Invoice).where(
-        Invoice.organization_id == tenant.organization_id, Invoice.id == invoice_id,
+        Invoice.organization_id == organization_id, Invoice.id == invoice_id,
     ).with_for_update())
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
     if invoice.status not in {"sent", "partially_paid"} or invoice.balance_due <= 0:
         raise HTTPException(status_code=409, detail="Only issued unpaid invoices can create Stripe Checkout")
     amount_minor = to_usd_minor_units(Decimal(invoice.balance_due), invoice.currency)
-    connection = _stripe_connection(db, tenant.organization_id, mode=mode)
+    connection = _stripe_connection(db, organization_id, mode=mode)
     if _linked_stripe_account(db, invoice, connection) is None:
         raise HTTPException(
             status_code=409,
@@ -199,7 +211,7 @@ def _create_checkout(invoice_id: str, request: Request, db: DbSession, tenant: F
         raise HTTPException(status_code=503, detail="Platform webhook public HTTPS API URL is not configured")
     now = datetime.now(timezone.utc)
     existing = db.scalar(select(StripeCheckoutAttempt).where(
-        StripeCheckoutAttempt.organization_id == tenant.organization_id,
+        StripeCheckoutAttempt.organization_id == organization_id,
         StripeCheckoutAttempt.invoice_id == invoice.id,
         StripeCheckoutAttempt.connection_id == connection.id,
         StripeCheckoutAttempt.currency == invoice.currency,
@@ -212,10 +224,10 @@ def _create_checkout(invoice_id: str, request: Request, db: DbSession, tenant: F
         return _attempt_json(existing)
 
     attempt = StripeCheckoutAttempt(
-        organization_id=tenant.organization_id, invoice_id=invoice.id,
+        organization_id=organization_id, invoice_id=invoice.id,
         connection_id=connection.id, mode=mode,
         currency=invoice.currency, amount_minor=amount_minor,
-        created_by_user_id=tenant.user_id,
+        created_by_user_id=actor_user_id or invoice.created_by_user_id,
         status="initiated",
     )
     db.add(attempt)
@@ -237,7 +249,7 @@ def _create_checkout(invoice_id: str, request: Request, db: DbSession, tenant: F
     attempt.status = "open"
     record_activity(
         db, action="payment_gateway.stripe.checkout_created", scope="tenant",
-        actor_user_id=tenant.user_id, organization_id=tenant.organization_id,
+        actor_user_id=actor_user_id, actor_type="user" if tenant is not None else "system", organization_id=organization_id,
         entity_type="stripe_checkout_attempt", entity_id=attempt.id,
         after={"invoice_id": invoice.id, "invoice_number": invoice.invoice_number,
                "connection_id": connection.id, "mode": mode, "amount_minor": amount_minor,
@@ -309,6 +321,24 @@ def reconcile_live_checkout(
         )
     db.commit()
     return {"result": result, "attempt_id": attempt.id, "accounting_posted": result == "live_paid_posted"}
+
+
+@router.get("/pay/{organization_id}/{invoice_id}/{signature}", include_in_schema=False)
+def open_public_live_invoice_checkout(
+    organization_id: str, invoice_id: str, signature: str, request: Request, db: DbSession,
+):
+    """Public bearer link shown in issued invoice PDFs and QR codes.
+
+    The HMAC is validated before reading tenant data. This endpoint exposes
+    no invoice/client details and only starts an authorized Live Stripe Checkout.
+    """
+    verify_public_invoice_link(organization_id, invoice_id, signature)
+    if not settings.stripe_live_collection_enabled:
+        raise HTTPException(status_code=503, detail="Online invoice payments are temporarily unavailable")
+    result = _create_checkout(
+        invoice_id, request, db, None, mode="live", authorized_organization_id=organization_id,
+    )
+    return RedirectResponse(url=result["checkout_url"], status_code=303)
 
 
 @router.post("/webhook/{connection_id}", include_in_schema=False)
