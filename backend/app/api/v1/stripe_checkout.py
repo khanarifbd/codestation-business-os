@@ -113,6 +113,42 @@ def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer
     }
 
 
+@router.get("/live/invoices/{invoice_id}")
+def stripe_live_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer):
+    invoice = db.scalar(select(Invoice).where(
+        Invoice.organization_id == tenant.organization_id, Invoice.id == invoice_id,
+    ))
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    connection = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.organization_id == tenant.organization_id,
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == "live",
+        PaymentGatewayConnection.is_active.is_(True),
+    ))
+    linked = _linked_stripe_account(db, invoice, connection) if connection else None
+    attempts = db.scalars(select(StripeCheckoutAttempt).where(
+        StripeCheckoutAttempt.organization_id == tenant.organization_id,
+        StripeCheckoutAttempt.invoice_id == invoice.id,
+        StripeCheckoutAttempt.mode == "live",
+    ).order_by(StripeCheckoutAttempt.created_at.desc()).limit(10)).all()
+    return {
+        "mode": "live",
+        "platform_live_enabled": settings.stripe_live_collection_enabled,
+        "gateway_connected": connection is not None,
+        "financial_account_linked": linked is not None,
+        "webhook_configured": bool(connection and connection.webhook_secret_ciphertext),
+        "checkout_available": bool(
+            settings.stripe_live_collection_enabled and connection
+            and connection.connection_method == "api_key" and connection.secret_key_ciphertext
+            and connection.webhook_secret_ciphertext and connection.charges_enabled
+            and linked and invoice.status in {"sent", "partially_paid"}
+            and invoice.balance_due > 0 and invoice.currency == "USD"
+        ),
+        "attempts": [_attempt_json(x) for x in attempts],
+    }
+
+
 @router.post("/webhook-secret")
 def save_webhook_secret(payload: WebhookSecretRequest, request: Request, db: DbSession, tenant: CurrentTenantAdmin):
     raw = payload.signing_secret.get_secret_value().strip()
