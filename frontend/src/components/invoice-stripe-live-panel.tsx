@@ -47,6 +47,22 @@ export function InvoiceStripeLivePanel({invoiceId, currency, status, canManage}:
       setError(reason instanceof Error ? reason.message : "Stripe Live Checkout failed");
     } finally { setBusy(false); }
   }
+  async function verifyExisting(attemptId: string) {
+    setBusy(true); setError(null); setNotice(null);
+    try {
+      const response = await fetch(
+        `/api/finance/stripe-checkout/live/invoices/${encodeURIComponent(invoiceId)}/attempts/${encodeURIComponent(attemptId)}/reconcile`,
+        { method: "POST" },
+      );
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(getApiErrorMessage(data, "Could not reconcile Stripe Live payment"));
+      setNotice(data.accounting_posted ? "Verified payment posted to Invoice, Clearing and Journal. Refresh the invoice to see updated balances." : "Stripe payment is pending or needs financial review.");
+      const updated = await fetch(`/api/finance/stripe-checkout/live/invoices/${encodeURIComponent(invoiceId)}`, {cache:"no-store"});
+      if (updated.ok) setState(await updated.json());
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Stripe payment verification failed");
+    } finally { setBusy(false); }
+  }
   return <section className="rounded-2xl border border-blue-200 bg-blue-50/40 p-5">
     <h2 className="text-base font-semibold">Stripe Live Checkout</h2>
     <p className="mt-1 text-xs text-neutral-600">Real payments only. Signed webhook and Stripe API verification are required before automatic Invoice, Fee and Journal posting.</p>
@@ -60,7 +76,8 @@ export function InvoiceStripeLivePanel({invoiceId, currency, status, canManage}:
     {state?.attempts?.length ? <div className="mt-4 space-y-2">
       {state.attempts.slice(0, 5).map(a => <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white p-3 text-xs" key={a.id}>
         <span>{a.currency} {a.amount} · {a.status.replaceAll("_"," ")}</span>
-        {a.checkout_url && a.status === "open" && <a href={a.checkout_url} target="_blank" rel="noopener noreferrer" className="underline">Open Stripe Checkout</a>}
+        <span className="flex items-center gap-3">{a.checkout_url && a.status === "open" && <a href={a.checkout_url} target="_blank" rel="noopener noreferrer" className="underline">Open Stripe Checkout</a>}
+        {state.platform_live_enabled && <button type="button" disabled={busy} onClick={() => void verifyExisting(a.id)} className="underline disabled:opacity-40">Verify payment</button>}</span>
       </div>)}
     </div> : null}
   </section>;
