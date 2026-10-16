@@ -160,9 +160,8 @@ def main():
             before_tx_count = db.scalar(select(func.count()).select_from(FinancialTransaction).where(FinancialTransaction.organization_id == org.id))
             before_journal_count = db.scalar(select(func.count()).select_from(JournalEntry).where(JournalEntry.organization_id == org.id))
             assert api.read_settlement(invoice.id, attempt.id, db, tenant)["reconciled"] is False
-            expect_reject(404, lambda: api.read_settlement(invoice.id, attempt.id, db, TenantContext(
-                organization=org, membership=member, user=user, organization_id="other-org"
-            )))
+            expect_reject(404, lambda: api._attempt(db, str(uuid4()), invoice.id, attempt.id, lock=False))
+            expect_reject(404, lambda: api._invoice(db, str(uuid4()), invoice.id))
             with patch.object(db, "commit", db.flush), patch("app.services.stripe_settlement.stripe_retrieve", retrieval):
                 result = api.reconcile_stripe_sandbox(invoice.id, attempt.id, _request(), db, tenant)
                 assert result["gross"] == "10.00"
