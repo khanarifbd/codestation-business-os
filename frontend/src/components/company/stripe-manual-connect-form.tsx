@@ -62,10 +62,10 @@ export function StripeManualConnectForm({
     {!enabled ? <p className="mt-2 text-xs text-amber-700">The SaaS administrator must configure server-side payment gateway encryption once before companies can securely save keys.</p> : null}
     {open && <form onSubmit={(event) => void submit(event)} className="mt-3 space-y-3 rounded-xl border bg-neutral-50 p-4">
       <h5 className="text-sm font-semibold">{mode === "test" ? "Test" : "Live"} Stripe credentials</h5>
-      <label className="block text-sm">Secret Key <span className="text-red-600">*</span>
+      <label className="block text-sm">Stripe API Key (Secret or Restricted) <span className="text-red-600">*</span>
         <input type="password" autoComplete="off" spellCheck={false} value={secretKey}
           onChange={(event) => setSecretKey(event.target.value)} required
-          placeholder={mode === "test" ? "sk_test_..." : "sk_live_..."}
+          placeholder={mode === "test" ? "sk_test_... or rk_test_..." : "sk_live_... or rk_live_..."}
           className="mt-1 w-full rounded-lg border bg-white px-3 py-2.5 font-mono text-sm" />
       </label>
       <label className="block text-sm">Webhook Signing Secret (optional until checkout integration)
@@ -73,7 +73,7 @@ export function StripeManualConnectForm({
           onChange={(event) => setWebhookSecret(event.target.value)} placeholder="whsec_..."
           className="mt-1 w-full rounded-lg border bg-white px-3 py-2.5 font-mono text-sm" />
       </label>
-      <p className="text-xs leading-5 text-neutral-500">Keys are validated directly with Stripe and stored encrypted, never displayed again. Never share a Secret Key in chat. <a
+      <p className="text-xs leading-5 text-neutral-500">Restricted keys (rk_) are supported. Grant the key read access to Account, Payment Intents, Charges, Balance Transactions, Payouts and Disputes, plus write access to Checkout Sessions. Key permissions are verified when relevant Stripe API calls are made. Keys are validated against the merchant account and stored encrypted, never displayed again. Never share an API key in chat. <a
         href={mode === "test" ? "https://dashboard.stripe.com/test/apikeys" : "https://dashboard.stripe.com/apikeys"}
         target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium underline">
         Stripe API Keys <ExternalLink className="size-3" /></a></p>
