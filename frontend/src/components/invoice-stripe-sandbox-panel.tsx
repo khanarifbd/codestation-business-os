@@ -18,6 +18,8 @@ type Attempt = {
 type SandboxStatus = {
   test_mode: boolean;
   gateway_connected: boolean;
+  financial_account_linked: boolean;
+  financial_account_name: string | null;
   webhook_configured: boolean;
   checkout_available: boolean;
   attempts: Attempt[];
@@ -80,6 +82,8 @@ export function InvoiceStripeSandboxPanel({
     {error && <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {notice && <p role="status" className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">{notice}</p>}
     {!data?.webhook_configured && <p className="mt-3 text-xs text-amber-800">First configure a Stripe Sandbox webhook in <Link href="/dashboard/company?tab=payments" className="font-semibold underline">Company Payment Gateways</Link>.</p>}
+    {data?.gateway_connected && !data.financial_account_linked && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">This invoice&apos;s receipt account is not linked to your Stripe Sandbox. Go to <Link href="/dashboard/accounting/accounts" className="font-semibold underline">Financial Accounts</Link>, open the existing Stripe Payment account, select <strong>Edit account & gateway</strong>, and link the connected Stripe Sandbox. This mapping does not change any balance.</p>}
+    {data?.financial_account_linked && <p className="mt-3 text-xs text-emerald-700">Receipt account mapped: {data.financial_account_name}. Test payments will not update this account balance.</p>}
     {currency !== "USD" && <p className="mt-3 text-xs text-amber-800">Sandbox Checkout is initially enabled for USD invoices only.</p>}
     {!eligible && <p className="mt-3 text-xs text-amber-800">Send the invoice before creating a Checkout link.</p>}
     {canManage && <button disabled={busy || !data?.checkout_available} type="button" onClick={() => void generate()} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="size-4 animate-spin" /> : <CreditCard className="size-4" />}Generate Sandbox Payment Link</button>}
