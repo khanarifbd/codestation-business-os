@@ -21,12 +21,18 @@ def upgrade() -> None:
         ["gateway_connection_id"], ["id"], ondelete="RESTRICT",
     )
     op.create_index(
+        "uq_financial_accounts_gateway_currency", "financial_accounts",
+        ["gateway_connection_id", "currency"], unique=True,
+        postgresql_where=sa.text("gateway_connection_id IS NOT NULL"),
+    )
+    op.create_index(
         "ix_financial_accounts_org_gateway", "financial_accounts",
         ["organization_id", "gateway_connection_id"],
     )
 
 
 def downgrade() -> None:
+    op.drop_index("uq_financial_accounts_gateway_currency", table_name="financial_accounts")
     op.drop_index("ix_financial_accounts_org_gateway", table_name="financial_accounts")
     op.drop_constraint("fk_financial_accounts_gateway_connection", "financial_accounts", type_="foreignkey")
     op.drop_column("financial_accounts", "gateway_connection_id")
