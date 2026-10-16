@@ -11,6 +11,7 @@ from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.finance import FinancialAccount, FinancialTransaction
+from app.services.payment_gateway_mapping import validate_gateway_mapping
 from app.schemas.finance import FinancialAccountCreate, FinancialAccountRead
 from app.schemas.invoice_payment import normalize_payment_url
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account
@@ -68,6 +69,9 @@ def _read(db: DbSession, account: FinancialAccount) -> FinancialAccountRead:
         provider_name=account.provider_name,
         account_holder_name=account.account_holder_name,
         account_reference=account.account_reference,
+        gateway_connection_id=account.gateway_connection_id,
+        payment_url=account.payment_url,
+        payment_instructions=account.payment_instructions,
         currency=account.currency,
         opening_balance=account.opening_balance,
         current_balance=_balance(db, account),
@@ -89,6 +93,7 @@ def create_accounting_financial_account(
     if payload.account_type == "credit_card" and opening < 0:
         raise HTTPException(status_code=400, detail="Credit card opening balance must be zero or a positive amount currently owed")
 
+    gateway_id = validate_gateway_mapping(db, organization_id=tenant.organization_id, gateway_connection_id=payload.gateway_connection_id, account_type=payload.account_type, currency=payload.currency)
     account = FinancialAccount(
         organization_id=tenant.organization_id,
         name=payload.name.strip(),
@@ -96,6 +101,7 @@ def create_accounting_financial_account(
         provider_name=_clean(payload.provider_name),
         account_holder_name=_clean(payload.account_holder_name),
         account_reference=_clean(payload.account_reference),
+        gateway_connection_id=gateway_id,
         currency=payload.currency.upper(),
         opening_balance=opening,
         notes=_clean(payload.notes),
@@ -151,6 +157,7 @@ def create_accounting_financial_account(
             "currency": account.currency,
             "opening_balance": str(account.opening_balance),
             "ledger_account_id": ledger.id,
+            "gateway_connection_id": gateway_id,
             "payment_url_configured": bool(account.payment_url),
             "payment_instructions_configured": bool(account.payment_instructions),
         },

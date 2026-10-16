@@ -7,8 +7,9 @@ import { useParams } from "next/navigation";
 
 import { CursorPager } from "@/components/cursor-pager";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { FinancialAccountEditPanel, type FinancialAccountEditData } from "@/components/financial-account-edit-panel";
 
-type Account = { id: string; name: string; account_type: string; provider_name: string | null; account_reference: string | null; currency: string; opening_balance: string | number; current_balance: string | number; is_active: boolean };
+type Account = FinancialAccountEditData;
 type Transaction = { id: string; transaction_date: string; direction: "credit" | "debit" | string; amount: string | number; currency: string; source_type: string; source_id: string; reference: string | null; description: string | null; created_at: string };
 type LedgerPage = { items: Transaction[]; next_cursor: string | null };
 
@@ -20,6 +21,7 @@ export default function AccountLedgerPage() {
   const params = useParams<{ accountId: string }>();
   const accountId = params.accountId;
   const [account, setAccount] = useState<Account | null>(null);
+  const [editing, setEditing] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +88,9 @@ export default function AccountLedgerPage() {
   return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
     <div><Link href="/dashboard/accounting/accounts" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Back to accounts</Link><div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts · Account Statement</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">{account?.name ?? "Account statement"}</h1><p className="mt-2 text-sm text-neutral-500">{account?.provider_name || account?.account_reference || "Full transaction history for this account."}</p></div>{account ? <div className="rounded-2xl border bg-white px-5 py-4 text-right"><p className="text-xs text-neutral-400">Current balance</p><p className="mt-1 text-2xl font-semibold tabular-nums">{money(account.current_balance, account.currency)}</p></div> : null}</div></div>
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+
+    {account && <div className="flex justify-end"><button type="button" onClick={() => setEditing(value => !value)} className="rounded-xl border bg-white px-4 py-2.5 text-sm font-medium">{editing ? "Close edit" : "Edit account & gateway"}</button></div>}
+    {account && editing ? <FinancialAccountEditPanel account={account} onCancel={() => setEditing(false)} onSaved={async () => { await loadAccount(); setEditing(false); }} /> : null}
 
     {account ? <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-2xl border bg-white p-5"><p className="text-sm text-neutral-500">Opening balance</p><p className="mt-2 text-2xl font-semibold tabular-nums">{money(account.opening_balance, account.currency)}</p></div><div className="rounded-2xl border bg-white p-5"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">Credit · this page</p><ArrowDownLeft className="size-4 text-neutral-400" /></div><p className="mt-2 text-2xl font-semibold tabular-nums">{money(totals.credit, account.currency)}</p></div><div className="rounded-2xl border bg-white p-5"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">Debit · this page</p><ArrowUpRight className="size-4 text-neutral-400" /></div><p className="mt-2 text-2xl font-semibold tabular-nums">{money(totals.debit, account.currency)}</p></div><div className="rounded-2xl border bg-white p-5"><div className="flex items-center justify-between"><p className="text-sm text-neutral-500">Current balance</p><Landmark className="size-4 text-neutral-400" /></div><p className="mt-2 text-2xl font-semibold tabular-nums">{money(account.current_balance, account.currency)}</p></div></section> : null}
 

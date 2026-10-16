@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.api.dependencies import CurrentTenantAdmin, DbSession, require_tenant_permission
 from app.core.config import settings
-from app.models.finance import Invoice
+from app.models.finance import FinancialAccount, Invoice
 from app.models.payment_gateways import PaymentGatewayConnection
 from app.models.stripe_checkout import StripeCheckoutAttempt, StripeWebhookEvent
 from app.services.activity_log import record_activity
@@ -51,6 +51,20 @@ def _stripe_connection(db: DbSession, organization_id: str, *, mode: str = "test
     return connection
 
 
+def _linked_stripe_account(db: DbSession, invoice: Invoice, connection: PaymentGatewayConnection) -> FinancialAccount | None:
+    """Invoice receipt destination must belong to the connected gateway and tenant."""
+    if not invoice.payment_account_id or invoice.payment_method != "stripe":
+        return None
+    return db.scalar(select(FinancialAccount).where(
+        FinancialAccount.organization_id == invoice.organization_id,
+        FinancialAccount.id == invoice.payment_account_id,
+        FinancialAccount.account_type == "payment_gateway",
+        FinancialAccount.is_active.is_(True),
+        FinancialAccount.currency == invoice.currency,
+        FinancialAccount.gateway_connection_id == connection.id,
+    ))
+
+
 def _attempt_json(row: StripeCheckoutAttempt) -> dict:
     return {
         "id": row.id, "invoice_id": row.invoice_id, "mode": row.mode,
@@ -73,6 +87,7 @@ def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer
         PaymentGatewayConnection.provider == "stripe",
         PaymentGatewayConnection.is_active.is_(True),
     ))
+    linked_account = _linked_stripe_account(db, invoice, connection) if connection is not None else None
     attempts = db.scalars(select(StripeCheckoutAttempt).where(
         StripeCheckoutAttempt.organization_id == tenant.organization_id,
         StripeCheckoutAttempt.invoice_id == invoice.id,
@@ -80,11 +95,14 @@ def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer
     ).order_by(StripeCheckoutAttempt.created_at.desc()).limit(10)).all()
     return {
         "test_mode": True, "gateway_connected": connection is not None,
+        "financial_account_linked": linked_account is not None,
+        "financial_account_name": linked_account.name if linked_account else None,
         "webhook_configured": bool(connection and connection.webhook_secret_ciphertext),
         "checkout_available": bool(connection and connection.connection_method == "api_key"
                                    and connection.charges_enabled and connection.secret_key_ciphertext
                                    and connection.webhook_secret_ciphertext
                                    and invoice.status in {"sent", "partially_paid"}
+                                   and linked_account is not None
                                    and invoice.balance_due > 0 and invoice.currency == "USD"),
         "account_id": connection.provider_account_id if connection else None,
         "webhook_url": (
@@ -135,6 +153,11 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
         raise HTTPException(status_code=409, detail="Only issued unpaid invoices can create Stripe Checkout")
     amount_minor = to_usd_minor_units(Decimal(invoice.balance_due), invoice.currency)
     connection = _stripe_connection(db, tenant.organization_id)
+    if _linked_stripe_account(db, invoice, connection) is None:
+        raise HTTPException(
+            status_code=409,
+            detail="The invoice Stripe receipt account must be linked to this company's connected Stripe Sandbox in Financial Accounts.",
+        )
     if connection.connection_method != "api_key" or not connection.secret_key_ciphertext:
         raise HTTPException(status_code=409, detail="Connect your Stripe Test API Key in Company Settings first")
     if not connection.charges_enabled or not connection.webhook_secret_ciphertext:

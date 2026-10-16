@@ -8,6 +8,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -16,6 +17,41 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+# Never relay raw Stripe error messages: some may contain customer data.
+SAFE_STRIPE_PARAMETERS = {
+    "customer_email", "success_url", "cancel_url", "mode",
+    "payment_method_types", "line_items", "line_items[0][price_data][currency]",
+    "line_items[0][price_data][unit_amount]",
+}
+
+def _stripe_checkout_error(exc: HTTPError) -> HTTPException:
+    code = ""
+    param = ""
+    try:
+        raw = json.loads(exc.read(4096))
+        error = raw.get("error", {}) if isinstance(raw, dict) else {}
+        if isinstance(error, dict):
+            code = error.get("code") if isinstance(error.get("code"), str) else ""
+            param = error.get("param") if isinstance(error.get("param"), str) else ""
+    except (ValueError, UnicodeDecodeError, OSError):
+        pass
+    # Log only numeric status and a bounded allowlisted parameter name.
+    safe_param = param if param in SAFE_STRIPE_PARAMETERS else "other"
+    logger.warning("Stripe Checkout rejected request: status=%s code=%s parameter=%s",
+                   exc.code, code[:48].replace("\n", ""), safe_param)
+    if exc.code == 401:
+        return HTTPException(status_code=409, detail="Stripe rejected the Test API Key. Reconnect the correct Stripe Sandbox Secret Key.")
+    if exc.code == 403:
+        return HTTPException(status_code=409, detail="Stripe API Key lacks permission to create Checkout Sessions; check Stripe key permissions.")
+    if exc.code == 400 and safe_param == "customer_email":
+        return HTTPException(status_code=422, detail="The invoice client email is invalid for Stripe Checkout. Correct the client email and try again.")
+    if exc.code == 400:
+        return HTTPException(status_code=422, detail=f"Stripe rejected the Checkout configuration ({safe_param}). Review the Sandbox Stripe account settings.")
+    return HTTPException(status_code=502, detail="Stripe Checkout is temporarily unavailable; try again later.")
+
 
 SIGNATURE_TOLERANCE_SECONDS = 300
 MAX_WEBHOOK_BYTES = 1024 * 1024
@@ -94,9 +130,11 @@ def stripe_checkout_request(
     try:
         with urlopen(req, timeout=15) as response:
             result = json.load(response)
-    except (HTTPError, URLError, TimeoutError, ValueError) as exc:
-        # Never leak Stripe credential or confidential upstream diagnostics.
-        raise HTTPException(status_code=502, detail="Stripe Checkout could not be created; retry safely") from exc
+    except HTTPError as exc:
+        raise _stripe_checkout_error(exc) from None
+    except (URLError, TimeoutError, ValueError) as exc:
+        logger.warning("Stripe Checkout request failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Could not reach Stripe Checkout. Please retry.") from None
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail="Unexpected Stripe Checkout response")
     url = result.get("url")
