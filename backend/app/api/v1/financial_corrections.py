@@ -23,6 +23,7 @@ from app.models.payroll import PayrollPeriod, PayrollRun, PayrollWithholdingPaym
 from app.models.tax import TaxSettlement
 from app.services.activity_log import record_activity
 from app.services.journal_reversal import reverse_source_journal
+from app.models.stripe_accounting import StripeAccountingPosting
 from app.services.loan_schedule import refresh_loan_schedule_payment_state
 from app.tenancy.context import TenantContext
 
@@ -583,6 +584,15 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
             raise HTTPException(status_code=404, detail="Payment not found")
         if payment.status != "confirmed":
             raise HTTPException(status_code=409, detail="Only confirmed payments can be reversed")
+        stripe_link = db.scalar(select(StripeAccountingPosting.id).where(
+            StripeAccountingPosting.organization_id == tenant.organization_id,
+            StripeAccountingPosting.payment_id == payment.id,
+        ))
+        if stripe_link is not None and db.info.get("stripe_verified_reversal_payment") != payment.id:
+            raise HTTPException(
+                status_code=409,
+                detail="Stripe payments require a verified provider refund or dispute; do not reverse them manually",
+            )
         invoice = db.scalar(
             select(Invoice).where(
                 Invoice.id == payment.invoice_id,

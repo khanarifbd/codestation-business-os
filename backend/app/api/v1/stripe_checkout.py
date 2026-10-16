@@ -113,6 +113,42 @@ def stripe_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer
     }
 
 
+@router.get("/live/invoices/{invoice_id}")
+def stripe_live_checkout_status(invoice_id: str, db: DbSession, tenant: FinanceViewer):
+    invoice = db.scalar(select(Invoice).where(
+        Invoice.organization_id == tenant.organization_id, Invoice.id == invoice_id,
+    ))
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    connection = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.organization_id == tenant.organization_id,
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == "live",
+        PaymentGatewayConnection.is_active.is_(True),
+    ))
+    linked = _linked_stripe_account(db, invoice, connection) if connection else None
+    attempts = db.scalars(select(StripeCheckoutAttempt).where(
+        StripeCheckoutAttempt.organization_id == tenant.organization_id,
+        StripeCheckoutAttempt.invoice_id == invoice.id,
+        StripeCheckoutAttempt.mode == "live",
+    ).order_by(StripeCheckoutAttempt.created_at.desc()).limit(10)).all()
+    return {
+        "mode": "live",
+        "platform_live_enabled": settings.stripe_live_collection_enabled,
+        "gateway_connected": connection is not None,
+        "financial_account_linked": linked is not None,
+        "webhook_configured": bool(connection and connection.webhook_secret_ciphertext),
+        "checkout_available": bool(
+            settings.stripe_live_collection_enabled and connection
+            and connection.connection_method == "api_key" and connection.secret_key_ciphertext
+            and connection.webhook_secret_ciphertext and connection.charges_enabled
+            and linked and invoice.status in {"sent", "partially_paid"}
+            and invoice.balance_due > 0 and invoice.currency == "USD"
+        ),
+        "attempts": [_attempt_json(x) for x in attempts],
+    }
+
+
 @router.post("/webhook-secret")
 def save_webhook_secret(payload: WebhookSecretRequest, request: Request, db: DbSession, tenant: CurrentTenantAdmin):
     raw = payload.signing_secret.get_secret_value().strip()
@@ -139,9 +175,8 @@ def save_webhook_secret(payload: WebhookSecretRequest, request: Request, db: DbS
     return {"webhook_configured": True}
 
 
-@router.post("/invoices/{invoice_id}", status_code=status.HTTP_201_CREATED)
-def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, tenant: FinanceManager):
-    """Create/reuse a test session; never use this endpoint for real money."""
+def _create_checkout(invoice_id: str, request: Request, db: DbSession, tenant: FinanceManager, *, mode: str):
+    """Create or reuse a tenant-owned USD Stripe Checkout with explicit mode."""
     invoice = db.scalar(select(Invoice).where(
         Invoice.organization_id == tenant.organization_id, Invoice.id == invoice_id,
     ).with_for_update())
@@ -150,14 +185,14 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
     if invoice.status not in {"sent", "partially_paid"} or invoice.balance_due <= 0:
         raise HTTPException(status_code=409, detail="Only issued unpaid invoices can create Stripe Checkout")
     amount_minor = to_usd_minor_units(Decimal(invoice.balance_due), invoice.currency)
-    connection = _stripe_connection(db, tenant.organization_id)
+    connection = _stripe_connection(db, tenant.organization_id, mode=mode)
     if _linked_stripe_account(db, invoice, connection) is None:
         raise HTTPException(
             status_code=409,
-            detail="The invoice Stripe receipt account must be linked to this company's connected Stripe Sandbox in Financial Accounts.",
+            detail="The invoice Stripe receipt account must be linked to this company's connected Stripe account in Financial Accounts.",
         )
     if connection.connection_method != "api_key" or not connection.secret_key_ciphertext:
-        raise HTTPException(status_code=409, detail="Connect your Stripe Test API Key in Company Settings first")
+        raise HTTPException(status_code=409, detail="Connect your Stripe API Key in Company Settings first")
     if not connection.charges_enabled or not connection.webhook_secret_ciphertext:
         raise HTTPException(status_code=409, detail="Enable Stripe charges and save a Webhook Signing Secret first")
     if settings.environment.lower().strip() in {"production", "staging"} and not settings.public_api_url.startswith("https://"):
@@ -170,6 +205,7 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
         StripeCheckoutAttempt.currency == invoice.currency,
         StripeCheckoutAttempt.amount_minor == amount_minor,
         StripeCheckoutAttempt.status == "open",
+        StripeCheckoutAttempt.mode == mode,
         StripeCheckoutAttempt.expires_at > now,
     ).order_by(StripeCheckoutAttempt.created_at.desc()).limit(1))
     if existing is not None and existing.checkout_url:
@@ -177,7 +213,7 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
 
     attempt = StripeCheckoutAttempt(
         organization_id=tenant.organization_id, invoice_id=invoice.id,
-        connection_id=connection.id, mode="test",
+        connection_id=connection.id, mode=mode,
         currency=invoice.currency, amount_minor=amount_minor,
         created_by_user_id=tenant.user_id,
         status="initiated",
@@ -190,7 +226,7 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
             attempt_id=attempt.id, invoice_number=invoice.invoice_number,
             currency=invoice.currency, amount_minor=amount_minor,
             client_email=invoice.client_email_snapshot,
-            public_app_url=settings.public_app_url,
+            public_app_url=settings.public_app_url, mode=mode,
         )
     except Exception:
         db.rollback()
@@ -200,15 +236,79 @@ def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, te
     attempt.expires_at = datetime.fromtimestamp(int(checkout["expires_at"]), tz=timezone.utc)
     attempt.status = "open"
     record_activity(
-        db, action="payment_gateway.stripe.sandbox_checkout_created", scope="tenant",
+        db, action="payment_gateway.stripe.checkout_created", scope="tenant",
         actor_user_id=tenant.user_id, organization_id=tenant.organization_id,
         entity_type="stripe_checkout_attempt", entity_id=attempt.id,
         after={"invoice_id": invoice.id, "invoice_number": invoice.invoice_number,
-               "connection_id": connection.id, "mode": "test", "amount_minor": amount_minor,
+               "connection_id": connection.id, "mode": mode, "amount_minor": amount_minor,
                "currency": invoice.currency}, request=request,
     )
     db.commit()
     return _attempt_json(attempt)
+
+
+
+@router.post("/invoices/{invoice_id}", status_code=status.HTTP_201_CREATED)
+def create_sandbox_checkout(invoice_id: str, request: Request, db: DbSession, tenant: FinanceManager):
+    """Existing Test Checkout stays Sandbox-only."""
+    return _create_checkout(invoice_id, request, db, tenant, mode="test")
+
+
+@router.post("/live/invoices/{invoice_id}", status_code=status.HTTP_201_CREATED)
+def create_live_checkout(invoice_id: str, request: Request, db: DbSession, tenant: FinanceManager):
+    """Real-money Checkout: require merchant Live gateway and signed webhook."""
+    if not settings.stripe_live_collection_enabled:
+        raise HTTPException(status_code=409, detail="Live collection requires platform approval and STRIPE_LIVE_COLLECTION_ENABLED")
+    return _create_checkout(invoice_id, request, db, tenant, mode="live")
+
+
+@router.post("/live/invoices/{invoice_id}/attempts/{attempt_id}/reconcile")
+def reconcile_live_checkout(
+    invoice_id: str, attempt_id: str, request: Request, db: DbSession, tenant: FinanceManager,
+):
+    """Recover a paid Live Checkout when a signed webhook was lost or held.
+
+    Re-read the exact original Checkout from the company's Stripe account,
+    validate amount, ownership, PaymentIntent, captured Charge and fee before
+    invoking established GL services. Never use client-supplied payment truth.
+    """
+    if not settings.stripe_live_collection_enabled:
+        raise HTTPException(status_code=409, detail="Live Stripe reconciliation is not enabled")
+    attempt = db.scalar(select(StripeCheckoutAttempt).where(
+        StripeCheckoutAttempt.organization_id == tenant.organization_id,
+        StripeCheckoutAttempt.invoice_id == invoice_id,
+        StripeCheckoutAttempt.id == attempt_id,
+        StripeCheckoutAttempt.mode == "live",
+    ).with_for_update())
+    if attempt is None or not attempt.stripe_session_id:
+        raise HTTPException(status_code=404, detail="Live Stripe Checkout session not found")
+    connection = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.id == attempt.connection_id,
+        PaymentGatewayConnection.organization_id == tenant.organization_id,
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == "live",
+        PaymentGatewayConnection.is_active.is_(True),
+    ))
+    if connection is None or not connection.secret_key_ciphertext or connection.connection_method != "api_key":
+        raise HTTPException(status_code=409, detail="Verified connected Stripe Live API credentials are required")
+    from app.services.stripe_settlement import stripe_retrieve
+    from app.api.v1.stripe_lifecycle import _verify_live_checkout_and_post
+    from app.db.session import defer_commits
+    session = stripe_retrieve(
+        decrypt_gateway_secret(connection.secret_key_ciphertext),
+        "checkout_session", attempt.stripe_session_id,
+    )
+    with defer_commits(db):
+        result, related_attempt_id = _verify_live_checkout_and_post(db, connection, session)
+        record_activity(
+            db, action="stripe.live_checkout_manual_reconciliation", scope="tenant",
+            organization_id=tenant.organization_id, actor_user_id=tenant.user_id,
+            entity_type="stripe_checkout_attempt", entity_id=attempt.id,
+            after={"result": result, "attempt_id": related_attempt_id, "invoice_id": invoice_id},
+            request=request,
+        )
+    db.commit()
+    return {"result": result, "attempt_id": attempt.id, "accounting_posted": result == "live_paid_posted"}
 
 
 @router.post("/webhook/{connection_id}", include_in_schema=False)

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     stripe_secret_key_live: str = ""
     stripe_oauth_redirect_uri: str = ""
     payment_gateway_encryption_key: str = ""
+    stripe_live_collection_enabled: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",
