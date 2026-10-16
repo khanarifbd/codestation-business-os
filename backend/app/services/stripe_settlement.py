@@ -81,20 +81,21 @@ def _expected_amount(value: object, expected: int, name: str) -> None:
 
 def verified_sandbox_settlement(
     *, api_key: str, payment_intent_id: str, currency: str, amount_minor: int,
+    mode: str = "test",
 ) -> VerifiedStripeSettlement:
     """Require matching PaymentIntent → Charge → BalanceTransaction facts."""
-    if currency != "USD" or not isinstance(amount_minor, int) or amount_minor <= 0:
+    if mode not in {"test", "live"} or currency != "USD" or not isinstance(amount_minor, int) or amount_minor <= 0:
         raise HTTPException(status_code=422, detail="Only positive USD Sandbox payments can be reconciled")
 
     intent_id = _stripe_id(payment_intent_id, "intent")
     intent = stripe_retrieve(api_key, "intent", intent_id)
-    if (intent.get("livemode") is not False or intent.get("currency") != currency.lower()
+    if (intent.get("livemode") is not (mode == "live") or intent.get("currency") != currency.lower()
             or intent.get("status") != "succeeded"):
         raise HTTPException(status_code=409, detail="Stripe PaymentIntent is not a completed USD Sandbox payment")
     _expected_amount(intent.get("amount_received"), amount_minor, "captured amount")
     charge_id = _object_id(intent.get("latest_charge"), "charge")
     charge = stripe_retrieve(api_key, "charge", charge_id)
-    if (charge.get("livemode") is not False or charge.get("currency") != currency.lower()
+    if (charge.get("livemode") is not (mode == "live") or charge.get("currency") != currency.lower()
             or charge.get("paid") is not True or charge.get("captured") is not True
             or charge.get("refunded") is True or charge.get("disputed") is True
             or charge.get("status") != "succeeded"
@@ -104,7 +105,7 @@ def verified_sandbox_settlement(
     _expected_amount(charge.get("amount_refunded"), 0, "refunded amount")
     transaction_id = _object_id(charge.get("balance_transaction"), "transaction")
     txn = stripe_retrieve(api_key, "transaction", transaction_id)
-    if txn.get("currency") != currency.lower():
+    if txn.get("currency") != currency.lower() or txn.get("livemode") is not (mode == "live"):
         raise HTTPException(status_code=409, detail="Stripe settlement currency differs from invoice currency; FX reconciliation is required")
     _expected_amount(txn.get("amount"), amount_minor, "balance transaction gross")
     if txn.get("source") not in (charge_id, {"id": charge_id}):
