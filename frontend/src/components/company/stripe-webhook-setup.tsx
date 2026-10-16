@@ -38,6 +38,7 @@ export function StripeWebhookSetup({
   return <div className="mt-4 rounded-xl border bg-neutral-50 p-4 text-sm">
     <div className="flex items-center gap-2 font-semibold"><ShieldCheck className="size-4" />Sandbox Checkout Webhook</div>
     <p className="mt-1 text-xs text-neutral-500">Register this endpoint in Stripe Sandbox → Developers → Webhooks. Listen for checkout.session.completed and checkout.session.async_payment_succeeded.</p>
+    {!url && <p className="mt-2 text-xs text-red-700">The platform administrator must configure PUBLIC_API_URL before you can register the webhook.</p>}
     {url && <div className="mt-3 flex flex-col gap-2 sm:flex-row">
       <code className="min-w-0 flex-1 break-all rounded-lg border bg-white px-3 py-2 text-xs">{url}</code>
       <button type="button" onClick={async () => { await navigator.clipboard.writeText(url); setMessage("Webhook endpoint copied."); }} className="inline-flex items-center justify-center gap-2 rounded-lg border bg-white px-3 py-2 text-xs"><Copy className="size-3.5" />Copy URL</button>
