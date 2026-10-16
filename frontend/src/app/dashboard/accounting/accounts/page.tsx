@@ -482,7 +482,7 @@ export default function AccountsPage() {
           ) : accounts.length ? (
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {accounts.map((account) => (
-                <AccountCard key={account.id} account={account} />
+                <AccountCard key={account.id} account={account} gateway={gateways.find((item) => item.id === account.gateway_connection_id)} />
               ))}
             </section>
           ) : (
@@ -510,7 +510,7 @@ export default function AccountsPage() {
   );
 }
 
-function AccountCard({ account }: { account: Account }) {
+function AccountCard({ account, gateway }: { account: Account; gateway?: Gateway }) {
   const isLiability = account.account_type === "credit_card";
 
   return (
@@ -534,6 +534,7 @@ function AccountCard({ account }: { account: Account }) {
       <div className="mt-5 min-w-0">
         <h3 className="truncate text-[15px] font-semibold text-neutral-950">{account.name}</h3>
         <p className="mt-1 truncate text-xs text-neutral-400">{account.provider_name || account.account_reference || "No provider or reference"}</p>
+        {account.gateway_connection_id ? <p className="mt-1 truncate text-xs font-medium text-emerald-700">{gateway ? `Linked: Stripe ${gateway.mode === "test" ? "Sandbox" : "Live"}` : "Previously linked gateway (currently unavailable)"}</p> : account.account_type === "payment_gateway" ? <p className="mt-1 text-xs text-amber-600">Not linked to a connected gateway</p> : null}
       </div>
 
       <div className="mt-6">
