@@ -105,7 +105,7 @@ def verified_sandbox_settlement(
     _expected_amount(charge.get("amount_refunded"), 0, "refunded amount")
     transaction_id = _object_id(charge.get("balance_transaction"), "transaction")
     txn = stripe_retrieve(api_key, "transaction", transaction_id)
-    if txn.get("currency") != currency.lower() or txn.get("livemode") is not (mode == "live"):
+    if txn.get("currency") != currency.lower():
         raise HTTPException(status_code=409, detail="Stripe settlement currency differs from invoice currency; FX reconciliation is required")
     _expected_amount(txn.get("amount"), amount_minor, "balance transaction gross")
     if txn.get("source") not in (charge_id, {"id": charge_id}):
