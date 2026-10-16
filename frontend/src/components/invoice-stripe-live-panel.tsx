@@ -55,7 +55,7 @@ export function InvoiceStripeLivePanel({invoiceId, currency, status, canManage}:
       );
     }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "Cannot load Stripe Live"); });
     return () => { active = false; };
-  }, [invoiceId]);
+  }, [invoiceId, status]);
   if (!canManage || currency !== "USD" || (!state?.gateway_connected && !error)) return null;
   async function generate() {
     if (!window.confirm("Create a REAL Stripe Live Checkout payment link? Only share it with the invoice customer. The verified payment will post to the company's real accounting ledger.")) return;
