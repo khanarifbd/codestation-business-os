@@ -192,15 +192,26 @@ function periodLabel(value: string) {
 export default function DashboardPage() {
   const router = useRouter();
   const { tenant } = useDashboardSession();
-  const [data, setData] = useState<Overview | null>(null);
-  const [details, setDetails] = useState<DashboardDetails | null>(null);
+  const activeOrganizationId = tenant?.organization.id;
+  const [reportResult, setReportResult] = useState<{ organizationId: string; value: Overview } | null>(null);
+  const data = reportResult?.organizationId === activeOrganizationId ? reportResult.value : null;
+  const [detailsResult, setDetails] = useState<{ organizationId: string; from: string; to: string; value: DashboardDetails } | null>(null);
+  const details = detailsResult?.organizationId === activeOrganizationId &&
+    detailsResult.from === data?.date_from && detailsResult.to === data?.date_to ? detailsResult.value : null;
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState(false);
-  const [orderPulse, setOrderPulse] = useState<OrderPulse | null>(null);
-  const [projectPulse, setProjectPulse] = useState<ProjectPulse | null>(null);
-  const [crmPulse, setCrmPulse] = useState<CrmPulse | null>(null);
-  const [financePulse, setFinancePulse] = useState<FinancePulse | null>(null);
-  const [peoplePulse, setPeoplePulse] = useState<PeoplePulse | null>(null);
+  const [pulseOrganizationId, setPulseOrganizationId] = useState<string | null>(null);
+  const [rawOrderPulse, setOrderPulse] = useState<OrderPulse | null>(null);
+  const [rawProjectPulse, setProjectPulse] = useState<ProjectPulse | null>(null);
+  const [rawCrmPulse, setCrmPulse] = useState<CrmPulse | null>(null);
+  const [rawFinancePulse, setFinancePulse] = useState<FinancePulse | null>(null);
+  const [rawPeoplePulse, setPeoplePulse] = useState<PeoplePulse | null>(null);
+  const pulseMatchesTenant = pulseOrganizationId === activeOrganizationId;
+  const orderPulse = pulseMatchesTenant ? rawOrderPulse : null;
+  const projectPulse = pulseMatchesTenant ? rawProjectPulse : null;
+  const crmPulse = pulseMatchesTenant ? rawCrmPulse : null;
+  const financePulse = pulseMatchesTenant ? rawFinancePulse : null;
+  const peoplePulse = pulseMatchesTenant ? rawPeoplePulse : null;
   const [preset, setPreset] = useState<Preset>("month");
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
@@ -221,7 +232,10 @@ export default function DashboardPage() {
           router.replace("/login");
           return;
         }
-        if (response.ok) setData((await response.json()) as Overview);
+        if (response.ok) {
+          const payload = (await response.json()) as Overview;
+          if (active) setReportResult({ organizationId: tenant.organization.id, value: payload });
+        }
         else if (response.status !== 403) throw new Error("Unable to load dashboard metrics");
       } catch (reason) {
         if (active) setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
@@ -246,6 +260,7 @@ export default function DashboardPage() {
         setCrmPulse(pulse.crm);
         setFinancePulse(pulse.finance);
         setPeoplePulse(pulse.people);
+        setPulseOrganizationId(tenant.organization.id);
       } catch {
         // Pulse cards are supplementary; the primary dashboard report remains usable.
       }
@@ -253,7 +268,6 @@ export default function DashboardPage() {
     return () => { active = false; };
   }, [tenant]);
 
-  const activeOrganizationId = tenant?.organization.id;
   const periodStart = data?.date_from;
   const periodEnd = data?.date_to;
 
@@ -276,7 +290,9 @@ export default function DashboardPage() {
         }
         if (!response.ok) throw new Error("Dashboard details unavailable");
         const payload = (await response.json()) as DashboardDetails;
-        if (!controller.signal.aborted) setDetails(payload);
+        if (!controller.signal.aborted) {
+          setDetails({ organizationId: activeOrganizationId, from: periodStart, to: periodEnd, value: payload });
+        }
       } catch {
         if (!controller.signal.aborted) setDetailsError(true);
       } finally {
@@ -299,7 +315,7 @@ export default function DashboardPage() {
         return;
       }
       if (!response.ok) throw new Error("Unable to load dashboard metrics");
-      setData((await response.json()) as Overview);
+      setReportResult({ organizationId: tenant!.organization.id, value: (await response.json()) as Overview });
       setPreset(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load dashboard metrics");
@@ -344,7 +360,7 @@ export default function DashboardPage() {
     crmPulse?.values.map((row) => ({ currency: row.currency, amount: row.weighted_amount })) ?? []
   ), [crmPulse]);
 
-  if (loading) {
+  if (loading || (reportResult !== null && reportResult.organizationId !== activeOrganizationId)) {
     return (
       <AppPage width="wide">
         <div className="space-y-5" role="status" aria-label="Loading dashboard">
@@ -563,7 +579,7 @@ export default function DashboardPage() {
         <div className="grid gap-5 xl:grid-cols-2">
           <Surface className="p-5 sm:p-6">
             <SectionHeading title="Financial accounts" note={details ? `${details.accounts.length} active account${details.accounts.length === 1 ? "" : "s"}` : "Account balances"} href="/dashboard/accounting/accounts" icon={Landmark} />
-            {detailsLoading ? <DetailPlaceholder /> : detailsError ? <DetailUnavailable /> : details?.accounts.length ? (
+            {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.accounts.length ? (
               <div className="mt-4 divide-y">
                 {details.accounts.slice(0, 8).map((row) => (
                   <Link prefetch={false} key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="flex flex-col items-start gap-2 py-3 text-sm hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-2">
@@ -577,7 +593,7 @@ export default function DashboardPage() {
 
           <Surface className="p-5 sm:p-6">
             <SectionHeading title="Recent project economics" note={`${rangeLabel} profitability`} href="/dashboard/reports" icon={FolderKanban} />
-            {detailsLoading ? <DetailPlaceholder /> : detailsError ? <DetailUnavailable /> : details?.projects.length ? (
+            {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.projects.length ? (
               <div className="mt-4 divide-y">
                 {details.projects.slice(0, 6).map((row) => (
                   <Link prefetch={false} key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="block py-3 hover:bg-neutral-50 sm:px-2">
@@ -595,7 +611,7 @@ export default function DashboardPage() {
 
         <Surface className="p-5 sm:p-6">
           <SectionHeading title="Client economics" note={`${rangeLabel} client performance`} href="/dashboard/clients" icon={Users} />
-          {detailsLoading ? <DetailPlaceholder /> : detailsError ? <DetailUnavailable /> : details?.clients.length ? (
+          {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.clients.length ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {details.clients.slice(0, 9).map((row) => (
                 <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="rounded-xl border border-neutral-200 p-4 transition hover:border-neutral-300 hover:bg-neutral-50">
