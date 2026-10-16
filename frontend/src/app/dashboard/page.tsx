@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { useDashboardSession } from "@/components/dashboard-session-context";
+import { CurrencyTrendCard, FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 
 type FinancialRow = {
@@ -497,33 +498,9 @@ export default function DashboardPage() {
             action={<Link prefetch={false} href="/dashboard/accounting/reports" className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-600 hover:text-neutral-950">Accounting reports <ArrowRight className="size-4" /></Link>}
           />
           {financialRows.length ? (
-            <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
               {financialRows.map((row) => (
-                <article key={row.currency} className="rounded-2xl border border-neutral-200 bg-neutral-50/60 p-4 sm:p-5">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-lg font-semibold">{row.currency}</h3>
-                        {row.currency === company.currency ? <span className="rounded-full border bg-white px-2 py-0.5 text-[11px] font-semibold text-neutral-500">Reporting currency</span> : null}
-                      </div>
-                      <p className="mt-1 text-xs text-neutral-400">Period performance</p>
-                    </div>
-                    <CircleDollarSign className="size-5 text-neutral-300" />
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
-                    <MoneyTile label="Invoiced" value={money(row.invoiced_revenue, row.currency)} />
-                    <MoneyTile label="Collected" value={money(row.collected_revenue, row.currency)} />
-                    <MoneyTile label="Receivable" value={money(row.receivables, row.currency)} />
-                    <MoneyTile label="Expenses" value={money(row.expenses, row.currency)} />
-                    <MoneyTile label="Net profit" value={money(row.net_profit, row.currency)} strong />
-                  </div>
-                  {(Number(row.platform_fees) !== 0 || Number(row.transfer_fees) !== 0) ? (
-                    <div className="mt-3 flex flex-col gap-1 border-t pt-3 text-xs text-neutral-500 sm:flex-row sm:flex-wrap sm:gap-x-5">
-                      <span>Platform fees: <strong className="font-semibold text-neutral-700">{money(row.platform_fees, row.currency)}</strong></span>
-                      <span>Transfer fees: <strong className="font-semibold text-neutral-700">{money(row.transfer_fees, row.currency)}</strong></span>
-                    </div>
-                  ) : null}
-                </article>
+                <FinancialPerformanceCard key={row.currency} row={row} reportingCurrency={company.currency} formatMoney={money} />
               ))}
             </div>
           ) : <EmptyState title="No financial activity" note={`No posted financial activity for ${rangeLabel.toLowerCase()}.`} />}
@@ -554,22 +531,9 @@ export default function DashboardPage() {
           <Surface className="min-w-0 p-5 sm:p-6">
             <SectionHeader title="Performance trend" description="Up to the last 6 reporting periods, separated by currency." action={<TrendingUp className="size-5 text-neutral-300" />} />
             {trendGroups.length ? (
-              <div className="mt-5 grid min-w-0 gap-4 lg:grid-cols-2">
+              <div className="mt-5 grid min-w-0 gap-4 2xl:grid-cols-2">
                 {trendGroups.map((group) => (
-                  <div key={group.currency} className="min-w-0 overflow-hidden rounded-xl border border-neutral-200">
-                    <div className="flex items-center justify-between gap-3 bg-neutral-50 px-4 py-3">
-                      <span className="font-semibold">{group.currency}</span>
-                      {group.currency === company.currency ? <span className="text-right text-[11px] font-medium text-neutral-400">Reporting currency</span> : null}
-                    </div>
-                    <div className="overflow-x-auto overscroll-x-contain">
-                      <table className="w-full min-w-[460px] text-left text-xs sm:min-w-[500px]">
-                        <thead className="border-y bg-white text-neutral-400"><tr><th className="px-4 py-2 font-medium">Period</th><th className="px-3 py-2 text-right font-medium">Invoiced</th><th className="px-3 py-2 text-right font-medium">Collected</th><th className="px-4 py-2 text-right font-medium">Net</th></tr></thead>
-                        <tbody className="divide-y">
-                          {group.rows.map((row) => <tr key={`${row.period}-${row.currency}`}><td className="px-4 py-2.5 font-medium">{periodLabel(row.period)}</td><td className="px-3 py-2.5 text-right tabular-nums">{money(row.invoiced_revenue, row.currency)}</td><td className="px-3 py-2.5 text-right tabular-nums">{money(row.collected_revenue, row.currency)}</td><td className="px-4 py-2.5 text-right font-semibold tabular-nums">{money(row.net_profit, row.currency)}</td></tr>)}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <CurrencyTrendCard key={group.currency} currency={group.currency} rows={group.rows} reportingCurrency={company.currency} formatMoney={money} formatPeriod={periodLabel} />
                 ))}
               </div>
             ) : <EmptyState title="No trend yet" note="Trend data appears after invoices, payments or expenses are posted." />}
@@ -582,8 +546,8 @@ export default function DashboardPage() {
             {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.accounts.length ? (
               <div className="mt-4 divide-y">
                 {details.accounts.slice(0, 8).map((row) => (
-                  <Link prefetch={false} key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="flex flex-col items-start gap-2 py-3 text-sm hover:bg-neutral-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-2">
-                    <div className="min-w-0"><p className="break-words font-medium sm:truncate">{row.account_name}</p><p className="mt-0.5 text-xs capitalize text-neutral-400">{row.account_type.replaceAll("_", " ")} · {row.currency}</p></div>
+                  <Link prefetch={false} key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="group -mx-2 flex flex-col items-start gap-2 rounded-lg px-2 py-3.5 text-sm transition-colors hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <div className="flex min-w-0 items-center gap-3"><span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-600"><Landmark className="size-4" /></span><div className="min-w-0"><p className="break-words font-semibold text-neutral-800 sm:truncate">{row.account_name}</p><p className="mt-1 text-xs capitalize text-neutral-500">{row.account_type.replaceAll("_", " ")} · {row.currency}</p></div></div>
                     <p className="max-w-full break-all font-semibold tabular-nums sm:shrink-0 sm:text-right">{money(row.balance, row.currency)}</p>
                   </Link>
                 ))}
@@ -596,9 +560,9 @@ export default function DashboardPage() {
             {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.projects.length ? (
               <div className="mt-4 divide-y">
                 {details.projects.slice(0, 6).map((row) => (
-                  <Link prefetch={false} key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="block py-3 hover:bg-neutral-50 sm:px-2">
+                  <Link prefetch={false} key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="group -mx-2 block rounded-lg px-2 py-3.5 transition-colors hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                      <div className="min-w-0"><p className="break-words text-sm font-medium sm:truncate">{row.project_number} · {row.project_name}</p><p className="mt-0.5 break-words text-xs text-neutral-400 sm:truncate">{row.client_name}</p></div>
+                      <div className="min-w-0"><p className="break-words text-sm font-semibold text-neutral-800 sm:truncate">{row.project_number} · {row.project_name}</p><p className="mt-1 break-words text-xs text-neutral-500 sm:truncate">{row.client_name}</p></div>
                       <div className="sm:shrink-0 sm:text-right"><p className="break-all text-sm font-semibold">{money(row.estimated_profit, row.currency)}</p><p className="mt-0.5 text-xs text-neutral-400">{percent(row.margin_percent)} margin</p></div>
                     </div>
                     <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-neutral-400 sm:flex sm:flex-wrap sm:gap-x-4"><span>Contract {money(row.contract_value, row.currency)}</span><span>Invoiced {money(row.invoiced_revenue, row.currency)}</span><span>Collected {money(row.collected_revenue, row.currency)}</span><span>Direct cost {money(row.direct_expenses, row.currency)}</span></div>
@@ -614,9 +578,9 @@ export default function DashboardPage() {
           {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.clients.length ? (
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {details.clients.slice(0, 9).map((row) => (
-                <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="rounded-xl border border-neutral-200 p-4 transition hover:border-neutral-300 hover:bg-neutral-50">
-                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-semibold sm:truncate">{row.client_name}</p><p className="mt-1 text-xs text-neutral-400">{row.currency} · {percent(row.margin_percent)} margin</p></div><ArrowRight className="size-4 shrink-0 text-neutral-300" /></div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Direct cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
+                <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="group rounded-xl border border-neutral-200 bg-white p-4 transition-[border-color,box-shadow] hover:border-neutral-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.045)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:p-5">
+                  <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words text-sm font-semibold text-neutral-900 sm:truncate">{row.client_name}</p><p className="mt-1.5 text-xs text-neutral-500">{row.currency} · {percent(row.margin_percent)} margin</p></div><ArrowRight aria-hidden="true" className="size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" /></div>
+                  <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-neutral-100 pt-4 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Direct cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
                 </Link>
               ))}
             </div>
@@ -672,12 +636,8 @@ function PeopleStat({ label, value, attention = false }: { label: string; value:
   return <div className={`rounded-xl border p-3 ${attention ? "border-amber-200 bg-amber-50" : "bg-white"}`}><p className="text-[11px] leading-4 text-neutral-400">{label}</p><p className={`mt-2 text-xl font-semibold tabular-nums ${attention ? "text-amber-800" : "text-neutral-950"}`}>{value}</p></div>;
 }
 
-function MoneyTile({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return <div className={`min-w-0 rounded-xl px-3 py-3 ${strong ? "col-span-2 border bg-white sm:col-span-1" : "bg-white/80"}`}><p className="text-[11px] text-neutral-400">{label}</p><p className={`mt-1 break-all text-sm tabular-nums ${strong ? "font-semibold" : "font-medium"}`}>{value}</p></div>;
-}
-
 function ClientMetric({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return <div className="min-w-0"><p className="text-neutral-400">{label}</p><p className={`mt-1 break-all tabular-nums ${strong ? "font-semibold text-neutral-950" : "font-medium text-neutral-700"}`}>{value}</p></div>;
+  return <div className="min-w-0"><p className="text-[11px] font-medium text-neutral-500">{label}</p><p className={`mt-1.5 break-all text-xs tabular-nums ${strong ? "font-semibold text-neutral-950" : "font-medium text-neutral-700"}`}>{value}</p></div>;
 }
 
 function AlertRow({ label, value, href }: { label: string; value: number; href: string }) {
