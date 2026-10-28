@@ -365,6 +365,15 @@ def disable_client_access(
     tenant: ClientAccessManager,
 ) -> None:
     client = _client(db, tenant.organization_id, client_id)
+    # Match acceptance's invitation-first lock order. Include accepted rows so an
+    # acceptance already in flight finishes before the fresh access query below.
+    invitations = db.scalars(
+        select(ClientInvitation).where(
+            ClientInvitation.organization_id == tenant.organization_id,
+            ClientInvitation.client_id == client.id,
+        ).order_by(ClientInvitation.id.asc()).with_for_update()
+    ).all()
+    pending_invitations = [item for item in invitations if item.status == "pending"]
     accesses = db.scalars(
         select(ClientMembership).where(
             ClientMembership.organization_id == tenant.organization_id,
@@ -372,8 +381,14 @@ def disable_client_access(
             ClientMembership.status == "active",
         )
     ).all()
-    if not accesses:
+    if not accesses and not pending_invitations:
         return
+
+    revoked_at = utc_now()
+    invitation_ids = [item.id for item in pending_invitations]
+    for item in pending_invitations:
+        item.status = "revoked"
+        item.revoked_at = revoked_at
 
     membership_ids = {access.membership_id for access in accesses}
     access_ids = [access.id for access in accesses]
@@ -393,8 +408,8 @@ def disable_client_access(
         entity_type="client",
         entity_id=client.id,
         message=f"Client portal access disabled for {client.display_name}",
-        before={"active_access_count": len(accesses), "access_ids": access_ids},
-        after={"active_access_count": 0},
+        before={"active_access_count": len(accesses), "access_ids": access_ids, "pending_invitation_count": len(pending_invitations), "invitation_ids": invitation_ids},
+        after={"active_access_count": 0, "revoked_invitation_count": len(pending_invitations)},
         request=request,
     )
     db.commit()
