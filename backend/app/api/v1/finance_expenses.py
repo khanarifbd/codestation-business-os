@@ -15,6 +15,7 @@ from sqlalchemy import and_, case, func, or_, select
 from starlette.responses import FileResponse, Response
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.v1.reports import _invoice_project_id
 from app.models.crm import Client
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, Payment
@@ -1005,7 +1006,14 @@ def delete_expense_document(expense_id: str, document_id: str, request: Request,
 
 @router.get("/profitability", response_model=ProfitabilityReport)
 def profitability_report(db: DbSession, tenant: FinanceViewer) -> ProfitabilityReport:
-    invoices = db.scalars(select(Invoice).where(Invoice.organization_id == tenant.organization_id, Invoice.status != "cancelled")).all()
+    invoice_rows = db.execute(
+        select(Invoice, _invoice_project_id()).where(
+            Invoice.organization_id == tenant.organization_id,
+            Invoice.status.not_in(["draft", "cancelled"]),
+        )
+    ).all()
+    invoices = [invoice for invoice, _ in invoice_rows]
+    invoice_projects = {invoice.id: project_id for invoice, project_id in invoice_rows}
     expenses = db.scalars(select(Expense).where(Expense.organization_id == tenant.organization_id, Expense.status == "posted")).all()
     projects = db.scalars(select(Project).where(Project.organization_id == tenant.organization_id).order_by(Project.created_at.desc()).limit(500)).all()
     clients = db.scalars(select(Client).where(Client.organization_id == tenant.organization_id).order_by(Client.display_name.asc()).limit(1000)).all()
@@ -1056,7 +1064,7 @@ def profitability_report(db: DbSession, tenant: FinanceViewer) -> ProfitabilityR
 
     project_rows: list[ProjectProfitabilityRow] = []
     for project in projects:
-        project_invoices = [item for item in invoices if item.project_id == project.id and item.currency == project.currency]
+        project_invoices = [item for item in invoices if invoice_projects[item.id] == project.id and item.currency == project.currency]
         project_expenses = [item for item in expenses if item.project_id == project.id and item.profitability_currency == project.currency]
         invoiced = _money(sum((item.total for item in project_invoices), Decimal("0")))
         collected = _money(sum((item.amount_paid for item in project_invoices), Decimal("0")))

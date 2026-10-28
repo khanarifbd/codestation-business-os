@@ -13,6 +13,8 @@ from sqlalchemy import func, select
 from starlette.requests import Request
 
 from app.api.v1.finance import _account_balance
+from app.api.v1.finance_expenses import profitability_report
+from app.models.expenses import Expense
 from app.db.session import SessionLocal
 from app.models.accounting import JournalEntry, JournalLine
 from app.models.crm import Client
@@ -146,6 +148,8 @@ def main():
         ))
         assert invoice.balance_due == Decimal("10") and invoice.amount_paid == Decimal("0")
 
+        before_profitability = next(row for row in profitability_report(db, actor).profit_loss_by_currency if row.currency == "USD")
+        before_expenses = db.scalar(select(func.count()).select_from(Expense).where(Expense.organization_id == org.id))
         with patch.object(db, "commit", db.flush):
             posted = post_verified_live_stripe_settlement(
                 db, organization_id=org.id, actor=actor,
@@ -159,6 +163,13 @@ def main():
             assert invoice.status == "paid" and Decimal(invoice.balance_due) == 0
             assert Decimal(invoice.amount_paid) == Decimal("10.00")
             assert _account_balance(db, account) == Decimal("9.41")
+            # A real local posting writes a separate GL/cash fee, not an Expense.
+            # Expenses profitability must subtract it exactly once, not omit it.
+            after_profitability = next(row for row in profitability_report(db, actor).profit_loss_by_currency if row.currency == "USD")
+            assert db.scalar(select(func.count()).select_from(Expense).where(Expense.organization_id == org.id)) == before_expenses
+            assert after_profitability.operating_expenses == before_profitability.operating_expenses
+            assert after_profitability.stripe_processing_fees == before_profitability.stripe_processing_fees + Decimal("0.59")
+            assert after_profitability.net_profit == before_profitability.net_profit - Decimal("0.59")
 
             payment_gl = db.scalar(select(JournalEntry).where(
                 JournalEntry.organization_id == org.id,

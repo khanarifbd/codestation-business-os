@@ -5,8 +5,8 @@ export function OperationalReportingNote() {
   return (
     <p className="mt-3 text-xs leading-5 text-neutral-500">
       Operational margin, not accrual net profit: issued invoice totals (including tax) plus direct income,
-      less posted expenses, approved payroll and transfer fees. Platform fees are already included in expenses.
-      Supplier bills, inventory cost of sales, depreciation and other journal-only adjustments are not included.
+      less posted expenses, approved payroll and transfer fees. Platform fees recorded as posted expenses are included.
+      Supplier bills, inventory cost of sales, depreciation, Stripe processing fees posted only to the ledger and other journal-only adjustments are not included.
       Client/project filters exclude unallocated payroll and transfer fees. Compare with the{" "}
       <Link href="/dashboard/accounting/reports" className="font-medium text-neutral-700 underline">
         accrual Profit &amp; Loss
