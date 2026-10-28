@@ -20,6 +20,7 @@ class PayableBillCreate(BaseModel):
 
 class PayableBillRead(BaseModel):
     id: str
+    purchase_receipt_id: str | None = None
     bill_number: str
     supplier_name: str
     bill_date: date

@@ -12,6 +12,7 @@ from app.api.v1.payables_workspace import router as payables_workspace_router
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.payables import PayableBill, PayablePayment
+from app.services.inventory_payables import sync_purchase_settlement
 from app.models.tax import TaxCode
 from app.schemas.payables import PayableBillCreate, PayableBillRead, PayablePaymentCreate, PayablePaymentRead
 from app.services.accounting_posting import PostingLine, financial_ledger_account, money, post_journal, system_account, to_base_amount
@@ -58,11 +59,11 @@ def _tax_ledger(db: DbSession, organization_id: str, user_id: str, *, system_key
 
 def _bill_read(db: DbSession, organization_id: str, bill: PayableBill) -> PayableBillRead:
     category_name = db.scalar(select(LedgerAccount.name).where(LedgerAccount.id == bill.expense_ledger_account_id, LedgerAccount.organization_id == organization_id)) or "—"
-    return PayableBillRead(id=bill.id, bill_number=bill.bill_number, supplier_name=bill.supplier_name, bill_date=bill.bill_date, due_date=bill.due_date, currency=bill.currency, subtotal_amount=bill.subtotal_amount, tax_code_id=bill.tax_code_id, tax_rate_snapshot=bill.tax_rate_snapshot, input_tax_amount=bill.input_tax_amount, recoverable_tax_amount=bill.recoverable_tax_amount, withholding_tax_code_id=bill.withholding_tax_code_id, withholding_rate_snapshot=bill.withholding_rate_snapshot, withholding_tax_amount=bill.withholding_tax_amount, original_amount=bill.original_amount, net_payable_amount=bill.net_payable_amount, amount_paid=bill.amount_paid, balance_due=bill.balance_due, expense_ledger_account_id=bill.expense_ledger_account_id, expense_ledger_account_name=category_name, description=bill.description, reference=bill.reference, notes=bill.notes, status=bill.status, created_at=bill.created_at)
+    return PayableBillRead(id=bill.id, purchase_receipt_id=bill.purchase_receipt_id, bill_number=bill.bill_number, supplier_name=bill.supplier_name, bill_date=bill.bill_date, due_date=bill.due_date, currency=bill.currency, subtotal_amount=bill.subtotal_amount, tax_code_id=bill.tax_code_id, tax_rate_snapshot=bill.tax_rate_snapshot, input_tax_amount=bill.input_tax_amount, recoverable_tax_amount=bill.recoverable_tax_amount, withholding_tax_code_id=bill.withholding_tax_code_id, withholding_rate_snapshot=bill.withholding_rate_snapshot, withholding_tax_amount=bill.withholding_tax_amount, original_amount=bill.original_amount, net_payable_amount=bill.net_payable_amount, amount_paid=bill.amount_paid, balance_due=bill.balance_due, expense_ledger_account_id=bill.expense_ledger_account_id, expense_ledger_account_name=category_name, description=bill.description, reference=bill.reference, notes=bill.notes, status=bill.status, created_at=bill.created_at)
 
 
 def _payable_carrying_base(db: DbSession, organization_id: str, bill: PayableBill, current_payment_id: str, payable_account_id: str, settlement_amount: Decimal) -> Decimal:
-    issue = db.scalar(select(JournalEntry).where(JournalEntry.organization_id == organization_id, JournalEntry.source_type == "payable_bill", JournalEntry.source_id == bill.id, JournalEntry.status == "posted"))
+    issue = db.scalar(select(JournalEntry).where(JournalEntry.organization_id == organization_id, JournalEntry.source_type == ("inventory_purchase_receipt" if bill.purchase_receipt_id else "payable_bill"), JournalEntry.source_id == (bill.purchase_receipt_id or bill.id), JournalEntry.status == "posted"))
     if issue is None: raise HTTPException(status_code=409, detail=f"Payable bill {bill.bill_number} does not have its source journal")
     issue_base = Decimal(db.scalar(select(func.coalesce(func.sum(JournalLine.credit), 0)).where(JournalLine.organization_id == organization_id, JournalLine.journal_entry_id == issue.id, JournalLine.ledger_account_id == payable_account_id)) or 0)
     reversed_payment = (
@@ -156,6 +157,7 @@ def pay_payable_bill(bill_id: str, payload: PayablePaymentCreate, request: Reque
     post_journal(db, organization_id=tenant.organization_id, user_id=tenant.user_id, entry_date=payment.payment_date, source_type="payable_payment", source_id=payment.id, lines=lines, reference=payment.reference, memo=f"Payment for {bill.bill_number}")
     db.add(FinancialTransaction(organization_id=tenant.organization_id, account_id=financial.id, transaction_date=payment.payment_date, direction="credit" if financial.account_type == "credit_card" else "debit", amount=amount, currency=bill.currency, source_type="payable_payment", source_id=payment.id, reference=payment.reference, description=f"Payment to {bill.supplier_name}: {bill.description}", created_by_user_id=tenant.user_id))
     bill.amount_paid = _money(Decimal(bill.amount_paid) + amount); bill.balance_due = _money(Decimal(bill.net_payable_amount) - Decimal(bill.amount_paid)); bill.status = "paid" if bill.balance_due == 0 else "partially_paid"; db.flush()
+    sync_purchase_settlement(db, bill)
     record_activity(db, action="accounting.payable.payment_created", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="payable_payment", entity_id=payment.id, after={"bill_id": bill.id, "amount": str(amount), "currency": bill.currency, "remaining": str(bill.balance_due), "account_id": financial.id, "cash_base": str(cash_base), "carrying_base": str(carrying_base), "realized_fx": str(difference)}, message=f"Payable payment recorded: {bill.currency} {amount} to {bill.supplier_name}", request=request)
     db.commit(); db.refresh(payment)
     return PayablePaymentRead(id=payment.id, bill_id=payment.bill_id, financial_account_id=payment.financial_account_id, financial_account_name=financial.name, payment_date=payment.payment_date, currency=payment.currency, amount=payment.amount, reference=payment.reference, notes=payment.notes, created_at=payment.created_at)

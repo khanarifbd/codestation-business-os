@@ -19,6 +19,7 @@ from app.models.finance import AccountTransfer, FinancialTransaction, Invoice, P
 from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
 from app.models.loan_accounting import LoanDisbursement, LoanFee
 from app.models.payables import PayableBill, PayablePayment
+from app.services.inventory_payables import sync_purchase_settlement
 from app.models.payroll import PayrollPeriod, PayrollRun, PayrollWithholdingPayment
 from app.models.tax import TaxSettlement
 from app.services.activity_log import record_activity
@@ -930,6 +931,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         bill.amount_paid = max(Decimal("0"), Decimal(bill.amount_paid) - Decimal(payment.amount))
         bill.balance_due = max(Decimal("0"), Decimal(bill.net_payable_amount) - Decimal(bill.amount_paid))
         bill.status = "paid" if bill.balance_due == 0 else "partially_paid" if bill.amount_paid > 0 else "open"
+        sync_purchase_settlement(db, bill)
         reversed_number = f"Payment for {bill.bill_number}"
         before_status = "paid_or_partially_paid"
         after_status = bill.status

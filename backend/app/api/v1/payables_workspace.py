@@ -61,6 +61,7 @@ def _decode_cursor(cursor: str) -> tuple[datetime, str]:
 def _bill_read(bill: PayableBill, expense_name: str) -> PayableBillRead:
     return PayableBillRead(
         id=bill.id,
+        purchase_receipt_id=bill.purchase_receipt_id,
         bill_number=bill.bill_number,
         supplier_name=bill.supplier_name,
         bill_date=bill.bill_date,

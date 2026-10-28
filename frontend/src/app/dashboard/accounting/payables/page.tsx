@@ -29,6 +29,7 @@ import { cn } from "@/lib/cn";
 
 type AgingBucket = "current" | "1-30" | "31-60" | "61-90" | "90+";
 type Bill = {
+  purchase_receipt_id?: string | null;
   id: string;
   bill_number: string;
   supplier_name: string;
@@ -634,7 +635,7 @@ export default function PayablesPage() {
         <PageHeader
           eyebrow="Finance & Accounting"
           title="Supplier payables"
-          description="Recognize vendor bills when incurred, manage due dates and settle Accounts Payable without recording the expense twice."
+          description="Settle vendor bills and received inventory purchases here. Inventory receipts are included automatically; do not create another bill for them."
           meta={
             <>
               <span className="rounded-full border border-neutral-200 bg-white px-2.5 py-1">Server-side totals & aging</span>
@@ -691,7 +692,7 @@ export default function PayablesPage() {
           />
           <MetricSurface
             label="Posting model"
-            value="Bill → Payable → Payment"
+            value="Purchase / Bill → Payment"
             help="Payment settles liability; it is not a second expense"
             icon={<ShieldCheck className="size-4" />}
             compact
@@ -944,7 +945,7 @@ export default function PayablesPage() {
             </div>
 
             <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <Info label="Expense category" value={selected.expense_ledger_account_name} />
+              <Info label={selected.purchase_receipt_id ? "Inventory account" : "Expense category"} value={selected.expense_ledger_account_name} />
               <Info label="Bill / due date" value={`${selected.bill_date} · ${selected.due_date || "No due date"}`} />
               <Info label="Input tax" value={`${money(selected.input_tax_amount, selected.currency)} · ${selected.tax_rate_snapshot ?? 0}%`} />
               <Info label="Recoverable input tax" value={money(selected.recoverable_tax_amount, selected.currency)} />
@@ -1092,7 +1093,7 @@ export default function PayablesPage() {
         <Surface className="overflow-hidden">
           <div className="p-5 sm:p-6">
             <SectionHeader
-              title="Supplier bills"
+              title="Supplier bills and inventory purchases"
               description="Search and filter server-side. Open a bill to inspect tax, payable balance and settlement history."
               action={<span className="text-xs text-neutral-400">{summary.filtered_count} matching bills</span>}
             />
@@ -1147,7 +1148,7 @@ export default function PayablesPage() {
                       <th className="px-5 py-3">Bill</th>
                       <th className="px-4 py-3">Supplier</th>
                       <th className="px-4 py-3">Due</th>
-                      <th className="px-4 py-3">Expense</th>
+                      <th className="px-4 py-3">Posting account</th>
                       <th className="px-4 py-3">Gross</th>
                       <th className="px-4 py-3">Net payable</th>
                       <th className="px-4 py-3">Still due</th>
@@ -1219,7 +1220,7 @@ export default function PayablesPage() {
       <FinancialConfirmationDialog
         open={confirmMode === "payment"}
         title="Post this supplier payment?"
-        description="This reduces Accounts Payable and updates the selected financial account. It does not recognize the vendor expense again."
+        description="This reduces Accounts Payable and updates the selected financial account. It does not post a new inventory purchase or expense."
         details={paymentConfirmation}
         confirmLabel="Post supplier payment"
         loading={saving}

@@ -195,6 +195,7 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
         select(
             PayableBill.id,
             PayableBill.bill_number,
+            PayableBill.purchase_receipt_id,
             PayableBill.status,
             PayableBill.net_payable_amount,
             PayableBill.amount_paid,
@@ -202,7 +203,7 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
         ).where(PayableBill.organization_id == organization_id)
     ).all()
     report.stats["payable_bills"] = len(bills)
-    for bill_id, number, status, net_payable, amount_paid, balance_due in bills:
+    for bill_id, number, purchase_receipt_id, status, net_payable, amount_paid, balance_due in bills:
         if money(net_payable) != money(amount_paid) + money(balance_due):
             report.add(
                 "payable_balance_mismatch",
@@ -210,7 +211,8 @@ def audit_organization_accounting(db, organization_id: str) -> AccountingIntegri
             )
         if money(amount_paid) < 0 or money(balance_due) < 0:
             report.add("payable_negative_balance", f"Bill {number} has a negative paid/due amount")
-        if ("payable_bill", bill_id) not in source_journals:
+        source = ("inventory_purchase_receipt", purchase_receipt_id) if purchase_receipt_id else ("payable_bill", bill_id)
+        if source not in source_journals:
             report.add("payable_missing_journal", f"Bill {number} ({status}) has no posted payable_bill journal")
         if status == "paid" and money(balance_due) != Decimal("0.00"):
             report.add("payable_paid_with_balance", f"Bill {number} is paid but balance_due={money(balance_due)}")

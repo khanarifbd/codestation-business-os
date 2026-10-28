@@ -15,6 +15,7 @@ from app.models.tax import TaxCode
 from app.schemas.inventory import AdjustmentCreate, CategoryCreate, ProductCreate, PurchaseReceiptCreate, WarehouseCreate
 from app.services.accounting_posting import PostingLine, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
+from app.services.inventory_payables import create_purchase_payable
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
@@ -34,8 +35,17 @@ def clean(v: str | None) -> str | None:
 
 
 def _ledger(db: DbSession, organization_id: str, user_id: str, *, system_key: str, code: str, name: str, category: str, normal_balance: str) -> LedgerAccount:
-    row=db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id==organization_id, LedgerAccount.system_key==system_key, LedgerAccount.is_active.is_(True)))
-    if row is not None: return row
+    row=db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id==organization_id, LedgerAccount.system_key==system_key))
+    if row is not None:
+        if not row.is_active:
+            raise HTTPException(409, f"Required inventory account is inactive: {row.name}")
+        return row
+    # Preserve custom and older system accounts occupying the preferred code.
+    preferred_code = code
+    suffix = 0
+    while db.scalar(select(LedgerAccount.id).where(LedgerAccount.organization_id == organization_id, LedgerAccount.code == code)):
+        suffix += 1
+        code = f"{preferred_code}-{suffix}"
     row=LedgerAccount(organization_id=organization_id, code=code, name=name, category=category, subtype=system_key, normal_balance=normal_balance, system_key=system_key, is_system=True, is_active=True, allow_manual_posting=False, notes="Inventory system account", created_by_user_id=user_id)
     db.add(row); db.flush(); return row
 
@@ -288,7 +298,7 @@ def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenan
     if money(base_total)>0:
         inventory_ledger=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_asset",code="1450",name="Inventory Asset",category="asset",normal_balance="debit")
         if delta>0:
-            counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_gain",code="4910",name="Inventory Adjustment Gain",category="income",normal_balance="credit")
+            counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_gain",code="4920",name="Inventory Adjustment Gain",category="income",normal_balance="credit")
             journal_lines=[PostingLine(ledger_account_id=inventory_ledger.id,debit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment {product.sku}"),PostingLine(ledger_account_id=counterpart.id,credit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment gain {product.sku}")]
         else:
             counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_expense",code="5050",name="Inventory Adjustment Expense",category="expense",normal_balance="debit")
@@ -347,5 +357,6 @@ def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSes
         lines.append(PostingLine(ledger_account_id=input_tax.id,debit=recoverable_base,currency=currency,exchange_rate_to_base=rate,original_amount=recoverable_total,description=f"Recoverable input tax {receipt.receipt_number}"))
     lines.append(PostingLine(ledger_account_id=payable.id,credit=total_base,currency=currency,exchange_rate_to_base=rate,original_amount=total,description=f"Inventory payable to {receipt.supplier_name}"))
     post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=receipt.receipt_date,source_type="inventory_purchase_receipt",source_id=receipt.id,lines=lines,reference=receipt.reference,memo=f"Inventory received from {receipt.supplier_name}")
+    create_purchase_payable(db, receipt, inventory_ledger.id)
     record_activity(db,action="inventory.purchase.received",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="purchase_receipt",entity_id=receipt.id,after={"receipt_number":receipt.receipt_number,"supplier":receipt.supplier_name,"warehouse_id":warehouse.id,"subtotal":str(subtotal),"tax":str(tax_total),"total":str(total),"currency":currency,"base_total":str(total_base),"base_currency":base_currency,"exchange_rate_to_base":str(rate)},request=request)
     db.commit();return {"id":receipt.id,"receipt_number":receipt.receipt_number,"total":receipt.total,"currency":receipt.currency,"base_currency":receipt.base_currency,"exchange_rate_to_base":receipt.exchange_rate_to_base,"status":receipt.status}

@@ -115,6 +115,7 @@ def list_payable_bills_fast(
     return [
         PayableBillRead(
             id=bill.id,
+            purchase_receipt_id=bill.purchase_receipt_id,
             bill_number=bill.bill_number,
             supplier_name=bill.supplier_name,
             bill_date=bill.bill_date,
@@ -247,6 +248,7 @@ def tax_report_fast(
         )
         .where(
             PayableBill.organization_id == org_id,
+            PayableBill.purchase_receipt_id.is_(None),
             PayableBill.bill_date >= date_from,
             PayableBill.bill_date <= date_to,
         )

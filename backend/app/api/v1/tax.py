@@ -105,13 +105,13 @@ def tax_report(db: DbSession, tenant: Viewer, date_from: date, date_to: date):
     rows = []
     for currency in sorted(currencies):
         output_tax = money(db.scalar(select(func.coalesce(func.sum(Invoice.tax_total), 0)).where(Invoice.organization_id == tenant.organization_id, Invoice.currency == currency, Invoice.issue_date >= date_from, Invoice.issue_date <= date_to, Invoice.status.not_in(["draft", "cancelled"]))))
-        payable_input = money(db.scalar(select(func.coalesce(func.sum(PayableBill.input_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
-        payable_recoverable = money(db.scalar(select(func.coalesce(func.sum(PayableBill.recoverable_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
+        payable_input = money(db.scalar(select(func.coalesce(func.sum(PayableBill.input_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.purchase_receipt_id.is_(None), PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
+        payable_recoverable = money(db.scalar(select(func.coalesce(func.sum(PayableBill.recoverable_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.purchase_receipt_id.is_(None), PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
         inventory_input = money(db.scalar(select(func.coalesce(func.sum(PurchaseReceipt.tax_total), 0)).where(PurchaseReceipt.organization_id == tenant.organization_id, PurchaseReceipt.currency == currency, PurchaseReceipt.receipt_date >= date_from, PurchaseReceipt.receipt_date <= date_to, PurchaseReceipt.status != "cancelled")))
         inventory_recoverable = money(db.scalar(select(func.coalesce(func.sum(PurchaseReceipt.recoverable_tax_total), 0)).where(PurchaseReceipt.organization_id == tenant.organization_id, PurchaseReceipt.currency == currency, PurchaseReceipt.receipt_date >= date_from, PurchaseReceipt.receipt_date <= date_to, PurchaseReceipt.status != "cancelled")))
         input_tax = money(payable_input + inventory_input)
         recoverable = money(payable_recoverable + inventory_recoverable)
-        withholding = money(db.scalar(select(func.coalesce(func.sum(PayableBill.withholding_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
+        withholding = money(db.scalar(select(func.coalesce(func.sum(PayableBill.withholding_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.purchase_receipt_id.is_(None), PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
         rows.append({"currency": currency, "output_tax": output_tax, "input_tax": input_tax, "recoverable_input_tax": recoverable, "withholding_tax": withholding, "net_indirect_tax_payable": money(output_tax - recoverable)})
     return {"date_from": date_from, "date_to": date_to, "rows": rows}
 
