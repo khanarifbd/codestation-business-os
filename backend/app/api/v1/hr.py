@@ -16,6 +16,7 @@ from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun
 from app.models.team import Department, Employee
 from app.models.user import User
 from app.services.activity_log import record_activity
+from app.services.hr_leave import ensure_no_leave_overlap, lock_leave_employee
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/hr", tags=["HR"])
@@ -238,6 +239,8 @@ def create_leave_request(payload: LeaveRequestCreate, request: Request, db: DbSe
         raise HTTPException(status_code=400, detail="End date cannot be before start date")
     lt = db.scalar(select(LeaveType).where(LeaveType.id == payload.leave_type_id, LeaveType.organization_id == tenant.organization_id, LeaveType.is_active.is_(True)))
     if lt is None: raise HTTPException(status_code=404, detail="Leave type not found")
+    lock_leave_employee(db, tenant.organization_id, employee.id)
+    ensure_no_leave_overlap(db, tenant.organization_id, employee.id, payload.start_date, payload.end_date)
     days = Decimal((payload.end_date - payload.start_date).days + 1)
     item = LeaveRequest(organization_id=tenant.organization_id, employee_id=employee.id, leave_type_id=lt.id, start_date=payload.start_date, end_date=payload.end_date, days=days, reason=payload.reason, status="pending" if lt.requires_approval else "approved")
     db.add(item); db.flush(); _audit(db, request, tenant, "hr.leave.requested", "leave_request", item.id, {"employee_id": employee.id, "days": str(days)}); db.commit(); db.refresh(item); return {"id": item.id, "status": item.status}
@@ -246,8 +249,13 @@ def create_leave_request(payload: LeaveRequestCreate, request: Request, db: DbSe
 @router.patch("/leave-requests/{request_id}")
 def review_leave(request_id: str, payload: LeaveReview, request: Request, db: DbSession, tenant: HRManager):
     if payload.status not in {"approved", "rejected", "cancelled"}: raise HTTPException(status_code=400, detail="Unsupported leave status")
-    item = db.scalar(select(LeaveRequest).where(LeaveRequest.id == request_id, LeaveRequest.organization_id == tenant.organization_id).with_for_update())
+    employee_id = db.scalar(select(LeaveRequest.employee_id).where(LeaveRequest.id == request_id, LeaveRequest.organization_id == tenant.organization_id))
+    if employee_id is None: raise HTTPException(status_code=404, detail="Leave request not found")
+    lock_leave_employee(db, tenant.organization_id, employee_id)
+    item = db.scalar(select(LeaveRequest).where(LeaveRequest.id == request_id, LeaveRequest.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if item is None: raise HTTPException(status_code=404, detail="Leave request not found")
+    if payload.status == "approved":
+        ensure_no_leave_overlap(db, tenant.organization_id, item.employee_id, item.start_date, item.end_date, exclude_request_id=item.id)
     item.status = payload.status; item.review_notes = payload.review_notes; item.reviewed_by_user_id = tenant.user_id; item.reviewed_at = datetime.now(timezone.utc)
     _audit(db, request, tenant, "hr.leave.reviewed", "leave_request", item.id, {"status": item.status}); db.commit(); return {"id": item.id, "status": item.status}
 

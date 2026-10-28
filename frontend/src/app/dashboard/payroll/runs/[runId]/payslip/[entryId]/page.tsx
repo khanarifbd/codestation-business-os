@@ -46,7 +46,7 @@ export default function PayslipPage() {
 
         <section className="grid gap-3 rounded-2xl bg-neutral-50 p-5 sm:grid-cols-3"><Metric label="Gross pay" value={money(entry.gross_pay, entry.currency)}/><Metric label="Total deductions" value={money(Number(entry.deduction_total || 0) + Number(entry.tax_amount || 0), entry.currency)}/><Metric label="Net pay" value={money(entry.net_pay, entry.currency)}/></section>
         {entry.notes ? <section className="mt-6 rounded-2xl border p-4"><p className="text-xs uppercase tracking-wide text-neutral-400">Payroll note</p><p className="mt-2 text-sm text-neutral-700">{entry.notes}</p></section> : null}
-        <footer className="mt-10 border-t pt-5 text-xs text-neutral-400">Generated from {tenant.organization.name} Business OS. This document reflects the approved payroll record for the selected period.</footer>
+        <footer className="mt-10 border-t pt-5 text-xs text-neutral-400">Generated from {tenant.organization.name} Business OS. {run.status === "draft" ? "This is a draft payroll statement, not an approved payroll record. Amounts may change before approval." : run.status === "approved" || run.status === "paid" ? "This document reflects the approved payroll record for the selected period." : `This document reflects the ${run.status} payroll record for the selected period.`}</footer>
       </article>
     </div>
   </main>;

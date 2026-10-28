@@ -18,6 +18,7 @@ from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun
 from app.models.team import Employee
 from app.models.user import User
 from app.services.activity_log import record_activity
+from app.services.hr_leave import lock_leave_employee
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes, shift_for_date
 from app.tenancy.context import TenantContext
 
@@ -273,6 +274,7 @@ def self_leave_balance(db: DbSession, tenant: HRSelf, year: int | None = None):
 @router.post("/self/leave-requests/{request_id}/cancel")
 def cancel_self_leave(request_id: str, request: Request, db: DbSession, tenant: HRSelf):
     employee = _employee(db, tenant)
+    lock_leave_employee(db, tenant.organization_id, employee.id)
     item = db.scalar(
         select(LeaveRequest)
         .where(
@@ -281,6 +283,7 @@ def cancel_self_leave(request_id: str, request: Request, db: DbSession, tenant: 
             LeaveRequest.employee_id == employee.id,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Leave request not found")
