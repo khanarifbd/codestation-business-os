@@ -6,6 +6,7 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
+    files: ["**/*.{js,jsx,mjs,ts,tsx,mts,cts}"],
     // The existing V1 frontend predates the newest React compiler-oriented
     // rules and contains effect-driven async loaders/function declaration
     // patterns across many stable screens. Keep those findings visible as
@@ -19,6 +20,11 @@ const eslintConfig = defineConfig([
       "@next/next/no-html-link-for-pages": "warn",
       "@typescript-eslint/no-explicit-any": "warn",
     },
+  },
+  {
+    files: ["tests/**/*.cjs"],
+    // Node test harnesses intentionally use CommonJS to load transpiled TSX.
+    rules: { "@typescript-eslint/no-require-imports": "off" },
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([

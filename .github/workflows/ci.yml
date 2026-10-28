@@ -126,6 +126,12 @@ jobs:
       - run: uv run python scripts/verify_tenant_isolation.py
       - run: uv run python scripts/verify_multi_org_relationships.py
       - run: uv run python scripts/verify_audit.py
+      - run: uv run python scripts/verify_inventory_qa_regressions.py
+      - run: uv run python scripts/verify_inventory_payables_migration.py
+      - run: uv run python scripts/verify_reporting_qa_regressions.py
+      - run: uv run python scripts/verify_qa_hr_leave.py
+      - run: uv run python scripts/verify_qa_invoice_ux.py
+      - run: ENVIRONMENT=test uv run python scripts/verify_qa_document_downloads.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
   frontend:
@@ -151,6 +157,7 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: node --test tests/*.cjs
       - run: pnpm build
         env:
           NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1

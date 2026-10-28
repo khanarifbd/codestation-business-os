@@ -4,6 +4,7 @@ const email = process.env.E2E_EMAIL ?? "e2e-owner@example.com";
 const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
 
 test("user can enroll a passkey and sign in passwordlessly", async ({ page, context }) => {
+  const passkeyName = `CI virtual passkey ${Date.now()}`;
   const cdp = await context.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
   const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
@@ -28,7 +29,7 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
     await page.getByRole("tab", { name: /security/i }).click();
     await expect(page.getByRole("heading", { name: "Passkeys", exact: true })).toBeVisible();
 
-    await page.getByLabel("Passkey name").fill("CI virtual passkey");
+    await page.getByLabel("Passkey name").fill(passkeyName);
     await page.locator('input[name="passkey_current_password"]').fill(password);
     await page.getByRole("button", { name: "Verify & add passkey" }).click();
 
@@ -44,7 +45,7 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
       if (await alert.isVisible()) return `browser error: ${await alert.innerText()}`;
       return "pending";
     }, { timeout: 15_000 }).toBe("success");
-    await expect(page.getByText("CI virtual passkey")).toBeVisible();
+    await expect(page.getByText(passkeyName, { exact: true })).toBeVisible();
 
     // Clear only browser cookies to prove the next authentication starts without
     // an existing Business OS access/refresh session. The virtual authenticator
