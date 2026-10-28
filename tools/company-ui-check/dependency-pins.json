@@ -1,0 +1,13 @@
+{
+  "lucide-react/package.json": "00fbe244c94ce88a9171a92e8757b601d4f890b0cfd130fd21284bf03fbab916",
+  "next/dist/compiled/webpack/webpack.js": "7ae3a1cb9950f7174a1bfc3c31d95be4687d9e90d1724d5ad28cc0f36f6c4bf6",
+  "next/package.json": "7bd991b2e608539915711fc0286a87de7bfcea244e9edaef4a031da7c0d74904",
+  "react-dom/client.js": "00e348ab3d6bc2eef908345d0bc4e008c95bcfecec060dfda5c4967953761396",
+  "react-dom/package.json": "7c82f0967114d4b5d38b1f07e543af87c9919e8d3243f9604004819319cb2200",
+  "react/index.js": "60caffdecbdc5db3bc4ec4e83df9488345ccb271d07533b9210bf5750918d97e",
+  "react/package.json": "e40c3ed9b633c9ecf188e09a4be309780a1ea0a9c068278a30ff6a27e7b2dbb6",
+  "typescript/lib/typescript.js": "3ae902c92cc44dace175c0e69e13a4b0899f6983c6121d76b9ab8dd5795e7675",
+  "typescript/package.json": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6",
+  "resolved:scheduler/package.json": "393bb96b7e481bf50189a1a02c7e0e7f4d01acba5abc6fbe7d214638624462fc",
+  "resolved:scheduler": "145965504d60007bc25486ab930b0367867dcd5d579ccd343c148d69349a7cfb"
+}

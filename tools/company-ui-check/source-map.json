@@ -1,0 +1,8 @@
+{
+  "frontend/package.json": "86a412e98dd04a0c1e3b5364f6dd0a0a321919984e41786a9fbf103f9678355e",
+  "frontend/pnpm-lock.yaml": "d706c85c127875430427765f35eb02ad676a4cebb8dc8931d2e587a629efd0e8",
+  "frontend/src/app/dashboard/company/page.tsx": "8c1ec1c99775564f34138fef3eda0dc413ef23243ff33ee5b615504ee2c7e698",
+  "frontend/src/components/searchable-select.tsx": "4e5b0e7e5caacbc687d250e84eceb1855df1ebdb8c54f43b106458138f836434",
+  "frontend/src/lib/api-error.ts": "ca51e5f514884c417df10cfc557c05fafc210b256b28b9444f77b0b48244525d",
+  "frontend/src/lib/company-options.ts": "e0aef88876cfcb7e5f97d5e3ebff21874c4f04083d65f25bdc43f53a649e74e5"
+}

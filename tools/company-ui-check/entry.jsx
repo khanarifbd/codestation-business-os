@@ -1,0 +1,6 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import Company from '@/app/dashboard/company/page';
+import {useFixture,resetScenario} from './adapter';
+function App(){const s=useFixture();return <><aside style={{padding:12,background:'#fff4cc',color:'#111',borderBottom:'2px solid #554400'}}><strong>SYNTHETIC COMPANY CHECK — no real backend, account or provider</strong><p>Actual Company page/forms; only navigation and excluded provider panels are adapters. Enter synthetic data only.</p><label>Scenario <select value={s.scenario} onChange={e=>resetScenario(e.target.value)}>{['initial-get-failure','initial-network-failure','initial-json-failure','saved-refresh-failure','partial-profile-failure'].map(v=><option key={v}>{v}</option>)}</select></label>{' '}<button type="button" onClick={()=>resetScenario(s.scenario)}>Reset scenario</button><details open><summary>Intercepted synthetic request journal</summary><pre aria-label="Synthetic request journal" style={{whiteSpace:'pre-wrap'}}>{JSON.stringify(s.calls,null,2)}</pre></details><p role="status">{s.blocked.at(-1)||'No blocked request.'}</p></aside><Company/></>;}
+createRoot(document.getElementById('app')).render(<App/>);
