@@ -94,4 +94,9 @@ test("QA-015 outstanding excludes cancelled and draft rows even with legacy resi
   await page.screenshot({ path: testInfo.outputPath("qa015-outstanding-filter.png"), fullPage: true });
   await page.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(page.getByRole("link", { name: "QA-CANCELLED", exact: true })).toBeVisible();
+  await page.unroute("**/api/finance/**");
+  await mockInvoice(page, { ...invoiceFixture("cancelled", 24.68), balance_due: 0 });
+  await page.goto("/dashboard/accounting/invoices/qa-preview");
+  await expect(page.getByText("Cancelled invoices are retained for audit history and cannot be collected.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Sent invoices are locked to preserve the commercial record.", { exact: true })).toHaveCount(0);
 });

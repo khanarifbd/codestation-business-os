@@ -132,6 +132,9 @@ jobs:
       - run: uv run python scripts/verify_qa_hr_leave.py
       - run: uv run python scripts/verify_qa_invoice_ux.py
       - run: ENVIRONMENT=test uv run python scripts/verify_qa_document_downloads.py
+      - run: uv run python scripts/verify_secondary_profitability_qa.py
+      - run: ENVIRONMENT=test uv run python scripts/verify_qa_invoice_api.py
+      - run: ENVIRONMENT=test uv run python scripts/verify_qa_document_http.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 
   frontend:

@@ -42,13 +42,13 @@ Use an isolated PostgreSQL database and synthetic settings only. Follow the root
 - `node --test tests/*.cjs` in frontend
 - Playwright specs `qa-search-accessibility.spec.mjs` and `qa-invoice-preview.spec.mjs`
 
-Full backend CI must run in its documented order because some existing scripts share the `Existing Tenant Fixture`. The new financial/reporting regression scripts use independent rollback fixtures. Browser tests use a local seeded login; the five new UI regression scenarios mock only synthetic business responses. The original critical journey continues to use the real local API.
+Full backend CI must run in its documented order because some existing scripts share the `Existing Tenant Fixture`. The new financial/reporting regression scripts use independent rollback fixtures. Browser tests use a local seeded login; the five new UI regression scenarios mock only synthetic business responses. The original critical journey uses the real local API for authenticated navigation across nine pages; it is not an end-to-end financial creation journey. Actual financial HTTP coverage is provided by the separate tests below.
 
 Run the browser suite with consistent `PUBLIC_APP_URL` and `E2E_BASE_URL` (both `http://localhost:3000`) so WebAuthn relying-party validation and session-cookie checks match. Repeated local test runs can exhaust the real login limiter; start with a fresh test database, rather than weakening application security. The passkey test uses a unique label so reruns do not match old fixture credentials.
 
 ## Previously blocked / partial cases
 
-- HR29: local service-level self-approval denial and independent-manager approval verified, including persisted 480-minute attendance correction.
+- HR29: real authenticated HTTP self-approval denial and independent-manager approval verified, including persisted 480-minute attendance correction. The requester deliberately also has manager permission, so the business self-review guard is exercised.
 - HR10: synthetic PDF upload and actual streamed file bytes verified for manager/self; unrelated employee denied.
 - PRJ15 and SET06: synthetic PDF upload and actual HTTP attachment body/header verification. This is backend download coverage, not certification of the original live browser download environment.
 - CLI07: search and status behavior covered by the search fix and local browser regression.
@@ -62,12 +62,26 @@ The cloud shell runner can run PostgreSQL, API, frontend and Playwright together
 
 Automated checks are not a claim that the original 160 live scenario groups were all replayed through the UI, nor a production-readiness guarantee. Existing lint warnings are separate from zero-error lint completion. No real payout, real external email or production data migration was performed.
 
-## Local verification result
+## Final local verification result
 
-- Fresh PostgreSQL 17.11 database: all 82 backend CI-equivalent commands passed, including compilation, all existing module/security/accounting/tenant checks and the six new QA checks.
+- Fresh PostgreSQL 17.11 database: all 85 backend CI-equivalent commands passed on the final deeper-review run, including compilation, all existing module/security/accounting/tenant checks and all nine new QA checks.
 - Separate migration fixture: legacy upgrade passed with unchanged source journal count.
 - Frontend: production build and TypeScript passed; lint completed with zero errors and 168 existing-style warnings.
 - Node component/validation/eligibility tests: 7 passed.
 - The manual review seed validates its financial expectations before commit and preserves edits on subsequent runs.
 - Final integrated Chromium suite: **13/13 passed**, including original critical journey, print/PDF, passkey/session tests and new search/preview/collection-filter scenarios. Invoice reversal screenshot confirms paid USD 80 and due USD 120 immediately, without reload.
 - Review fixture seeded and idempotent rerun/production-refusal safeguards passed.
+
+## Deeper review, second pass
+
+Additional defects within QA-002/008 and QA-003/004/013 were found and corrected:
+- Inventory receipts and positive adjustments now use transaction-date FX, not the current rate. EUR60 at historical1.2 posts USD72 rather than USD96 at current1.6. Partial/final settlements at changed rates, realized FX, reversal/re-payment and migration states were verified.
+- Expenses profitability and both Capital insight implementations now exclude draft/cancelled invoices and include order-linked project attribution, without double counting explicit project overrides.
+- Cancelled invoice detail copy no longer incorrectly says the invoice was sent.
+
+New real PostgreSQL integration tests, with synthetic rollback fixtures:
+- `verify_qa_invoice_api.py`: real application HTTP, bearer authentication, membership/permissions, CRM/client searches, tax identifiers, draft edit/cancel, issued cancellation, payment reversal; final cash80/AR120/revenue200 and six balanced journals. Cross-tenant, read-only and duplicate actions preserve financial/audit state. Only database session injection is overridden, not endpoint/authentication logic.
+- `verify_qa_document_http.py`: actual multipart upload and exact PDF bytes/attachment headers for HR10, PRJ15 and SET06; anonymous, tenant and role denials; HR29 independent approval/self-review protection. Synthetic database rows roll back and generated upload files are removed. These are API tests, not interactive browser download UX certification.
+- `verify_secondary_profitability_qa.py`: remaining reporting surfaces, draft/cancel exclusion, order fallback/explicit attribution, cost-only clients and tenant isolation. The real Stripe posting regression confirms its fee is not also an Expense row; no speculative double-count fix was applied.
+
+See `qa-v2-coverage-traceability.md` for all 160 historical case groups and evidence limits, and `joint-review-checklist.md` for seeded values and human-review steps. Original policy questions remain unresolved rather than silently changed.
