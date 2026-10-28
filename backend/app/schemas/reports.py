@@ -1,5 +1,6 @@
 from datetime import date
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -78,6 +79,7 @@ class DashboardDetails(BaseModel):
 
 
 class ReportsOverview(BaseModel):
+    reporting_basis: Literal["operational"] = "operational"
     date_from: date
     date_to: date
     financials: list[ReportFinancialRow]

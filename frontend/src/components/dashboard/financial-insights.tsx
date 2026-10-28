@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import { OperationalReportingNote } from "./operational-reporting-note";
 
 type MoneyFormatter = (amount: string | number, currency: string) => string;
 
 export type FinancialCurrencyRow = {
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   receivables: string;
   expenses: string;
@@ -17,6 +19,7 @@ export type CurrencyTrendRow = {
   period: string;
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   expenses: string;
   transfer_fees: string;
@@ -56,14 +59,16 @@ export function FinancialPerformanceCard({ row, reportingCurrency, formatMoney }
       <div className="px-4 pb-4 pt-4 sm:px-5 sm:pb-5">
         <dl className="grid grid-cols-2 gap-2.5">
           <FinancialFigure label="Invoiced" value={formatMoney(row.invoiced_revenue, row.currency)} />
+          <FinancialFigure label="Direct income" value={formatMoney(row.direct_income, row.currency)} />
           <FinancialFigure label="Collected" value={formatMoney(row.collected_revenue, row.currency)} />
           <FinancialFigure label="Receivable" value={formatMoney(row.receivables, row.currency)} />
           <FinancialFigure label="Expenses" value={formatMoney(row.expenses, row.currency)} />
         </dl>
         <dl className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3 ${negativeProfit ? "border-rose-200 bg-rose-50/70" : "border-neutral-200 bg-neutral-50"}`}>
-          <dt className="text-xs font-semibold text-neutral-600">Net profit</dt>
+          <dt className="text-xs font-semibold text-neutral-600">Operational margin</dt>
           <dd className={`break-all text-base font-semibold tracking-tight tabular-nums sm:text-lg ${negativeProfit ? "text-rose-700" : "text-neutral-950"}`}>{formatMoney(row.net_profit, row.currency)}</dd>
         </dl>
+        <OperationalReportingNote />
         {showFees ? (
           <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-neutral-100 pt-3 text-xs text-neutral-500">
             {Number(row.platform_fees) !== 0 ? <div><dt className="inline">Platform fees: </dt><dd className="inline font-semibold tabular-nums text-neutral-700">{formatMoney(row.platform_fees, row.currency)}</dd></div> : null}
@@ -120,7 +125,7 @@ export function CurrencyTrendCard({ currency, rows, reportingCurrency, formatMon
             <th scope="col" className="px-4 py-3 font-medium">Period</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Invoiced</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Collected</th>
-            <th scope="col" className="px-4 py-3 text-right font-medium">Net</th>
+            <th scope="col" className="px-4 py-3 text-right font-medium">Op. margin</th>
           </tr></thead>
           <tbody className="divide-y divide-neutral-100">
             {rows.map((row) => <tr key={`${row.period}-${row.currency}`} className="hover:bg-neutral-50/80">

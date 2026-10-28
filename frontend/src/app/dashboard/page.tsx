@@ -27,6 +27,7 @@ import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app
 type FinancialRow = {
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   receivables: string;
   expenses: string;
@@ -39,6 +40,7 @@ type TrendRow = {
   period: string;
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   expenses: string;
   transfer_fees: string;
@@ -61,6 +63,7 @@ type ProjectProfitRow = {
   currency: string;
   contract_value: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   direct_expenses: string;
   estimated_profit: string;
@@ -72,6 +75,7 @@ type ClientProfitRow = {
   client_name: string;
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   direct_expenses: string;
   estimated_profit: string;
@@ -580,7 +584,7 @@ export default function DashboardPage() {
               {details.clients.slice(0, 9).map((row) => (
                 <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="group rounded-xl border border-neutral-200 bg-white p-4 transition-[border-color,box-shadow] hover:border-neutral-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.045)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:p-5">
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words text-sm font-semibold text-neutral-900 sm:truncate">{row.client_name}</p><p className="mt-1.5 text-xs text-neutral-500">{row.currency} · {percent(row.margin_percent)} margin</p></div><ArrowRight aria-hidden="true" className="size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" /></div>
-                  <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-neutral-100 pt-4 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Direct cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
+                  <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-neutral-100 pt-4 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Linked cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
                 </Link>
               ))}
             </div>
