@@ -1,7 +1,7 @@
 "use client";
 
 import { Eye, EyeOff } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 export function PasswordField({
   name,
@@ -9,20 +9,24 @@ export function PasswordField({
   autoComplete,
   placeholder,
   minLength = 8,
+  hideLabel = false,
 }: {
   name: string;
   label: string;
   autoComplete: string;
   placeholder: string;
   minLength?: number;
+  hideLabel?: boolean;
 }) {
+  const id = useId();
   const [visible, setVisible] = useState(false);
 
   return (
-    <label className="block text-sm font-medium text-neutral-800">
-      {label}
+    <div className="block text-sm font-medium text-neutral-800">
+      <label htmlFor={id} className={hideLabel ? "sr-only" : undefined}>{label}</label>
       <div className="relative mt-2">
         <input
+          id={id}
           name={name}
           type={visible ? "text" : "password"}
           autoComplete={autoComplete}
@@ -40,6 +44,6 @@ export function PasswordField({
           {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
         </button>
       </div>
-    </label>
+    </div>
   );
 }

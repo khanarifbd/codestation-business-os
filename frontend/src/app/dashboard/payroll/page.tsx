@@ -1,5 +1,7 @@
 "use client";
 
+import { getApiErrorMessage } from "@/lib/api-error";
+
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Banknote, CheckCircle2, Edit3, FileText, Loader2, Play, Plus, Trash2, Users, X } from "lucide-react";
@@ -24,7 +26,7 @@ function money(value: string | number, currency: string) { return `${currency} $
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { ...init, headers: { "Content-Type": "application/json", ...(init?.headers || {}) } });
   const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.detail || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(getApiErrorMessage(body, `Request failed (${response.status})`));
   return body as T;
 }
 

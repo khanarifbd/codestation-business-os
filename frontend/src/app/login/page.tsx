@@ -219,7 +219,8 @@ export default function LoginPage() {
           </div>
           <PasswordField
             name="password"
-            label=""
+            label="Password"
+            hideLabel
             autoComplete="current-password"
             placeholder="Enter your password"
           />

@@ -1,5 +1,7 @@
 "use client";
 
+import { matchesInvoiceBalance } from "@/lib/invoice-balance";
+
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, Plus, Search, Trash2, X } from "lucide-react";
@@ -124,8 +126,7 @@ export function InvoicesWorkspaceV2() {
       const balanceDue = Number(invoice.balance_due || 0);
       const overdue = Boolean(invoice.due_date && invoice.due_date < currentDate && balanceDue > 0 && !["draft", "cancelled"].includes(invoice.status));
       if (dueFilter === "overdue" && !overdue) return false;
-      if (dueFilter === "outstanding" && balanceDue <= 0) return false;
-      if (dueFilter === "paid" && balanceDue > 0) return false;
+      if ((dueFilter === "outstanding" || dueFilter === "paid") && !matchesInvoiceBalance(invoice, dueFilter)) return false;
       return true;
     });
   }, [currencyFilter, dueFilter, invoices, query, statusFilter]);

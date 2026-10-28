@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Building2, CalendarClock, CheckCircle2, Filter, Loader2, LockKeyhole, MessageSquarePlus, Plus, Search, Settings2, Target, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -43,6 +43,12 @@ export default function CrmPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
+  const listRequest = useRef(0);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchDraft.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
   const [statusFilter, setStatusFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
@@ -68,10 +74,11 @@ export default function CrmPage() {
   const loadMeta = useCallback(async () => setMeta(await api("/meta") as Meta), [api]);
   const loadSummary = useCallback(async () => setSummary(await api("/summary") as Summary), [api]);
   const loadLeads = useCallback(async () => {
+    const request = ++listRequest.current;
     setLoading(true); setError(null);
-    try { const payload = await api(`/leads?${queryString}`) as { items: Lead[]; next_cursor: string | null }; setLeads(payload.items); setNextCursor(payload.next_cursor); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load leads."); }
-    finally { setLoading(false); }
+    try { const payload = await api(`/leads?${queryString}`) as { items: Lead[]; next_cursor: string | null }; if (request !== listRequest.current) return; setLeads(payload.items); setNextCursor(payload.next_cursor); }
+    catch (reason) { if (request === listRequest.current) setError(reason instanceof Error ? reason.message : "Unable to load leads."); }
+    finally { if (request === listRequest.current) setLoading(false); }
   }, [api, queryString]);
 
   const reloadDetail = useCallback(async (leadId?: string) => {
@@ -99,10 +106,11 @@ export default function CrmPage() {
   }
 
   async function loadMore() {
+    const request = listRequest.current;
     if (!nextCursor) return;
     setLoadingMore(true);
-    try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/leads?${params}`) as { items: Lead[]; next_cursor: string | null }; setLeads((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load more leads."); }
+    try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/leads?${params}`) as { items: Lead[]; next_cursor: string | null }; if (request !== listRequest.current) return; setLeads((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); }
+    catch (reason) { if (request === listRequest.current) setError(reason instanceof Error ? reason.message : "Unable to load more leads."); }
     finally { setLoadingMore(false); }
   }
 

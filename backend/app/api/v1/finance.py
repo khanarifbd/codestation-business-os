@@ -172,7 +172,7 @@ def _invoice_list_item(invoice: Invoice, timezone_name: str) -> InvoiceListItem:
         currency=invoice.currency,
         total=invoice.total,
         amount_paid=invoice.amount_paid,
-        balance_due=invoice.balance_due,
+        balance_due=Decimal("0.00") if invoice.status == "cancelled" else invoice.balance_due,
         created_at=invoice.created_at,
     )
 
@@ -263,7 +263,10 @@ def _seller_snapshot(db: DbSession, tenant: TenantContext) -> tuple[str, str | N
     )
     identifier = db.scalar(
         select(OrganizationIdentifier)
-        .where(OrganizationIdentifier.organization_id == tenant.organization_id)
+        .where(
+            OrganizationIdentifier.organization_id == tenant.organization_id,
+            OrganizationIdentifier.identifier_type.in_(["tin", "bin", "vat", "gst", "ein", "abn", "tax"]),
+        )
         .order_by(OrganizationIdentifier.is_primary.desc(), OrganizationIdentifier.created_at.asc())
         .limit(1)
     )

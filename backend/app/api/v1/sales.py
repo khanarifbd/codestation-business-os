@@ -683,7 +683,10 @@ def create_quotation(payload: QuotationCreate, request: Request, db: DbSession, 
     )
     identifier = db.scalar(
         select(OrganizationIdentifier)
-        .where(OrganizationIdentifier.organization_id == tenant.organization_id)
+        .where(
+            OrganizationIdentifier.organization_id == tenant.organization_id,
+            OrganizationIdentifier.identifier_type.in_(["tin", "bin", "vat", "gst", "ein", "abn", "tax"]),
+        )
         .order_by(OrganizationIdentifier.is_primary.desc(), OrganizationIdentifier.created_at.asc())
     )
     source_lead_id = _source_lead_for_client(

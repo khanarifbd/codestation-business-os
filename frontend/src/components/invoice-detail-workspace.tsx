@@ -94,7 +94,7 @@ function toForm(invoice: Invoice): EditForm {
 
 const blankLine = (): EditLine => ({ description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
 
-export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
+export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: string; onUpdated?: () => void }) {
   const { tenant } = useDashboardSession();
   const canReversePayment = Boolean(tenant?.permissions.includes("*") || tenant?.permissions.includes("finance.manage"));
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
@@ -164,6 +164,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
       setMessage("Draft invoice updated successfully.");
       setEditing(false);
       await load();
+      onUpdated?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not update invoice");
     } finally { setSaving(false); }
@@ -183,6 +184,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
       setMessage("Invoice sent. Commercial details are now locked.");
       setEditing(false);
       await load();
+      onUpdated?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not send invoice");
     } finally { setSaving(false); }
@@ -228,6 +230,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
       setCancelReason("");
       setEditing(false);
       await load();
+      onUpdated?.();
       setMessage("Invoice cancelled. The reason is preserved in the audit trail and any posted invoice journal was reversed.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not cancel invoice");
@@ -258,6 +261,7 @@ export function InvoiceDetailWorkspace({ invoiceId }: { invoiceId: string }) {
       setConfirmingReversal(false);
       setReversalReason("");
       await load();
+      onUpdated?.();
       setMessage(`Payment ${paymentToReverse.payment_number} reversed. The invoice balance and accounting records have been updated.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not reverse invoice payment");

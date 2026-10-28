@@ -1,5 +1,7 @@
 "use client";
 
+import { getApiErrorMessage } from "@/lib/api-error";
+
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Calculator, Laptop, Plus, RefreshCw } from "lucide-react";
 
@@ -8,7 +10,7 @@ type Account={id:string;name:string;currency:string;account_type:string;balance:
 type Meta={accounts:Account[];base_currency:string};
 type Asset={id:string;asset_code:string;name:string;category:string;currency:string;acquisition_cost:string;salvage_value:string;accumulated_depreciation:string;opening_accumulated_depreciation:string;record_mode:"purchase"|"opening";opening_balance_date?:string|null;book_value:string;depreciable_amount:string;acquisition_date:string;in_service_date:string;useful_life_months:number;depreciation_method:string;purchase_account_id?:string|null;reference?:string|null;status:string;notes?:string|null};
 type Summary={rows:{currency:string;cost:string;accumulated_depreciation:string;book_value:string}[];active_assets:number};
-async function api<T>(url:string,init?:RequestInit):Promise<T>{const r=await fetch(url,{cache:"no-store",...init,headers:{"Content-Type":"application/json",...(init?.headers||{})}});const b=await r.json().catch(()=>null);if(!r.ok)throw new Error(b?.detail||"Request failed");return b as T}
+async function api<T>(url:string,init?:RequestInit):Promise<T>{const r=await fetch(url,{cache:"no-store",...init,headers:{"Content-Type":"application/json",...(init?.headers||{})}});const b=await r.json().catch(()=>null);if(!r.ok)throw new Error(getApiErrorMessage(b, "Request failed"));return b as T}
 const money=(v:string|number,c:string)=>`${c} ${Number(v||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 
 export default function AssetsPage(){

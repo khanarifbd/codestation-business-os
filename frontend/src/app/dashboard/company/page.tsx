@@ -1,5 +1,7 @@
 "use client";
 
+import { getApiErrorMessage } from "@/lib/api-error";
+
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -81,11 +83,11 @@ export default function CompanySettingsPage() {
   const [bundle,setBundle]=useState<CompanyBundle|null>(null); const [activeTab,setActiveTab]=useState<TabId>("general");
   const [activeAddressTab,setActiveAddressTab]=useState<AddressTabId>("registered");
   const [loading,setLoading]=useState(true); const [saving,setSaving]=useState(false); const [message,setMessage]=useState<string|null>(null); const [error,setError]=useState<string|null>(null); const [version,setVersion]=useState(0);
-  const load=useCallback(async()=>{ const response=await fetch("/api/company-settings",{cache:"no-store"}); if(response.status===401){router.replace("/login");return;} if(response.status===403){router.replace("/dashboard");return;} if(!response.ok){const payload=await response.json().catch(()=>null);setError(payload?.detail??"Unable to load company settings.");setLoading(false);return;} setBundle(await response.json() as CompanyBundle);setLoading(false);},[router]);
+  const load=useCallback(async()=>{ const response=await fetch("/api/company-settings",{cache:"no-store"}); if(response.status===401){router.replace("/login");return;} if(response.status===403){router.replace("/dashboard");return;} if(!response.ok){const payload=await response.json().catch(()=>null);setError(getApiErrorMessage(payload, "Unable to load company settings."));setLoading(false);return;} setBundle(await response.json() as CompanyBundle);setLoading(false);},[router]);
   useEffect(()=>{void load();},[load]);
   useEffect(()=>{const requested=new URLSearchParams(window.location.search).get("tab"); if(requested&&tabs.some(([id])=>id===requested))setActiveTab(requested as TabId);},[]);
-  async function api(path:string,method:string,body?:unknown){const response=await fetch(`/api/company-settings${path}`,{method,headers:body===undefined?undefined:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(payload?.detail??"Unable to save changes.");}return response.status===204?null:response.json();}
-  async function uploadDocument(form:HTMLFormElement){const response=await fetch("/api/company-settings/documents/upload",{method:"POST",body:new FormData(form)});if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(payload?.detail??"Unable to upload document.");}}
+  async function api(path:string,method:string,body?:unknown){const response=await fetch(`/api/company-settings${path}`,{method,headers:body===undefined?undefined:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(getApiErrorMessage(payload, "Unable to save changes."));}return response.status===204?null:response.json();}
+  async function uploadDocument(form:HTMLFormElement){const response=await fetch("/api/company-settings/documents/upload",{method:"POST",body:new FormData(form)});if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(getApiErrorMessage(payload, "Unable to upload document."));}}
   async function runSave(work:()=>Promise<void>,success="Changes saved"){setSaving(true);setError(null);setMessage(null);try{await work();await load();setVersion(v=>v+1);setMessage(success);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to save changes.");}finally{setSaving(false);}}
   if(loading)return <main className="flex min-h-[70vh] items-center justify-center bg-neutral-100"><Loader2 className="size-6 animate-spin text-neutral-500"/></main>;
   if(!bundle)return <main className="flex min-h-[70vh] items-center justify-center bg-neutral-100 px-6"><div className="max-w-lg rounded-2xl border bg-white p-8 text-center"><h1 className="text-xl font-semibold">Company settings unavailable</h1><p className="mt-2 text-sm text-neutral-500">{error}</p></div></main>;

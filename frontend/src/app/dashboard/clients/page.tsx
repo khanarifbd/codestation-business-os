@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, FileText, Loader2, Plus, Search, UserRound, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -48,6 +48,12 @@ export default function ClientsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
+  const listRequest = useRef(0);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchDraft.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
   const [statusFilter, setStatusFilter] = useState("");
   const [portalAccess, setPortalAccess] = useState<Record<string, PortalAccessStatus>>({});
   const [canManagePortalAccess, setCanManagePortalAccess] = useState(false);
@@ -89,14 +95,17 @@ export default function ClientsPage() {
   }, [search, statusFilter]);
 
   const loadList = useCallback(async (background = false) => {
-    background ? setFiltering(true) : setLoading(true);
+    const request = ++listRequest.current;
+    if (background) setFiltering(true);
+    else setLoading(true);
     setError(null);
     try {
       const page = await api(`/clients?${queryString}`) as { items: Client[]; next_cursor: string | null };
+      if (request !== listRequest.current) return;
       setClients(page.items); setNextCursor(page.next_cursor);
       void loadPortalStatuses(page.items.map((item) => item.id));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load clients."); }
-    finally { setLoading(false); setFiltering(false); }
+    } catch (reason) { if (request === listRequest.current) setError(reason instanceof Error ? reason.message : "Unable to load clients."); }
+    finally { if (request === listRequest.current) { setLoading(false); setFiltering(false); } }
   }, [api, loadPortalStatuses, queryString]);
 
   const loadSummary = useCallback(async () => {
@@ -105,25 +114,14 @@ export default function ClientsPage() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true); setError(null);
-    void Promise.all([api(`/clients?${queryString}`), api("/clients/summary"), api("/meta")]).then(([pagePayload, totals, crmMeta]) => {
+    void Promise.all([api("/clients/summary"), api("/meta")]).then(([totals, crmMeta]) => {
       if (!active) return;
-      const page = pagePayload as { items: Client[]; next_cursor: string | null };
-      setClients(page.items); setNextCursor(page.next_cursor); setSummary(totals as Summary); setMeta(crmMeta as Meta);
-      void loadPortalStatuses(page.items.map((item) => item.id));
-    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load clients."); })
-      .finally(() => { if (active) setLoading(false); });
+      setSummary(totals as Summary); setMeta(crmMeta as Meta);
+    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load clients."); });
     return () => { active = false; };
-    // bootstrap only: filter changes are handled by the dedicated list effect below
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, loadPortalStatuses]);
+  }, [api]);
 
-  useEffect(() => {
-    if (loading) return;
-    void loadList(true);
-    // loading is intentionally excluded to avoid an extra bootstrap request
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryString, loadList]);
+  useEffect(() => { void loadList(true); }, [loadList]);
 
   useEffect(() => {
     const requestedEditId = new URLSearchParams(window.location.search).get("edit");
@@ -141,9 +139,10 @@ export default function ClientsPage() {
   }
 
   async function loadMore() {
+    const request = listRequest.current;
     if (!nextCursor) return; setLoadingMore(true);
-    try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/clients?${params}`) as { items: Client[]; next_cursor: string | null }; setClients((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); void loadPortalStatuses(payload.items.map((item) => item.id)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load more clients."); }
+    try { const params = new URLSearchParams(queryString); params.set("cursor", nextCursor); const payload = await api(`/clients?${params}`) as { items: Client[]; next_cursor: string | null }; if (request !== listRequest.current) return; setClients((current) => [...current, ...payload.items]); setNextCursor(payload.next_cursor); void loadPortalStatuses(payload.items.map((item) => item.id)); }
+    catch (reason) { if (request === listRequest.current) setError(reason instanceof Error ? reason.message : "Unable to load more clients."); }
     finally { setLoadingMore(false); }
   }
 
