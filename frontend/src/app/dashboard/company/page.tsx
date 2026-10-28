@@ -2,7 +2,7 @@
 
 import { getApiErrorMessage } from "@/lib/api-error";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -83,14 +83,33 @@ export default function CompanySettingsPage() {
   const [bundle,setBundle]=useState<CompanyBundle|null>(null); const [activeTab,setActiveTab]=useState<TabId>("general");
   const [activeAddressTab,setActiveAddressTab]=useState<AddressTabId>("registered");
   const [loading,setLoading]=useState(true); const [saving,setSaving]=useState(false); const [message,setMessage]=useState<string|null>(null); const [error,setError]=useState<string|null>(null); const [version,setVersion]=useState(0);
-  const load=useCallback(async()=>{ const response=await fetch("/api/company-settings",{cache:"no-store"}); if(response.status===401){router.replace("/login");return;} if(response.status===403){router.replace("/dashboard");return;} if(!response.ok){const payload=await response.json().catch(()=>null);setError(getApiErrorMessage(payload, "Unable to load company settings."));setLoading(false);return;} setBundle(await response.json() as CompanyBundle);setLoading(false);},[router]);
+  const readSequence=useRef(0);
+  const [refreshing,setRefreshing]=useState(false); const [refreshFailed,setRefreshFailed]=useState(false);
+  const load=useCallback(async():Promise<"success"|"failure"|"redirect"|"superseded">=>{
+    const request=++readSequence.current; setRefreshing(true);
+    try {
+      const response=await fetch("/api/company-settings",{cache:"no-store"});
+      if(request!==readSequence.current)return "superseded";
+      if(response.status===401||response.status===403){setRefreshFailed(false);router.replace(response.status===401?"/login":"/dashboard");return "redirect";}
+      if(!response.ok){const payload=await response.json().catch(()=>null);if(request!==readSequence.current)return "superseded";setError(getApiErrorMessage(payload,"Unable to load company settings."));setRefreshFailed(true);return "failure";}
+      const next=await response.json() as CompanyBundle;
+      if(request!==readSequence.current)return "superseded";
+      setBundle(next);setError(null);setMessage(null);setRefreshFailed(false);return "success";
+    } catch {
+      if(request!==readSequence.current)return "superseded";
+      setError("Unable to load company settings. Please retry loading.");setRefreshFailed(true);return "failure";
+    } finally {
+      if(request===readSequence.current){setLoading(false);setRefreshing(false);}
+    }
+  },[router]);
+  async function retryLoad(){if(refreshing||saving)return; const request=readSequence.current+1; if(await load()==="success"&&request===readSequence.current)setVersion(v=>v+1);}
   useEffect(()=>{void load();},[load]);
   useEffect(()=>{const requested=new URLSearchParams(window.location.search).get("tab"); if(requested&&tabs.some(([id])=>id===requested))setActiveTab(requested as TabId);},[]);
   async function api(path:string,method:string,body?:unknown){const response=await fetch(`/api/company-settings${path}`,{method,headers:body===undefined?undefined:{"Content-Type":"application/json"},body:body===undefined?undefined:JSON.stringify(body)});if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(getApiErrorMessage(payload, "Unable to save changes."));}return response.status===204?null:response.json();}
   async function uploadDocument(form:HTMLFormElement){const response=await fetch("/api/company-settings/documents/upload",{method:"POST",body:new FormData(form)});if(!response.ok){const payload=await response.json().catch(()=>null);throw new Error(getApiErrorMessage(payload, "Unable to upload document."));}}
-  async function runSave(work:()=>Promise<void>,success="Changes saved"){setSaving(true);setError(null);setMessage(null);try{await work();await load();setVersion(v=>v+1);setMessage(success);}catch(reason){setError(reason instanceof Error?reason.message:"Unable to save changes.");}finally{setSaving(false);}}
+  async function runSave(work:()=>Promise<void>,success="Changes saved"){setSaving(true);setError(null);setMessage(null);try{await work();const request=readSequence.current+1;const result=await load();if(request!==readSequence.current)return;if(result==="success"){setVersion(v=>v+1);setMessage(success);}else if(result==="failure"){setError("Changes were saved, but settings could not be refreshed. Retry loading; do not submit the same changes again.");}}catch(reason){setError(reason instanceof Error?reason.message:"Unable to save changes.");}finally{setSaving(false);}}
   if(loading)return <main className="flex min-h-[70vh] items-center justify-center bg-neutral-100"><Loader2 className="size-6 animate-spin text-neutral-500"/></main>;
-  if(!bundle)return <main className="flex min-h-[70vh] items-center justify-center bg-neutral-100 px-6"><div className="max-w-lg rounded-2xl border bg-white p-8 text-center"><h1 className="text-xl font-semibold">Company settings unavailable</h1><p className="mt-2 text-sm text-neutral-500">{error}</p></div></main>;
+  if(!bundle)return <main className="flex min-h-[70vh] items-center justify-center bg-neutral-100 px-6"><div className="max-w-lg rounded-2xl border bg-white p-8 text-center"><h1 className="text-xl font-semibold">Company settings unavailable</h1><p className="mt-2 text-sm text-neutral-500">{error}</p><button type="button" disabled={refreshing} onClick={()=>void retryLoad()} className="mt-4 rounded-xl border px-4 py-2 text-sm font-medium disabled:opacity-60">{refreshing?"Loading…":"Retry loading"}</button></div></main>;
   const company=bundle.organization; const profile=bundle.profile; const addressByType=Object.fromEntries(bundle.addresses.map(item=>[item.address_type,item]));
 
   return <main className="min-h-screen bg-neutral-100 text-neutral-950"><div className="mx-auto max-w-[1500px] px-5 py-6 sm:px-7 lg:px-8">
@@ -107,7 +126,7 @@ export default function CompanySettingsPage() {
 
       {activeTab==="localization"?<form onSubmit={event=>{event.preventDefault();const form=new FormData(event.currentTarget);void runSave(async()=>{await api("/localization","PATCH",{country_code:text(form,"country_code"),timezone:text(form,"timezone"),currency:company.currency,default_language:text(form,"default_language"),date_format:text(form,"date_format"),time_format:text(form,"time_format"),number_format:text(form,"number_format"),decimal_places:Number(form.get("decimal_places")),currency_position:text(form,"currency_position"),first_day_of_week:Number(form.get("first_day_of_week"))});});}} className="space-y-6"><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"><SearchableSelect label="Country" name="country_code" defaultValue={company.country_code} options={COUNTRY_OPTIONS} placeholder="Select country" required/><SearchableSelect label="Timezone" name="timezone" defaultValue={company.timezone} options={TIMEZONE_OPTIONS} placeholder="Select timezone" required/><SearchableSelect label="Default language" name="default_language" defaultValue={bundle.localization.default_language} options={LANGUAGE_OPTIONS} placeholder="Select language" allowCustom required/><SelectField label="Date format" name="date_format" defaultValue={bundle.localization.date_format} options={["YYYY-MM-DD","DD/MM/YYYY","MM/DD/YYYY","DD-MM-YYYY"]}/><SelectField label="Time format" name="time_format" defaultValue={bundle.localization.time_format} options={["24h","12h"]}/><Field label="Number format" name="number_format" defaultValue={bundle.localization.number_format} required/><Field label="Decimal places" name="decimal_places" type="number" defaultValue={String(bundle.localization.decimal_places)} required/><SelectField label="Currency position" name="currency_position" defaultValue={bundle.localization.currency_position} options={["before","after"]}/><SelectField label="First day of week" name="first_day_of_week" defaultValue={String(bundle.localization.first_day_of_week)} options={["0","1","2","3","4","5","6"]}/></div><p className="rounded-xl bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-500">Currency selection is managed in <strong>Currencies & FX</strong> so reporting currency and exchange-rate policy cannot become inconsistent.</p><SaveBar saving={saving}/></form>:null}
 
-      {activeTab==="currencies"?<CurrencySettingsPanel onChanged={load}/>:null}
+      {activeTab==="currencies"?<CurrencySettingsPanel onChanged={async()=>{await load();}}/>:null}
 
       {activeTab==="finance"?<form onSubmit={event=>{event.preventDefault();const form=new FormData(event.currentTarget);void runSave(async()=>{await api("/financial","PATCH",{financial_year_start_month:Number(form.get("financial_year_start_month")),accounting_currency:company.currency,default_payment_terms_days:Number(form.get("default_payment_terms_days")),tax_calculation_mode:text(form,"tax_calculation_mode"),default_tax_rate:Number(form.get("default_tax_rate")),prices_include_tax:form.get("prices_include_tax")==="on"});});}} className="space-y-6"><div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3"><SelectField label="Financial year starts" name="financial_year_start_month" defaultValue={String(company.financial_year_start_month)} options={Array.from({length:12},(_,i)=>String(i+1))}/><Field label="Default payment terms (days)" name="default_payment_terms_days" type="number" defaultValue={String(bundle.financial.default_payment_terms_days)} required/><SelectField label="Tax calculation" name="tax_calculation_mode" defaultValue={bundle.financial.tax_calculation_mode} options={["exclusive","inclusive"]}/><Field label="Default tax rate %" name="default_tax_rate" type="number" step="0.0001" defaultValue={String(bundle.financial.default_tax_rate)} required/><label className="flex items-end gap-2 pb-3 text-sm font-medium"><input type="checkbox" name="prices_include_tax" defaultChecked={bundle.financial.prices_include_tax}/> Prices include tax by default</label></div><p className="rounded-xl bg-neutral-50 px-4 py-3 text-xs leading-5 text-neutral-500">Accounting/reporting currency is managed in <strong>Currencies & FX</strong>. Finance & Tax now contains only fiscal, payment and tax defaults.</p><SaveBar saving={saving}/></form>:null}
 
@@ -123,7 +142,7 @@ export default function CompanySettingsPage() {
 
       {activeTab==="online"?<form onSubmit={event=>{event.preventDefault();const form=new FormData(event.currentTarget);void runSave(async()=>{await api("/online-legal","PATCH",{privacy_policy_url:text(form,"privacy_policy_url"),terms_url:text(form,"terms_url"),linkedin_url:text(form,"linkedin_url"),facebook_url:text(form,"facebook_url"),x_url:text(form,"x_url"),instagram_url:text(form,"instagram_url"),youtube_url:text(form,"youtube_url")});});}} className="space-y-6"><div className="grid gap-5 sm:grid-cols-2"><Field label="Privacy Policy URL" name="privacy_policy_url" type="url" defaultValue={bundle.online_legal.privacy_policy_url}/><Field label="Terms & Conditions URL" name="terms_url" type="url" defaultValue={bundle.online_legal.terms_url}/><Field label="LinkedIn" name="linkedin_url" type="url" defaultValue={bundle.online_legal.linkedin_url}/><Field label="Facebook" name="facebook_url" type="url" defaultValue={bundle.online_legal.facebook_url}/><Field label="X / Twitter" name="x_url" type="url" defaultValue={bundle.online_legal.x_url}/><Field label="Instagram" name="instagram_url" type="url" defaultValue={bundle.online_legal.instagram_url}/><Field label="YouTube" name="youtube_url" type="url" defaultValue={bundle.online_legal.youtube_url}/></div><SaveBar saving={saving}/></form>:null}
 
-      {message?<div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>:null}{error?<div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>:null}
+      {message?<div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>:null}{error?<div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}{refreshFailed?<button type="button" disabled={refreshing||saving} onClick={()=>void retryLoad()} className="ml-3 rounded-lg border px-3 py-1 font-medium disabled:opacity-60">{refreshing?"Loading…":"Retry loading"}</button>:null}</div>:null}
     </div></section></div></div></main>;
 }
 
