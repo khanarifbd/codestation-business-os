@@ -49,6 +49,18 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen
       - run: uv run python -m compileall app alembic scripts
+      - name: Run portable HR and team regressions (no external database)
+        env:
+          ENVIRONMENT: test
+        run: |
+          for test_file in \
+            test_candidate_conversion_atomicity_offline.py \
+            test_candidate_conversion_transaction_sqlite.py \
+            test_hr_talent_read_contract_offline.py \
+            test_team_patch_name_integrity_offline.py
+          do
+            uv run --offline --no-sync python -m unittest discover -s tests -p "$test_file" -v || exit 1
+          done
       - run: uv run alembic upgrade 0008_team_roles
       - run: uv run python scripts/seed_existing_tenant_fixture.py
       - run: uv run alembic upgrade head
