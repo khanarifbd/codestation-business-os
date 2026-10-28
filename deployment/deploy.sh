@@ -571,7 +571,7 @@ for command_name in docker git curl nginx systemctl flock openssl; do
 done
 
 if [[ "${BUSINESS_OS_DEPLOY_REEXEC:-0}" == "1" ]]; then
-  [[ -e "/proc/$/fd/9" ]] || fail "Deployment re-exec lost its deployment lock"
+  [[ -e "/proc/$$/fd/9" ]] || fail "Deployment re-exec lost its deployment lock"
 else
   exec 9>"${LOCK_FILE}"
   flock -n 9 || fail "Another Business OS deployment is already running"
