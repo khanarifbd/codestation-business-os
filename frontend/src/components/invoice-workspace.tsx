@@ -8,7 +8,7 @@ export function InvoiceWorkspace({ invoiceId }: { invoiceId: string }) {
   const [revision, setRevision] = useState(0);
   const refreshPreview = useCallback(() => setRevision((value) => value + 1), []);
   return <div className="invoice-workspace">
-    <InvoiceDetailWorkspace invoiceId={invoiceId} onUpdated={refreshPreview} />
+    <InvoiceDetailWorkspace key={invoiceId} invoiceId={invoiceId} onUpdated={refreshPreview} />
     <div className="invoice-payment-continuation"><InvoicePaymentWorkspace key={`${invoiceId}:${revision}`} invoiceId={invoiceId} /></div>
   </div>;
 }

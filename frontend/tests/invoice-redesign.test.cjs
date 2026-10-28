@@ -25,19 +25,47 @@ function financialBaseline(text) {
     .replace('    if (form.tax_calculation_mode !== "exclusive" && form.tax_calculation_mode !== "inclusive") {\n      setError("The saved invoice tax mode could not be verified. Reload the invoice before saving; no tax mode will be guessed.");\n      return;\n    }\n', '')
     .replace('tax_calculation_mode: form.tax_calculation_mode,', 'tax_calculation_mode: "exclusive",');
 }
+// Approved identity/read-admission seams only. Literal replacements preserve every
+// unrelated baseline statement; invoice-identity.test.cjs exercises the new behavior.
+const identitySeams = [
+  ['  const readSequence = useRef(0);\n  const readPending = useRef(false);\n  const [readFailed, setReadFailed] = useState(false);\n\n  function hasCurrentInvoice() {\n    return Boolean(invoice && invoice.id === invoiceId && !loading && !readPending.current && !readFailed);\n  }\n\n', '', 1],
+  ['    const request = ++readSequence.current;\n    readPending.current = true;\n', '', 1],
+  ['      if (request !== readSequence.current) return;\n', '', 2],
+  ['      if (invoicePayload?.id !== invoiceId) throw new Error("Invoice identity could not be verified. Retry loading.");\n      if (!Array.isArray(paymentPayload)) throw new Error("Payment history could not be verified. Retry loading.");\n      const nextForm = toForm(invoicePayload);\n      setReadFailed(false);\n', '', 1],
+  ['      setForm(nextForm);', '      setForm(toForm(invoicePayload));', 1],
+  ['      setReadFailed(true);\n', '', 1],
+  ['    } finally { if (request === readSequence.current) { readPending.current = false; setLoading(false); } }', '    } finally { setLoading(false); }', 1],
+  ['  useEffect(() => { void load(); return () => { readSequence.current++; readPending.current = true; }; }, [load]);', '  useEffect(() => { void load(); }, [load]);', 1],
+  ['    if (!hasCurrentInvoice()) return;\n', '', 5],
+  ['    const paymentToReverse = payments.find(payment => payment.id === selectedPayment.id && payment.status === "confirmed");\n    if (!paymentToReverse) return;', '    const paymentToReverse = selectedPayment;', 1],
+];
+function identityBaseline(text) {
+  for (const [approved, previous] of identitySeams) text = text.split(approved).join(previous);
+  return text;
+}
+const approvedLifecycle = {
+  draft: ['currentRead && invoice.status === "draft"', 'invoice.status === "draft"'],
+  canCancelInvoice: ['currentRead && !["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0', '!["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0'],
+  canCollectPayment: ['currentRead && !["draft", "cancelled", "paid"].includes(invoice.status) && Number(invoice.balance_due) > 0', '!["draft", "cancelled", "paid"].includes(invoice.status) && Number(invoice.balance_due) > 0'],
+};
+test('Approved invoice identity seams remain exact and bounded', () => {
+  const source = read(root, files.detail);
+  for (const [approved, , count] of identitySeams) assert.equal(source.split(approved).length - 1, count, approved);
+  assert.ok(source.includes('const currentRead = invoice.id === invoiceId && !loading && !readFailed;'));
+});
 const approvedHelpers = {
   'src/components/invoices-workspace-v2.tsx:money': 'function money(value: string | number, currency: string) { return formatMoneyExact(value, currency); }',
   'src/components/invoices-workspace-v2.tsx:lineTotal': 'function lineTotal(line: Line, taxMode: string) { return salesLinePreview(line, taxMode)?.total ?? ""; }',
 };
 for (const [file,name] of [[files.list,'InvoicesWorkspaceV2'],[files.detail,'InvoiceDetailWorkspace'],[files.payment,'InvoicePaymentWorkspace'],[files.workspace,'InvoiceWorkspace']]) {
-  test(`${name}: pre-render logic is unchanged except explicit verified financial corrections`,()=>assert.equal(financialBaseline(logic(root,file,name)),logic(baseline,file,name)));
+  test(`${name}: pre-render logic is unchanged except explicit verified financial corrections`,()=>assert.equal(financialBaseline(identityBaseline(logic(root,file,name))),logic(baseline,file,name)));
 }
 for (const [file,names] of [[files.list,['inferPaymentMethod','money','pretty','lineTotal','selectPaymentDestination','resetSource','clearFilters','updateLine','changeManualCurrency','selectLineSource','submit']],[files.detail,['money','apiError','toForm','saveDraft','sendInvoice','shareInvoice','cancelInvoice','reversePayment']],[files.payment,['money','apiError','methodLabel','inferMethod','toForm','selectDestination','changeMethod','savePaymentInstructions','printInvoice']]]) {
-  for(const name of names) test(`${path.basename(file)} ${name}: action contract or exact approved money-helper delegation is retained`,()=>{const a=find(root,file,name),b=find(baseline,file,name);assert.equal(approvedHelpers[file+':'+name] ? a.node.getText(a.ast) : financialBaseline(a.node.getText(a.ast)),approvedHelpers[file+':'+name] ?? b.node.getText(b.ast));});
+  for(const name of names) test(`${path.basename(file)} ${name}: action contract or exact approved money-helper delegation is retained`,()=>{const a=find(root,file,name),b=find(baseline,file,name);assert.equal(approvedHelpers[file+':'+name] ? a.node.getText(a.ast) : financialBaseline(identityBaseline(a.node.getText(a.ast))),approvedHelpers[file+':'+name] ?? b.node.getText(b.ast));});
 }
 for(const [file,names] of [[files.detail,['draft','canCancelInvoice','canCollectPayment','sourceLabel']],[files.payment,['hasPaymentInstructions','canEdit']]]) {
   test(`${path.basename(file)}: lifecycle, source and edit guards retain exact expressions`,()=>{
-    for(const name of names){const a=find(root,file,name,ts.isVariableDeclaration),b=find(baseline,file,name,ts.isVariableDeclaration);assert.equal(a.node.initializer.getText(a.ast),b.node.initializer.getText(b.ast),name);}
+    for(const name of names){const a=find(root,file,name,ts.isVariableDeclaration),b=find(baseline,file,name,ts.isVariableDeclaration);const current=a.node.initializer.getText(a.ast), approved=file===files.detail?approvedLifecycle[name]:undefined;if(approved)assert.equal(current,approved[0],name+" exact admitted expression");assert.equal(approved?approved[1]:current,b.node.initializer.getText(b.ast),name);}
   });
 }
 test('Detail updates continue to remount the payment/client preview using revision key',()=>{

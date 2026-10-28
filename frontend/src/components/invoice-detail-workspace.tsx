@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, FileText, Plus, RotateCcw, Save, Send, Share2, Trash2, X, Edit3 } from "lucide-react";
 
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
@@ -119,7 +119,17 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const readSequence = useRef(0);
+  const readPending = useRef(false);
+  const [readFailed, setReadFailed] = useState(false);
+
+  function hasCurrentInvoice() {
+    return Boolean(invoice && invoice.id === invoiceId && !loading && !readPending.current && !readFailed);
+  }
+
   const load = useCallback(async () => {
+    const request = ++readSequence.current;
+    readPending.current = true;
     setLoading(true); setError(null);
     try {
       const [invoiceResponse, paymentResponse] = await Promise.all([
@@ -128,19 +138,27 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
       ]);
       const invoicePayload = await invoiceResponse.json();
       const paymentPayload = await paymentResponse.json();
+      if (request !== readSequence.current) return;
       if (!invoiceResponse.ok) throw new Error(apiError(invoicePayload, "Could not load invoice"));
       if (!paymentResponse.ok) throw new Error(apiError(paymentPayload, "Could not load payment history"));
+      if (invoicePayload?.id !== invoiceId) throw new Error("Invoice identity could not be verified. Retry loading.");
+      if (!Array.isArray(paymentPayload)) throw new Error("Payment history could not be verified. Retry loading.");
+      const nextForm = toForm(invoicePayload);
+      setReadFailed(false);
       setInvoice(invoicePayload);
       setPayments(paymentPayload);
-      setForm(toForm(invoicePayload));
+      setForm(nextForm);
     } catch (reason) {
+      if (request !== readSequence.current) return;
+      setReadFailed(true);
       setError(reason instanceof Error ? reason.message : "Could not load invoice");
-    } finally { setLoading(false); }
+    } finally { if (request === readSequence.current) { readPending.current = false; setLoading(false); } }
   }, [invoiceId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { readSequence.current++; readPending.current = true; }; }, [load]);
 
   async function saveDraft() {
+    if (!hasCurrentInvoice()) return;
     if (!form || !invoice) return;
     if (form.tax_calculation_mode !== "exclusive" && form.tax_calculation_mode !== "inclusive") {
       setError("The saved invoice tax mode could not be verified. Reload the invoice before saving; no tax mode will be guessed.");
@@ -181,6 +199,7 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   }
 
   async function sendInvoice() {
+    if (!hasCurrentInvoice()) return;
     if (!invoice) return;
     setSaving(true); setError(null); setMessage(null);
     try {
@@ -201,6 +220,7 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   }
 
   async function shareInvoice() {
+    if (!hasCurrentInvoice()) return;
     if (!invoice) return;
     setError(null);
     setMessage(null);
@@ -224,6 +244,7 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   }
 
   async function cancelInvoice() {
+    if (!hasCurrentInvoice()) return;
     if (!invoice || cancelReason.trim().length < 3 || cancellingInvoice) return;
     setCancellingInvoice(true);
     setError(null);
@@ -250,8 +271,10 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   }
 
   async function reversePayment() {
+    if (!hasCurrentInvoice()) return;
     if (!selectedPayment || selectedPayment.status !== "confirmed" || reversing || reversalReason.trim().length < 3) return;
-    const paymentToReverse = selectedPayment;
+    const paymentToReverse = payments.find(payment => payment.id === selectedPayment.id && payment.status === "confirmed");
+    if (!paymentToReverse) return;
     setReversing(true);
     setError(null);
     setMessage(null);
@@ -283,11 +306,12 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   }
 
   if (loading && !invoice) return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl text-sm text-neutral-500">Loading invoice…</div></main>;
-  if (!invoice || !form) return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl"><p className="text-red-600">{error ?? "Invoice not found"}</p></div></main>;
+  if (!invoice || invoice.id !== invoiceId || !form) return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl"><p className="text-red-600">{error ?? "Invoice not found"}</p><button type="button" disabled={loading} onClick={() => void load()}>Retry loading</button></div></main>;
 
-  const draft = invoice.status === "draft";
-  const canCancelInvoice = !["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0;
-  const canCollectPayment = !["draft", "cancelled", "paid"].includes(invoice.status) && Number(invoice.balance_due) > 0;
+  const currentRead = invoice.id === invoiceId && !loading && !readFailed;
+  const draft = currentRead && invoice.status === "draft";
+  const canCancelInvoice = currentRead && !["paid", "cancelled"].includes(invoice.status) && Number(invoice.amount_paid) === 0;
+  const canCollectPayment = currentRead && !["draft", "cancelled", "paid"].includes(invoice.status) && Number(invoice.balance_due) > 0;
   const sourceLabel = invoice.project_id ? "Project invoice" : invoice.order_id ? "Order invoice" : "Manual client invoice";
 
   return <main className="invoice-detail-page"><div className="invoice-detail-content">
@@ -298,18 +322,18 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
       title={invoice.invoice_number}
       description={<>{sourceLabel}<span className="invoice-detail-separator" aria-hidden="true">/</span>{invoice.client_name}</>}
       actions={<div className="invoice-detail-actions">
-        {!editing ? <Link href={`/print/invoices/${invoice.id}`} target="_blank" rel="noreferrer" className="invoice-detail-action"><FileText className="size-4" />PDF View · saved</Link> : null}
-        {!editing ? <button type="button" onClick={() => void shareInvoice()} className="invoice-detail-action"><Share2 className="size-4" />Share</button> : null}
+        {currentRead && !editing ? <Link href={`/print/invoices/${invoice.id}`} target="_blank" rel="noreferrer" className="invoice-detail-action"><FileText className="size-4" />PDF View · saved</Link> : null}
+        {currentRead && !editing ? <button type="button" onClick={() => void shareInvoice()} className="invoice-detail-action"><Share2 className="size-4" />Share</button> : null}
         {draft && !editing ? <button onClick={() => setEditing(true)} className="invoice-detail-action"><Edit3 className="size-4" />Edit draft</button> : null}
         {draft && !editing ? <button disabled={saving} onClick={() => void sendInvoice()} className="invoice-detail-action invoice-detail-action-primary"><Send className="size-4" />Send invoice</button> : null}
         {canCollectPayment && !editing ? <Link href={`/dashboard/accounting/money-in?invoice_id=${invoice.id}`} className="invoice-detail-action invoice-detail-action-primary">Collect payment</Link> : null}
         {canCancelInvoice && !editing ? <button type="button" disabled={saving || cancellingInvoice} onClick={() => { setCancelReason(""); setCancelOpen(true); setError(null); }} className="invoice-detail-action invoice-detail-action-danger"><Trash2 className="size-4" />Cancel invoice</button> : null}
         {editing ? <button onClick={() => { setForm(toForm(invoice)); setEditing(false); }} className="invoice-detail-action"><X className="size-4" />Cancel edit</button> : null}
-        {editing ? <button disabled={saving} onClick={() => void saveDraft()} className="invoice-detail-action invoice-detail-action-primary"><Save className="size-4" />{saving ? "Saving…" : "Save changes"}</button> : null}
+        {editing ? <button disabled={saving || !currentRead} onClick={() => void saveDraft()} className="invoice-detail-action invoice-detail-action-primary"><Save className="size-4" />{saving ? "Saving…" : "Save changes"}</button> : null}
       </div>}
     />
 
-    {error ? <div role="alert" className="invoice-detail-notice invoice-detail-notice-error">{error}</div> : null}
+    {error ? <div role="alert" className="invoice-detail-notice invoice-detail-notice-error">{error}{readFailed ? <button type="button" disabled={loading} onClick={() => void load()} className="ml-3 underline">Retry loading</button> : null}</div> : null}
     {message ? <div role="status" className="invoice-detail-notice invoice-detail-notice-success">{message}</div> : null}
     {invoice.status === "cancelled" ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"><strong>Cancelled invoice.</strong>{invoice.cancel_reason ? <> Reason: {invoice.cancel_reason}</> : <> Cancellation reason is available in the audit trail for newer cancellations.</>}</div> : null}
 
@@ -322,8 +346,8 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
 
     {editing ? <p className="invoice-detail-notice" role="status">Totals shown are the saved invoice values. Edits are recalculated when saved. Print / PDF uses the saved document, not unsaved changes.</p> : null}
 
-    {!editing && <InvoiceStripeSandboxPanel invoiceId={invoice.id} currency={invoice.currency} status={invoice.status} canManage={canReversePayment} />}
-    {!editing && <InvoiceStripeLivePanel invoiceId={invoice.id} currency={invoice.currency} status={invoice.status} canManage={canReversePayment} />}
+    {currentRead && !editing && <InvoiceStripeSandboxPanel invoiceId={invoice.id} currency={invoice.currency} status={invoice.status} canManage={canReversePayment} />}
+    {currentRead && !editing && <InvoiceStripeLivePanel invoiceId={invoice.id} currency={invoice.currency} status={invoice.status} canManage={canReversePayment} />}
 
     <section className="invoice-detail-card">
       <SectionHeader title="Invoice details" description={draft ? "Draft invoices can be changed until they are sent." : invoice.status === "cancelled" ? "Cancelled invoices are retained for audit history and cannot be collected." : "Sent invoices are locked to preserve the commercial record."} action={invoice.project_id ? <Link href={`/dashboard/projects/${invoice.project_id}`} className="invoice-detail-text-action">Open project →</Link> : null} />
@@ -370,7 +394,7 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
           <td className="px-4 py-3 font-semibold">{money(payment.invoice_amount, payment.invoice_currency)}</td>
           <td className="px-4 py-3"><span className={`inline-flex rounded-full px-2 py-1 text-xs font-semibold ${payment.status === "reversed" ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>{payment.status === "reversed" ? "Reversed" : payment.status === "confirmed" ? "Confirmed" : payment.status}</span></td>
           <td className="px-4 py-3">{payment.reference || "—"}</td>
-          {canReversePayment ? <td className="px-4 py-3 text-right">{payment.status === "confirmed" ? <button type="button" disabled={saving || reversing} onClick={() => { setSelectedPayment(payment); setReversalReason(""); setConfirmingReversal(false); setError(null); }} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-50"><RotateCcw className="size-3.5" />Reverse payment</button> : <span className="text-xs text-neutral-400">—</span>}</td> : null}
+          {canReversePayment ? <td className="px-4 py-3 text-right">{payment.status === "confirmed" ? <button type="button" disabled={saving || reversing || !currentRead} onClick={() => { setSelectedPayment(payment); setReversalReason(""); setConfirmingReversal(false); setError(null); }} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-50"><RotateCcw className="size-3.5" />Reverse payment</button> : <span className="text-xs text-neutral-400">—</span>}</td> : null}
         </tr>)}</tbody></table></div> : <div className="invoice-payments-empty"><FileText size={22} strokeWidth={1.5} aria-hidden="true" /><p>No payments recorded yet.</p><span>Collections for this invoice will appear here.</span></div>}
       {canReversePayment ? <p className="invoice-payment-audit-note">Recorded by mistake? Reverse the payment instead of changing the invoice status. This does not issue a refund or move real money.</p> : null}
     </section>
