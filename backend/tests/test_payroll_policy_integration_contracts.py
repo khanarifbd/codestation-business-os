@@ -110,6 +110,44 @@ class PayrollIntegrationContractTests(unittest.TestCase):
     def test_holiday_writer_is_guard_only_delta(self):
         old=(BASE/'app/api/v1/hr_extended.py').read_text()
         expected=old.replace('from app.services.activity_log import record_activity','from app.services.activity_log import record_activity\nfrom app.services.payroll_policy_inputs import lock_payroll_inputs').replace('def create_holiday(payload: HolidayCreate, request: Request, db: DbSession, tenant: HRManager):\n','def create_holiday(payload: HolidayCreate, request: Request, db: DbSession, tenant: HRManager):\n    lock_payroll_inputs(db, tenant.organization_id)\n')
+        # Approved conversion seam: commit 7862b27968d1ba46eaae9eecc7cb75d78b2d747c.
+        # Keep whole-file byte comparison; only apply its exact import/tail patch.
+        # Runtime transaction coverage lives in test_candidate_conversion_atomicity_offline.py
+        # and test_candidate_conversion_transaction_sqlite.py. No baseline hashes change.
+        old_conversion_tail = (
+            '    # Reuse the canonical employee invitation/onboarding flow. It commits the audited invitation transaction.\n'
+            '    invitation = create_invitation(\n'
+            '        InvitationCreate(email=candidate.email, full_name=candidate.full_name, role_id=role_id, department_id=department_id, designation_id=payload.designation_id, employee_code=payload.employee_code),\n'
+            '        request, db, tenant,  # type: ignore[arg-type]\n'
+            '    )\n'
+            '    # The invitation flow committed; lock and mark the candidate hired in a new audited transaction.\n'
+            '    candidate = db.scalar(select(JobCandidate).where(JobCandidate.id == candidate_id, JobCandidate.organization_id == tenant.organization_id).with_for_update())\n'
+            '    if candidate is None:\n'
+            '        raise HTTPException(status_code=404, detail="Candidate not found")\n'
+            '    candidate.stage = "hired"\n'
+            '    _audit(db, request, tenant, "hr.candidate.converted", "job_candidate", candidate.id, {"invitation_id": invitation.id, "employee_code": invitation.employee_code}); db.commit()\n'
+            '    return {"candidate_id": candidate.id, "stage": candidate.stage, "invitation_id": invitation.id, "employee_code": invitation.employee_code, "invite_token": invitation.invite_token, "email": invitation.email}'
+        )
+        atomic_conversion_tail = (
+            '    # Keep the invitation, candidate state and both audits in one transaction.\n'
+            "    # SessionLocal uses BusinessSession: the canonical flow's commit is deferred\n"
+            "    # to a flush, so this candidate's existing row lock remains held throughout.\n"
+            '    with defer_commits(db):\n'
+            '        invitation = create_invitation(\n'
+            '            InvitationCreate(email=candidate.email, full_name=candidate.full_name, role_id=role_id, department_id=department_id, designation_id=payload.designation_id, employee_code=payload.employee_code),\n'
+            '            request, db, tenant,  # type: ignore[arg-type]\n'
+            '        )\n'
+            '        candidate.stage = "hired"\n'
+            '        _audit(db, request, tenant, "hr.candidate.converted", "job_candidate", candidate.id, {"invitation_id": invitation.id, "employee_code": invitation.employee_code})\n'
+            '        result = {"candidate_id": candidate.id, "stage": candidate.stage, "invitation_id": invitation.id, "employee_code": invitation.employee_code, "invite_token": invitation.invite_token, "email": invitation.email}\n'
+            '    db.commit()\n'
+            '    return result'
+        )
+        invitation_import = 'from app.api.v1.team import create_invitation\n'
+        self.assertEqual(expected.count(invitation_import), 1)
+        self.assertEqual(expected.count(old_conversion_tail), 1)
+        expected = expected.replace(invitation_import, invitation_import + 'from app.db.session import defer_commits\n', 1)
+        expected = expected.replace(old_conversion_tail, atomic_conversion_tail, 1)
         self.assertEqual((ROOT/'app/api/v1/hr_extended.py').read_text(),expected)
 
     def test_mutex_is_transaction_scoped_stable_and_tenant_specific(self):
