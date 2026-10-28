@@ -141,15 +141,24 @@ class TalentReadContract(unittest.TestCase):
             calls = [n.func.attr for n in ast.walk(function(TREE, name)) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
             self.assertFalse(set(calls) & {'commit', 'flush', 'add', 'delete', 'with_for_update'})
 
-    def test_conversion_commits_before_candidate_second_lookup_static_only(self):
+    def test_conversion_defers_invitation_commit_and_keeps_one_candidate_lock_static_only(self):
         convert = function(EXTENDED, 'convert_candidate'); invite = function(TEAM, 'create_invitation')
-        invitation_call = next(n for n in ast.walk(convert) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'create_invitation')
-        scalar_lines = sorted(n.lineno for n in ast.walk(convert) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'scalar')
-        self.assertTrue(any(line > invitation_call.lineno for line in scalar_lines))
-        after = [n for n in ast.walk(convert) if isinstance(n, ast.Raise) and n.lineno > invitation_call.lineno]
-        self.assertTrue(any('404' in ast.unparse(n) for n in after))
-        self.assertTrue(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'commit' for n in ast.walk(invite)))
-        self.assertTrue(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'commit' and n.lineno > invitation_call.lineno for n in ast.walk(convert)))
+        boundary = next(n for n in convert.body if isinstance(n, ast.With))
+        self.assertEqual(ast.unparse(boundary.items[0].context_expr), 'defer_commits(db)')
+        invitation_calls = [n for n in ast.walk(boundary) if isinstance(n, ast.Call)
+                            and isinstance(n.func, ast.Name) and n.func.id == 'create_invitation']
+        self.assertEqual(len(invitation_calls), 1)
+        self.assertTrue(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                            and n.func.id == '_audit' for n in ast.walk(boundary)))
+        self.assertFalse(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                             and n.func.attr == 'scalar' for n in ast.walk(boundary)))
+        commits = [n for n in ast.walk(convert) if isinstance(n, ast.Call)
+                   and isinstance(n.func, ast.Attribute) and n.func.attr == 'commit']
+        self.assertEqual(len(commits), 1)
+        self.assertGreater(commits[0].lineno, boundary.end_lineno)
+        self.assertTrue(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                            and n.func.attr == 'commit' for n in ast.walk(invite)))
+
 
 
 if __name__ == '__main__': unittest.main()

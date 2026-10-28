@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.api.v1.team import create_invitation
+from app.db.session import defer_commits
 from app.models.hr import EmployeeShiftAssignment, HRAnnouncement, HRShift, JobCandidate, JobOpening
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.team import Department, Designation, Employee, OrganizationRole
@@ -148,15 +149,16 @@ def convert_candidate(candidate_id: str, payload: CandidateConvert, request: Req
         raise HTTPException(status_code=409, detail="No active employee role is available")
     ensure_grantable_employee_role(db, tenant, role_id)
     department_id = payload.department_id if payload.department_id is not None else job.department_id
-    # Reuse the canonical employee invitation/onboarding flow. It commits the audited invitation transaction.
-    invitation = create_invitation(
-        InvitationCreate(email=candidate.email, full_name=candidate.full_name, role_id=role_id, department_id=department_id, designation_id=payload.designation_id, employee_code=payload.employee_code),
-        request, db, tenant,  # type: ignore[arg-type]
-    )
-    # The invitation flow committed; lock and mark the candidate hired in a new audited transaction.
-    candidate = db.scalar(select(JobCandidate).where(JobCandidate.id == candidate_id, JobCandidate.organization_id == tenant.organization_id).with_for_update())
-    if candidate is None:
-        raise HTTPException(status_code=404, detail="Candidate not found")
-    candidate.stage = "hired"
-    _audit(db, request, tenant, "hr.candidate.converted", "job_candidate", candidate.id, {"invitation_id": invitation.id, "employee_code": invitation.employee_code}); db.commit()
-    return {"candidate_id": candidate.id, "stage": candidate.stage, "invitation_id": invitation.id, "employee_code": invitation.employee_code, "invite_token": invitation.invite_token, "email": invitation.email}
+    # Keep the invitation, candidate state and both audits in one transaction.
+    # SessionLocal uses BusinessSession: the canonical flow's commit is deferred
+    # to a flush, so this candidate's existing row lock remains held throughout.
+    with defer_commits(db):
+        invitation = create_invitation(
+            InvitationCreate(email=candidate.email, full_name=candidate.full_name, role_id=role_id, department_id=department_id, designation_id=payload.designation_id, employee_code=payload.employee_code),
+            request, db, tenant,  # type: ignore[arg-type]
+        )
+        candidate.stage = "hired"
+        _audit(db, request, tenant, "hr.candidate.converted", "job_candidate", candidate.id, {"invitation_id": invitation.id, "employee_code": invitation.employee_code})
+        result = {"candidate_id": candidate.id, "stage": candidate.stage, "invitation_id": invitation.id, "employee_code": invitation.employee_code, "invite_token": invitation.invite_token, "email": invitation.email}
+    db.commit()
+    return result
