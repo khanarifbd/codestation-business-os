@@ -1,7 +1,20 @@
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+
+def _salary_profile_storage_value(value: Decimal | None) -> Decimal | None:
+    # Preserve existing handler rounding and PATCH omission/null validation.
+    if value is None:
+        return value
+    try:
+        rounded = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise ValueError("Base salary must fit Numeric(18,2) after rounding") from exc
+    if rounded > Decimal("9999999999999999.99"):
+        raise ValueError("Base salary must fit Numeric(18,2) after rounding")
+    return value
 
 
 class PayrollComponent(BaseModel):
@@ -19,6 +32,11 @@ class SalaryProfileCreate(BaseModel):
     effective_from: date
     notes: str | None = None
 
+    @field_validator("base_salary")
+    @classmethod
+    def validate_salary_storage(cls, value: Decimal | None) -> Decimal | None:
+        return _salary_profile_storage_value(value)
+
 
 class SalaryProfileUpdate(BaseModel):
     base_salary: Decimal | None = Field(default=None, gt=0)
@@ -27,6 +45,11 @@ class SalaryProfileUpdate(BaseModel):
     effective_to: date | None = None
     is_active: bool | None = None
     notes: str | None = None
+
+    @field_validator("base_salary")
+    @classmethod
+    def validate_salary_storage(cls, value: Decimal | None) -> Decimal | None:
+        return _salary_profile_storage_value(value)
 
     @model_validator(mode="after")
     def validate_non_nullable_updates(self):
