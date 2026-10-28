@@ -66,6 +66,8 @@ def main() -> None:
     db = SessionLocal()
     marker = uuid4().hex[:7].upper()
     try:
+        # Verification can run repeatedly against the synthetic tenant.
+        before_values = {item["currency"]: Decimal(item["value"]) for item in dashboard_summary(db, tenant)["inventory_values"]}
         source = create_warehouse(
             WarehouseCreate(code=f"TS{marker[:5]}", name=f"Transfer Source {marker}"),
             request("POST", "/inventory/warehouses"), db, tenant,  # type: ignore[arg-type]
@@ -183,7 +185,7 @@ def main() -> None:
         values = {item["currency"]: Decimal(item["value"]) for item in summary["inventory_values"]}
         if tenant.organization.currency.upper() not in values or foreign_currency not in values:
             raise AssertionError(f"inventory values were not separated by currency: {values}")
-        if values[foreign_currency] != Decimal("50.0000"):
+        if values[foreign_currency] != before_values.get(foreign_currency, Decimal("0")) + Decimal("50.0000"):
             raise AssertionError(f"foreign inventory value incorrect: {values[foreign_currency]}")
     finally:
         db.close()

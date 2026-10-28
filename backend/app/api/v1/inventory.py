@@ -290,7 +290,7 @@ def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenan
         bal=_balance(db,tenant.organization_id,product.id,warehouse.id)
         unit=cost(payload.unit_cost if payload.unit_cost is not None else bal.average_unit_cost or product.standard_cost)
         source_total=cost(unit*delta)
-        base_total,applied_rate=to_base_amount(db,tenant.organization_id,base_currency,source_total,product.currency)
+        base_total,applied_rate=to_base_amount(db,tenant.organization_id,base_currency,source_total,product.currency,rate_date=payload.adjustment_date)
         movement=_stock_in(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=delta,incoming_total_cost=source_total,incoming_total_cost_base=base_total,base_currency=base_currency,source_type="stock_adjustment",source_id=source_id,reference=reference,reason=payload.reason.strip())
     else:
         movement=_stock_out(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=abs(delta),source_type="stock_adjustment",source_id=source_id,reference=reference,reason=payload.reason.strip())
@@ -333,7 +333,7 @@ def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSes
         subtotal+=line_base;tax_total+=tax_amount;recoverable_total+=recoverable;inventory_debit+=inv_cost
         prepared.append({"product":product,"line":line,"tax_code":tax_code,"base":line_base,"tax_amount":tax_amount,"recoverable":recoverable,"inv_cost":inv_cost,"line_total":line_total})
     subtotal=money(subtotal);tax_total=money(tax_total);recoverable_total=money(recoverable_total);total=money(subtotal+tax_total);inventory_debit=cost(inventory_debit)
-    total_base,rate=to_base_amount(db,tenant.organization_id,base_currency,total,currency)
+    total_base,rate=to_base_amount(db,tenant.organization_id,base_currency,total,currency,rate_date=payload.receipt_date)
     recoverable_base=money(recoverable_total*rate)
     inventory_debit_base=money(total_base-recoverable_base)
     remaining_base=cost(inventory_debit_base)

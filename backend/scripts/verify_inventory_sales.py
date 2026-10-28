@@ -65,7 +65,7 @@ def alternate_currency(base_currency: str) -> str:
     return "USD" if base_currency.upper() != "USD" else "EUR"
 
 
-def upsert_direct_rate(db, organization_id: str, user_id: str, source_currency: str, base_currency: str, rate: Decimal) -> None:
+def upsert_direct_rate(db, organization_id: str, user_id: str, source_currency: str, base_currency: str, rate: Decimal, effective_date: date) -> None:
     row = db.scalar(select(OrganizationExchangeRate).where(
         OrganizationExchangeRate.organization_id == organization_id,
         OrganizationExchangeRate.base_currency == source_currency,
@@ -97,6 +97,10 @@ def upsert_direct_rate(db, organization_id: str, user_id: str, source_currency: 
         row.reference_rate = rate; row.manual_rate = rate; row.effective_rate = rate
         row.source = "manual"; row.synced_at = datetime.now(timezone.utc)
         action = "company.exchange_rate.updated"; method = "PATCH"
+    from app.services.exchange_rates import record_rate_snapshot
+    record_rate_snapshot(db, organization_id=organization_id, base_currency=source_currency,
+                         quote_currency=base_currency, effective_date=effective_date,
+                         effective_rate=rate, reference_rate=rate, source="synthetic_qa", user_id=user_id)
     record_activity(
         db,
         action=action,
@@ -330,7 +334,7 @@ def main() -> None:
         if Decimal(posted_quantity) != Decimal("4") or second.id == first.id:
             raise AssertionError("posted fulfillment quantity/history is incorrect")
 
-        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("120"))
+        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("120"), date(2099, 3, 1))
         fx_product = create_product(
             ProductCreate(
                 sku=f"FX-{marker}", name=f"FX Sale Product {marker}", item_type="stock_item",
@@ -355,7 +359,7 @@ def main() -> None:
             ),
             req("POST", "/sales/orders"), db, tenant,  # type: ignore[arg-type]
         )
-        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("130"))
+        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("130"), date(2099, 3, 3))
         fx_fulfillment = fulfill_order(
             fx_order.id,
             FulfillmentCreate(warehouse_id=warehouse.id, fulfillment_date=date(2099, 3, 3), items=[FulfillmentLineInput(order_item_id=fx_order.items[0].id, quantity=Decimal("2"))]),

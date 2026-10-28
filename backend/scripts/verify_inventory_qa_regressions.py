@@ -25,6 +25,62 @@ from app.services.accounting_posting import ensure_default_chart
 from app.services.functional_currency import ensure_initial_functional_currency_period
 
 
+def verify_foreign_inventory(db, tenant, request, warehouse):
+    from datetime import timedelta
+    from app.models.company_defaults import OrganizationExchangeRate
+    from app.services.exchange_rates import record_rate_snapshot
+    from app.models.finance import FinancialTransaction
+    org = tenant.organization_id
+    ap_account = db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id == org, LedgerAccount.system_key == "accounts_payable"))
+    def total_ap():
+        return db.scalar(select(func.coalesce(func.sum(JournalLine.credit-JournalLine.debit),0)).where(JournalLine.ledger_account_id == ap_account.id))
+    ap_before = total_ap()
+    day = date.today() - timedelta(days=2)
+    db.add(OrganizationExchangeRate(organization_id=org, base_currency="EUR", quote_currency="USD", effective_rate=D("1.6")))
+    for offset, rate in ((0, "1.2"), (1, "1.4"), (2, "1.1")):
+        record_rate_snapshot(db, organization_id=org, base_currency="EUR", quote_currency="USD", effective_date=day + timedelta(days=offset), effective_rate=D(rate), reference_rate=None, source="synthetic_qa", user_id=tenant.user_id)
+    product = create_product(ProductCreate(sku="QA-FX-STOCK", name="Synthetic EUR Stock", item_type="stock_item", currency="EUR", standard_cost=D("6")), request, db, tenant)
+    result = receive_purchase(PurchaseReceiptCreate(supplier_name="Synthetic EUR Supplier", warehouse_id=warehouse.id, receipt_date=day, currency="EUR", items=[PurchaseLineInput(product_id=product["id"], quantity=D("10"), unit_cost=D("6"))]), request, db, tenant)
+    receipt = db.get(PurchaseReceipt, result["id"])
+    assert receipt.exchange_rate_to_base == D("1.2"), f"Receipt ignored effective date: {receipt.exchange_rate_to_base}"
+    bill = db.scalar(select(PayableBill).where(PayableBill.purchase_receipt_id == receipt.id))
+    account = create_account(FinancialAccountCreate(name="QA EUR Cash", account_type="cash", currency="EUR", opening_balance=D("100")), request, db, tenant)
+    def journal_lines(source_id):
+        return db.execute(select(JournalLine, LedgerAccount.system_key).join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id).join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id).where(JournalEntry.source_id == source_id, JournalEntry.organization_id == org)).all()
+    def check(source_id, expected):
+        lines = journal_lines(source_id)
+        assert sum(line.debit for line, _ in lines) == sum(line.credit for line, _ in lines)
+        for key, signed in expected.items():
+            assert sum((line.debit-line.credit for line,k in lines if k == key),D("0")) == D(signed), (key, lines)
+        return lines
+    check(receipt.id, {"inventory_asset":"72", "accounts_payable":"-72"})
+    partial = pay_payable_bill(bill.id, PayablePaymentCreate(financial_account_id=account.id, payment_date=day+timedelta(days=1), amount=D("20")), request, db, tenant)
+    check(partial.id, {"accounts_payable":"24", "realized_fx_loss":"4", f"financial_account:{account.id}":"-28"})
+    assert receipt.balance_due == bill.balance_due == D("40")
+    final = pay_payable_bill(bill.id, PayablePaymentCreate(financial_account_id=account.id, payment_date=day+timedelta(days=2), amount=D("40")), request, db, tenant)
+    check(final.id, {"accounts_payable":"48", "realized_fx_gain":"-4", f"financial_account:{account.id}":"-44"})
+    assert bill.balance_due == receipt.balance_due == 0
+    assert db.scalar(select(func.sum(FinancialTransaction.amount)).where(FinancialTransaction.account_id == account.id)) == D("60")
+    reverse_business_transaction(CorrectionRequest(source_type="payable_payment", source_id=final.id, reversal_date=day+timedelta(days=2), reason="Synthetic FX reversal"), request, db, tenant)
+    assert receipt.balance_due == D("40")
+    repaid = pay_payable_bill(bill.id, PayablePaymentCreate(financial_account_id=account.id, payment_date=day+timedelta(days=2), amount=D("40")), request, db, tenant)
+    check(repaid.id, {"accounts_payable":"48", "realized_fx_gain":"-4", f"financial_account:{account.id}":"-44"})
+    adjustment_result = adjustment(AdjustmentCreate(product_id=product["id"], warehouse_id=warehouse.id, adjustment_date=day, quantity_delta=D("1"), unit_cost=D("6"), reason="Synthetic historical FX adjustment"), request, db, tenant)
+    check(adjustment_result["id"], {"inventory_asset":"7.20", "inventory_adjustment_gain":"-7.20"})
+    balance = db.scalar(select(InventoryBalance).where(InventoryBalance.product_id == product["id"]))
+    assert balance.inventory_value == D("66") and balance.inventory_value_base == D("79.20")
+    negative = adjustment(AdjustmentCreate(product_id=product["id"], warehouse_id=warehouse.id, adjustment_date=day+timedelta(days=2), quantity_delta=D("-1"), reason="Synthetic carrying cost adjustment"), request, db, tenant)
+    check(negative["id"], {"inventory_asset":"-7.20", "inventory_adjustment_expense":"7.20"})
+    assert balance.inventory_value_base == D("72")
+    assert total_ap() == ap_before, "Foreign receipt AP did not fully clear"
+    transactions = db.scalars(select(FinancialTransaction).where(FinancialTransaction.account_id == account.id)).all()
+    assert sum((t.amount if t.direction == "debit" else -t.amount for t in transactions), D("0")) == D("60")
+    for key, expected in (("realized_fx_gain",D("-4")), ("realized_fx_loss",D("4"))):
+        signed = db.scalar(select(func.sum(JournalLine.debit-JournalLine.credit)).join(LedgerAccount, LedgerAccount.id == JournalLine.ledger_account_id).where(LedgerAccount.organization_id == org, LedgerAccount.system_key == key))
+        assert signed == expected, (key,signed)
+    print("PASS FX: dated EUR receipt72USD; partial AP24/loss4; final AP48/gain4; reversal/re-payment; dated adjustment and carrying-cost reduction")
+
+
 def main():
     assert engine.url.host in {"localhost", "127.0.0.1", "::1"}, "Local database only"
     with engine.connect() as conn:
@@ -121,6 +177,7 @@ def main():
             from app.services.accounting_integrity_audit import audit_organization_accounting
             audit = audit_organization_accounting(db, org.id)
             assert not any(issue.code == "payable_missing_journal" for issue in audit.issues)
+            verify_foreign_inventory(db, tenant, request, warehouse)
             print("PASS QA-002: receipt AP visible; partial/final/overpayment/reversal/re-payment reconcile; no duplicate journal")
             print("PASS QA-008: +1/-1 quantity, source/base value, history and balanced journals; overdraw rejected")
         finally:
