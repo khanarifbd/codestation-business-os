@@ -1,0 +1,94 @@
+"use client";
+import { useEffect, useLayoutEffect, useRef } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { ArrowLeft, CheckCircle2, Loader2, ReceiptText, ShieldAlert } from "lucide-react";
+import { useDashboardSession } from "@/components/dashboard-session-context";
+import { RelationshipNotice, RelationshipPage } from "@/components/relationships/relationship-ui";
+import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
+import { SearchableSelect } from "@/components/searchable-select";
+import { orderDocumentHref, orderReturnHref } from "@/lib/order-navigation";
+import { settlementScope, useOrderSettlement, type OrderSettlementWorkspaceState } from "@/hooks/use-order-settlement";
+import { settlementMoney, settlementNetPreview, type SettlementState } from "./order-settlement-model";
+import { formatMoneyExact } from "@/lib/sales-money-preview";
+import "./order-settlement.css";
+
+export function OrderSettlementWorkspace() {
+  const { tenant, loading } = useDashboardSession(), { orderId } = useParams<{ orderId: string }>(), search = useSearchParams();
+  if (loading) return <RelationshipPage><p role="status">Loading settlement access…</p></RelationshipPage>;
+  const returnHref = orderDocumentHref(orderId, "view", orderReturnHref(search.toString()));
+  return <OrderSettlementContent key={settlementScope(tenant, orderId)} orderId={orderId} returnHref={returnHref}/>;
+}
+export function OrderSettlementContent({ orderId, returnHref }: { orderId: string; returnHref: string }) {
+  const vm = useOrderSettlement(orderId, returnHref);
+  return <RelationshipPage className="os-workspace">
+    <button type="button" className="os-back" onClick={vm.back} disabled={vm.phase === "pending"}><ArrowLeft aria-hidden="true"/>Back to order</button>
+    {!vm.canView || !vm.canManage ? <section className="os-state"><ShieldAlert aria-hidden="true"/><h1>Settlement access is restricted</h1><p>{!vm.canManage ? "Creating a settlement requires finance management permission." : "Your role can manage finance, but the order and account reads needed for this workspace are unavailable."} The server remains authoritative for access.</p></section>
+      : vm.phase === "acknowledged" || vm.phase === "unknown" ? <OrderSettlementOutcome vm={vm}/>
+      : <>
+        <header className="os-header"><p className="relationship-eyebrow">Order / Settlement</p><h1>Create invoice & settle</h1><p>Create the internal invoice, record the full payment and optionally one related expense. This records money already received; it does not collect funds or email the client.</p></header>
+        {vm.loading ? <div className="os-state" role="status"><Loader2 className="animate-spin"/>Loading current order and settlement options…</div> : !vm.setup ? <section className="os-state"><h2>Settlement information unavailable</h2><p role="alert">{vm.loadError || "Current order and account information could not be verified."}</p><button type="button" className="relationship-secondary" onClick={() => void vm.load()}>Retry existing information</button></section>
+          : vm.setup.order.status !== "completed" || !vm.setup.state.eligible || vm.setup.state.invoice_id ? <section className="os-state"><h2>Use the existing order workflow</h2><p>{vm.setup.state.reason || "Complete the order before creating its invoice settlement."}</p>{vm.setup.state.invoice_id ? <OrderSettlementObserved state={vm.setup.state}/> : null}<button type="button" className="relationship-secondary" onClick={() => void vm.load()}>Refresh existing state</button></section>
+          : <OrderSettlementForm vm={vm}/>}
+        {vm.error ? <RelationshipNotice tone="error">{vm.error}</RelationshipNotice> : null}
+      </>}
+    <OrderSettlementConfirmation vm={vm}/>
+  </RelationshipPage>;
+}
+export function OrderSettlementForm({ vm }: { vm: OrderSettlementWorkspaceState }) {
+  const { setup, values } = vm;
+  if (!setup) return null;
+  const { order, meta } = setup;
+  const rawExpense = Number(values.expenseAmount || 0);
+  const previewExpense = Math.max(0, rawExpense);
+  const previewNet = settlementNetPreview(order.total, values.expenseAmount);
+  const accountOptions = meta.accounts.filter(a => a.currency === order.currency && a.account_type !== "credit_card").map(a => ({ value: a.id, label: `${a.name} · ${a.currency} · ${settlementMoney(a.current_balance, a.currency)}`, keywords: `${a.account_type} ${a.currency}` }));
+  const categoryOptions = meta.expense_categories.map(c => ({ value: c.id, label: c.name, keywords: c.cost_type }));
+  return <form noValidate onSubmit={event => { event.preventDefault(); vm.beginReview(); }} className="os-form">
+    <div className="os-context"><div><span>Completed order</span><strong>{order.order_number}</strong></div><div><span>Order total</span><strong>{settlementMoney(order.total, order.currency)}</strong></div><div><span>Preview · net account increase</span><strong>{previewNet !== null ? formatMoneyExact(previewNet, order.currency) : "Unavailable — enter a valid expense up to the order total"}</strong></div></div>
+    <fieldset disabled={vm.locked || Boolean(vm.review)} className="os-fields">
+      <section className="os-section"><h2>Where was payment received?</h2><p>Only an available receiving account in {order.currency} can be used here.</p>
+        <SearchableSelect label="Receive into" value={values.accountId} onValueChange={value => vm.change("accountId", value)} options={accountOptions} placeholder={`Select ${order.currency} account / wallet`} searchPlaceholder="Search accounts..." required clearable={false}/>
+        <div className="os-two"><label>Settlement date<input type="date" value={values.date} onChange={e => vm.change("date", e.target.value)}/><small>Leave blank to use the company’s current date.</small></label><label>Reference<input value={values.reference} onChange={e => vm.change("reference", e.target.value)} maxLength={180} placeholder="External order ID or reference"/></label></div>
+      </section>
+      <section className="os-section"><h2>Optional expense / fee</h2><p>Record one related expense with the payment, using an existing category.</p><div className="os-two"><label>Expense amount<input type="number" min="0" step="0.01" value={values.expenseAmount} onChange={e => vm.change("expenseAmount", e.target.value)}/></label><SearchableSelect label="Expense category" value={values.categoryId} onValueChange={value => vm.change("categoryId", value)} options={categoryOptions} placeholder="Select category" searchPlaceholder="Search categories..." disabled={previewExpense <= 0}/></div><label>Expense description<input value={values.description} onChange={e => vm.change("description", e.target.value)} disabled={previewExpense <= 0} maxLength={500} placeholder={`Settlement fee for ${order.order_number}`}/></label></section>
+      <label className="os-checkbox"><input type="checkbox" checked={values.markSent} onChange={e => vm.change("markSent", e.target.checked)}/><span><strong>Mark invoice as sent to client</strong><small>Default is off. This is a record-only marker; this action does not email the invoice.</small></span></label>
+    </fieldset>
+    <div className="os-guidance"><p>Quick settlement uses an account in <strong>{order.currency}</strong>. Cross-currency payments remain in the existing payment/conversion workflow; no exchange rate is guessed.</p><p><strong>If a request is interrupted:</strong> check the order’s invoice, payment and related expense before recording anything again. This tab’s outcome lock is memory-only; reloading or closing loses that context. Current settlement state is not a receipt for a particular request.</p></div>
+    {!accountOptions.length ? <RelationshipNotice tone="info">No active {order.currency} receiving account or wallet is available. Configure an eligible account in Finance & Accounts before settling.</RelationshipNotice> : null}
+    <div className="os-actions"><button type="button" className="relationship-secondary" onClick={vm.back} disabled={vm.locked}>Cancel</button><button type="submit" className="relationship-primary" disabled={vm.locked || !accountOptions.length || !values.accountId}><ReceiptText aria-hidden="true"/>Review settlement</button></div>
+  </form>;
+}
+export function OrderSettlementOutcome({ vm }: { vm: OrderSettlementWorkspaceState }) {
+  const confirmed = vm.phase === "acknowledged";
+  return <>
+    <header className="os-header"><p className="relationship-eyebrow">Order / Settlement result</p><h1>{confirmed ? "Settlement acknowledged" : "Settlement outcome is uncertain"}</h1><p>{confirmed ? "The server acknowledged this operation. Its status is retained even if the returned details or a follow-up read are unavailable." : "The request may already have created an invoice, payment and expense. Posting stays locked in this tab; there is no automatic or same-request business retry."}</p></header>
+    <RelationshipNotice tone={confirmed ? "success" : "info"}>{confirmed ? "Do not submit this settlement again." : "Check existing records before recording anything else. Leaving or reloading loses this memory-only operation context; it does not establish that the request failed."}</RelationshipNotice>
+    {vm.error ? <RelationshipNotice tone="error">{vm.error}</RelationshipNotice> : null}
+    {vm.result ? <section className="os-section"><h2><CheckCircle2 aria-hidden="true"/>Acknowledged records</h2><dl className="os-ledger"><dt>Invoice</dt><dd>{vm.result.invoice_number}</dd><dt>Payment</dt><dd>{vm.result.payment_number}</dd><dt>Received into</dt><dd>{vm.result.account_name}</dd><dt>Gross received</dt><dd>{settlementMoney(vm.result.gross_amount, vm.result.currency)}</dd><dt>Related expense</dt><dd>{vm.result.expense_number || "None"} · {settlementMoney(vm.result.expense_amount, vm.result.currency)}</dd><dt>Net account increase</dt><dd>{settlementMoney(vm.result.net_amount, vm.result.currency)}</dd><dt>Date</dt><dd>{vm.result.settlement_date}</dd></dl></section> : null}
+    {vm.submitted ? <details className="os-submitted"><summary>Submitted context retained in this tab</summary><dl className="os-ledger"><dt>Order</dt><dd>{vm.submitted.orderNumber}</dd><dt>Receiving account</dt><dd>{vm.submitted.accountName}</dd><dt>Expense</dt><dd>{settlementMoney(vm.submitted.body.expense_amount, vm.submitted.currency)}</dd><dt>Date</dt><dd>{vm.submitted.body.settlement_date || "Company current date"}</dd><dt>Reference</dt><dd>{vm.submitted.body.reference || "None"}</dd></dl></details> : null}
+    <section className="os-section"><h2>Read current settlement state</h2><p>This GET shows the latest active invoice and confirmed payment. Presence does not prove this exact submission succeeded; absence does not prove rollback or make another POST safe.</p><button type="button" className="relationship-secondary" disabled={vm.verifying} onClick={() => void vm.verify()}>{vm.verifying ? "Checking existing records…" : "Check existing settlement state"}</button>{vm.verifyError ? <p role="alert" className="os-error">{vm.verifyError} The original outcome is unchanged.</p> : null}{vm.observed ? <OrderSettlementObserved state={vm.observed}/> : null}</section>
+    <div className="os-actions"><button type="button" className="relationship-secondary" onClick={vm.back}>Return to order</button></div>
+  </>;
+}
+export function OrderSettlementObserved({ state }: { state: SettlementState }) {
+  return <div className="os-observed"><p><strong>Latest observed state — not a request receipt</strong></p>{state.invoice_id ? <dl className="os-ledger"><dt>Invoice</dt><dd>{state.invoice_number || state.invoice_id} · {state.invoice_status}</dd><dt>Confirmed payment</dt><dd>{state.payment_number || "No confirmed payment returned"}</dd><dt>Receiving account</dt><dd>{state.account_name || "Unavailable"}</dd><dt>Related expenses</dt><dd>{state.expenses.length ? state.expenses.map(e => `${e.expense_number} · ${settlementMoney(e.amount, e.currency)}`).join("; ") : "No related posted expense returned"}</dd></dl> : <p>No active invoice was returned by this read. This does not prove an interrupted request failed, and does not unlock resubmission.</p>}{state.reason ? <p>{state.reason}</p> : null}</div>;
+}
+export function OrderSettlementConfirmation({ vm }: { vm: OrderSettlementWorkspaceState }) {
+  const ref = useRef<HTMLDivElement>(null), busy = vm.phase === "pending", review = vm.review;
+  const close = useRef(vm.cancelReview), pending = useRef(busy), token = review?.token;
+  useLayoutEffect(() => { close.current = vm.cancelReview; pending.current = busy; }, [vm.cancelReview, busy]);
+  useEffect(() => {
+    if (!token) return;
+    const host = ref.current;
+    if (!host) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const controls = () => Array.from(host.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]')).filter(e => e.getClientRects().length > 0);
+    const focus = () => (controls()[0] || host).focus(); focus();
+    const trap = (event: FocusEvent) => { if (event.target instanceof Node && !host.contains(event.target)) focus(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); if (!pending.current) close.current(); } if (event.key === "Tab") { const all = controls(), first = all[0], last = all.at(-1); if (!first) { event.preventDefault(); host.focus(); } else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
+    document.addEventListener("focusin", trap); host.addEventListener("keydown", key);
+    return () => { document.removeEventListener("focusin", trap); host.removeEventListener("keydown", key); if (previous?.isConnected && !(previous instanceof HTMLButtonElement && previous.disabled)) previous.focus(); };
+  }, [token]);
+  if (!review) return null;
+  return <div ref={ref} tabIndex={-1}><FinancialConfirmationDialog open title="Create invoice and record settlement?" description="This creates a paid internal invoice, records the full payment into the selected account and optionally posts one related expense." details={[{ label: "Order", value: review.orderNumber }, { label: "Gross payment", value: settlementMoney(review.total, review.currency), emphasis: true }, { label: "Receiving account", value: review.accountName }, { label: "Expense", value: `${settlementMoney(review.body.expense_amount, review.currency)}${review.categoryName ? ` · ${review.categoryName}` : ""}` }, { label: "Settlement date", value: review.body.settlement_date || "Company current date" }, { label: "Reference", value: review.body.reference || "None" }, { label: "Mark sent", value: review.body.mark_invoice_sent_to_client ? "Yes — record only, no email" : "No — internal only" }]} warning="Post only once. An interrupted request may already be recorded; checking current state is not proof that another attempt is safe." confirmLabel="Create invoice & settle" busyLabel="Creating settlement…" loading={busy} onCancel={vm.cancelReview} onConfirm={() => vm.confirm(review.token)}/></div>;
+}

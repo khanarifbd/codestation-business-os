@@ -1,0 +1,173 @@
+{
+  "bytes": 706907,
+  "count": 33,
+  "files": {
+    "evidence/accounting-money-out/backend-contract/monetary-vectors.json": {
+      "bytes": 12863,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/accounting-money-out/backend-contract/monetary-vectors.json",
+      "sha256": "7073f215e9a3a946acb61cc80f61f82f87fed774a751461fad91a779050cfc17"
+    },
+    "evidence/accounting-payables/backend/monetary-vectors.json": {
+      "bytes": 11325,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/accounting-payables/backend/monetary-vectors.json",
+      "sha256": "28e08bc578f4d7aea1dba5ad0fd9e3e4914ff4001b4df5a32476bde7fba0361b"
+    },
+    "evidence/accounting-transfers/decimal-oracle.json": {
+      "bytes": 36733,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/accounting-transfers/decimal-oracle.json",
+      "sha256": "b9a1c10dca75f780fd75409360ece109ec16ffcbc7dc0c33d28d06fa8ad1850c"
+    },
+    "evidence/hr-time/baseline-time-page.tsx.txt": {
+      "bytes": 14037,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/hr-time/baseline-time-page.tsx.txt",
+      "sha256": "81130976159c3879dbaefb0b6487a1c57f1fa3e4caa996612ac1f589b7e84b32"
+    },
+    "evidence/order-settlement-ui/correction-r2/preimages-neutral/src/components/commercial/order-settlement-model.ts.txt": {
+      "bytes": 8526,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r2/preimages-neutral/src/components/commercial/order-settlement-model.ts.txt",
+      "sha256": "6ee123d5539d9f0d2423bfef5783a05126945dc633c1454e4b0747611c5ccb28"
+    },
+    "evidence/order-settlement-ui/correction-r3/preimages-neutral/src/components/commercial/order-settlement-workspace.tsx.txt": {
+      "bytes": 15248,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r3/preimages-neutral/src/components/commercial/order-settlement-workspace.tsx.txt",
+      "sha256": "b1aa81da848145f38511e620b7257ec512403c48b26df09dd49b7200a37bf14d"
+    },
+    "evidence/order-settlement-ui/correction-r4/preimages-neutral/src/app/dashboard/orders/[orderId]/page.tsx.txt": {
+      "bytes": 38805,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r4/preimages-neutral/src/app/dashboard/orders/[orderId]/page.tsx.txt",
+      "sha256": "ec5e1b383a832bc3292b9b8272f46366e0a642540a0b34bda2030090e01edba6"
+    },
+    "evidence/order-settlement-ui/correction-r4/preimages-neutral/src/components/commercial/order-settlement-model.ts.txt": {
+      "bytes": 9127,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r4/preimages-neutral/src/components/commercial/order-settlement-model.ts.txt",
+      "sha256": "c7585809be956d8b4303cfae01896ee151bfe190e6346d2f6abebf1e4b69aa5d"
+    },
+    "evidence/order-settlement-ui/correction-r4/preimages-neutral/tests/order-settlement-correction-r2.test.cjs.txt": {
+      "bytes": 4013,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r4/preimages-neutral/tests/order-settlement-correction-r2.test.cjs.txt",
+      "sha256": "df4b5b1be8dbd5d50db2586b43802b015484efeca566b178426e973b07957e7b"
+    },
+    "evidence/order-settlement-ui/correction-r4/preimages-neutral/tests/orders-handlers.test.cjs.txt": {
+      "bytes": 70685,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r4/preimages-neutral/tests/orders-handlers.test.cjs.txt",
+      "sha256": "dee3c50665ab94beb60c7f220ecae7baf0f8609922a7a359ee8d161e8480faeb"
+    },
+    "evidence/order-settlement-ui/correction-r4/preimages-neutral/tests/orders-redesign.test.cjs.txt": {
+      "bytes": 27969,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/order-settlement-ui/correction-r4/preimages-neutral/tests/orders-redesign.test.cjs.txt",
+      "sha256": "914f646d91f251fbdf61360f014ee82ab3cf57655c573e535812f88a9961dfe8"
+    },
+    "evidence/portal-ui/payment-return-r1/dependency-pins.json": {
+      "bytes": 388,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/portal-ui/payment-return-r1/dependency-pins.json",
+      "sha256": "cb57cb72db015a937f63fda8ec0be280d187c68dd2aedf17a55545045936b706"
+    },
+    "evidence/portal-ui/payment-return-r1/preimages/src/app/payments/stripe/return/page.tsx.txt": {
+      "bytes": 1927,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/portal-ui/payment-return-r1/preimages/src/app/payments/stripe/return/page.tsx.txt",
+      "sha256": "56b8c1ccb0096a1f9f2008477fc2d46d7f06f74e981ddc0742a0a300000e2dbe"
+    },
+    "evidence/portal-ui/payment-return-r1/preimages/src/components/stripe-checkout-return-status.tsx.txt": {
+      "bytes": 4503,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/portal-ui/payment-return-r1/preimages/src/components/stripe-checkout-return-status.tsx.txt",
+      "sha256": "35a451588c42d6a8fd737bae54abbebb49f262d74abb7efc4e2e398442f267bd"
+    },
+    "evidence/profile-security/baseline-shared-pins.json": {
+      "bytes": 999,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/profile-security/baseline-shared-pins.json",
+      "sha256": "62c8eaa7c86144da754f97e96919d4336d6157a7ee1ec6458e97ad352d7602ea"
+    },
+    "evidence/project-child-safety/dialog-accessibility-r5/preimages/src/components/project-client-milestone-sharing.tsx.txt": {
+      "bytes": 16391,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/dialog-accessibility-r5/preimages/src/components/project-client-milestone-sharing.tsx.txt",
+      "sha256": "ae9caa0b4254a65246133f42aa7a239cd0c9d8f110d8c249d7ddaa380aaba590"
+    },
+    "evidence/project-child-safety/dialog-accessibility-r5/preimages/src/components/project-notes-section.tsx.txt": {
+      "bytes": 16181,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/dialog-accessibility-r5/preimages/src/components/project-notes-section.tsx.txt",
+      "sha256": "3e9fd3387534d0276b9bf1897b48806c71d7d96f831494eddfe256275741478c"
+    },
+    "evidence/project-child-safety/dialog-accessibility-r5/preimages/src/components/project-review-tips.tsx.txt": {
+      "bytes": 45815,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/dialog-accessibility-r5/preimages/src/components/project-review-tips.tsx.txt",
+      "sha256": "7baaca695d7f51da973f45731ccd823697a3a924836b32c4d7c582d5dd70b3ab"
+    },
+    "evidence/project-child-safety/donor-source-manifest.json": {
+      "bytes": 91091,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/donor-source-manifest.json",
+      "sha256": "c1b9c80f302d455b9f282fde0b4c66b3277b7c48a523fcd73531c3b295bcd525"
+    },
+    "evidence/project-child-safety/focus-correction-r7/preimages/src/components/project-review-tips.tsx.txt": {
+      "bytes": 46575,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/focus-correction-r7/preimages/src/components/project-review-tips.tsx.txt",
+      "sha256": "0b86c350d1000eaecea38d03b913c3bd0c08eaee3e53497cf95482acd62c6996"
+    },
+    "evidence/project-child-safety/layout-correction-r6/preimages/src/components/project-client-milestone-sharing.tsx.txt": {
+      "bytes": 16650,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/layout-correction-r6/preimages/src/components/project-client-milestone-sharing.tsx.txt",
+      "sha256": "016aa677e6594de62d83ddf83574e50f6b8527e492d16812d5b73650c889c628"
+    },
+    "evidence/project-child-safety/layout-correction-r6/preimages/src/components/project-review-tips.tsx.txt": {
+      "bytes": 46169,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/layout-correction-r6/preimages/src/components/project-review-tips.tsx.txt",
+      "sha256": "826fd19a6c012fb4a744ee5a4e85a4e85c6d738dfd1c26e35ea80808e973b53a"
+    },
+    "evidence/project-child-safety/preimages/src/app/dashboard/layout.tsx.txt": {
+      "bytes": 877,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/app/dashboard/layout.tsx.txt",
+      "sha256": "199e90a62c881471104b346ba8462e39e6967f87bd7c26b266cba08bb3bb34ba"
+    },
+    "evidence/project-child-safety/preimages/src/components/project-client-milestone-sharing.tsx.txt": {
+      "bytes": 11646,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/components/project-client-milestone-sharing.tsx.txt",
+      "sha256": "d1fc069b9f2d43526ef302b6114e3f29864332cf04ebd394b633453419fb70b3"
+    },
+    "evidence/project-child-safety/preimages/src/components/project-notes-section.tsx.txt": {
+      "bytes": 11740,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/components/project-notes-section.tsx.txt",
+      "sha256": "78abbb98d0e09e9549dd652cff756b5495c8c93cf97111e93e0315078c8482e8"
+    },
+    "evidence/project-child-safety/preimages/src/components/project-review-tips.tsx.txt": {
+      "bytes": 41413,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/components/project-review-tips.tsx.txt",
+      "sha256": "d5bbc4f5adfa8546822d9e50da09c9fdf40f32ebb52a72c33b6efcf27641e418"
+    },
+    "evidence/project-child-safety/preimages/src/components/projects/project-workspace.tsx.txt": {
+      "bytes": 33476,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/components/projects/project-workspace.tsx.txt",
+      "sha256": "c83aff2ebcbf4de5c838a6f3aec2698e36d9f800bc0b2ae72901a27363ec4ef9"
+    },
+    "evidence/project-child-safety/preimages/src/hooks/use-project-workspace.ts.txt": {
+      "bytes": 22111,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/hooks/use-project-workspace.ts.txt",
+      "sha256": "f037adcb28f024bf39aa3ce088668d37fb828f1255372d58f3df6d3fac8f8166"
+    },
+    "evidence/project-child-safety/preimages/src/lib/project-navigation.ts.txt": {
+      "bytes": 3142,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/evidence/project-child-safety/preimages/src/lib/project-navigation.ts.txt",
+      "sha256": "ca4a4c8e9a2edcb6d15499243904eeb6d9c3dc0e7f23c491e082268e0ac9d9fd"
+    },
+    "review/accounting-loans/provenance/shared-read-safety/candidate-final-manifest.json": {
+      "bytes": 4269,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/review/accounting-loans/provenance/shared-read-safety/candidate-final-manifest.json",
+      "sha256": "cb6e5411488483c524e57cc08f8998ef63f9553b415d00a3076e72e57a80aaff"
+    },
+    "review/accounting-loans/provenance/shared-read-safety/candidate-source.patch": {
+      "bytes": 25442,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/review/accounting-loans/provenance/shared-read-safety/candidate-source.patch",
+      "sha256": "c3cddf81d8487459097837563e2b5e9cf923e760cf19281824e1c31047ecc6aa"
+    },
+    "review/accounting-loans/provenance/shared-read-safety/preimages/src/hooks/use-advanced-resource.ts.txt": {
+      "bytes": 2974,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/review/accounting-loans/provenance/shared-read-safety/preimages/src/hooks/use-advanced-resource.ts.txt",
+      "sha256": "534293022ccaca1a01a1c7c74ffaa19cb9371710eb6c698e74ece6c24835f7ed"
+    },
+    "review/accounting-loans/provenance/shared-read-safety/preimages/tests/operational-reports-safety-independent.test.cjs.txt": {
+      "bytes": 13797,
+      "origin": "/workspace/scratch/443abd2a276c/business-os-hr-canonical-preparation-r1-20261027/source/frontend/review/accounting-loans/provenance/shared-read-safety/preimages/tests/operational-reports-safety-independent.test.cjs.txt",
+      "sha256": "ca8c5c402b47fa1acca6659355f018cbab4ffc5cc64042e764f1e53c384b7589"
+    }
+  },
+  "review": "Code preimages, deterministic vectors and provenance hashes; no credentials or live records identified in bounded content review.",
+  "status": "IMMUTABLE_HISTORICAL_SUPPORT_NOT_NEW_TEST_PASS"
+}

@@ -1,0 +1,327 @@
+--- a/src/hooks/use-advanced-resource.ts
++++ b/src/hooks/use-advanced-resource.ts
+@@ -1,5 +1,5 @@
+ "use client";
+-import { useCallback, useEffect, useRef, useState } from "react";
++import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+ import { useRouter } from "next/navigation";
+ import { useDashboardSession } from "@/components/dashboard-session-context";
+ import { getApiErrorMessage } from "@/lib/api-error";
+@@ -10,30 +10,41 @@
+ export function useAdvancedResource<T>(url: string, enabled: boolean, validate: (payload: unknown) => payload is T) {
+   const { tenant } = useDashboardSession();
+   const key = `${tenant?.organization.id}:${tenant?.membership_id}:${tenant?.role_id}:${tenant?.permissions.join("|")}:${url}`;
+-  const router = useRouter(), alive = useRef(true), epoch = useRef(0);
+-  const [state, setState] = useState<{ key: string; value: T | null; loading: boolean; error: string | null; status: number | null }>({ key: "", value: null, loading: false, error: null, status: null });
++  const router = useRouter(), epoch = useRef(0);
++  // A committed lifetime owns its responses. A -> B -> A must not revive
++  // callbacks retained from the first A, even when its URL is identical.
++  const scope = useMemo(() => ({ key, enabled, validate }), [key, enabled, validate]);
++  const activeScope = useRef<typeof scope | null>(null);
++  const [state, setState] = useState<{ scope: typeof scope | null; value: T | null; loading: boolean; error: string | null; status: number | null }>({ scope: null, value: null, loading: false, error: null, status: null });
++  useLayoutEffect(() => {
++    activeScope.current = scope;
++    epoch.current += 1;
++    return () => { if (activeScope.current === scope) { activeScope.current = null; epoch.current += 1; } };
++  }, [scope]);
+   const refresh = useCallback(async () => {
+     const stale = { current: false, value: null, status: null };
+-    if (!enabled || !alive.current) return stale;
+-    const current = ++epoch.current;
+-    setState({ key, value: null, loading: true, error: null, status: null });
++    if (!scope.enabled || activeScope.current !== scope) return stale;
++    const request = ++epoch.current;
++    const current = () => activeScope.current === scope && request === epoch.current;
++    setState({ scope, value: null, loading: true, error: null, status: null });
+     let status: number | null = null;
+     try {
+-      const response = await fetch(url, { cache: "no-store" }); status = response.status;
++      const response = await fetch(url, { cache: "no-store" });
++      if (!current()) return stale;
++      status = response.status;
+       const payload: unknown = await response.json().catch(() => null);
+-      if (!alive.current || current !== epoch.current) return stale;
++      if (!current()) return stale;
+       if (status === 401) router.replace("/login");
+       if (!response.ok) throw new Error(getApiErrorMessage(payload, "Accounting information is unavailable."));
+-      if (!validate(payload)) throw new Error("The accounting response could not be verified. It is not an empty or balanced result.");
+-      setState({ key, value: payload, loading: false, error: null, status });
++      if (!scope.validate(payload)) throw new Error("The accounting response could not be verified. It is not an empty or balanced result.");
++      setState({ scope, value: payload, loading: false, error: null, status });
+       return { current: true, value: payload, status };
+     } catch (reason) {
+-      if (!alive.current || current !== epoch.current) return stale;
+-      setState({ key, value: null, loading: false, error: reason instanceof Error ? reason.message : "Accounting information is unavailable.", status });
++      if (!current()) return stale;
++      setState({ scope, value: null, loading: false, error: reason instanceof Error ? reason.message : "Accounting information is unavailable.", status });
+       return { current: true, value: null, status };
+     }
+-  }, [enabled, router, url, key, validate]);
+-  const invalidate = useCallback(() => { epoch.current += 1; }, []);
+-  useEffect(() => { let active = true; alive.current = true; queueMicrotask(() => { if (active) void refresh(); }); return () => { active = false; alive.current = false; invalidate(); }; }, [refresh, invalidate]);
+-  return { value: enabled && state.key === key ? state.value : null, error: enabled && state.key === key ? state.error : null, status: enabled && state.key === key ? state.status : null, loading: enabled && (state.key !== key || state.loading), refresh };
++  }, [scope, router, url]);
++  useEffect(() => { let scheduled = true; queueMicrotask(() => { if (scheduled) void refresh(); }); return () => { scheduled = false; }; }, [refresh]);
++  return { value: enabled && state.scope === scope ? state.value : null, error: enabled && state.scope === scope ? state.error : null, status: enabled && state.scope === scope ? state.status : null, loading: enabled && (state.scope !== scope || state.loading), refresh };
+ }
+--- /dev/null
++++ b/tests/shared-read-safety-independent.test.cjs
+@@ -0,0 +1,258 @@
++/* Independent actual-source lifecycle checks. React scheduling/fetch/router are deterministic fakes;
++ * this is not React DOM, a browser, an API integration test or PostgreSQL evidence. */
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const fs = require('node:fs');
++const path = require('node:path');
++const { createHash } = require('node:crypto');
++const { sourceLoader, hookHarness, root } = require('./reconciliation-harness.cjs');
++const f = require('./reconciliation-fixtures.cjs');
++const statement = require('./statement-fixtures.cjs');
++const advanced = require('./advanced-fixtures.cjs');
++const tax = require('./tax-fixtures.cjs');
++const controls = require('./control-fixtures.cjs');
++const assets = require('./asset-fixtures.cjs');
++
++const tick = () => new Promise(resolve => setImmediate(resolve));
++const sha = value => createHash('sha256').update(value).digest('hex');
++const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
++const valid = value => Boolean(value && typeof value.tag === 'string');
++const initial = 'date_from=2026-10-01&date_to=2026-10-26';
++const next = 'date_from=2026-09-01&date_to=2026-10-26';
++
++// Separate layout and passive cleanup lets a response settle after commit/unmount,
++// before passive cleanup. No application callback, validator or resource is mocked.
++function resourceHarness({ file = 'src/hooks/use-advanced-resource.ts', target = 'useAdvancedResource', initialArgs } = {}) {
++  const slots = [], effects = new Map(), queuedLayout = new Map(), queuedPassive = new Map();
++  let index = 0, dirty = true, mounted = true, vm;
++  let args = initialArgs || ['/api/accounting/test-read?scope=A', true, valid];
++  let tenant = { organization: { id: 'synthetic-A' }, membership_id: 'membership-A', role_id: 'role-A', permissions: ['finance.view', 'finance.manage'] };
++  let respond = async () => f.ok({ tag: 'A' });
++  const calls = [], nav = [];
++  const router = { replace: href => nav.push(href) };
++  const hooks = {
++    useState(initialValue) {
++      const i = index++;
++      if (!slots[i]) slots[i] = { value: typeof initialValue === 'function' ? initialValue() : initialValue };
++      return [slots[i].value, value => {
++        const nextValue = typeof value === 'function' ? value(slots[i].value) : value;
++        if (!Object.is(nextValue, slots[i].value)) { slots[i].value = nextValue; dirty = true; }
++      }];
++    },
++    useRef(value) { const i = index++; return slots[i] ||= { current: value }; },
++    useMemo(fn, deps) { const i = index++; if (!slots[i] || !same(slots[i].deps, deps)) slots[i] = { deps, value: fn() }; return slots[i].value; },
++    useCallback(fn, deps) { return hooks.useMemo(() => fn, deps); },
++    useLayoutEffect(fn, deps) { const i = index++; if (!effects.has(i) || !same(effects.get(i).deps, deps)) queuedLayout.set(i, { kind: 'layout', fn, deps }); },
++    useEffect(fn, deps) { const i = index++; if (!effects.has(i) || !same(effects.get(i).deps, deps)) queuedPassive.set(i, { kind: 'passive', fn, deps }); },
++  };
++  const guard = () => ({ markClean() {}, navigate: () => false, confirmLeave: () => false });
++  const loader = sourceLoader({ react: hooks, 'next/navigation': { useRouter: () => router }, '@/components/dashboard-session-context': { useDashboardSession: () => ({ tenant, loading: false }) }, '@/hooks/use-document-navigation-guard': { useDocumentNavigationGuard: guard } });
++  const resource = loader.load(file)[target];
++  assert.equal(typeof resource, 'function');
++  const originalFetch = global.fetch;
++  global.fetch = async (url, init) => { calls.push({ url, init }); return respond(url, init); };
++  const commit = queue => {
++    const pending = [...queue.entries()]; queue.clear();
++    for (const [i, effect] of pending) { effects.get(i)?.cleanup?.(); effects.set(i, { ...effect, cleanup: effect.fn() }); }
++  };
++  const render = () => { index = 0; dirty = false; vm = resource(...args); commit(queuedLayout); return vm; };
++  async function flush() {
++    for (let turn = 0; turn < 30; turn++) {
++      if (!mounted) { await tick(); return vm; }
++      if (dirty || !vm) render();
++      commit(queuedPassive); await tick(); await tick();
++      if (!dirty && !queuedPassive.size && !queuedLayout.size) return vm;
++    }
++    throw new Error('Independent harness failed to settle');
++  }
++  return {
++    calls, nav, render, flush, vm: () => vm, respond: fn => { respond = fn; },
++    args: patch => { args = args.map((v, i) => Object.hasOwn(patch, i) ? patch[i] : v); dirty = true; },
++    tenant: patch => { tenant = { ...tenant, ...patch }; dirty = true; },
++    // Only layout cleanup runs here; delayed passive cleanup cannot mask the regression.
++    unmountLayout() { mounted = false; for (const effect of effects.values()) if (effect.kind === 'layout') { effect.cleanup?.(); effect.cleanup = undefined; } },
++    startPassive() { commit(queuedPassive); },
++    replayEffects() { for (const effect of effects.values()) effect.cleanup?.(); for (const kind of ['layout', 'passive']) for (const effect of effects.values()) if (effect.kind === kind) effect.cleanup = effect.fn(); },
++    cleanup() { mounted = false; for (const effect of effects.values()) effect.cleanup?.(); effects.clear(); queuedLayout.clear(); queuedPassive.clear(); global.fetch = originalFetch; },
++  };
++}
++
++const direct = (name, body) => test(name, async () => { const h = resourceHarness(); try { await body(h); } finally { h.cleanup(); } });
++const changes = {
++  url: h => h.args({ 0: '/api/accounting/test-read?scope=B' }),
++  company: h => h.tenant({ organization: { id: 'synthetic-B' } }),
++  membership: h => h.tenant({ membership_id: 'membership-B' }),
++  role: h => h.tenant({ role_id: 'role-B' }),
++  permissions: h => h.tenant({ permissions: ['finance.view', 'synthetic.extra'] }),
++  disabled: h => h.args({ 1: false }),
++  validator: h => h.args({ 2: value => Boolean(value && value.tag === 'B') }),
++};
++for (const [name, change] of Object.entries(changes)) {
++  direct(`${name} layout commit rejects prior request401 before passive cleanup`, async h => {
++    const pending = f.deferred(); h.respond(() => pending.promise); await h.flush();
++    change(h); h.render(); pending.resolve(f.failure(401)); await tick(); await tick();
++    assert.deepEqual(h.nav, []); assert.equal(h.vm().value, null);
++  });
++  direct(`${name} layout commit rejects retained refresh before request and state effects`, async h => {
++    await h.flush(); const old = h.vm().refresh; change(h); h.render(); const before = h.calls.length;
++    assert.equal((await old()).current, false); assert.equal(h.calls.length, before); assert.deepEqual(h.nav, []);
++  });
++}
++direct('layout-only unmount invalidates pending401 without relying on passive cleanup', async h => {
++  const pending = f.deferred(); h.respond(() => pending.promise); await h.flush();
++  h.unmountLayout(); pending.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++});
++direct('retained callback after layout-only unmount does not fetch', async h => {
++  await h.flush(); const old = h.vm().refresh, before = h.calls.length; h.unmountLayout();
++  assert.equal((await old()).current, false); assert.equal(h.calls.length, before);
++});
++direct('queued initial request is canceled by layout-only unmount', async h => {
++  h.render(); h.startPassive(); h.unmountLayout(); await tick(); assert.equal(h.calls.length, 0);
++});
++direct('StrictMode-style setup cleanup setup only runs current queued GET', async h => {
++  h.render(); h.startPassive(); h.replayEffects(); await h.flush();
++  assert.equal(h.calls.length, 1); assert.equal(h.vm().value.tag, 'A');
++});
++direct('stale payload parsing completion cannot redirect after current scope commit', async h => {
++  const body = f.deferred(); h.respond(() => ({ ok: false, status: 401, json: () => body.promise })); await h.flush();
++  h.args({ 0: '/api/accounting/test-read?scope=B' }); h.render(); body.resolve({ detail: 'Old response' });
++  await tick(); await tick(); assert.deepEqual(h.nav, []);
++});
++direct('superseded same-scope request401 cannot redirect over later successful read', async h => {
++  await h.flush(); const a = f.deferred(), b = f.deferred(); let n = 0; h.respond(() => ++n === 1 ? a.promise : b.promise);
++  const first = h.vm().refresh(), second = h.vm().refresh(); b.resolve(f.ok({ tag: 'B' })); await second; await h.flush();
++  a.resolve(f.failure(401)); assert.equal((await first).current, false); await h.flush();
++  assert.equal(h.vm().value.tag, 'B'); assert.deepEqual(h.nav, []);
++});
++direct('late network rejection cannot replace newer state', async h => {
++  const old = f.deferred(); h.respond(() => old.promise); await h.flush(); h.args({ 0: '/api/accounting/test-read?scope=B' });
++  h.respond(() => f.ok({ tag: 'B' })); await h.flush(); old.reject(new Error('Old request failed')); await tick(); await h.flush();
++  assert.equal(h.vm().value.tag, 'B'); assert.equal(h.vm().error, null);
++});
++for (const [name, bad] of [
++  ['network failure', () => Promise.reject(new Error('Synthetic network error'))],
++  ['503', () => f.failure(503)],
++  ['invalid schema', () => f.ok({ unrelated: true })],
++  ['invalid JSON', () => ({ ok: true, status: 200, json: async () => { throw new Error('Synthetic JSON error'); } })],
++]) direct(`current ${name} is explicit, does not redirect, and retry recovers`, async h => {
++  await h.flush(); h.respond(bad); await h.vm().refresh(); await h.flush();
++  assert.equal(h.vm().value, null); assert.ok(h.vm().error); assert.equal(h.vm().loading, false); assert.deepEqual(h.nav, []);
++  h.respond(() => f.ok({ tag: 'recovered' })); const outcome = await h.vm().refresh(); await h.flush();
++  assert.equal(outcome.current, true); assert.equal(h.vm().value.tag, 'recovered'); assert.equal(h.vm().error, null);
++});
++direct('current401 still redirects even if body parsing fails', async h => {
++  h.respond(() => ({ ok: false, status: 401, json: async () => { throw new Error('Synthetic JSON failure'); } }));
++  await h.flush(); assert.deepEqual(h.nav, ['/login']); assert.equal(h.vm().status, 401);
++});
++direct('permission disable followed by enable never revives old enabled callback', async h => {
++  await h.flush(); const old = h.vm().refresh; h.args({ 1: false }); await h.flush(); h.args({ 1: true }); await h.flush();
++  const before = h.calls.length; assert.equal((await old()).current, false); assert.equal(h.calls.length, before); assert.equal(h.vm().value.tag, 'A');
++});
++
++function consumer(name, file, target, body) {
++  test(name, async () => { const h = hookHarness({ file, target }); try { await body(h); } finally { h.cleanup(); } });
++}
++const statements = (name, body) => consumer(name, 'src/hooks/use-financial-statements.ts', 'useFinancialStatements', body);
++const statementResponse = url => { const q = new URL(url, 'https://synthetic.invalid').searchParams; return f.ok({ ...statement.report, date_from: q.get('date_from') || statement.report.date_from, date_to: q.get('date_to') || statement.report.date_to }); };
++
++statements('regression: actual financial statements query401 is stale at layout commit before passive cleanup', async h => {
++  const old = f.deferred(); h.query(initial); h.respond(() => old.promise); await h.flush();
++  h.query(next); h.render(); assert.equal(h.vm().period.from, '2026-09-01'); assert.equal(h.vm().resource.value, null);
++  old.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++  h.respond(statementResponse); await h.flush(); assert.equal(h.vm().resource.value.date_from, '2026-09-01');
++});
++statements('regression: actual statements retained old refresh refuses GET and preserves current result', async h => {
++  h.query(initial); h.respond(statementResponse); await h.flush(); const staleRefresh = h.vm().resource.refresh;
++  h.query(next); await h.flush(); const before = h.calls.length;
++  assert.equal((await staleRefresh()).current, false); await h.flush(); assert.equal(h.calls.length, before);
++  assert.equal(h.vm().resource.value.date_from, '2026-09-01'); assert.equal(h.vm().resource.loading, false);
++});
++statements('actual statements A→B→A does not revive first-A retained callback', async h => {
++  h.query(initial); h.respond(statementResponse); await h.flush(); const staleRefresh = h.vm().resource.refresh;
++  h.query(next); await h.flush(); h.query(initial); await h.flush(); const before = h.calls.length;
++  assert.equal((await staleRefresh()).current, false); assert.equal(h.calls.length, before); assert.equal(h.vm().resource.value.date_from, '2026-10-01');
++});
++statements('actual statements same API section change does not refetch or lose value', async h => {
++  h.query(initial); h.respond(statementResponse); await h.flush(); const before = h.calls.length;
++  h.query(initial + '&section=balance-sheet'); await h.flush(); assert.equal(h.calls.length, before); assert.equal(h.vm().resource.value.total_assets, '1000.00');
++});
++statements('actual statements genuine current401 remains authoritative', async h => {
++  h.query(initial); h.respond(() => f.failure(401)); await h.flush(); assert.ok(h.nav.some(n => n.href === '/login'));
++});
++statements('actual statements failed current read clears values and explicit retry recovers', async h => {
++  h.query(initial); h.respond(statementResponse); await h.flush(); h.respond(() => f.failure(503));
++  await h.vm().resource.refresh(); await h.flush(); assert.equal(h.vm().resource.value, null); assert.equal(h.vm().resource.status, 503);
++  h.respond(statementResponse); const result = await h.vm().resource.refresh(); await h.flush();
++  assert.equal(result.current, true); assert.equal(result.status, 200); assert.equal(h.vm().resource.value.total_assets, '1000.00');
++});
++consumer('actual account ledger account change rejects old401 before passive cleanup', 'src/hooks/use-account-statement.ts', 'useAccountStatement', async h => {
++  const old = f.deferred(); h.query('account=account-a');
++  h.respond(url => url === '/api/finance/accounts' ? f.ok([statement.account, statement.accountB]) : old.promise); await h.flush();
++  h.query('account=account-b'); h.render(); old.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++  h.respond(url => url === '/api/finance/accounts' ? f.ok([statement.account, statement.accountB]) : f.ok({ items: [{ ...statement.movement, currency: 'BDT' }], next_cursor: null }));
++  await h.flush(); assert.equal(h.vm().ledger.value.items[0].currency, 'BDT');
++});
++consumer('actual trial balance date change rejects old401 before passive cleanup', 'src/hooks/use-advanced-register.ts', 'useAdvancedRegister', async h => {
++  const old = f.deferred(); h.query('tab=trial&asOf=2026-10-26'); h.respond(() => old.promise); await h.flush();
++  h.query('tab=trial&asOf=2026-09-30'); h.render(); old.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++  h.respond(() => f.ok({ ...advanced.trial, as_of: '2026-09-30' })); await h.flush(); assert.equal(h.vm().trial.value.as_of, '2026-09-30');
++});
++consumer('actual advanced register tab disable invalidates prior journal401', 'src/hooks/use-advanced-register.ts', 'useAdvancedRegister', async h => {
++  const old = f.deferred(); h.query('tab=journals'); h.respond(() => old.promise); await h.flush();
++  h.query('tab=chart'); h.render(); old.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++  h.respond(() => f.ok([advanced.ledger])); await h.flush(); assert.equal(h.vm().accounts.value[0].id, advanced.ledger.id); assert.equal(h.vm().journals.value, null);
++});
++consumer('actual Controls tab URL/validator transition rejects old401', 'src/hooks/use-control-browse.ts', 'useControlBrowse', async h => {
++  const old = f.deferred(); h.query('tab=recurring'); h.respond(() => old.promise); await h.flush();
++  h.query('tab=periods'); h.render(); old.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++  h.respond(() => f.ok([controls.period()])); await h.flush(); assert.equal(h.vm().resource.value[0].status, 'open');
++});
++consumer('actual Tax report query transition rejects old401', 'src/hooks/use-tax-browse.ts', 'useTaxReport', async h => {
++  const old = f.deferred(); h.query(initial); h.respond(() => old.promise); await h.flush();
++  h.query(next); h.render(); old.resolve(f.failure(401)); await tick(); await tick(); assert.deepEqual(h.nav, []);
++  h.respond(() => f.ok({ ...tax.report, date_from: '2026-09-01' })); await h.flush(); assert.equal(h.vm().resource.value.date_from, '2026-09-01');
++});
++consumer('actual tax settlement in-form date change invalidates metadata401 without write', 'src/hooks/use-tax-settlement.ts', 'useTaxSettlement', async h => {
++  h.respond(() => f.ok(tax.meta)); await h.flush(); const old = f.deferred(); h.respond(() => old.promise);
++  const pending = h.vm().meta.refresh(); h.vm().change('settlement_date', '2026-09-30'); h.render();
++  old.resolve(f.failure(401)); assert.equal((await pending).current, false); assert.deepEqual(h.nav, []);
++  h.respond(() => f.ok(tax.meta)); await h.flush(); assert.equal(h.vm().currency, 'USD');
++  assert.ok(h.calls.every(call => !call.init?.method && !call.init?.body));
++});
++
++for (const [name, file, target, args, reply] of [
++  ['journal detail', 'src/hooks/use-advanced-document.ts', 'useAdvancedDocument', ['journal-a', false, '/dashboard/accounting/advanced'], advanced.journal],
++  ['asset detail', 'src/hooks/use-asset-document.ts', 'useAssetDocument', ['asset-a', '/dashboard/accounting/assets'], assets.history],
++]) test(`actual ${name} layout-only keyed unmount rejects late401 and retained refresh`, async () => {
++  const h = resourceHarness({ file, target, initialArgs: args });
++  try {
++    h.respond(() => f.ok(reply)); await h.flush(); const old = f.deferred(); h.respond(() => old.promise);
++    const refresh = h.vm().resource.refresh, pending = refresh(); h.unmountLayout(); old.resolve(f.failure(401));
++    assert.equal((await pending).current, false); assert.deepEqual(h.nav, []); const before = h.calls.length;
++    assert.equal((await refresh()).current, false); assert.equal(h.calls.length, before);
++  } finally { h.cleanup(); }
++});
++
++direct('stable identity re-render does not invalidate current data or start another GET', async h => {
++  await h.flush(); const before = h.calls.length, refresh = h.vm().refresh; h.render(); await h.flush();
++  assert.equal(h.vm().refresh, refresh); assert.equal(h.calls.length, before); assert.equal(h.vm().value.tag, 'A');
++});
++direct('public initial/loading/success/refresh shapes and cache request remain unchanged', async h => {
++  const pending = f.deferred(); h.respond(() => pending.promise); h.render();
++  assert.deepEqual(Object.keys(h.vm()).sort(), ['error', 'loading', 'refresh', 'status', 'value']);
++  assert.equal(h.vm().loading, true); assert.equal(h.vm().value, null); await h.flush();
++  assert.deepEqual(h.calls[0].init, { cache: 'no-store' }); pending.resolve(f.ok({ tag: 'A' })); await h.flush();
++  assert.equal(h.vm().loading, false); assert.equal(h.vm().status, 200); assert.equal(h.vm().error, null);
++  h.respond(() => f.ok({ tag: 'B' })); assert.deepEqual(await h.vm().refresh(), { current: true, value: { tag: 'B' }, status: 200 });
++});
++direct('existing accounting fallback and schema error strings are preserved', async h => {
++  h.respond(() => ({ ok: false, status: 500, json: async () => null })); await h.flush(); assert.equal(h.vm().error, 'Accounting information is unavailable.');
++  h.respond(() => f.ok({ malformed: true })); await h.vm().refresh(); await h.flush();
++  assert.equal(h.vm().error, 'The accounting response could not be verified. It is not an empty or balanced result.');
++});
++test('useAdvancedPermissions exact existing source body is unchanged', () => {
++  const source = fs.readFileSync(path.join(root, 'src/hooks/use-advanced-resource.ts'), 'utf8');
++  const permissions = source.slice(source.indexOf('export function useAdvancedPermissions'), source.indexOf('export function useAdvancedResource'));
++  assert.equal(sha(permissions), 'dde0a9f2732a6c36bb06401447be4895715773d00d114bd4bb577295671046a2');
++});
++
