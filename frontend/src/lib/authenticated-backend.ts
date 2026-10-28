@@ -1,3 +1,4 @@
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 import { createHash } from "node:crypto";
 
 import { NextRequest } from "next/server";
@@ -50,6 +51,9 @@ export async function authenticatedBackendFetch(
   path: string,
   init: RequestInit = {},
 ): Promise<{ upstream: Response; rotatedTokens: TokenPair | null }> {
+  const rejected = guardMutationOrigin(request);
+  if (rejected) return { upstream: rejected, rotatedTokens: null };
+
   let accessToken = request.cookies.get("access_token")?.value;
   let rotatedTokens: TokenPair | null = null;
 

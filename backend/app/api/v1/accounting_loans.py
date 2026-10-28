@@ -171,11 +171,29 @@ def _loan(db: DbSession, organization_id: str, loan_id: str, *, lock: bool = Fal
         CompanyLoan.organization_id == organization_id,
     )
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     item = db.scalar(query)
     if item is None:
         raise HTTPException(status_code=404, detail="Loan not found")
     return item
+
+
+def _locked_loan_account(db: DbSession, organization_id: str, account_id: str) -> FinancialAccount:
+    """Loan writers lock loan, then one tenant account, before balance/ledger work.
+
+    Re-populate cached ORM state after lock acquisition; a concurrent account
+    update must not leave this operation using an old active flag or balance.
+    This does not claim synchronization with writers that do not take this lock.
+    """
+    account = db.scalar(
+        select(FinancialAccount)
+        .where(FinancialAccount.id == account_id, FinancialAccount.organization_id == organization_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if account is None or not account.is_active:
+        raise HTTPException(status_code=404, detail="Active financial account not found")
+    return account
 
 
 def _disbursed_total(db: DbSession, loan: CompanyLoan) -> Decimal:
@@ -405,6 +423,7 @@ def disburse_loan(
     if payload.disbursement_date < loan.loan_date:
         raise HTTPException(status_code=409, detail="Loan disbursement cannot predate the approval date")
 
+    _locked_loan_account(db, tenant.organization_id, payload.account_id)
     financial, bank_ledger = financial_ledger_account(db, tenant.organization_id, payload.account_id)
     if financial.currency != loan.currency:
         raise HTTPException(status_code=400, detail="Disbursement account currency must match loan currency")
@@ -561,6 +580,7 @@ def repay_loan(
     if principal > money(loan.outstanding_principal):
         raise HTTPException(status_code=400, detail="Principal repayment exceeds outstanding principal")
 
+    _locked_loan_account(db, tenant.organization_id, payload.account_id)
     financial, bank_ledger = financial_ledger_account(db, tenant.organization_id, payload.account_id)
     if financial.currency != loan.currency:
         raise HTTPException(status_code=400, detail="Repayment account currency must match loan currency")

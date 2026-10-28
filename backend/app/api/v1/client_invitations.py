@@ -165,13 +165,15 @@ def invite_client(
     db.add(item)
     db.flush()
     try:
-        send_client_portal_invitation(
+        delivered = send_client_portal_invitation(
             email=item.email,
             full_name=item.full_name,
             company_name=tenant.organization.name,
             client_name=client.display_name,
             token=token,
         )
+        if not delivered:
+            raise AccountEmailDeliveryError("Client invitation email was not delivered")
     except AccountEmailDeliveryError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Unable to send the client invitation email. Check SMTP configuration and try again.") from exc
@@ -216,13 +218,15 @@ def resend_client_invitation(
     item.last_sent_at = utc_now()
     db.flush()
     try:
-        send_client_portal_invitation(
+        delivered = send_client_portal_invitation(
             email=item.email,
             full_name=item.full_name,
             company_name=tenant.organization.name,
             client_name=client.display_name,
             token=token,
         )
+        if not delivered:
+            raise AccountEmailDeliveryError("Client invitation email was not delivered")
     except AccountEmailDeliveryError as exc:
         db.rollback()
         raise HTTPException(status_code=503, detail="Unable to resend the client invitation email. Check SMTP configuration and try again.") from exc

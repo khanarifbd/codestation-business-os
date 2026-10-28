@@ -18,7 +18,7 @@ from app.schemas.finance import FinancialAccountCreate
 from app.schemas.payables import PayablePaymentCreate
 from app.api.v1.inventory import create_warehouse, create_product, receive_purchase, adjustment
 from app.api.v1.finance import create_account
-from app.api.v1.payables import pay_payable_bill
+from app.api.v1.payables import list_payable_payments, pay_payable_bill
 from app.api.v1.payables_workspace import payables_workspace
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.services.accounting_posting import ensure_default_chart
@@ -121,14 +121,26 @@ def main():
                 assert exc.status_code == 400
             p2 = pay("40")
             assert purchase.balance_due == 0 and workspace().open_bill_count == 0
+            assert all(payment.status == "posted" for payment in list_payable_payments(bill.id, db, tenant))
             ap = db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id == org.id, LedgerAccount.system_key == "accounts_payable"))
             def ap_balance():
                 return db.scalar(select(func.sum(JournalLine.credit - JournalLine.debit)).where(JournalLine.organization_id == org.id, JournalLine.ledger_account_id == ap.id))
             assert ap_balance() == 0
             reverse_business_transaction(CorrectionRequest(source_type="payable_payment", source_id=p2.id, reason="Synthetic reversal QA", reversal_date=today), request, db, tenant)
             assert purchase.balance_due == D("40") and ap_balance() == D("40")
+            history = list_payable_payments(bill.id, db, tenant)
+            assert len(history) == 2 and next(payment for payment in history if payment.id == p2.id).status == "reversed"
+            assert sum((payment.amount for payment in history if payment.status == "posted"), D("0")) == bill.amount_paid == D("20")
             pay("40")
             assert purchase.balance_due == 0 and ap_balance() == 0
+            history = list_payable_payments(bill.id, db, tenant)
+            assert len(history) == 3 and sum(payment.status == "reversed" for payment in history) == 1
+            assert sum((payment.amount for payment in history if payment.status == "posted"), D("0")) == bill.amount_paid == D("60")
+            try:
+                list_payable_payments(bill.id, db, SimpleNamespace(organization_id=str(uuid4())))
+                raise AssertionError("Supplier payment history leaked across tenants")
+            except HTTPException as exc:
+                assert exc.status_code == 404
             def adjust(delta):
                 return adjustment(AdjustmentCreate(product_id=product["id"], warehouse_id=warehouse.id, adjustment_date=today, quantity_delta=D(delta), unit_cost=D("6"), reason="Synthetic adjustment", reference="QA2-STOCK-ADD-001"), request, db, tenant)
             # A custom account may already occupy the new preferred gain code.

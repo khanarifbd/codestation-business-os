@@ -231,6 +231,14 @@ class ExpenseMetaPayment(BaseModel):
     status: str
 
 
+class ExpenseRelationshipContext(BaseModel):
+    """Ancestors of loaded suggestions, not extra independently selectable rows."""
+
+    invoices: list[ExpenseMetaInvoice] = Field(default_factory=list)
+    projects: list[ExpenseMetaProject] = Field(default_factory=list)
+    orders: list[ExpenseMetaOrder] = Field(default_factory=list)
+
+
 class ExpenseMeta(BaseModel):
     vendors: list[VendorRead]
     categories: list[ExpenseCategoryRead]
@@ -240,6 +248,7 @@ class ExpenseMeta(BaseModel):
     orders: list[ExpenseMetaOrder]
     invoices: list[ExpenseMetaInvoice]
     payments: list[ExpenseMetaPayment]
+    relationship_context: ExpenseRelationshipContext = Field(default_factory=ExpenseRelationshipContext)
 
 
 class ExpenseCurrencySummary(BaseModel):

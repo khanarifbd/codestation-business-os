@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class LeadStatusRead(BaseModel):
@@ -34,6 +34,14 @@ class LeadStatusUpdate(BaseModel):
     is_active: bool | None = None
 
 
+    @field_validator('name', 'category', 'sort_order', 'is_default', 'is_active', mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        # Omitted PATCH fields keep their defaults; supplied required fields cannot clear.
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
 class LeadSourceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
@@ -53,6 +61,14 @@ class LeadSourceUpdate(BaseModel):
     sort_order: int | None = Field(default=None, ge=0, le=10000)
     is_active: bool | None = None
 
+
+    @field_validator('name', 'sort_order', 'is_active', mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        # Omitted PATCH fields keep their defaults; supplied required fields cannot clear.
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
 
 class CrmEmployeeOption(BaseModel):
     id: str
@@ -141,6 +157,22 @@ class LeadUpdate(BaseModel):
     next_follow_up_at: datetime | None = None
     notes: str | None = None
 
+
+    @field_validator('contact_name', 'lead_type', 'probability_percent', mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        # Omitted PATCH fields keep their defaults; supplied required fields cannot clear.
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
+    @field_validator("contact_name")
+    @classmethod
+    def reject_blank_contact_name(cls, value):
+        # Preserve existing handler trimming; reject values that would become None.
+        if not value.strip():
+            raise ValueError("Contact name cannot be blank")
+        return value
 
 class LeadListItem(BaseModel):
     id: str

@@ -1,0 +1,32 @@
+"use client";
+
+import type { ReactNode } from "react";
+import { MoneyOutConfirmation } from "@/components/accounting-money-out/money-out-ui";
+import type { ConfirmationDetail } from "@/components/financial-confirmation-dialog";
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight } from "lucide-react";
+export { AccountHeading as LoanHeading, AccountSectionHeading as LoanSectionHeading, AccountState as LoanState } from "@/components/accounting-accounts/account-ui";
+
+export function LoanBack({ onClick, href, disabled = false, label = "Back to loans", context }: { onClick?: () => void; href?: string; disabled?: boolean; label?: string; context: string }) {
+  return <div className="ln-breadcrumb">{href ? <a className="aa-back" href={href}><ArrowLeft aria-hidden="true"/>{label}</a> : <button className="aa-back" type="button" onClick={onClick} disabled={disabled}><ArrowLeft aria-hidden="true"/>{label}</button>}<span>{context}</span></div>;
+}
+export function LoanDatum({ label, children }: { label: string; children: ReactNode }) { return <div><dt>{label}</dt><dd>{children ?? "—"}</dd></div>; }
+export function LoanField({ label, hint, children, wide = false }: { label: string; hint?: string; children: ReactNode; wide?: boolean }) { return <label className={`ln-field${wide ? " ln-span" : ""}`}><span>{label}</span>{children}{hint ? <small>{hint}</small> : null}</label>; }
+export function LoanNotice({ children, tone = "info" }: { children: ReactNode; tone?: "info" | "error" | "warning" }) { return <div className="ln-notice" data-tone={tone} role={tone === "error" ? "alert" : "status"}>{children}</div>; }
+export function LoanTag({ status }: { status: string }) { return <span className="ln-tag" data-status={status}>{status.replaceAll("_", " ")}</span>; }
+export function LoanPager({ page, pages, total, onPage }: { page: number; pages: number; total: number; onPage: (page: number) => void }) { return <div className="ln-pager"><p>Page {page} of {pages} · {total} matching agreements</p><div><button type="button" className="aa-secondary" disabled={page <= 1} onClick={() => onPage(page - 1)}><ChevronLeft aria-hidden="true"/>Previous</button><button type="button" className="aa-secondary" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next<ChevronRight aria-hidden="true"/></button></div></div>; }
+
+export function loanPretty(value: string | null | undefined) { return value ? value.replaceAll("_", " ").replace(/\b\w/g, part => part.toUpperCase()) : "—"; }
+
+export type LoanActionPresentation = {
+  phase: "idle" | "saving" | "acknowledged" | "unknown";
+  locked: boolean; busy: boolean; error: string | null; notice: string | null;
+  confirmation: { title: string; description: string; warning: string; details: ConfirmationDetail[]; confirmLabel: string } | null;
+  operation: { title: string; description: string; warning: string; details: ConfirmationDetail[]; confirmLabel: string } | null;
+  resultHref: string | null; retryAvailable: boolean;
+  confirm: () => void | Promise<void>; close: () => void; retrySameRequest: () => void | Promise<void>;
+};
+export function LoanActionStatus({ action, inspectHref }: { action: LoanActionPresentation; inspectHref: string }) {
+  if (action.phase === "idle") return <>{action.error ? <LoanNotice tone="error">{action.error}</LoanNotice> : null}{action.notice ? <LoanNotice>{action.notice}</LoanNotice> : null}</>;
+  return <section className="ln-outcome" data-phase={action.phase} role="status"><p className="aa-eyebrow">{action.phase === "saving" ? "Request in progress" : action.phase === "unknown" ? "Outcome needs verification" : "Response acknowledged"}</p><h2>{action.phase === "saving" ? "Keep this workspace open." : action.phase === "unknown" ? "Keep this operation together." : "A successful response has been retained."}</h2><p>{action.notice || (action.phase === "saving" ? "The loan operation is in progress. Posting controls stay locked while waiting for its response." : action.phase === "unknown" ? "Do not create a new agreement or financial operation to resolve an uncertain response. Inspect the saved loan and keep this context." : "A later parsing, navigation or read failure does not mean the operation failed. Repeat submission remains locked in this workspace.")}</p>{action.error ? <p className="ln-inline-error">{action.error}</p> : null}{action.operation ? <section className="ln-operation" aria-label="Submitted operation context"><h3>Submitted operation context</h3><p>This is the frozen submitted review, not a fresh verification of current server state.</p>{action.operation.description ? <p className="ln-operation-description">{action.operation.description}</p> : null}{action.operation.warning ? <p className="ln-operation-warning"><strong>Submitted warning: </strong>{action.operation.warning}</p> : null}<dl>{action.operation.details.map((row,index) => <div key={`${row.label}-${index}`}><dt>{row.label}</dt><dd className={row.emphasis ? "ln-emphasis" : undefined}>{row.value}</dd></div>)}</dl></section> : null}<div className="ln-outcome-actions">{action.resultHref ? <a className="aa-secondary" href={action.resultHref}>Open verified result<ArrowRight aria-hidden="true"/></a> : null}<a className="aa-secondary" href={inspectHref} target="_blank" rel="noreferrer">Inspect saved loans in another tab</a>{action.retryAvailable ? <button type="button" className="aa-secondary" disabled={action.busy} onClick={() => void action.retrySameRequest()}>Retry the same request</button> : null}</div>{action.phase === "saving" ? <p className="ln-muted">Do not submit again while this request is in progress.</p> : action.retryAvailable ? <p className="ln-muted">The recovery action reuses the same operation key, loan identity and frozen request. It does not create a new posting intent.</p> : <p className="ln-muted">No fresh submission or automatic replay is available here. A read failure does not establish an unsuccessful write.</p>}</section>;
+}
+export function LoanConfirmation({ action }: { action: LoanActionPresentation }) { const review = action.confirmation; return <MoneyOutConfirmation open={Boolean(review)} loading={action.busy} title={review?.title || "Review loan operation"} description={review?.description || ""} warning={review?.warning || ""} details={review?.details || []} confirmLabel={review?.confirmLabel || "Confirm"} eyebrow="Review loan operation" busyLabel="Recording…" onCancel={action.close} onConfirm={action.confirm}/>; }

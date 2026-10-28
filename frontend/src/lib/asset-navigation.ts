@@ -1,0 +1,10 @@
+import { assetId } from "@/components/accounting-assets/asset-model";
+import { assetStatuses } from "@/components/accounting-assets/asset-types";
+import type { AssetBrowse } from "@/components/accounting-assets/asset-types";
+export const ASSETS_PATH = "/dashboard/accounting/assets";
+export function assetBrowse(raw: string | URLSearchParams): AssetBrowse { const p = new URLSearchParams(raw), page = Number(p.get("page")), status = p.get("status"), currency = (p.get("currency") || "").toUpperCase(); return { search: (p.get("search") || "").slice(0, 300), status: assetStatuses.includes(status as typeof assetStatuses[number]) ? status as AssetBrowse["status"] : "all", currency: /^[A-Z]{3}$/.test(currency) ? currency : "", page: Number.isSafeInteger(page) && page > 0 ? page : 1, focus: assetId(p.get("focus")) ? p.get("focus")! : "" }; }
+export function assetListHref(partial: Partial<AssetBrowse> = {}) { const raw = new URLSearchParams(); for (const [key,value] of Object.entries(partial)) if (value !== undefined) raw.set(key,String(value)); const b = assetBrowse(raw), p = new URLSearchParams(); if (b.search) p.set("search",b.search); if (b.status !== "all") p.set("status",b.status); if (b.currency) p.set("currency",b.currency); if (b.page > 1) p.set("page",String(b.page)); if (b.focus) p.set("focus",b.focus); return ASSETS_PATH + (p.size ? `?${p}` : ""); }
+export function safeAssetReturn(raw?: string | null) { if (!raw || raw.includes("#") || !(raw === ASSETS_PATH || raw.startsWith(ASSETS_PATH + "?"))) return ASSETS_PATH; return assetListHref(assetBrowse(raw.slice(ASSETS_PATH.length + 1))); }
+export const assetDetailHref = (id: string, back?: string | null) => assetId(id) ? `${ASSETS_PATH}/${encodeURIComponent(id)}?${new URLSearchParams({ returnTo: safeAssetReturn(back) })}` : safeAssetReturn(back);
+export const assetCreateHref = (back?: string | null) => `${ASSETS_PATH}/new?${new URLSearchParams({ returnTo: safeAssetReturn(back) })}`;
+export const assetDepreciationHref = (back?: string | null) => `${ASSETS_PATH}/depreciation?${new URLSearchParams({ returnTo: safeAssetReturn(back) })}`;

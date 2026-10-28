@@ -65,6 +65,7 @@ from app.models.stripe_accounting import StripeAccountingPosting
 from app.models.stripe_payout import StripePayoutReconciliation
 from app.models.payables import PayableBill, PayablePayment
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
+from app.models.payroll_policy import PayrollEntryAdjustment, PayrollPolicyVersion
 from app.models.posting_idempotency import PostingIdempotency
 from app.models.projects import (
     Project,
@@ -103,7 +104,7 @@ __all__ = [
     "PasskeyChallenge", "PayablePayment", "Payment", "PerformanceReview", "PostingIdempotency", "Product", "ProductCategory", "ProjectInvestor", "ProjectInvestorFunding", "Organization",
     "OrganizationAddress", "OrganizationBranding", "OrganizationDocument", "OrganizationExchangeRate", "OrganizationExchangeRateHistory", "OrganizationDocumentSequence",
     "OrganizationFinancialSettings", "OrganizationIdentifier", "OrganizationLocalizationSettings", "OrganizationOnlineProfile", "OrganizationProfile",
-    "OrganizationRole", "OrganizationSystemDefaults", "GatewayOAuthState", "PaymentGatewayConnection", "PayrollEntry", "PayrollPeriod", "PayrollRun", "PayrollWithholdingPayment", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
+    "OrganizationRole", "OrganizationSystemDefaults", "GatewayOAuthState", "PaymentGatewayConnection", "PayrollEntry", "PayrollEntryAdjustment", "PayrollPolicyVersion", "PayrollPeriod", "PayrollRun", "PayrollWithholdingPayment", "PurchaseReceipt", "PurchaseReceiptItem", "SalaryProfile", "Project", "ProjectCredential",
     "ProjectDocument", "ProjectMember", "ProjectMilestone", "ProjectNote", "ProjectReview", "ProjectTask", "ProjectWorkLog", "RecurringExpense", "Quotation", "QuotationItem",
     "QuotationMilestone", "QuotationPaymentMilestone", "QuotationSection", "StockMovement", "Subscription", "TaxCode", "TaxSettlement", "User", "UserPasskey", "UserSession", "Vendor", "Warehouse",
 ]

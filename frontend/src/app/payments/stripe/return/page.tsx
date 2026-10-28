@@ -30,8 +30,8 @@ export default async function StripeCheckoutReturnPage({ searchParams }: ReturnP
           : "You have returned from Stripe Checkout. A successful browser redirect alone does not confirm that Business OS has verified and recorded your payment."}
       </p>
       <StripeCheckoutReturnStatus mode={mode} sessionId={id} result={outcome} />
-      <Link href="/dashboard/accounting/invoices" className="mt-6 inline-flex rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">
-        Return to Invoices
+      <Link href="/dashboard" className="mt-6 inline-flex rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white">
+        Return to your workspace
       </Link>
     </section>
   </main>;

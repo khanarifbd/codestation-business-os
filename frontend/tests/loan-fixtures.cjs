@@ -1,0 +1,16 @@
+const loan={id:'loan-a',lender_name:'Synthetic lender',lender_type:'bank',currency:'USD',approved_amount:'1000.00',disbursed_amount:'600.00',undisbursed_amount:'400.00',outstanding_principal:'500.00',annual_interest_rate:'5.1250',approval_date:'2026-10-01',maturity_date:'2027-10-01',status:'active',reference:'SYN-LOAN',notes:'Synthetic agreement'};
+const account={id:'account-a',name:'Synthetic bank',account_type:'bank',currency:'USD',current_balance:'10000.00',is_active:true};
+const schedule={id:'schedule-a',installment_number:1,due_date:'2026-11-01',principal_due:'100.00',interest_due:'20.00',fee_due:'5.00',principal_paid:'0.00',interest_paid:'0.00',fee_paid:'0.00',status:'pending'};
+const disbursement={id:'disbursement-a',date:'2026-10-02',account_id:account.id,account_name:account.name,principal_amount:'600.00',fee_withheld_amount:'10.00',net_received_amount:'590.00',reference:'SYN-R',notes:null,status:'posted',created_at:'2026-10-02T10:00:00Z'};
+const repayment={id:'repayment-a',date:'2026-10-03',account_id:account.id,account_name:account.name,principal_amount:'100.00',interest_amount:'20.00',reference:'SYN-P',notes:null,status:'posted',created_at:'2026-10-03T10:00:00Z'};
+const fee={id:'fee-a',date:'2026-10-03',fee_type:'loan_fee',amount:'5.00',payment_status:'paid',reference:'SYN-P',notes:null,created_at:'2026-10-03T10:00:00Z'};
+const history={disbursements:[disbursement],repayments:[repayment],fees:[fee]};
+const agreementForm={lender_name:loan.lender_name,lender_type:loan.lender_type,currency:loan.currency,approved_amount:'1000',annual_interest_rate:'5.125',approval_date:loan.approval_date,maturity_date:loan.maturity_date,reference:loan.reference,notes:loan.notes};
+const receiveForm={account_id:account.id,disbursement_date:'2026-10-26',principal_amount:'200',fee_withheld_amount:'10',reference:'SYN-R2',notes:'Synthetic received'};
+const repayForm={account_id:account.id,payment_date:'2026-10-26',principal_amount:'100',interest_amount:'20',fee_amount:'5',fee_type:'loan_fee',reference:'SYN-P2',notes:'Synthetic paid'};
+const draft={...loan,status:'draft',disbursed_amount:'0.00',undisbursed_amount:'1000.00',outstanding_principal:'0.00'};
+const receiveResult={id:'disbursement-new',loan:{...loan,disbursed_amount:'800.00',undisbursed_amount:'200.00',outstanding_principal:'700.00'},principal_amount:'200.00',fee_withheld_amount:'10.00',net_received_amount:'190.00',journal_entry_id:'journal-r'};
+const repayResult={id:'repayment-new',loan:{...loan,outstanding_principal:'400.00'},principal_amount:'100.00',interest_amount:'20.00',fee_amount:'5.00',cash_paid:'125.00',journal_entry_id:'journal-p'};
+module.exports={loan,account,schedule,disbursement,repayment,fee,history,agreementForm,receiveForm,repayForm,draft,receiveResult,repayResult};
+Object.assign(module.exports,require('./reconciliation-fixtures.cjs'),{account});
+module.exports.confirmation={title:'Synthetic loan posting',description:'Controlled fixture only',warning:'No real financial action',details:[{label:'Synthetic amount',value:'USD 200.00',emphasis:true}],confirmLabel:'Confirm fixture'};

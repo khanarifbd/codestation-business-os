@@ -1,0 +1,21 @@
+.relationship-workspace { --rel-ink:#1c3b2d; --rel-muted:#60715f; --rel-line:#dce5d7; padding:29px 31px 42px; background:#f5f7f2; color:var(--rel-ink); min-width:0; }
+.relationship-header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:23px; }
+.relationship-header>div:first-child { min-width:0; }
+.relationship-eyebrow { font-size:10px; font-weight:550; letter-spacing:1.5px; text-transform:uppercase; color:#576c57; }
+.relationship-header h1 { font-size:30px; line-height:1.25; letter-spacing:-1px; font-weight:600; margin-top:7px; }
+.relationship-description { color:var(--rel-muted); font-size:12px; line-height:1.8; max-width:630px; margin-top:8px; }
+.relationship-header-actions { display:flex; gap:8px; flex-shrink:0; }
+.relationship-primary,.relationship-secondary { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:41px; padding:9px 14px; border:1px solid #214735; border-radius:7px; background:#214735; color:white; font-size:11px; font-weight:600; cursor:pointer; }
+.relationship-primary:hover { background:#315c43; }.relationship-primary svg,.relationship-secondary svg { width:15px; height:15px; }
+.relationship-secondary { border-color:#d2ddcc; background:#fff; color:#38543a; }.relationship-secondary:hover { background:#edf4e6; }
+.relationship-metrics { display:grid; border:1px solid var(--rel-line); border-radius:8px; background:#fdfefb; overflow:hidden; }
+.relationship-metric { display:flex; justify-content:space-between; align-items:center; gap:14px; padding:15px 19px; border-right:1px solid var(--rel-line); min-width:0; }.relationship-metric:last-child { border-right:0; }
+.relationship-metric dt { color:#52694f; font-size:11px; font-weight:500; }.relationship-metric dt>span { display:block; margin-top:4px; color:#61715c; font-size:10px; }.relationship-metric dd { font-size:26px; line-height:1; font-weight:550; letter-spacing:-.8px; font-variant-numeric:tabular-nums; }.relationship-metric[data-attention] { background:#f7f0de; color:#755c24; }
+.relationship-notice { border:1px solid #dbe4d6; border-radius:7px; background:#eef3e8; padding:11px 14px; margin:16px 0; font-size:12px; line-height:1.7; color:#3f5d38; }.relationship-notice[data-tone="error"] { border-color:#ebc9bd; background:#fff2ec; color:#943e2e; }.relationship-notice[data-tone="success"] { border-color:#cadebf; background:#eef7e8; }
+.relationship-workspace :is(input,select,textarea) { min-width:0; max-width:100%; border-color:#d4dfcd; border-radius:6px; color:#29472f; background:#fff; }
+.relationship-workspace :is(input,select,textarea,button,a,summary):focus-visible { outline:3px solid #7d9c6c; outline-offset:3px; }
+.relationship-workspace :is(button,a) { -webkit-tap-highlight-color:transparent; }.relationship-workspace button:disabled { cursor:not-allowed; }
+.relationship-workspace .text-neutral-400 { color:#6a7864; }.relationship-workspace .text-neutral-500 { color:#596c54; }
+@media(max-width:1023px) { .relationship-workspace { padding:25px 24px 40px; } }
+@media(max-width:639px) { .relationship-workspace { padding:22px 16px 35px; }.relationship-header { display:block; margin-bottom:19px; }.relationship-header h1 { font-size:28px; }.relationship-description { font-size:12px; line-height:1.7; }.relationship-header-actions { margin-top:16px; }.relationship-header-actions>* { flex:1; }.relationship-metric { padding:13px 12px; gap:6px; }.relationship-metric dd { font-size:23px; }.relationship-metric dt { font-size:10px; }.relationship-metric dt>span { display:block; font-size:9px; } }
+@media(prefers-reduced-motion:reduce) { .relationship-workspace * { transition:none!important; animation:none!important; } }

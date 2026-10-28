@@ -16,6 +16,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.dependencies import CurrentTenantAdmin, DbSession, require_tenant_permission
 from app.core.config import settings
 from app.models.finance import FinancialAccount, Invoice
@@ -332,12 +333,14 @@ def reconcile_live_checkout(
     """
     if not settings.stripe_live_collection_enabled:
         raise HTTPException(status_code=409, detail="Live Stripe reconciliation is not enabled")
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization)
     attempt = db.scalar(select(StripeCheckoutAttempt).where(
         StripeCheckoutAttempt.organization_id == tenant.organization_id,
         StripeCheckoutAttempt.invoice_id == invoice_id,
         StripeCheckoutAttempt.id == attempt_id,
         StripeCheckoutAttempt.mode == "live",
-    ).with_for_update())
+    ).with_for_update().execution_options(populate_existing=True))
     if attempt is None or not attempt.stripe_session_id:
         raise HTTPException(status_code=404, detail="Live Stripe Checkout session not found")
     connection = db.scalar(select(PaymentGatewayConnection).where(
@@ -346,7 +349,7 @@ def reconcile_live_checkout(
         PaymentGatewayConnection.provider == "stripe",
         PaymentGatewayConnection.mode == "live",
         PaymentGatewayConnection.is_active.is_(True),
-    ))
+    ).execution_options(populate_existing=True))
     if connection is None or not connection.secret_key_ciphertext or connection.connection_method != "api_key":
         raise HTTPException(status_code=409, detail="Verified connected Stripe Live API credentials are required")
     from app.services.stripe_settlement import stripe_retrieve

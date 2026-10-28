@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { OperationalReportingNote } from "./operational-reporting-note";
+import "./financial-composition.css";
 
 type MoneyFormatter = (amount: string | number, currency: string) => string;
 
@@ -28,9 +28,9 @@ export type CurrencyTrendRow = {
 
 function FinancialFigure({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="min-w-0 rounded-xl border border-neutral-100 bg-neutral-50/80 p-3 sm:p-3.5">
-      <dt className="text-[11px] font-medium text-neutral-500">{label}</dt>
-      <dd className="mt-2 break-all text-sm font-semibold tabular-nums leading-5 text-neutral-800">{value}</dd>
+    <div className="financial-ledger-figure">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   );
 }
@@ -43,39 +43,28 @@ export function FinancialPerformanceCard({ row, reportingCurrency, formatMoney }
   const negativeProfit = Number(row.net_profit) < 0;
   const showFees = Number(row.platform_fees) !== 0 || Number(row.transfer_fees) !== 0;
   return (
-    <article className="min-w-0 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.035)]">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 px-4 py-4 sm:px-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold tracking-tight text-neutral-900">{row.currency}</h3>
-            {row.currency === reportingCurrency ? (
-              <span className="rounded-md bg-neutral-100 px-2 py-1 text-[10px] font-semibold text-neutral-600">Reporting currency</span>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-neutral-500">Period financial performance</p>
+    <article className="financial-ledger-row">
+      <header className="financial-ledger-currency">
+        <h3>{row.currency}</h3>
+        <p>{row.currency === reportingCurrency ? "Reporting currency" : "Original currency"}</p>
+      </header>
+      <dl className="financial-ledger-values">
+        <FinancialFigure label="Invoiced" value={formatMoney(row.invoiced_revenue, row.currency)} />
+        <FinancialFigure label="Direct income" value={formatMoney(row.direct_income, row.currency)} />
+        <FinancialFigure label="Collected" value={formatMoney(row.collected_revenue, row.currency)} />
+        <FinancialFigure label="Receivable" value={formatMoney(row.receivables, row.currency)} />
+        <FinancialFigure label="Expenses" value={formatMoney(row.expenses, row.currency)} />
+        <div className={`financial-ledger-figure financial-ledger-margin ${negativeProfit ? "financial-ledger-negative" : ""}`}>
+          <dt>Operational margin</dt>
+          <dd>{formatMoney(row.net_profit, row.currency)}</dd>
         </div>
-        <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-sm font-semibold text-neutral-600">{row.currency}</span>
-      </div>
-      <div className="px-4 pb-4 pt-4 sm:px-5 sm:pb-5">
-        <dl className="grid grid-cols-2 gap-2.5">
-          <FinancialFigure label="Invoiced" value={formatMoney(row.invoiced_revenue, row.currency)} />
-          <FinancialFigure label="Direct income" value={formatMoney(row.direct_income, row.currency)} />
-          <FinancialFigure label="Collected" value={formatMoney(row.collected_revenue, row.currency)} />
-          <FinancialFigure label="Receivable" value={formatMoney(row.receivables, row.currency)} />
-          <FinancialFigure label="Expenses" value={formatMoney(row.expenses, row.currency)} />
+      </dl>
+      {showFees ? (
+        <dl className="financial-ledger-fees">
+          {Number(row.platform_fees) !== 0 ? <div><dt>Platform fees</dt><dd>{formatMoney(row.platform_fees, row.currency)}</dd></div> : null}
+          {Number(row.transfer_fees) !== 0 ? <div><dt>Transfer fees</dt><dd>{formatMoney(row.transfer_fees, row.currency)}</dd></div> : null}
         </dl>
-        <dl className={`mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3 ${negativeProfit ? "border-rose-200 bg-rose-50/70" : "border-neutral-200 bg-neutral-50"}`}>
-          <dt className="text-xs font-semibold text-neutral-600">Operational margin</dt>
-          <dd className={`break-all text-base font-semibold tracking-tight tabular-nums sm:text-lg ${negativeProfit ? "text-rose-700" : "text-neutral-950"}`}>{formatMoney(row.net_profit, row.currency)}</dd>
-        </dl>
-        <OperationalReportingNote />
-        {showFees ? (
-          <dl className="mt-3 flex flex-wrap gap-x-5 gap-y-2 border-t border-neutral-100 pt-3 text-xs text-neutral-500">
-            {Number(row.platform_fees) !== 0 ? <div><dt className="inline">Platform fees: </dt><dd className="inline font-semibold tabular-nums text-neutral-700">{formatMoney(row.platform_fees, row.currency)}</dd></div> : null}
-            {Number(row.transfer_fees) !== 0 ? <div><dt className="inline">Transfer fees: </dt><dd className="inline font-semibold tabular-nums text-neutral-700">{formatMoney(row.transfer_fees, row.currency)}</dd></div> : null}
-          </dl>
-        ) : null}
-      </div>
+      ) : null}
     </article>
   );
 }
@@ -94,31 +83,35 @@ export function CurrencyTrendCard({ currency, rows, reportingCurrency, formatMon
 }) {
   const maxCollected = Math.max(0, ...rows.map((row) => positiveAmount(row.collected_revenue)));
   return (
-    <article className="min-w-0 overflow-hidden rounded-xl border border-neutral-200 bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-4 py-3.5">
-        <div>
-          <h3 className="text-sm font-semibold text-neutral-900">{currency}</h3>
-          <p className="mt-0.5 text-[11px] text-neutral-500">Collected revenue · by period</p>
-        </div>
-        {currency === reportingCurrency ? <span className="rounded-md bg-neutral-100 px-2 py-1 text-[10px] font-medium text-neutral-600">Reporting currency</span> : null}
-      </div>
-      <div className="px-4 pb-4 pt-5">
-        <div aria-hidden="true" className="flex h-32 items-end gap-2 border-b border-neutral-200 px-1 sm:gap-3">
+    <article className="collections-trend">
+      <header className="collections-trend-heading">
+        <div><p>COLLECTED REVENUE</p><h3>{currency}</h3></div>
+        {currency === reportingCurrency ? <span>Reporting currency</span> : <span>Original currency</span>}
+      </header>
+      {rows.length ? <div className="collections-latest"><span>Latest period · {formatPeriod(rows[rows.length - 1].period)}</span><strong>{formatMoney(rows[rows.length - 1].collected_revenue, currency)}</strong></div> : null}
+      <figure className="collections-figure">
+        <div aria-hidden="true" className="collections-plot" data-dense={rows.length > 6}>
+          <div className="collections-grid"><i /><i /><i /><i /></div>
           {rows.map((row) => (
-            <div key={row.period} className="flex h-full min-w-0 flex-1 items-end justify-center">
+            <div key={row.period} className="collections-column">
               <div
-                className="w-full max-w-12 rounded-t-md bg-neutral-800/85"
+                className="collections-bar"
                 style={{ height: `${maxCollected ? (positiveAmount(row.collected_revenue) / maxCollected) * 100 : 0}%` }}
-              />
+              >
+                <span className="collections-amount">{formatMoney(row.collected_revenue, row.currency)}</span>
+              </div>
             </div>
           ))}
         </div>
-        <div aria-hidden="true" className="mt-2 flex gap-2 px-1 text-center text-[10px] text-neutral-500 sm:gap-3">
-          {rows.map((row) => <span key={row.period} className="min-w-0 flex-1 truncate">{formatPeriod(row.period).split(" ")[0]}</span>)}
+        <div aria-hidden="true" className="collections-periods">
+          {rows.map((row) => <span key={row.period} title={formatPeriod(row.period)}>{formatPeriod(row.period)}</span>)}
         </div>
-        <p className="mt-3 text-[11px] leading-4 text-neutral-500">Bars compare collections within {currency} only. Exact amounts are listed below.</p>
-      </div>
-      <div className="overflow-x-auto overscroll-x-contain border-t border-neutral-100">
+        <figcaption>Bars compare collections within {currency} only. Exact amounts are listed below.</figcaption>
+      </figure>
+      <details className="collections-exact-values">
+        <summary>View exact period values<span aria-hidden="true" /></summary>
+        <div className="collections-table-scroll" tabIndex={0} role="region" aria-label={`Financial performance table for ${currency}; scroll horizontally for all columns`}>
+
         <table className="w-full min-w-[440px] text-left text-xs">
           <caption className="sr-only">Financial performance by period for {currency}</caption>
           <thead className="bg-neutral-50 text-neutral-500"><tr>
@@ -136,7 +129,8 @@ export function CurrencyTrendCard({ currency, rows, reportingCurrency, formatMon
             </tr>)}
           </tbody>
         </table>
-      </div>
+        </div>
+      </details>
     </article>
   );
 }

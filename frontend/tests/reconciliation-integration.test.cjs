@@ -1,0 +1,24 @@
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
+const React=require('react');const {renderToStaticMarkup}=require('react-dom/server');
+const {sourceLoader,root}=require('./reconciliation-harness.cjs');
+const {FinancialConfirmationDialog}=sourceLoader().load('src/components/financial-confirmation-dialog.tsx');
+const props={open:true,title:'Synthetic confirmation',description:'No financial request is sent by this render.',details:[{label:'Currency',value:'USD'}],confirmLabel:'Confirm',onCancel(){},onConfirm(){}};
+test('shared financial confirmation preserves existing posting defaults',()=>{const html=renderToStaticMarkup(React.createElement(FinancialConfirmationDialog,{...props,loading:true}));assert.match(html,/Review before posting/);assert.match(html,/Posting…/);assert.match(html,/role="dialog"/);assert.match(html,/aria-modal="true"/);assert.match(html,/aria-labelledby="financial-confirmation-title"/);assert.match(html,/disabled=""/);});
+test('reconciliation can supply truthful nonposting dialog labels without altering shared defaults',()=>{const html=renderToStaticMarkup(React.createElement(FinancialConfirmationDialog,{...props,loading:true,eyebrow:'Review reconciliation',busyLabel:'Saving selection…'}));assert.match(html,/Review reconciliation/);assert.match(html,/Saving selection…/);assert.doesNotMatch(html,/Posting…|Review before posting/);});
+test('closed shared confirmation renders no modal',()=>assert.equal(renderToStaticMarkup(React.createElement(FinancialConfirmationDialog,{...props,open:false})),''));
+test('shared confirmation escapes synthetic text instead of HTML injection',()=>{const html=renderToStaticMarkup(React.createElement(FinancialConfirmationDialog,{...props,eyebrow:'<script>synthetic</script>',busyLabel:'<b>busy</b>',loading:true}));assert.doesNotMatch(html,/<script>/);assert.match(html,/&lt;script&gt;/);assert.match(html,/&lt;b&gt;/);});
+test('workspace remount boundary includes company, membership, role, permissions and pathname',()=>{const s=fs.readFileSync(path.join(root,'src/components/accounting-reconciliation/reconciliation-workspace.tsx'),'utf8');for(const token of ['tenant?.organization.id','tenant?.membership_id','tenant?.role_id','tenant?.permissions.join','${pathname}'])assert.ok(s.includes(token),token);});
+test('separate list/new/document/matching route leaves are Suspense wrapped and reuse one workspace',()=>{for(const p of ['page.tsx','new/page.tsx','[reconciliationId]/page.tsx','[reconciliationId]/match/page.tsx']){const s=fs.readFileSync(path.join(root,'src/app/dashboard/accounting/reconciliation',p),'utf8');assert.match(s,/Suspense/);assert.match(s,/ReconciliationWorkspace/);assert.doesNotMatch(s,/fetch\(/);}});
+test('matching and create entrants use native anchors rather than SPA router pushes',()=>{const register=fs.readFileSync(path.join(root,'src/components/accounting-reconciliation/reconciliation-register.tsx'),'utf8');const document=fs.readFileSync(path.join(root,'src/components/accounting-reconciliation/reconciliation-document.tsx'),'utf8');assert.match(register,/<a[^>]*href=\{vm\.createHref\}/);assert.match(document,/<a[^>]*href=\{vm\.matchingHref\}/);});
+test('discarded matching document labels register return instead of the deleted statement',()=>{
+  let phase='idle';
+  const vm=()=>({canView:true,phase,busy:false,error:null,message:null,document:null,back(){},resource:{loading:true,error:null}});
+  const {ReconciliationDocument}=sourceLoader({'@/hooks/use-reconciliation-document':{useReconciliationDocument:vm}}).load('src/components/accounting-reconciliation/reconciliation-document.tsx');
+  const element=()=>React.createElement(ReconciliationDocument,{reconciliationId:'synthetic-reconciliation',matching:true,returnHref:'/dashboard/accounting/reconciliation'});
+  const before=renderToStaticMarkup(element());
+  assert.match(before,/Back to statement/);assert.match(before,/Matching workspace/);
+  phase='discarded';
+  const after=renderToStaticMarkup(element());
+  assert.match(after,/Back to reconciliations/);assert.match(after,/Discarded draft/);assert.match(after,/Return to register/);
+  assert.doesNotMatch(after,/Back to statement|Matching workspace|Match transactions/);
+});

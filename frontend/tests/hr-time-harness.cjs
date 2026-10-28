@@ -1,0 +1,34 @@
+/* Actual HR hooks, validators and shared navigation guard, synthetic scheduling.
+ * Separate layout/passive phases expose the pre-passive stale-response window.
+ * No React DOM, browser, live API, provider, payroll or database proof. */
+const {sourceLoader}=require('./reconciliation-harness.cjs');
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const ok=(body,status=200)=>({ok:status>=200&&status<300,status,json:async()=>structuredClone(body)});
+const fail=status=>ok({detail:'Synthetic rejection'},status);
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
+const access={can_view:true,can_manage:true,can_self:true,can_view_people:true,can_manage_people:true,can_invite_employees:true,can_manage_structure:true,is_employee:true,role_name:'Synthetic HR manager',timezone:'Asia/Dhaka',currency:'BDT',landing:'overview'};
+const summary={today:'2026-10-27',timezone:'Asia/Dhaka',metrics:{active_employees:550,present_today:322,absent_today:8,on_leave_today:17},attention:{pending_leave:219,documents_expiring_30d:6,active_candidates:12,pending_invitations:4},setup:{departments:3,leave_types:2,shifts:2,holidays:9,employees:550},recruitment:{open_jobs:3}};
+const meta={employees:[{id:'employee-A',employee_code:'SYN-1',name:'Synthetic Employee'}]};
+const attendance={id:'attendance-A',employee_id:'employee-A',employee_name:'Synthetic Employee',attendance_date:'2026-10-27',status:'present',attendance_mode:'manual',check_in_at:null,check_out_at:null,work_minutes:480,overtime_minutes:0,notes:'Synthetic note'};
+const leave={id:'leave-A',employee_id:'employee-A',employee_name:'Synthetic Employee',leave_type_id:'type-A',leave_type_name:'Synthetic leave',start_date:'2026-10-27',end_date:'2026-10-28',days:'2.00',reason:'Synthetic reason',status:'pending',review_notes:null};
+const same=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>Object.is(x,b[i]));
+function harness({path='/dashboard/hr/time',query='',resource=null,overview=false}={}){
+ const slots=[],effects=new Map(),layouts=new Map(),passives=new Map(),calls=[],nav=[],prompts=[];let index=0,dirty=true,alive=true,value,pathname=path,params=new URLSearchParams(query),caps={...access},org='company-A',allowExit=true,args=resource;
+ const hooks={useState(initial){const i=index++;if(!slots[i])slots[i]={value:typeof initial==='function'?initial():initial};return[slots[i].value,next=>{const v=typeof next==='function'?next(slots[i].value):next;if(!Object.is(v,slots[i].value)){slots[i].value=v;dirty=true;}}];},useRef(initial){return slots[index++]||=({current:initial});},useMemo(fn,deps){const i=index++;if(!slots[i]||!same(slots[i].deps,deps))slots[i]={deps,value:fn()};return slots[i].value;},useCallback(fn,deps){return hooks.useMemo(()=>fn,deps);},useLayoutEffect(fn,deps){const i=index++;if(!effects.has(i)||!same(effects.get(i).deps,deps))layouts.set(i,{fn,deps});},useEffect(fn,deps){const i=index++;if(!effects.has(i)||!same(effects.get(i).deps,deps))passives.set(i,{fn,deps});}};
+ const router={replace:href=>nav.push({kind:'replace',href}),push:href=>nav.push({kind:'push',href})};
+ const tenant=()=>({organization:{id:org},membership_id:'member-A',role_id:'role-A',status:'active',permissions:[...(caps.can_view?['hr.view']:[]),...(caps.can_manage?['hr.manage']:[])]});
+ const saved={fetch:global.fetch,window:global.window,document:global.document,Node:global.Node,Element:global.Element};
+ class Node{}class Element extends Node{constructor(href){super();this.href=href;}closest(){return this;}getAttribute(name){return name==='href'?this.href:null;}hasAttribute(){return false;}}
+ const win=new EventTarget();win.location={href:'https://synthetic.invalid'+path,assign:href=>nav.push({kind:'native',href}),replace:href=>nav.push({kind:'native-replace',href})};win.confirm=message=>{prompts.push(message);return allowExit;};global.window=win;global.document={};global.Node=Node;global.Element=Element;
+ let responder=url=>url==='/api/hr/workspace-summary'?ok(summary):url==='/api/hr/meta'?ok(meta):url.includes('/leave-requests?')?ok({items:[leave],next_cursor:null}):url.includes('/attendance?')?ok({items:[attendance],next_cursor:null}):fail(405);
+ global.fetch=async(url,init)=>{calls.push({url,init});return responder(url,init);};
+ const loader=sourceLoader({react:hooks,'next/navigation':{useRouter:()=>router,usePathname:()=>pathname,useSearchParams:()=>params},'@/components/dashboard-session-context':{useDashboardSession:()=>({tenant:tenant(),profile:{email:'synthetic@example.invalid'},loading:false})},'@/components/hr-access-context':{useHRAccess:()=>({access:caps,loading:false,error:null})}});
+ function render(nextArgs){if(nextArgs)args=nextArgs;index=0;dirty=false;value=args?loader.load('src/hooks/use-hr-time-resource.ts').useHRTimeResource(...args):overview?loader.load('src/hooks/use-hr-overview.ts').useHROverview():loader.load('src/hooks/use-hr-time-workspace.ts').useHRTimeWorkspace();const jobs=[...layouts];layouts.clear();for(const[i,item]of jobs){effects.get(i)?.cleanup?.();effects.set(i,{...item,layout:true,cleanup:item.fn()});}return value;}
+ async function flush(){for(let n=0;n<35;n++){if(!alive){await tick();return value;}if(dirty||!value)render();const jobs=[...passives];passives.clear();for(const[i,item]of jobs){effects.get(i)?.cleanup?.();effects.set(i,{...item,layout:false,cleanup:item.fn()});}await tick();await tick();if(!dirty&&!passives.size)return value;}throw Error('HR hooks did not settle');}
+ function layoutUnmount(){alive=false;for(const row of effects.values())if(row.layout)row.cleanup?.();layouts.clear();passives.clear();}
+ return{calls,nav,prompts,window:win,loader,render,flush,vm:()=>value,respond:fn=>{responder=fn;},route:(p,q='')=>{pathname=p;params=new URLSearchParams(q);dirty=true;},query:q=>{params=new URLSearchParams(q);dirty=true;},caps:c=>{caps={...caps,...c};dirty=true;},company:id=>{org=id;dirty=true;},exit:v=>{allowExit=v;},anchor(href){const event=new Event('click',{cancelable:true});Object.defineProperties(event,{target:{value:new Element(href)},button:{value:0}});win.dispatchEvent(event);return event;},layoutUnmount,cleanup(){alive=false;for(const row of effects.values())row.cleanup?.();Object.assign(global,saved);}};
+}
+const writes=h=>h.calls.filter(c=>['POST','PATCH'].includes(c.init?.method));
+async function createReady(h){await h.flush();h.vm().change('employee_id','employee-A');await h.flush();return h.vm();}
+async function reviewReady(h,decision='approved'){await h.flush();h.vm().choose(decision);await h.flush();h.vm().reviewLeave();await h.flush();return h.vm();}
+module.exports={harness,sourceLoader,access,summary,meta,attendance,leave,ok,fail,deferred,writes,tick,createReady,reviewReady};

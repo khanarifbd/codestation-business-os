@@ -440,7 +440,13 @@ def update_task_progress(project_id: str, task_id: str, payload: TaskProgressUpd
     elif next_status == "completed":
         raise HTTPException(status_code=400, detail="Completed tasks must have 100% progress")
     elif next_status is None:
-        next_status = "in_progress" if payload.progress_percent > 0 and item.status == "todo" else item.status
+        # Lowering a completed task's progress reopens it even when callers omit status.
+        # Otherwise it remains hidden from My Work with contradictory completion data.
+        next_status = (
+            "in_progress"
+            if item.status == "completed" or (payload.progress_percent > 0 and item.status == "todo")
+            else item.status
+        )
     before = {"progress_percent": item.progress_percent, "status": item.status}
     item.progress_percent = payload.progress_percent; item.status = next_status
     item.completed_at = datetime.now(timezone.utc) if item.status == "completed" else None

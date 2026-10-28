@@ -52,11 +52,17 @@ export function ClientAccessSection({ clientId }: { clientId: string }) {
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    const response = await fetch(`/api/client-access/manage/client/${encodeURIComponent(clientId)}/overview`, { cache: "no-store" });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) setError(payload?.detail ?? "Unable to load client access.");
-    else setOverview(payload as Overview);
-    setLoading(false);
+    try {
+      const response = await fetch(`/api/client-access/manage/client/${encodeURIComponent(clientId)}/overview`, { cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.detail ?? "Unable to load client access.");
+      setOverview(payload as Overview);
+    } catch (reason) {
+      setOverview(null);
+      setError(reason instanceof Error ? reason.message : "Unable to load client access.");
+    } finally {
+      setLoading(false);
+    }
   }, [clientId]);
 
   useEffect(() => { void load(); }, [load]);

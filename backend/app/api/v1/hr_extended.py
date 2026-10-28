@@ -14,6 +14,7 @@ from app.models.user import User
 from app.models.membership import Membership
 from app.schemas.team import InvitationCreate
 from app.services.activity_log import record_activity
+from app.services.payroll_policy_inputs import lock_payroll_inputs
 from app.services.team_role_grants import ensure_grantable_employee_role
 from app.tenancy.context import TenantContext
 
@@ -57,6 +58,7 @@ def list_holidays(db: DbSession, tenant: HRViewer):
 
 @router.post("/holidays", status_code=status.HTTP_201_CREATED)
 def create_holiday(payload: HolidayCreate, request: Request, db: DbSession, tenant: HRManager):
+    lock_payroll_inputs(db, tenant.organization_id)
     exists = db.scalar(select(HRHoliday.id).where(HRHoliday.organization_id == tenant.organization_id, HRHoliday.holiday_date == payload.holiday_date, HRHoliday.name == payload.name.strip()))
     if exists:
         raise HTTPException(status_code=409, detail="Holiday already exists")

@@ -1,32 +1,48 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CheckCircle2, Clock3, ShieldCheck, AlertTriangle } from "lucide-react";
 
 type CheckoutMode = "live" | "test" | "unknown";
 type PaymentState = "checking" | "processing" | "posted" | "reversed" | "review_required" | "sandbox_paid" | "pending" | "unavailable";
 
-export function StripeCheckoutReturnStatus({
-  mode, sessionId, result,
-}: { mode: CheckoutMode; sessionId: string | null; result: string }) {
+type ReturnStatusProps = { mode: CheckoutMode; sessionId: string | null; result: string };
+
+export function StripeCheckoutReturnStatus(props: ReturnStatusProps) {
+  // A different return must never display the previous session's posting status,
+  // even in the render before passive effects run. No role or payment authority
+  // is inferred from these public URL parameters.
+  const identity = JSON.stringify([props.sessionId, props.mode, props.result]);
+  return <CheckoutReturnSession key={identity} {...props} />;
+}
+
+function CheckoutReturnSession({ mode, sessionId, result }: ReturnStatusProps) {
   const [state, setState] = useState<PaymentState>("checking");
+  const lifetime = useRef<object | null>(null);
+  useLayoutEffect(() => {
+    const generation = {};
+    lifetime.current = generation;
+    return () => { if (lifetime.current === generation) lifetime.current = null; };
+  }, []);
 
   useEffect(() => {
-    if (!sessionId) {
-      return;
-    }
+    if (!sessionId || mode === "unknown") return;
+    const generation = lifetime.current;
     let active = true;
+    const current = () => active && generation !== null && lifetime.current === generation;
     let pollCount = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function check() {
+      if (!current()) return;
       try {
         const response = await fetch(
           `/api/stripe-checkout/return-status/${encodeURIComponent(sessionId!)}`,
           { cache: "no-store" },
         );
+        if (!current()) return;
         const data = await response.json().catch(() => null);
-        if (!active) return;
+        if (!current()) return;
         if (response.ok && ["posted", "reversed", "review_required", "processing", "sandbox_paid", "pending"].includes(data?.status)) {
           setState(data.status as PaymentState);
           if (data.status === "posted" || data.status === "reversed" || data.status === "review_required" || data.status === "sandbox_paid") return;
@@ -34,15 +50,15 @@ export function StripeCheckoutReturnStatus({
           setState("unavailable");
         }
       } catch {
-        if (active) setState("unavailable");
+        if (current()) setState("unavailable");
       }
       pollCount += 1;
-      if (active && pollCount < 12) timer = setTimeout(() => { void check(); }, 4000);
+      if (current() && pollCount < 12) timer = setTimeout(() => { void check(); }, 4000);
     }
 
     void check();
     return () => { active = false; if (timer) clearTimeout(timer); };
-  }, [sessionId]);
+  }, [sessionId, mode]);
 
   if (!sessionId || mode === "unknown") {
     return <div role="status" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">

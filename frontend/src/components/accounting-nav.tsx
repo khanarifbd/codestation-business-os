@@ -47,7 +47,7 @@ const items: Item[] = [
     label: "Controls",
     href: "/dashboard/accounting/controls",
     icon: SlidersHorizontal,
-    aliases: ["/dashboard/finance/controls"],
+    aliases: ["/dashboard/finance/controls", "/dashboard/finance/auto-post"],
   },
   { label: "Accounting", href: "/dashboard/accounting/advanced", icon: BookOpenText },
 ];

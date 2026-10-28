@@ -1,3 +1,4 @@
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 import { NextRequest, NextResponse } from "next/server";
 
 import { setAuthCookies, type TokenPair } from "@/lib/auth-session";
@@ -24,6 +25,9 @@ async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
 }
 
 async function proxyOrganizations(request: NextRequest, method: "GET" | "POST") {
+  const rejected = guardMutationOrigin(request, { requireJson: method === "POST" });
+  if (rejected) return rejected;
+
   let accessToken = request.cookies.get("access_token")?.value;
   let rotatedTokens: TokenPair | null = null;
 

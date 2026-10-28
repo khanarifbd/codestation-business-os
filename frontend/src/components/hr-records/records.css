@@ -1,0 +1,13 @@
+.records-workspace,.records-register,.records-toolbar,.records-filters,.records-filters>label,.records-search,.records-modal form,.records-modal fieldset,.records-modal label,.records-modal input,.records-modal select,.records-modal textarea { min-width:0; max-width:100%; }
+.records-filters>label { display:block; font-size:.875rem; font-weight:500; }
+.records-filters input,.records-filters select { display:block; width:100%; height:44px; margin-top:.5rem; border:1px solid #e5e5e5; border-radius:.75rem; padding:0 .75rem; background:white; }
+.records-modal { overflow-wrap:anywhere; }
+.records-modal fieldset { min-inline-size:0; }
+.records-modal input[type="date"],.records-modal input[type="file"] { min-inline-size:0; width:100%; max-inline-size:100%; }
+.records-document dd { margin-top:.25rem; overflow-wrap:anywhere; }
+
+/* Bound only this existing selector instance; shared default/source stays unchanged. */
+.records-modal [data-records-select],.records-modal [data-records-select] > div { min-width:0; max-width:100%; }
+.records-modal [data-records-select] .min-w-\[260px\] { min-width:0; max-width:100%; }
+.records-modal [data-records-select] input { min-width:0; max-width:100%; }
+.records-modal [data-records-select] svg { flex-shrink:0; }

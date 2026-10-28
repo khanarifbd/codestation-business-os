@@ -13,6 +13,7 @@ from app.models.expenses import Vendor
 from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, PurchaseReceiptItem, StockMovement, Warehouse
 from app.models.tax import TaxCode
 from app.schemas.inventory import AdjustmentCreate, CategoryCreate, ProductCreate, PurchaseReceiptCreate, WarehouseCreate
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.accounting_posting import PostingLine, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.services.inventory_payables import create_purchase_payable
@@ -279,6 +280,8 @@ def movements(db: DbSession, tenant: Viewer, limit: int=200):
 
 @router.post("/adjustments", status_code=201)
 def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenant: Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["currency"])
     product=db.scalar(select(Product).where(Product.id==payload.product_id,Product.organization_id==tenant.organization_id,Product.item_type=="stock_item",Product.is_active.is_(True)))
     warehouse=db.scalar(select(Warehouse).where(Warehouse.id==payload.warehouse_id,Warehouse.organization_id==tenant.organization_id,Warehouse.is_active.is_(True)))
     if product is None: raise HTTPException(404,"Active stock product not found")
@@ -315,6 +318,8 @@ def purchases(db: DbSession, tenant: Viewer, limit:int=200):
 
 @router.post("/purchases", status_code=status.HTTP_201_CREATED)
 def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSession, tenant: Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["currency"])
     warehouse=db.scalar(select(Warehouse).where(Warehouse.id==payload.warehouse_id,Warehouse.organization_id==tenant.organization_id,Warehouse.is_active.is_(True)))
     if warehouse is None: raise HTTPException(404,"Active warehouse not found")
     if payload.vendor_id and not db.scalar(select(Vendor.id).where(Vendor.id==payload.vendor_id,Vendor.organization_id==tenant.organization_id)): raise HTTPException(404,"Vendor not found")

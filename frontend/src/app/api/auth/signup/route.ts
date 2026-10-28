@@ -1,9 +1,13 @@
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 import { NextResponse } from "next/server";
 
 import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
 export async function POST(request: Request) {
+  const rejected = guardMutationOrigin(request, { requireJson: true });
+  if (rejected) return rejected;
+
   const body = await request.text();
   const upstream = await backendFetch("/auth/signup", {
     method: "POST",

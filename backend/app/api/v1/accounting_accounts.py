@@ -16,6 +16,7 @@ from app.schemas.finance import FinancialAccountCreate, FinancialAccountRead
 from app.schemas.invoice_payment import normalize_payment_url
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account
 from app.services.activity_log import record_activity
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/financial-accounts", tags=["Accounting"])
@@ -93,6 +94,9 @@ def create_accounting_financial_account(
     if payload.account_type == "credit_card" and opening < 0:
         raise HTTPException(status_code=400, detail="Credit card opening balance must be zero or a positive amount currently owed")
 
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    # Tenant resolution may predate a queued functional-currency transition.
+    db.refresh(tenant.organization, attribute_names=["currency", "timezone"])
     gateway_id = validate_gateway_mapping(db, organization_id=tenant.organization_id, gateway_connection_id=payload.gateway_connection_id, account_type=payload.account_type, currency=payload.currency)
     account = FinancialAccount(
         organization_id=tenant.organization_id,

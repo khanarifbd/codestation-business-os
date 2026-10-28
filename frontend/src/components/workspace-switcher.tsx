@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Building2, Check, ChevronDown, Loader2, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { requestWorkspaceExit } from "@/lib/workspace-navigation";
 
 import {
   useDashboardSession,
@@ -41,6 +42,7 @@ export function WorkspaceSwitcher() {
       setOpen(false);
       return;
     }
+    if (!requestWorkspaceExit()) return;
     setSwitchingId(workspace.organization.id);
     setError(null);
     try {
@@ -106,7 +108,8 @@ export function WorkspaceSwitcher() {
         })}
         {!workspaces.length ? <p className="px-3 py-6 text-center text-sm text-neutral-400">No active workspaces</p> : null}
       </div>
-      <div className="border-t p-2"><button type="button" onClick={() => { setOpen(false); router.push("/onboarding?new=1"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold hover:bg-neutral-50"><span className="flex size-9 items-center justify-center rounded-lg border bg-white"><Plus className="size-4" /></span><span><span className="block">Create company workspace</span><span className="mt-0.5 block text-xs font-normal text-neutral-400">Own and operate another company with this account</span></span></button></div>
+      {/* eslint-disable-next-line @next/next/no-location-assign-relative-destination -- The editor navigation guard requires full-document entry so Back crosses a document boundary. */}
+      <div className="border-t p-2"><button type="button" onClick={() => { if (!requestWorkspaceExit()) return; setOpen(false); window.location.assign("/onboarding?new=1"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold hover:bg-neutral-50"><span className="flex size-9 items-center justify-center rounded-lg border bg-white"><Plus className="size-4" /></span><span><span className="block">Create company workspace</span><span className="mt-0.5 block text-xs font-normal text-neutral-400">Own and operate another company with this account</span></span></button></div>
       {error ? <div className="border-t bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div> : null}
     </div> : null}
   </div>;

@@ -1,0 +1,29 @@
+.inventory-workspace { color:#243e32; }
+.inventory-workspace-header { display:flex; justify-content:space-between; align-items:center; gap:24px; margin-bottom:22px; }
+.inventory-workspace-header h1 { font-size:30px; font-weight:600; letter-spacing:-.9px; line-height:1.2; margin-top:7px; }
+.inventory-workspace-header>div>p:last-child { font-size:12px; color:#60715b; line-height:1.75; margin-top:9px; max-width:600px; }
+.inventory-header-actions { display:flex; gap:8px; flex-wrap:wrap; flex-shrink:0; }
+.inventory-section-nav { display:flex; align-items:center; gap:3px; overflow-x:auto; border-block:1px solid #dce5d5; margin:0 0 24px; padding:6px 0; scrollbar-width:thin; }
+.inventory-section-nav button { flex-shrink:0; min-height:44px; padding:10px 11px; display:flex; align-items:center; gap:7px; font-size:11px; border-radius:6px; color:#62755c; }
+.inventory-section-nav svg { width:14px; height:14px; }
+.inventory-section-nav [aria-current] { background:#e9f0df; color:#304e34; font-weight:600; }
+.inventory-section-nav button:hover { background:#f0f4e9; }
+.inventory-section-nav button:focus-visible,.inventory-back:focus-visible { outline:2px solid #53754b; outline-offset:2px; }
+.inventory-document-context { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-bottom:19px; }
+.inventory-document-context>span { font-size:10px; color:#78836e; text-transform:capitalize; }
+.inventory-back { display:inline-flex; align-items:center; gap:7px; min-height:44px; font-size:11px; color:#566d4c; }
+.inventory-back svg { width:15px; height:15px; }
+.inventory-workspace-state { border:1px solid #dce5d5; border-radius:9px; padding:52px 24px; text-align:center; background:#fff; }
+.inventory-workspace-state>svg { width:29px; height:29px; color:#7b916e; margin:0 auto 15px; }
+.inventory-workspace-state h2 { font-size:17px; font-weight:600; }
+.inventory-workspace-state p { color:#687a5d; font-size:12px; line-height:1.8; margin:9px auto 0; max-width:560px; }
+.inventory-workspace .relationship-notice { margin-bottom:16px; }
+@media(max-width:1023px) { .inventory-workspace-header { align-items:flex-start; flex-direction:column; gap:16px; }.inventory-section-nav { margin-bottom:20px; }.inventory-header-actions { flex-shrink:1; } }
+@media(max-width:639px) { .inventory-workspace-header h1 { font-size:27px; }.inventory-workspace-header { margin-bottom:18px; }.inventory-header-actions { width:100%; }.inventory-header-actions>.inventory-primary { flex:1 1 100%; }.inventory-header-actions>.inventory-secondary { flex:1; justify-content:center; }.inventory-section-nav { margin-inline:-16px; padding-inline:16px; }.inventory-document-context { margin-bottom:10px; }.inventory-document-context>span { font-size:9px; max-width:40%; text-align:right; }.inventory-workspace-state { padding:35px 18px; } }
+
+/* Inside a register, keep the module context short so records lead the screen. */
+.inventory-workspace-header-compact { gap:12px; margin-bottom:14px; }
+.inventory-workspace-header-compact .inventory-eyebrow, .inventory-workspace-header-compact>div>p:last-child { display:none; }
+.inventory-workspace-header-compact h1 { margin:0; font-size:22px; letter-spacing:-.5px; }
+@media(max-width:1023px) { .inventory-workspace-header-compact { flex-direction:row; align-items:center; } }
+@media(max-width:639px) { .inventory-workspace-header-compact .inventory-header-actions { width:auto; }.inventory-workspace-header-compact h1 { font-size:20px; }.inventory-workspace-header-compact+.inventory-section-nav { margin-bottom:16px; } }

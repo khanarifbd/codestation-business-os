@@ -1,0 +1,37 @@
+.ci-content { display:grid; gap:17px; min-width:0; }
+.ci-content * { box-sizing:border-box; }
+.ci-content :is(button,input):focus-visible { outline:3px solid #527c65; outline-offset:3px; }
+.ci-loading { display:flex; align-items:center; gap:10px; min-height:90px; color:#56645b; font-size:13px; }
+.ci-invitation { border:1px solid #d7e1d8; background:#f8faf6; border-radius:12px; overflow:hidden; }
+.ci-company { display:flex; align-items:flex-start; gap:11px; padding:16px 18px; border-bottom:1px solid #e0e7dd; }
+.ci-company > svg { flex-shrink:0; margin-top:3px; color:#52755b; }
+.ci-company span { display:block; font-size:10px; letter-spacing:.1em; font-weight:650; text-transform:uppercase; color:#617063; }
+.ci-company h2 { font-size:16px; font-weight:650; color:#26372b; margin:5px 0 0; overflow-wrap:anywhere; }
+.ci-invitation dl { display:grid; grid-template-columns:1fr; gap:13px; margin:0; padding:16px 18px; }
+.ci-invitation dl > div { display:grid; grid-template-columns:110px minmax(0,1fr); gap:12px; align-items:start; }
+.ci-invitation dt { display:flex; align-items:center; gap:5px; font-size:11px; color:#607061; }
+.ci-invitation dd { margin:0; font-size:12px; font-weight:550; color:#243529; overflow-wrap:anywhere; }
+.ci-invitation dd small { display:block; font-size:10px; font-weight:400; margin-top:3px; color:#607061; }
+.ci-guidance, .ci-footer-note { margin:0; font-size:12px; line-height:1.8; color:#566359; }
+.ci-form, .ci-fields { display:grid; gap:16px; min-width:0; }
+.ci-field { min-width:0; }
+.ci-field > label { display:block; font-size:12px; font-weight:650; color:#344038; margin-bottom:7px; }
+.ci-password { display:flex; position:relative; min-width:0; }
+.ci-password input { min-height:48px; width:100%; min-width:0; border:1px solid #cfd9cf; border-radius:8px; padding:10px 52px 10px 13px; background:white; color:#203027; font-size:14px; }
+.ci-password input::placeholder { color:#6b776e; }
+.ci-password button { position:absolute; top:2px; bottom:2px; right:2px; width:44px; min-height:44px; display:flex; align-items:center; justify-content:center; border:0; border-radius:6px; color:#5f7064; background:transparent; cursor:pointer; }
+.ci-password button:hover { background:#eef3eb; }
+.ci-content button:disabled, .ci-password input:disabled { cursor:not-allowed; opacity:.65; }
+.ci-caption { font-size:10px; line-height:1.7; color:#607061; margin:0; }
+.ci-secondary, .ci-sign-in { min-height:44px; display:inline-flex; justify-content:center; align-items:center; gap:8px; border:1px solid #c8d4c8; border-radius:8px; padding:10px 14px; background:white; color:#3e5f48; font-size:12px; font-weight:650; cursor:pointer; text-align:center; }
+.ci-sign-in { border-color:transparent; background:transparent; }
+.ci-secondary:hover, .ci-sign-in:hover { background:#f0f5eb; }
+.ci-success { padding:18px; border:1px solid #cfdccc; border-radius:12px; background:#f4f9ee; color:#3b5a39; }
+.ci-success h2 { font-size:17px; font-weight:650; margin:10px 0; }
+.ci-success p { font-size:12px; line-height:1.8; margin:8px 0 0; overflow-wrap:anywhere; }
+.ci-footer-note { padding-top:13px; border-top:1px solid #e1e6df; font-size:10px; }
+@media(max-width:390px) {
+ .ci-company, .ci-invitation dl { padding:14px; }
+ .ci-invitation dl > div { grid-template-columns:minmax(0,1fr); gap:4px; }
+ .ci-content { gap:15px; }
+}

@@ -55,6 +55,54 @@ def reconciliation_or_404(db: DbSession, org: str, reconciliation_id: str) -> Ba
     return row
 
 
+# BEGIN RECONCILIATION WRITE LOCKS
+# Every reconciliation writer locks account -> reconciliation. Discover only the
+# account ID before waiting; refresh ORM identities after locking. At PostgreSQL
+# READ COMMITTED this serializes the cooperating draft/period/selection checks.
+# These locks do not create idempotency or repair preexisting duplicate drafts.
+def _locked_account_or_404(db: DbSession, org: str, account_id: str) -> FinancialAccount:
+    row = db.scalar(
+        select(FinancialAccount)
+        .where(
+            FinancialAccount.id == account_id,
+            FinancialAccount.organization_id == org,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Financial account not found")
+    return row
+
+
+def _locked_reconciliation_or_404(
+    db: DbSession, org: str, reconciliation_id: str,
+) -> BankReconciliation:
+    account_id = db.scalar(
+        select(BankReconciliation.account_id).where(
+            BankReconciliation.id == reconciliation_id,
+            BankReconciliation.organization_id == org,
+        )
+    )
+    if account_id is None:
+        raise HTTPException(status_code=404, detail="Reconciliation not found")
+    _locked_account_or_404(db, org, account_id)
+    row = db.scalar(
+        select(BankReconciliation)
+        .where(
+            BankReconciliation.id == reconciliation_id,
+            BankReconciliation.organization_id == org,
+            BankReconciliation.account_id == account_id,
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Reconciliation not found")
+    return row
+# END RECONCILIATION WRITE LOCKS
+
+
 def cleared_balance(db: DbSession, row: BankReconciliation) -> Decimal:
     account = account_or_404(db, row.organization_id, row.account_id)
     selected = db.execute(
@@ -167,7 +215,7 @@ def create_reconciliation(
     db: DbSession,
     tenant: Manager,
 ):
-    account = account_or_404(db, tenant.organization_id, payload.account_id)
+    account = _locked_account_or_404(db, tenant.organization_id, payload.account_id)
     draft = db.scalar(
         select(BankReconciliation.id).where(
             BankReconciliation.organization_id == tenant.organization_id,
@@ -284,7 +332,7 @@ def select_transaction(
     db: DbSession,
     tenant: Manager,
 ):
-    row = reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
+    row = _locked_reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
     if row.status != "draft":
         raise HTTPException(status_code=409, detail="Finalized reconciliation cannot be changed")
     tx = db.scalar(
@@ -339,7 +387,7 @@ def unselect_transaction(
     db: DbSession,
     tenant: Manager,
 ):
-    row = reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
+    row = _locked_reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
     if row.status != "draft":
         raise HTTPException(status_code=409, detail="Finalized reconciliation cannot be changed")
     item = db.scalar(
@@ -371,7 +419,7 @@ def unselect_transaction(
 
 @router.post("/{reconciliation_id}/finalize", response_model=ReconciliationRead)
 def finalize(reconciliation_id: str, request: Request, db: DbSession, tenant: Manager):
-    row = reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
+    row = _locked_reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
     if row.status == "finalized":
         return row_json(db, row)
     refresh_totals(db, row)
@@ -415,16 +463,7 @@ def discard_reconciliation(
     db: DbSession,
     tenant: Manager,
 ):
-    row = db.scalar(
-        select(BankReconciliation)
-        .where(
-            BankReconciliation.id == reconciliation_id,
-            BankReconciliation.organization_id == tenant.organization_id,
-        )
-        .with_for_update()
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="Reconciliation not found")
+    row = _locked_reconciliation_or_404(db, tenant.organization_id, reconciliation_id)
     if row.status != "draft":
         raise HTTPException(status_code=409, detail="Finalized reconciliation cannot be discarded")
 

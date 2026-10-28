@@ -544,6 +544,7 @@ start_candidate() {
     --network "${NETWORK_NAME}" \
     --restart unless-stopped \
     -e INTERNAL_API_URL="http://${backend_name}:8000/api/v1" \
+    -e PUBLIC_APP_URL="$(env_value PUBLIC_APP_URL)" \
     -p "127.0.0.1:${frontend_port}:3000" \
     "${frontend_image}" >/dev/null
 

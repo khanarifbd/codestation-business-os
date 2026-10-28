@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   ArrowDownLeft,
@@ -41,6 +41,8 @@ import { BrandMark } from "@/components/brand-mark";
 import { useDashboardSession, type WorkspaceContext } from "@/components/dashboard-session-context";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { cn } from "@/lib/cn";
+import { requestWorkspaceExit } from "@/lib/workspace-navigation";
+import "@/components/dashboard/dashboard-design.css";
 
 type NavigationItem = {
   label: string;
@@ -170,7 +172,7 @@ function isFinanceItemActive(pathname: string, href: string) {
     return pathname.startsWith(href) || pathname.startsWith("/dashboard/finance/transfers");
   }
   if (href === "/dashboard/accounting/controls") {
-    return pathname.startsWith(href) || pathname.startsWith("/dashboard/finance/controls");
+    return pathname.startsWith(href) || pathname.startsWith("/dashboard/finance/controls") || pathname.startsWith("/dashboard/finance/auto-post");
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -203,7 +205,7 @@ function Navigation({
   const visibleFinanceItems = financeNavigation.filter((item) => hasAnyPermission(permissions, item.permissions));
 
   return (
-    <nav className="space-y-1" aria-label="Workspace navigation">
+    <nav className="ws-navigation space-y-1" aria-label="Workspace navigation">
       {visibleItems.map(({ label, icon: Icon, href }) => {
         if (label === "Finance & Accounts") {
           if (!visibleFinanceItems.length) return null;
@@ -212,9 +214,10 @@ function Navigation({
               <button
                 type="button"
                 aria-expanded={financeOpen}
+                data-active={financeActive || undefined}
                 onClick={() => setFinanceOpen((value) => !value)}
                 className={cn(
-                  "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
+                  "ws-navigation-item group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
                   financeActive
                     ? "bg-neutral-950 text-white shadow-sm"
                     : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950",
@@ -233,7 +236,7 @@ function Navigation({
               </button>
 
               {financeOpen ? (
-                <div className="ml-[1.35rem] mt-1.5 space-y-0.5 border-l border-neutral-200 pl-3">
+                <div className="ws-finance-navigation ml-[1.35rem] mt-1.5 space-y-0.5 border-l border-neutral-200 pl-3">
                   {visibleFinanceItems.map(({ label: childLabel, icon: ChildIcon, href: childHref }) => {
                     const childActive = isFinanceItemActive(pathname, childHref);
                     return (
@@ -272,7 +275,7 @@ function Navigation({
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
+              "ws-navigation-item group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
               active
                 ? "bg-neutral-950 text-white shadow-sm"
                 : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950",
@@ -308,7 +311,7 @@ function ProfileLink({
       href="/dashboard/profile"
       onClick={onNavigate}
       className={cn(
-        "flex items-center gap-3 rounded-xl border p-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
+        "ws-profile flex items-center gap-3 rounded-xl border p-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-1",
         active
           ? "border-neutral-950 bg-neutral-950 text-white"
           : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50",
@@ -356,7 +359,7 @@ function MobileBottomNavigation({
   return (
     <nav
       aria-label="Mobile primary navigation"
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-neutral-200/90 bg-white/95 shadow-[0_-8px_30px_rgba(0,0,0,0.04)] backdrop-blur-xl lg:hidden"
+      className="ws-bottom-nav fixed inset-x-0 bottom-0 z-40 border-t border-neutral-200/90 bg-white/95 shadow-[0_-8px_30px_rgba(0,0,0,0.04)] backdrop-blur-xl lg:hidden"
     >
       <div
         className="grid min-h-[62px] items-stretch px-1.5"
@@ -416,6 +419,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
   const { profile, tenant: workspaceContext } = useDashboardSession();
 
   useEffect(() => {
@@ -423,11 +427,53 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    if (!mobileOpen) return;
+    if (!mobileOpen || !drawerRef.current) return;
+    const drawer = drawerRef.current;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    const overlay = drawer.parentElement;
+    const background = Array.from(overlay?.parentElement?.children ?? [])
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== overlay)
+      .map((element) => ({ element, inert: element.inert }));
+    background.forEach(({ element }) => { element.inert = true; });
+    const focusable = () => Array.from(drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0 && !element.closest("[inert]"));
+    const focusFirst = () => (focusable()[0] ?? drawer).focus();
+    focusFirst();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileOpen(false);
+      } else if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first) { event.preventDefault(); drawer.focus(); }
+        else if (!drawer.contains(document.activeElement) || (!event.shiftKey && document.activeElement === last)) {
+          event.preventDefault(); first.focus();
+        } else if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+          event.preventDefault(); last.focus();
+        }
+      }
+    };
+    const focusin = (event: FocusEvent) => { if (!drawer.contains(event.target as Node)) focusFirst(); };
+    // A hidden desktop drawer must not retain modal focus/inert state after resize.
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const resized = () => { if (desktop.matches) setMobileOpen(false); };
+    document.addEventListener("keydown", keydown);
+    document.addEventListener("focusin", focusin);
+    desktop.addEventListener("change", resized);
+    resized();
     return () => {
+      document.removeEventListener("keydown", keydown);
+      document.removeEventListener("focusin", focusin);
+      desktop.removeEventListener("change", resized);
+      background.forEach(({ element, inert }) => { element.inert = inert; });
       document.body.style.overflow = previous;
+      if (opener?.isConnected && opener.getClientRects().length > 0) opener.focus();
     };
   }, [mobileOpen]);
 
@@ -498,6 +544,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }, [clientOnly, employeeSelfService, permissions]);
 
   async function logout() {
+    if (!requestWorkspaceExit()) return;
     await fetch("/api/auth/logout", { method: "POST" });
     router.replace("/login");
     router.refresh();
@@ -510,29 +557,29 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const navLabel = employeeSelfService ? "My workspace" : clientOnly ? "Client workspace" : "Workspace";
 
   return (
-    <div className="min-h-screen bg-[var(--app-canvas)] text-neutral-950 lg:flex">
-      <aside className="hidden h-screen w-[280px] shrink-0 border-r border-neutral-200/90 bg-white px-3 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:flex-col">
+    <div className="workspace-shell min-h-screen bg-[var(--app-canvas)] text-neutral-950 lg:flex">
+      <aside className="ws-sidebar hidden h-screen w-[280px] shrink-0 border-r border-neutral-200/90 bg-white px-3 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:flex-col">
         <div className="px-2">
-          <div className="flex items-center gap-3 px-1 py-2">
+          <div className="ws-brand flex items-center gap-3 px-1 py-2">
             <div className="flex size-11 items-center justify-center rounded-2xl border border-neutral-200 bg-white p-2.5 shadow-sm">
               <BrandMark className="h-full w-full object-contain" />
             </div>
             <div className="min-w-0">
               <p className="truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-neutral-400">CodeStation AI</p>
-              <h1 className="mt-0.5 truncate text-[17px] font-semibold tracking-tight">{portalLabel}</h1>
+              <p className="ws-brand-title mt-0.5 truncate text-[17px] font-semibold tracking-tight">{portalLabel}</p>
             </div>
           </div>
-          <div className="mt-3">
+          <div className="ws-switcher mt-3">
             <WorkspaceSwitcher />
           </div>
         </div>
 
-        <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-1 pb-4 [scrollbar-width:thin]">
+        <div className="ws-nav-scroll mt-5 min-h-0 flex-1 overflow-y-auto px-1 pb-4 [scrollbar-width:thin]">
           <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{navLabel}</p>
           <Navigation pathname={pathname} items={navigation} permissions={permissions} />
         </div>
 
-        <div className="space-y-2 border-t border-neutral-100 px-1 pt-3">
+        <div className="ws-sidebar-footer space-y-2 border-t border-neutral-100 px-1 pt-3">
           <ProfileLink profile={profile} active={profileActive} />
           <button
             type="button"
@@ -547,7 +594,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-neutral-200/90 bg-white/95 px-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] backdrop-blur-xl lg:hidden">
+      <div className="ws-mobile-header sticky top-0 z-40 flex h-16 items-center justify-between border-b border-neutral-200/90 bg-white/95 px-4 shadow-[0_1px_2px_rgba(0,0,0,0.02)] backdrop-blur-xl lg:hidden">
         <div className="flex min-w-0 items-center gap-2.5">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-white p-2 shadow-sm">
             <BrandMark className="h-full w-full object-contain" />
@@ -575,10 +622,12 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             aria-label="Close app drawer"
+            aria-hidden="true"
+            tabIndex={-1}
             onClick={() => setMobileOpen(false)}
             className="absolute inset-0 bg-black/35 backdrop-blur-[1px]"
           />
-          <aside className="absolute inset-y-0 left-0 flex w-[88vw] max-w-[390px] flex-col bg-white px-3 pb-4 pt-3 shadow-2xl">
+          <aside ref={drawerRef} role="dialog" aria-modal="true" aria-label="App navigation" tabIndex={-1} className="ws-drawer absolute inset-y-0 left-0 flex w-[88vw] max-w-[390px] flex-col bg-white px-3 pb-4 pt-3 shadow-2xl">
             <div className="flex items-center justify-between px-2 py-2">
               <div className="flex min-w-0 items-center gap-3">
                 <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-neutral-200 bg-white p-2 shadow-sm">
@@ -593,17 +642,17 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 type="button"
                 aria-label="Close app drawer"
                 onClick={() => setMobileOpen(false)}
-                className="flex size-9 items-center justify-center rounded-xl border border-neutral-200 bg-white"
+                className="flex size-11 items-center justify-center rounded-xl border border-neutral-200 bg-white"
               >
                 <X className="size-4" />
               </button>
             </div>
 
-            <div className="mt-2 px-2">
+            <div className="ws-switcher mt-2 px-2">
               <WorkspaceSwitcher />
             </div>
 
-            <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-1 pb-4">
+            <div className="ws-nav-scroll mt-5 min-h-0 flex-1 overflow-y-auto px-1 pb-4">
               <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-400">{navLabel}</p>
               <Navigation
                 pathname={pathname}
@@ -613,7 +662,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               />
             </div>
 
-            <div className="space-y-2 border-t border-neutral-100 px-1 pt-3">
+            <div className="ws-sidebar-footer space-y-2 border-t border-neutral-100 px-1 pt-3">
               <ProfileLink profile={profile} active={profileActive} onNavigate={() => setMobileOpen(false)} />
               <button
                 type="button"
@@ -632,10 +681,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
       <div
         className={cn(
-          "min-w-0 flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0",
+          "ws-main min-w-0 flex-1 pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0",
           pathname === "/dashboard" && "[&>main>div>aside]:!hidden [&>main>div]:!max-w-none",
         )}
       >
+        <div className="ws-context-bar"><span>{portalLabel}</span><span aria-hidden="true">/</span><strong>{workspaceContext?.organization.name ?? "Workspace"}</strong><span className="ws-context-role">{workspaceContext?.role_name ?? ""}</span></div>
         {children}
       </div>
 

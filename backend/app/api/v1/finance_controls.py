@@ -14,6 +14,7 @@ from app.models.crm import Client
 from app.models.expenses import Expense, ExpenseCategory, Vendor
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.finance_controls import AccountingPeriod, RecurringExpense
+from app.services.accounting_period_gate import acquire_accounting_period_gate, ensure_accounting_period_open
 from app.models.projects import Project
 from app.schemas.finance_controls import (
     AccountingPeriodClose,
@@ -28,6 +29,7 @@ from app.schemas.finance_controls import (
 )
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.finance_controls_safety import CREDIT_CARD_RECURRING_UNSUPPORTED, lock_accounting_period_creation
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance Controls"])
@@ -98,16 +100,7 @@ def _next_due(value: date, frequency: str, interval: int) -> date:
 
 
 def _ensure_open_period(db: DbSession, organization_id: str, finance_date: date) -> None:
-    closed = db.scalar(
-        select(AccountingPeriod.id).where(
-            AccountingPeriod.organization_id == organization_id,
-            AccountingPeriod.status == "closed",
-            AccountingPeriod.start_date <= finance_date,
-            AccountingPeriod.end_date >= finance_date,
-        )
-    )
-    if closed:
-        raise HTTPException(status_code=409, detail=f"Accounting period is closed for {finance_date.isoformat()}")
+    ensure_accounting_period_open(db, organization_id, finance_date)
 
 
 def _recurring_query(organization_id: str):
@@ -128,6 +121,13 @@ def _recurring_query(organization_id: str):
         .outerjoin(Project, Project.id == RecurringExpense.project_id)
         .where(RecurringExpense.organization_id == organization_id)
     )
+
+
+def _validate_recurring_tax(expense_amount: Decimal | None, tax_amount: Decimal | None) -> None:
+    if expense_amount is None or tax_amount is None:
+        raise HTTPException(status_code=400, detail="Expense amount and tax amount cannot be null")
+    if _money(tax_amount) > _money(expense_amount):
+        raise HTTPException(status_code=400, detail="Tax amount cannot exceed the expense amount")
 
 
 def _recurring_read(row) -> RecurringExpenseRead:
@@ -158,6 +158,9 @@ def _recurring_read(row) -> RecurringExpenseRead:
         reference=item.reference,
         notes=item.notes,
         is_active=item.is_active,
+        auto_post=item.auto_post,
+        auto_post_last_attempt_at=item.auto_post_last_attempt_at,
+        auto_post_last_error=item.auto_post_last_error,
         last_posted_expense_id=item.last_posted_expense_id,
         last_posted_at=item.last_posted_at,
         created_at=item.created_at,
@@ -283,6 +286,7 @@ def create_recurring_expense(
     db: DbSession,
     tenant: FinanceManager,
 ):
+    _validate_recurring_tax(payload.expense_amount, payload.tax_amount)
     if payload.end_date and payload.end_date < payload.next_due_date:
         raise HTTPException(status_code=400, detail="End date cannot be before the next due date")
     category = _validate_category(db, tenant.organization_id, payload.category_id)
@@ -351,6 +355,11 @@ def update_recurring_expense(
         "next_due_date": item.next_due_date.isoformat(),
     }
     changes = payload.model_dump(exclude_unset=True)
+    if "expense_amount" in changes or "tax_amount" in changes:
+        _validate_recurring_tax(
+            changes.get("expense_amount", item.expense_amount),
+            changes.get("tax_amount", item.tax_amount),
+        )
     next_category_id = changes.get("category_id", item.category_id)
     next_account_id = changes.get("account_id", item.account_id)
     next_vendor_id = changes.get("vendor_id", item.vendor_id)
@@ -418,10 +427,12 @@ def post_recurring_expense(
         select(FinancialAccount).where(
             FinancialAccount.id == recurring.account_id,
             FinancialAccount.organization_id == tenant.organization_id,
-        ).with_for_update()
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if account is None or not account.is_active:
         raise HTTPException(status_code=409, detail="Recurring expense account is inactive or unavailable")
+    if account.account_type == "credit_card":
+        raise HTTPException(status_code=409, detail=CREDIT_CARD_RECURRING_UNSUPPORTED)
     category = _validate_category(db, tenant.organization_id, recurring.category_id)
     _validate_vendor(db, tenant.organization_id, recurring.vendor_id)
     project, client, client_id = _validate_project_client(
@@ -429,6 +440,7 @@ def post_recurring_expense(
     )
 
     amount = _money(payload.expense_amount or recurring.expense_amount)
+    _validate_recurring_tax(amount, recurring.tax_amount)
     if account.currency == recurring.expense_currency:
         account_amount = amount
         exchange_rate = Decimal("1.00000000")
@@ -571,6 +583,7 @@ def create_accounting_period(
 ):
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="Period end date cannot be before start date")
+    lock_accounting_period_creation(db, tenant.organization_id)
     overlap = db.scalar(
         select(AccountingPeriod.id).where(
             AccountingPeriod.organization_id == tenant.organization_id,
@@ -620,11 +633,12 @@ def close_accounting_period(
     db: DbSession,
     tenant: FinanceManager,
 ):
+    acquire_accounting_period_gate(db, tenant.organization_id, exclusive=True)
     item = db.scalar(
         select(AccountingPeriod).where(
             AccountingPeriod.id == period_id,
             AccountingPeriod.organization_id == tenant.organization_id,
-        ).with_for_update()
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Accounting period not found")
@@ -667,11 +681,12 @@ def reopen_accounting_period(
     db: DbSession,
     tenant: FinanceManager,
 ):
+    acquire_accounting_period_gate(db, tenant.organization_id, exclusive=True)
     item = db.scalar(
         select(AccountingPeriod).where(
             AccountingPeriod.id == period_id,
             AccountingPeriod.organization_id == tenant.organization_id,
-        ).with_for_update()
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Accounting period not found")

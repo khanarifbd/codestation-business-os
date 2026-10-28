@@ -8,9 +8,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate, ensure_accounting_period_open
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
-from app.models.finance_controls import AccountingPeriod
 from app.schemas.accounting import (
     JournalEntryCreate,
     JournalEntryRead,
@@ -50,16 +50,7 @@ def _clean(value: str | None) -> str | None:
 
 
 def _ensure_open_period(db: DbSession, organization_id: str, entry_date) -> None:
-    closed = db.scalar(
-        select(AccountingPeriod.id).where(
-            AccountingPeriod.organization_id == organization_id,
-            AccountingPeriod.status == "closed",
-            AccountingPeriod.start_date <= entry_date,
-            AccountingPeriod.end_date >= entry_date,
-        )
-    )
-    if closed:
-        raise HTTPException(status_code=409, detail=f"Accounting period is closed for {entry_date.isoformat()}")
+    ensure_accounting_period_open(db, organization_id, entry_date)
 
 
 def _validate_parent(db: DbSession, organization_id: str, parent_id: str | None, category: str, account_id: str | None = None) -> None:
@@ -157,6 +148,8 @@ def get_journal(entry_id: str, db: DbSession, tenant: AccountingViewer):
 
 @router.post("/journals", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
 def create_manual_journal(payload: JournalEntryCreate, request: Request, db: DbSession, tenant: AccountingManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization)
     _ensure_open_period(db, tenant.organization_id, payload.entry_date)
     functional_period = assert_current_functional_posting_period(db, tenant.organization_id, payload.entry_date)
     requested_ids = {line.ledger_account_id for line in payload.lines}
@@ -214,7 +207,9 @@ def create_manual_journal(payload: JournalEntryCreate, request: Request, db: DbS
 
 @router.post("/journals/{entry_id}/reverse", response_model=JournalEntryRead, status_code=status.HTTP_201_CREATED)
 def reverse_journal(entry_id: str, request: Request, db: DbSession, tenant: AccountingManager):
-    original = db.scalar(select(JournalEntry).where(JournalEntry.id == entry_id, JournalEntry.organization_id == tenant.organization_id).with_for_update())
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization)
+    original = db.scalar(select(JournalEntry).where(JournalEntry.id == entry_id, JournalEntry.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if original is None: raise HTTPException(status_code=404, detail="Journal entry not found")
     if original.source_type == "functional_currency_transition": raise HTTPException(status_code=409, detail="Functional-currency transition journals cannot be reversed as ordinary journals")
     if original.source_type != "manual":

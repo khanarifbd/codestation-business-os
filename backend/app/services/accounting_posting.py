@@ -10,8 +10,8 @@ from sqlalchemy import select
 
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount
-from app.models.finance_controls import AccountingPeriod
 from app.services.exchange_rates import resolve_exchange_rate
+from app.services.accounting_period_gate import ensure_accounting_period_open
 from app.services.functional_currency import assert_current_functional_posting_period
 
 MONEY = Decimal("0.01")
@@ -211,9 +211,9 @@ def _normalize_implicit_foreign_lines(
 
 
 def ensure_open_period(db, organization_id: str, entry_date: date) -> None:
-    closed = db.scalar(select(AccountingPeriod.id).where(AccountingPeriod.organization_id == organization_id, AccountingPeriod.status == "closed", AccountingPeriod.start_date <= entry_date, AccountingPeriod.end_date >= entry_date))
-    if closed:
-        raise HTTPException(status_code=409, detail=f"Accounting period is closed for {entry_date.isoformat()}")
+    # Compatibility name retained for all existing posting services. Acquisition
+    # belongs at the transaction boundary, never as a late leaf fallback.
+    ensure_accounting_period_open(db, organization_id, entry_date)
 
 
 def system_account(db, organization_id: str, system_key: str) -> LedgerAccount:

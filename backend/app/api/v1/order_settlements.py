@@ -3,12 +3,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.db.session import defer_commits
 from app.schemas.order_settlements import (
     OrderSettlementCreate,
     OrderSettlementMeta,
     OrderSettlementRead,
     OrderSettlementState,
 )
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.order_commercial import staged_billing_enabled
 from app.services.order_settlement import settle_order, settlement_meta, settlement_state
 from app.tenancy.context import TenantContext
@@ -62,14 +64,18 @@ def create_order_settlement(
     db: DbSession,
     tenant: FinanceManager,
 ) -> OrderSettlementRead:
+    acquire_accounting_period_gate(db, tenant.organization_id)
     if staged_billing_enabled(db, tenant.organization_id, order_id):
         raise HTTPException(status_code=409, detail=_staged_reason())
-    return settle_order(
-        db,
-        organization_id=tenant.organization_id,
-        user_id=tenant.user_id,
-        organization_timezone=tenant.organization.timezone,
-        order_id=order_id,
-        payload=payload,
-        request=request,
-    )
+    with defer_commits(db):
+        result = settle_order(
+            db,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            organization_timezone=tenant.organization.timezone,
+            order_id=order_id,
+            payload=payload,
+            request=request,
+        )
+    db.commit()
+    return result

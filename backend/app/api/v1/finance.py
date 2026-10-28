@@ -46,6 +46,7 @@ from app.services.payment_gateway_mapping import validate_gateway_mapping
 from app.services.order_commercial import staged_billing_enabled
 from app.services.sales import calculate_line, calculate_totals
 from app.services.sales_catalog import resolve_sales_line
+from app.services.financial_account_constraints import ensure_payment_receipt_account_supported
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
@@ -425,6 +426,29 @@ def _existing_source_invoice(db: DbSession, organization_id: str, *, order_id: s
 
 
 def _create_invoice_from_order(order: Order, project_id: str | None, request: Request, db: DbSession, tenant: TenantContext, payment_details: InvoicePaymentInstructionsUpdate | None = None) -> InvoiceDetail:
+    # All legacy order/project callers serialize on the same source row. Refresh
+    # the preloaded ORM instance after waiting so status and amounts are current.
+    # NO KEY UPDATE also permits unrelated child-row foreign-key references.
+    order = db.scalar(
+        select(Order)
+        .where(Order.id == order.id, Order.organization_id == tenant.organization_id)
+        .with_for_update(key_share=True)
+        .execution_options(populate_existing=True)
+    )
+    if order is None:
+        raise HTTPException(status_code=409, detail="Source order is no longer available")
+    if project_id:
+        project = db.scalar(
+            select(Project)
+            .where(Project.id == project_id, Project.organization_id == tenant.organization_id)
+            .execution_options(populate_existing=True)
+        )
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if project.order_id != order.id:
+            raise HTTPException(status_code=409, detail="Project source order has changed; reload before invoicing")
+        if project.status == "cancelled":
+            raise HTTPException(status_code=409, detail="Cancelled projects cannot be invoiced")
     if order.status == "cancelled":
         raise HTTPException(status_code=409, detail="Cancelled orders cannot be invoiced")
     if staged_billing_enabled(db, tenant.organization_id, order.id):
@@ -733,8 +757,6 @@ def create_invoice_from_project(project_id: str, request: Request, db: DbSession
     project = db.scalar(select(Project).where(Project.id == project_id, Project.organization_id == tenant.organization_id))
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    if project.status == "cancelled":
-        raise HTTPException(status_code=409, detail="Cancelled projects cannot be invoiced")
     order = db.scalar(select(Order).where(Order.id == project.order_id, Order.organization_id == tenant.organization_id))
     if order is None:
         raise HTTPException(status_code=409, detail="Project source order is not available")
@@ -878,9 +900,10 @@ def record_payment(payload: PaymentCreate, request: Request, db: DbSession, tena
         raise HTTPException(status_code=409, detail=f"Cannot record payment against a {invoice.status} invoice")
     if payload.invoice_amount > invoice.balance_due:
         raise HTTPException(status_code=409, detail=f"Payment exceeds invoice balance {invoice.balance_due} {invoice.currency}")
-    account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == payload.account_id, FinancialAccount.organization_id == tenant.organization_id).with_for_update())
+    account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == payload.account_id, FinancialAccount.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if account is None or not account.is_active:
         raise HTTPException(status_code=404, detail="Active financial account not found")
+    ensure_payment_receipt_account_supported(account.account_type)
     if account.currency == invoice.currency:
         exchange_rate = Decimal("1")
     else:
@@ -960,3 +983,18 @@ def record_payment(payload: PaymentCreate, request: Request, db: DbSession, tena
     db.commit()
     db.refresh(payment)
     return _payment_read(db, payment)
+
+
+# BEGIN MONEY IN RECEIPT READ
+@router.get("/payments/{payment_id}", response_model=PaymentRead)
+def get_payment(payment_id: str, db: DbSession, tenant: FinanceViewer):
+    item = db.scalar(
+        select(Payment).where(
+            Payment.organization_id == tenant.organization_id,
+            Payment.id == payment_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return _payment_read(db, item)
+# END MONEY IN RECEIPT READ

@@ -847,6 +847,7 @@ def change_quotation_status(
         select(Quotation)
         .where(Quotation.id == quotation_id, Quotation.organization_id == tenant.organization_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if quotation is None:
         raise HTTPException(status_code=404, detail="Quotation not found")

@@ -28,6 +28,14 @@ class SalaryProfileUpdate(BaseModel):
     is_active: bool | None = None
     notes: str | None = None
 
+    @model_validator(mode="after")
+    def validate_non_nullable_updates(self):
+        # Omitted fields are unchanged; explicit null cannot clear required data.
+        for field in ("base_salary", "default_allowances", "default_deductions", "is_active"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+
 
 class SalaryProfileRead(BaseModel):
     id: str
@@ -76,16 +84,27 @@ class PayrollPeriodRead(BaseModel):
 class PayrollRunCreate(BaseModel):
     period_id: str
     currency: str = Field(min_length=3, max_length=3)
+    expected_calculation_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class PayrollEntryUpdate(BaseModel):
+    base_salary: Decimal | None = Field(default=None, ge=0, max_digits=18, decimal_places=2, allow_inf_nan=False)
+    adjustment_reason: str | None = Field(default=None, max_length=2000)
     allowances: list[PayrollComponent] | None = None
     deductions: list[PayrollComponent] | None = None
     tax_amount: Decimal | None = Field(default=None, ge=0)
     notes: str | None = None
 
+    @model_validator(mode="after")
+    def validate_base_override(self):
+        if "base_salary" in self.model_fields_set and self.base_salary is None:
+            raise ValueError("base_salary cannot be null")
+        return self
+
 
 class PayrollEntryRead(BaseModel):
+    calculation_snapshot: dict | None = None
+    adjustments: list[dict] = Field(default_factory=list)
     id: str
     employee_id: str
     employee_code: str
@@ -103,6 +122,10 @@ class PayrollEntryRead(BaseModel):
 
 
 class PayrollRunRead(BaseModel):
+    policy_version_id: str | None = None
+    calculation_engine_version: str | None = None
+    calculation_hash: str | None = None
+    calculation_context: dict | None = None
     id: str
     run_number: str
     period_id: str

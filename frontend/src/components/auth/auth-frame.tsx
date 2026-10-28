@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight, Check, Globe2, ShieldCheck } from "lucide-react";
 
 import { BrandMark } from "@/components/brand-mark";
+import { LoginFrame, type AuthFrameVariant } from "@/components/auth/login-frame";
 
 export function AuthFrame({
   eyebrow,
@@ -10,6 +11,7 @@ export function AuthFrame({
   asideTitle,
   asideDescription,
   children,
+  variant = "default",
 }: {
   eyebrow: string;
   title: string;
@@ -17,7 +19,11 @@ export function AuthFrame({
   asideTitle: string;
   asideDescription: string;
   children: React.ReactNode;
+  variant?: "default" | AuthFrameVariant;
 }) {
+  if (variant !== "default") {
+    return <LoginFrame variant={variant} eyebrow={eyebrow} title={title} description={description}>{children}</LoginFrame>;
+  }
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#f5f5f3] px-4 py-4 text-neutral-950 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_10%,rgba(255,255,255,0.95),transparent_28%),radial-gradient(circle_at_88%_90%,rgba(228,228,226,0.9),transparent_30%)]" />

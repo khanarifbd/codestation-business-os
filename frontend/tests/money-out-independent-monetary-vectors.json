@@ -1,0 +1,427 @@
+{
+  "result": "PASS",
+  "schema_numeric_string_parity_vectors": [
+    {
+      "expense_amount": "0.01",
+      "account_amount": null,
+      "tax_amount": "0.00"
+    },
+    {
+      "expense_amount": "110.00",
+      "account_amount": "120.00",
+      "tax_amount": "10.00"
+    },
+    {
+      "expense_amount": "1000000000000.00",
+      "account_amount": null,
+      "tax_amount": "0.00"
+    },
+    {
+      "expense_amount": "999999999999.99",
+      "account_amount": "999999999999.99",
+      "tax_amount": "0.01"
+    },
+    {
+      "expense_amount": "0.29",
+      "account_amount": "0.31",
+      "tax_amount": "0.01"
+    }
+  ],
+  "schema_rejected_bounds": [
+    {
+      "field": "expense_amount",
+      "rejected": "0"
+    },
+    {
+      "field": "expense_amount",
+      "rejected": "-0.01"
+    },
+    {
+      "field": "expense_amount",
+      "rejected": "1000000000000.01"
+    },
+    {
+      "field": "account_amount",
+      "rejected": "0"
+    },
+    {
+      "field": "account_amount",
+      "rejected": "1000000000000.01"
+    },
+    {
+      "field": "tax_amount",
+      "rejected": "-0.01"
+    },
+    {
+      "field": "tax_amount",
+      "rejected": "1000000000000.01"
+    }
+  ],
+  "actual_financial_block_vectors": [
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "110.00",
+        "account_amount": null,
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "10.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "USD",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "110.00",
+        "tax_amount": "10.00",
+        "account_amount": "110.00",
+        "exchange_rate": "1.00000000",
+        "profitability_currency": "USD",
+        "profitability_amount": "110.00",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "0.01",
+        "account_amount": null,
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "0.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "USD",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "0.01",
+        "tax_amount": "0.00",
+        "account_amount": "0.01",
+        "exchange_rate": "1.00000000",
+        "profitability_currency": "USD",
+        "profitability_amount": "0.01",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "1000000000000.00",
+        "account_amount": null,
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "0.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "USD",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "1000000000000.00",
+        "tax_amount": "0.00",
+        "account_amount": "1000000000000.00",
+        "exchange_rate": "1.00000000",
+        "profitability_currency": "USD",
+        "profitability_amount": "1000000000000.00",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "110.00",
+        "account_amount": "120.00",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "10.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "EUR",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "110.00",
+        "tax_amount": "10.00",
+        "account_amount": "120.00",
+        "exchange_rate": "1.09090909",
+        "profitability_currency": "USD",
+        "profitability_amount": "110.00",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "3.00",
+        "account_amount": "1.00",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "0.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "EUR",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "3.00",
+        "tax_amount": "0.00",
+        "account_amount": "1.00",
+        "exchange_rate": "0.33333333",
+        "profitability_currency": "USD",
+        "profitability_amount": "3.00",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "0.03",
+        "account_amount": "0.01",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "0.01",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "EUR",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "0.03",
+        "tax_amount": "0.01",
+        "account_amount": "0.01",
+        "exchange_rate": "0.33333333",
+        "profitability_currency": "USD",
+        "profitability_amount": "0.03",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "128.00",
+        "account_amount": "1.00",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "0.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "EUR",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "128.00",
+        "tax_amount": "0.00",
+        "account_amount": "1.00",
+        "exchange_rate": "0.00781250",
+        "profitability_currency": "USD",
+        "profitability_amount": "128.00",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "110.005",
+        "account_amount": "120.005",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "10.005",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "EUR",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "110.01",
+        "tax_amount": "10.01",
+        "account_amount": "120.01",
+        "exchange_rate": "1.09090083",
+        "profitability_currency": "USD",
+        "profitability_amount": "110.01",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "110.00",
+        "account_amount": "999.00",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "10.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "USD",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "110.00",
+        "tax_amount": "10.00",
+        "account_amount": "110.00",
+        "exchange_rate": "1.00000000",
+        "profitability_currency": "USD",
+        "profitability_amount": "110.00",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    },
+    {
+      "request": {
+        "description": "Synthetic expense",
+        "category_id": "category",
+        "account_id": "account",
+        "vendor_id": null,
+        "client_id": null,
+        "project_id": null,
+        "order_id": null,
+        "invoice_id": null,
+        "payment_id": null,
+        "expense_date": null,
+        "expense_currency": "USD",
+        "expense_amount": "999999999999.99",
+        "account_amount": "999999999999.98",
+        "exchange_rate": null,
+        "profitability_amount": null,
+        "profitability_exchange_rate": null,
+        "tax_amount": "0.00",
+        "payment_method": "bank_transfer",
+        "reference": null,
+        "notes": null
+      },
+      "account_currency": "EUR",
+      "result": {
+        "expense_currency": "USD",
+        "expense_amount": "999999999999.99",
+        "tax_amount": "0.00",
+        "account_amount": "999999999999.98",
+        "exchange_rate": "1.00000000",
+        "profitability_currency": "USD",
+        "profitability_amount": "999999999999.99",
+        "profitability_exchange_rate": "1.00000000"
+      }
+    }
+  ],
+  "rounded_tax_exceeds_expense_rejected400": true,
+  "existing_storage_limit_observation": {
+    "request": {
+      "expense_amount": "0.01",
+      "account_amount": "1000000000000.00"
+    },
+    "computed_exchange_rate": "100000000000000.00000000",
+    "declared_storage": "Numeric(18,8), maximum9999999999.99999999",
+    "classification": "Valid field maxima can produce a derived rate outside storage range. Source-only observation, not executed persistence failure; no backend fix or claim of PG validation."
+  },
+  "source_sha256": {
+    "app/schemas/expenses.py": "dbbb34c958ecd8ae83983cae45c9e16bd8bfb47ceee9800cec146edeef7600e6",
+    "app/api/v1/finance_expenses.py": "6098ca1cbbb397ef53c49aa585f2bde058a7b38744d6a627b04218bcb9b9fc4d"
+  },
+  "scope": "Actual Pydantic ExpenseCreate class, unchanged pure financial block and actual helpers executed; independent Fraction HALF_UP oracle. No application/config import, database, HTTP request, server, provider or environment read."
+}

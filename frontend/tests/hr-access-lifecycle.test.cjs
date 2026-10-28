@@ -1,0 +1,54 @@
+/* Actual provider + keyed child lifecycle. Separate layout/passive phases.
+ * Deterministic hook host, not React DOM/browser or live authentication proof.
+ * Direct enabled toggles are defensive component cases: TenantAreaGuard normally
+ * removes this subtree when dashboard loading or tenant readiness changes.
+ */
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const {sourceLoader}=require('./reconciliation-harness.cjs');
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
+const response=(body,status=200)=>({ok:status>=200&&status<300,status,json:async()=>body});
+const access={can_view:true,can_manage:true,can_self:false,can_view_people:true,can_manage_people:false,can_invite_employees:false,can_manage_structure:false,is_employee:false,role_name:'Synthetic manager',timezone:'Asia/Dhaka',currency:'BDT',landing:'overview'};
+function harness(){
+ const calls=[],navigation=[],instances=[],retired=[];let current=null,rendering=null,index=0,value=null,dirty=true,enabledOverride;
+ const session={tenant:{organization:{id:'company-a'},membership_id:'member-a',role_id:'role-a',status:'active',permissions:['hr.view']},profile:{email:'synthetic@example.invalid'},loading:false};
+ let respond=()=>response(access);
+ const same=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
+ function effect(kind,fn,deps){const i=index++,old=rendering.slots[i];if(!old||!same(old.deps,deps)){rendering[kind].set(i,{fn,deps});}}
+ const hooks={
+  createContext:()=>({Provider:'HRContextProvider'}),useContext:()=>value,
+  useState(initial){const owner=rendering,i=index++;if(!owner.slots[i])owner.slots[i]={value:typeof initial==='function'?initial():initial};return[owner.slots[i].value,next=>{if(!owner.alive)return;const result=typeof next==='function'?next(owner.slots[i].value):next;if(!Object.is(owner.slots[i].value,result)){owner.slots[i].value=result;dirty=true;}}];},
+  useRef(initial){return rendering.slots[index++]||=({current:initial});},
+  useMemo(fn,deps){const i=index++;if(!rendering.slots[i]||!same(rendering.slots[i].deps,deps))rendering.slots[i]={deps,value:fn()};return rendering.slots[i].value;},
+  useLayoutEffect(fn,deps){effect('layouts',fn,deps);},useEffect(fn,deps){effect('passives',fn,deps);},
+ };
+ const router={replace:href=>navigation.push(href)};
+ const loader=sourceLoader({react:hooks,'react/jsx-runtime':{jsx:(type,props,key)=>({type,props,key}),jsxs:(type,props,key)=>({type,props,key})},'next/navigation':{useRouter:()=>router},'@/components/dashboard-session-context':{useDashboardSession:()=>session}});
+ const Provider=loader.load('src/components/hr-access-context.tsx').HRAccessProvider;
+ const originalFetch=global.fetch;global.fetch=(url,init)=>{calls.push({url,init});return Promise.resolve(respond(url,init));};
+ function layoutUnmount(instance=current){if(!instance||!instance.alive)return;instance.alive=false;for(const slot of instance.slots)if(slot?.kind==='layouts')slot.cleanup?.();instance.layouts.clear();instance.passives.clear();retired.push(instance);}
+ function commit(instance,kind){const work=[...instance[kind]];instance[kind].clear();for(const[i,item]of work){instance.slots[i]?.cleanup?.();instance.slots[i]={kind,deps:item.deps,cleanup:item.fn()};}}
+ function render(patch){if(patch)Object.assign(session,patch);dirty=false;const element=Provider({children:'Synthetic child'});if(!current||current.key!==element.key||!current.alive){layoutUnmount();current={key:element.key,type:element.type,slots:[],layouts:new Map(),passives:new Map(),alive:true};instances.push(current);}rendering=current;index=0;const result=current.type({...element.props,...(enabledOverride===undefined?{}:{enabled:enabledOverride})});value=result.props.value;rendering=null;commit(current,'layouts');return value;}
+ function passiveCleanup(){while(retired.length){const old=retired.shift();for(const slot of old.slots)if(slot?.kind==='passives'){slot.cleanup?.();slot.cleanup=null;}}}
+ function passive(){passiveCleanup();if(current?.alive)commit(current,'passives');}
+ async function flush(){for(let i=0;i<20;i++){if(dirty||!value)render();passive();await tick();await tick();if(!dirty&&!current.passives.size)return value;}throw Error('HR lifecycle did not settle');}
+ return{session,calls,navigation,instances,render,flush,passive,passiveCleanup,layoutUnmount,value:()=>value,respond:fn=>{respond=fn;},enabled:v=>{enabledOverride=v;},switchCompany:id=>render({tenant:{...session.tenant,organization:{id}}}),cleanup(){layoutUnmount();passiveCleanup();global.fetch=originalFetch;}};
+}
+function check(name,fn){test(name,async()=>{const h=harness();try{await fn(h);}finally{h.cleanup();}});}
+check('current success preserves the exact public context fields and no-store request',async h=>{await h.flush();assert.deepEqual(h.value(),{access,loading:false,error:null});assert.deepEqual(Object.keys(h.value()).sort(),['access','error','loading']);assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'/api/hr/access');assert.equal(h.calls[0].init.cache,'no-store');});
+check('current 401 remains authoritative without parsing its body',async h=>{let parsed=0;h.respond(()=>({ok:false,status:401,json:async()=>{parsed++;return{};}}));await h.flush();assert.deepEqual(h.navigation,['/login']);assert.equal(parsed,0);assert.deepEqual(h.value(),{access:null,loading:false,error:'Authentication required'});});
+check('layout-unmounted old401 cannot navigate before passive cleanup',async h=>{const pending=deferred();h.respond(()=>pending.promise);h.render();h.passive();const signal=h.calls[0].init.signal;h.layoutUnmount();assert.equal(signal.aborted,false);pending.resolve(response({},401));await tick();await tick();assert.deepEqual(h.navigation,[]);h.passiveCleanup();assert.equal(signal.aborted,true);});
+check('keyed company commit invalidates old401 before passive cleanup',async h=>{const pending=deferred();h.respond(()=>pending.promise);h.render();h.passive();h.switchCompany('company-b');assert.deepEqual(h.value(),{access:null,loading:true,error:null});pending.resolve(response({},401));await tick();await tick();assert.deepEqual(h.navigation,[]);});
+check('keyed company commit cannot display old200 capabilities',async h=>{const pending=deferred();h.respond(()=>pending.promise);h.render();h.passive();h.switchCompany('company-b');pending.resolve(response(access));await tick();await tick();assert.deepEqual(h.value(),{access:null,loading:true,error:null});h.respond(()=>response({...access,can_manage:false}));await h.flush();assert.equal(h.value().access.can_manage,false);});
+check('body-pending old200 is rejected after layout unmount',async h=>{const body=deferred();let parsing=0;h.respond(()=>({ok:true,status:200,json:()=>{parsing++;return body.promise;}}));h.render();h.passive();await tick();assert.equal(parsing,1);h.switchCompany('company-b');body.resolve(access);await tick();await tick();assert.deepEqual(h.value(),{access:null,loading:true,error:null});assert.deepEqual(h.navigation,[]);});
+check('body-pending olderror cannot install error in the next owner',async h=>{const body=deferred();h.respond(()=>({ok:false,status:403,json:()=>body.promise}));h.render();h.passive();await tick();h.switchCompany('company-b');body.resolve({detail:'Old owner denial'});await tick();await tick();assert.deepEqual(h.value(),{access:null,loading:true,error:null});});
+check('A to B to A uses a fresh owner even when the first key returns',async h=>{const first=deferred();h.respond(()=>first.promise);h.render();h.passive();const firstKey=h.instances[0].key;h.switchCompany('company-b');h.switchCompany('company-a');assert.equal(h.instances[2].key,firstKey);assert.notEqual(h.instances[2],h.instances[0]);first.resolve(response({},401));await tick();await tick();assert.deepEqual(h.navigation,[]);assert.deepEqual(h.value(),{access:null,loading:true,error:null});h.respond(()=>response({...access,role_name:'Fresh A'}));await h.flush();assert.equal(h.value().access.role_name,'Fresh A');});
+check('direct disabled component masks prior access without changing public fields',async h=>{await h.flush();h.enabled(false);h.render();assert.deepEqual(h.value(),{access:null,loading:true,error:null});h.passive();assert.equal(h.calls.length,1);});
+check('direct disabled to enabled transition cannot revive a prior receipt',async h=>{await h.flush();h.enabled(false);h.render();h.passive();h.enabled(true);h.render();assert.deepEqual(h.value(),{access:null,loading:true,error:null});const body=deferred();h.respond(()=>body.promise);h.passive();assert.equal(h.calls.length,2);assert.equal(h.value().access,null);body.resolve(response({...access,can_manage:false}));await h.flush();assert.equal(h.value().access.can_manage,false);});
+check('direct disable invalidates pending401 before passive abort',async h=>{const pending=deferred();h.respond(()=>pending.promise);h.render();h.passive();h.enabled(false);h.render();assert.equal(h.calls[0].init.signal.aborted,false);pending.resolve(response({},401));await tick();await tick();assert.deepEqual(h.navigation,[]);assert.equal(h.value().access,null);});
+check('disabled component does not fetch until enabled',async h=>{h.enabled(false);await h.flush();assert.equal(h.calls.length,0);h.enabled(true);h.render();await h.flush();assert.equal(h.calls.length,1);});
+check('ordinary same-owner rerender keeps access and does not refetch',async h=>{await h.flush();h.render();await h.flush();assert.equal(h.calls.length,1);assert.deepEqual(h.value().access,access);});
+check('passive cleanup still aborts and suppresses its late failure',async h=>{const pending=deferred();h.respond(()=>pending.promise);h.render();h.passive();h.layoutUnmount();h.passiveCleanup();assert.equal(h.calls[0].init.signal.aborted,true);pending.reject(new Error('Synthetic ignored abort rejection'));await tick();await tick();assert.deepEqual(h.navigation,[]);});
+check('current failure retains existing error behavior',async h=>{h.respond(()=>response({detail:'Synthetic unavailable'},503));await h.flush();assert.deepEqual(h.value(),{access:null,loading:false,error:'Synthetic unavailable'});assert.deepEqual(h.navigation,[]);});
+check('provider retains organization membership role permission email key inputs',async h=>{h.render();const keys=[h.instances.at(-1).key];for(const patch of [{tenant:{...h.session.tenant,membership_id:'member-b'}},{tenant:{...h.session.tenant,role_id:'role-b'}},{tenant:{...h.session.tenant,status:'suspended'}},{tenant:{...h.session.tenant,permissions:['hr.manage']}},{profile:{email:'other@example.invalid'}}]){h.render(patch);keys.push(h.instances.at(-1).key);}assert.equal(new Set(keys).size,6);});

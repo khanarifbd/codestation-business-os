@@ -1,8 +1,9 @@
 import Link from "next/link";
+import { portalMoney } from "@/components/client-portal/portal-model";
 import { ArrowLeft, Loader2 } from "lucide-react";
 
 export function formatPortalMoney(value: string | number, currency: string) {
-  return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return portalMoney(value, currency);
 }
 
 export function formatPortalDate(value: string | null | undefined) {

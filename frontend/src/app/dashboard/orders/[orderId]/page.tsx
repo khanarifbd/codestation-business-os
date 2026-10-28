@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { formatMoneyExact } from "@/lib/sales-money-preview";
+import { transferCents } from "@/components/accounting-transfers/transfer-model";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   BadgeDollarSign,
@@ -9,7 +11,6 @@ import {
   CircleDollarSign,
   FileText,
   FolderKanban,
-  HandCoins,
   Loader2,
   PackageCheck,
   PlayCircle,
@@ -17,12 +18,16 @@ import {
   UserRound,
   UsersRound,
   X,
-  XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { OrderFulfillmentPanel, type FulfillmentOrderItem } from "@/components/order-fulfillment-panel";
-import { SearchableSelect } from "@/components/searchable-select";
+import { RelationshipPage } from "@/components/relationships/relationship-ui";
+import { orderDocumentHref, orderReturnHref } from "@/lib/order-navigation";
+import "@/components/commercial/order-detail.css";
+import { useDashboardSession } from "@/components/dashboard-session-context";
+import { settlementScope, useOrderSettlementState } from "@/hooks/use-order-settlement";
+import type { SettlementState } from "@/components/commercial/order-settlement-model";
 
 type OrderItem = FulfillmentOrderItem & {
   quotation_item_id: string | null;
@@ -99,66 +104,25 @@ type ProjectDetail = ProjectLink & {
   progress_percent?: number;
 };
 
-type SettlementExpense = {
-  id: string;
-  expense_number: string;
-  category_name: string;
-  amount: string | number;
-  currency: string;
-};
-
-type SettlementState = {
-  order_id: string;
-  eligible: boolean;
-  reason: string | null;
-  invoice_id: string | null;
-  invoice_number: string | null;
-  invoice_status: string | null;
-  invoice_total: string | number | null;
-  invoice_amount_paid: string | number | null;
-  invoice_balance_due: string | number | null;
-  invoice_sent_to_client: boolean;
-  payment_id: string | null;
-  payment_number: string | null;
-  account_id: string | null;
-  account_name: string | null;
-  gross_amount: string | number | null;
-  currency: string | null;
-  expenses: SettlementExpense[];
-};
-
-type SettlementMeta = {
-  order_id: string;
-  order_number: string;
-  currency: string;
-  total: string | number;
-  accounts: Array<{
-    id: string;
-    name: string;
-    account_type: string;
-    currency: string;
-    current_balance: string | number;
-  }>;
-  expense_categories: Array<{
-    id: string;
-    name: string;
-    cost_type: string;
-  }>;
-};
-
-type SettlementResult = {
-  invoice_number: string;
-  payment_number: string;
-  expense_number: string | null;
-  account_name: string;
-  currency: string;
-  gross_amount: string | number;
-  expense_amount: string | number;
-  net_amount: string | number;
-};
-
 function money(value: string | number | null | undefined, currency: string) {
-  return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatMoneyExact(value || 0, currency);
+}
+
+/** Read-display only. The state API does not supply converted amounts for mixed-currency expenses. */
+function settlementDisplayTotals(settlement: SettlementState | null, orderCurrency: string) {
+  const currency = settlement?.currency || orderCurrency;
+  const unavailable = { expenseTotal: null, net: null, unavailable: true };
+  if (settlement?.expenses.some(expense => expense.currency !== currency)) return unavailable;
+  let expenseCents = BigInt(0);
+  for (const expense of settlement?.expenses || []) {
+    const cents = transferCents(expense.amount);
+    if (cents === null) return unavailable;
+    expenseCents += cents;
+  }
+  const decimal = (value: bigint) => { const magnitude = value < BigInt(0) ? -value : value; return `${value < BigInt(0) ? "-" : ""}${magnitude / BigInt(100)}.${String(magnitude % BigInt(100)).padStart(2, "0")}`; };
+  const gross = settlement?.gross_amount == null ? null : transferCents(settlement.gross_amount);
+  if (settlement?.gross_amount != null && gross === null) return unavailable;
+  return { expenseTotal: decimal(expenseCents), net: gross === null ? null : decimal(gross - expenseCents), unavailable: false };
 }
 
 function readableDate(value: string | null | undefined) {
@@ -172,39 +136,40 @@ function statusLabel(status: string) {
   return status.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
-export default function OrderDetailPage() {
+export default function OrderDetailRoute() {
+  const { tenant, loading } = useDashboardSession();
+  const { orderId } = useParams<{ orderId: string }>();
+  if (loading) return <RelationshipPage><p role="status">Loading order access…</p></RelationshipPage>;
+  return <OrderDetailPage key={settlementScope(tenant, orderId)} />;
+}
+
+function OrderDetailPage() {
   const params = useParams<{ orderId: string }>();
   const router = useRouter();
   const orderId = params.orderId;
+  const { tenant } = useDashboardSession();
+  const query = useSearchParams();
+  const canManageFinance = Boolean(tenant?.permissions.some(p => p === "*" || p === "finance.manage"));
+  const settlementRead = useOrderSettlementState(orderId);
+  const settlement = settlementRead.value;
+  const financeAccess = settlementRead.canView && !settlementRead.denied;
+  const settlementHref = orderDocumentHref(orderId, "settlement", orderReturnHref(query.toString()));
+  const alive = useRef(true);
+  useLayoutEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [lead, setLead] = useState<LeadDetail | null>(null);
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [projectAccessRestricted, setProjectAccessRestricted] = useState(false);
   const [leadAccessRestricted, setLeadAccessRestricted] = useState(false);
-  const [settlement, setSettlement] = useState<SettlementState | null>(null);
-  const [financeAccess, setFinanceAccess] = useState(true);
   const [loading, setLoading] = useState(true);
   const [savingStatus, setSavingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
-  const [settlementOpen, setSettlementOpen] = useState(false);
-  const [settlementMeta, setSettlementMeta] = useState<SettlementMeta | null>(null);
-  const [settlementLoading, setSettlementLoading] = useState(false);
-  const [settlementSaving, setSettlementSaving] = useState(false);
-  const [settlementError, setSettlementError] = useState<string | null>(null);
-  const [settlementAccountId, setSettlementAccountId] = useState("");
-  const [settlementDate, setSettlementDate] = useState("");
-  const [expenseAmount, setExpenseAmount] = useState("0.00");
-  const [expenseCategoryId, setExpenseCategoryId] = useState("");
-  const [expenseDescription, setExpenseDescription] = useState("");
-  const [settlementReference, setSettlementReference] = useState("");
-  const [markInvoiceSent, setMarkInvoiceSent] = useState(false);
-
   const salesApi = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(`/api/sales${path}`, init);
-    if (response.status === 401) {
+    if (response.status === 401 && alive.current) {
       router.replace("/login");
       throw new Error("Authentication required");
     }
@@ -213,23 +178,7 @@ export default function OrderDetailPage() {
     return payload;
   }, [router]);
 
-  const loadSettlement = useCallback(async () => {
-    const response = await fetch(`/api/finance/orders/${encodeURIComponent(orderId)}/settlement`, { cache: "no-store" });
-    if (response.status === 401) {
-      router.replace("/login");
-      return null;
-    }
-    if (response.status === 403) {
-      setFinanceAccess(false);
-      setSettlement(null);
-      return null;
-    }
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) return null;
-    setFinanceAccess(true);
-    setSettlement(payload as SettlementState);
-    return payload as SettlementState;
-  }, [orderId, router]);
+  const loadSettlement = settlementRead.load;
 
   const loadRelated = useCallback(async (sourceOrder: OrderDetail) => {
     setLead(null);
@@ -290,6 +239,8 @@ export default function OrderDetailPage() {
     setError(null);
     try {
       const payload = await salesApi(`/orders/${encodeURIComponent(orderId)}`) as OrderDetail;
+      if (!alive.current) return;
+      if (!payload || payload.id !== orderId) throw new Error("Order identity could not be verified.");
       setOrder(payload);
       await loadRelated(payload);
     } catch (reason) {
@@ -299,7 +250,7 @@ export default function OrderDetailPage() {
     }
   }, [loadRelated, orderId, salesApi]);
 
-  useEffect(() => { void loadOrder(); }, [loadOrder]);
+  useEffect(() => { let active = true; queueMicrotask(() => { if (active) void loadOrder(); }); return () => { active = false; }; }, [loadOrder]);
 
   const stockRemaining = useMemo(
     () => order?.items.some((item) => item.item_type_snapshot === "stock_item" && item.product_id && Number(item.remaining_quantity || 0) > 0) ?? false,
@@ -350,180 +301,105 @@ export default function OrderDetailPage() {
     await loadOrder(false);
   }
 
-  async function openSettlement() {
-    if (!order || !financeAccess) return;
-    setSettlementOpen(true);
-    setSettlementLoading(true);
-    setSettlementError(null);
-    setSettlementMeta(null);
-    setSettlementAccountId("");
-    setExpenseAmount("0.00");
-    setExpenseCategoryId("");
-    setExpenseDescription("");
-    setSettlementReference(order.external_order_id || order.order_number);
-    setMarkInvoiceSent(false);
-    try {
-      const response = await fetch(`/api/finance/orders/${encodeURIComponent(order.id)}/settlement-meta`, { cache: "no-store" });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to load settlement options.");
-      setSettlementMeta(payload as SettlementMeta);
-    } catch (reason) {
-      setSettlementError(reason instanceof Error ? reason.message : "Unable to load settlement options.");
-    } finally {
-      setSettlementLoading(false);
-    }
-  }
-
-  async function submitSettlement() {
-    if (!order || !settlementMeta) return;
-    const expense = Number(expenseAmount || 0);
-    if (!settlementAccountId) {
-      setSettlementError("Select the account or wallet that received the order payment.");
-      return;
-    }
-    if (!Number.isFinite(expense) || expense < 0) {
-      setSettlementError("Enter a valid expense amount.");
-      return;
-    }
-    if (expense > Number(order.total)) {
-      setSettlementError("Settlement expense cannot exceed the order total.");
-      return;
-    }
-    if (expense > 0 && !expenseCategoryId) {
-      setSettlementError("Select an expense category when an expense amount is entered.");
-      return;
-    }
-
-    setSettlementSaving(true);
-    setSettlementError(null);
-    try {
-      const response = await fetch(`/api/finance/orders/${encodeURIComponent(order.id)}/settle`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account_id: settlementAccountId,
-          settlement_date: settlementDate || null,
-          expense_amount: expense.toFixed(2),
-          expense_category_id: expense > 0 ? expenseCategoryId : null,
-          expense_description: expense > 0 ? (expenseDescription.trim() || null) : null,
-          mark_invoice_sent_to_client: markInvoiceSent,
-          reference: settlementReference.trim() || null,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to settle this order.");
-      const result = payload as SettlementResult;
-      setSettlementOpen(false);
-      setMessage(
-        `${result.invoice_number} created and paid via ${result.account_name}${result.expense_number ? `; ${result.expense_number} recorded` : ""}.`,
-      );
-      await Promise.all([loadOrder(false), loadSettlement()]);
-    } catch (reason) {
-      setSettlementError(reason instanceof Error ? reason.message : "Unable to settle this order.");
-    } finally {
-      setSettlementSaving(false);
-    }
-  }
-
   if (loading) {
-    return <main className="flex min-h-[70vh] items-center justify-center bg-neutral-100 p-6"><Loader2 className="size-6 animate-spin text-neutral-400" /></main>;
+    return <RelationshipPage className="order-detail-workspace"><div role="status" className="order-loading"><Loader2 className="size-5 animate-spin" />Loading order…</div></RelationshipPage>;
   }
 
   if (!order) {
     return (
-      <main className="min-h-screen bg-neutral-100 p-4 sm:p-6 lg:p-10">
-        <div className="mx-auto max-w-5xl rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error ?? "Order is unavailable."}</div>
-      </main>
+      <RelationshipPage className="order-detail-workspace">
+        <div className="order-unavailable"><OrderBackLink /><h1>Order unavailable</h1><p role="alert">{error ?? "Order is unavailable."}</p></div>
+      </RelationshipPage>
     );
   }
 
-  const settlementExpenseTotal = settlement?.expenses.reduce((total, item) => total + Number(item.amount || 0), 0) ?? 0;
-  const settlementNet = settlement?.gross_amount != null ? Number(settlement.gross_amount) - settlementExpenseTotal : null;
-  const previewExpense = Math.max(0, Number(expenseAmount || 0));
-  const previewNet = Number(order.total) - (Number.isFinite(previewExpense) ? previewExpense : 0);
-  const canSettle = order.status === "completed" && financeAccess && settlement?.eligible === true;
-
-  const accountOptions = settlementMeta?.accounts.map((account) => ({
-    value: account.id,
-    label: `${account.name} · ${account.currency} · ${money(account.current_balance, account.currency)}`,
-    keywords: `${account.account_type} ${account.currency}`,
-  })) ?? [];
-  const categoryOptions = settlementMeta?.expense_categories.map((category) => ({
-    value: category.id,
-    label: category.name,
-    keywords: category.cost_type,
-  })) ?? [];
+  const settlementTotals = settlementDisplayTotals(settlement, order.currency);
+  const settlementExpenseTotal = settlementTotals.expenseTotal;
+  const settlementNet = settlementTotals.net;
+  const canSettle = order.id === orderId && order.status === "completed" && canManageFinance && financeAccess && !settlementRead.loading && !settlementRead.error && settlement?.eligible === true;
 
   return (
-    <main className="min-h-screen bg-neutral-100 p-4 sm:p-6 lg:p-10">
-      <div className="mx-auto max-w-[1500px] space-y-6">
-        <header className="rounded-3xl border bg-white p-5 shadow-sm sm:p-7">
-          <Link href="/dashboard/orders" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500 transition hover:text-neutral-950"><ArrowLeft className="size-4" />Back to orders</Link>
-          <div className="mt-5 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+    <RelationshipPage className="order-detail-workspace">
+      <div className="order-detail-content">
+        <header className="order-identity">
+          <OrderBackLink />
+          <div className="order-identity-main">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">Sales order</p>
+                <p className="relationship-eyebrow">Sales / Order workspace</p>
                 <StatusBadge status={order.status} />
                 {order.source ? <span className="rounded-full border bg-neutral-50 px-2.5 py-1 text-xs font-medium text-neutral-600">{order.source}</span> : null}
               </div>
               <h1 className="mt-2 break-words text-2xl font-semibold tracking-tight sm:text-3xl">{order.order_number}</h1>
               <p className="mt-1 break-words text-sm text-neutral-500">{order.subject || `${order.client_name_snapshot} commercial order`}</p>
-              <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm text-neutral-500">
+              <div className="order-identity-meta">
                 <span>{readableDate(order.order_date)}</span>
-                <span>{money(order.total, order.currency)}</span>
                 {order.external_order_id ? <span>External ID: <strong className="font-medium text-neutral-700">{order.external_order_id}</strong></span> : null}
               </div>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap xl:justify-end">
+            <div className="order-identity-right"><div className="order-identity-total"><span>Order total · {order.currency}</span><strong>{money(order.total, order.currency)}</strong></div><div className="order-identity-actions">
               {project ? <Link href={`/dashboard/projects/${encodeURIComponent(project.project_id)}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" />Open project</Link> : ["confirmed", "in_progress"].includes(order.status) ? <Link href={`/dashboard/projects?order_id=${encodeURIComponent(order.id)}`} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold"><FolderKanban className="size-4" />Project workspace</Link> : null}
-              {canSettle ? <button type="button" onClick={() => void openSettlement()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><CircleDollarSign className="size-4" />Create invoice & settle</button> : null}
-            </div>
+              {canSettle ? <a href={settlementHref} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><CircleDollarSign className="size-4" />Create invoice & settle</a> : null}
+            </div></div>
           </div>
         </header>
 
         {message ? <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{message}</div> : null}
         {error ? <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-        <BusinessFlow order={order} lead={lead} project={project} settlement={settlement} leadAccessRestricted={leadAccessRestricted} projectAccessRestricted={projectAccessRestricted} />
-
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)] xl:items-start">
-          <div className="space-y-6">
-            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+            <section className="order-execution">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">Execution</p><div className="mt-2"><StatusBadge status={order.status} /></div></div>
+                <div className="order-execution-label"><p className="relationship-eyebrow">Execution</p><h2><StatusBadge status={order.status} /></h2></div>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   {order.status === "confirmed" ? <><button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><PlayCircle className="size-4" />Start order</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
                   {order.status === "in_progress" ? <><button disabled={savingStatus || stockRemaining} onClick={() => void changeStatus("completed")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><CheckCircle2 className="size-4" />{stockRemaining ? "Fulfill stock first" : "Complete order"}</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
                   {order.status === "completed" ? <button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold disabled:opacity-50"><PlayCircle className="size-4" />Reopen order</button> : null}
                 </div>
               </div>
-              {order.status === "completed" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>Order completed.</strong> Reopen it if execution or project setup needs to continue. {financeAccess && settlement?.eligible ? "You can also create the invoice and record settlement from this completed order." : null}</div> : null}
+              {order.status === "completed" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>Order completed.</strong> Reopen it if execution or project setup needs to continue. {canSettle ? "You can also create the invoice and record settlement from this completed order." : null}</div> : null}
               {order.status === "cancelled" ? <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><strong>Order cancelled.</strong><p className="mt-1 whitespace-pre-wrap">{order.cancellation_reason ? `Reason: ${order.cancellation_reason}` : "Cancellation reason is unavailable for this older record."}</p></div> : null}
               {hasPostedFulfillment && order.status !== "completed" ? <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Posted stock fulfillment cannot be cancelled directly. A stock return/reversal is required first.</div> : null}
             </section>
 
+        <BusinessFlow order={order} lead={lead} project={project} settlement={settlement} leadAccessRestricted={leadAccessRestricted} projectAccessRestricted={projectAccessRestricted} settlementUnavailable={Boolean(settlementRead.loading || settlementRead.error || !financeAccess)} />
+
+        <div className="order-detail-columns">
+          <div className="order-detail-main">
             <OrderFulfillmentPanel orderId={order.id} orderNumber={order.order_number} status={order.status} currency={order.currency} items={order.items} disabled={savingStatus} onFulfilled={refreshAfterFulfillment} />
 
-            <section className="overflow-hidden rounded-3xl border bg-white shadow-sm">
-              <div className="border-b p-5 sm:p-6"><div className="flex items-center gap-2"><PackageCheck className="size-5" /><h2 className="font-semibold">Order items</h2></div><p className="mt-1 text-sm text-neutral-500">Commercial lines captured on this order.</p></div>
-              <div className="space-y-3 p-4 md:hidden">
-                {order.items.map((item) => <div key={item.id} className="rounded-2xl border p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words font-medium">{item.item_name_snapshot}</p><p className="mt-1 break-words text-xs text-neutral-500">{item.description}</p></div><p className="shrink-0 text-sm font-semibold">{money(item.line_total, order.currency)}</p></div><div className="mt-4 grid grid-cols-2 gap-3 text-xs"><Metric label="Quantity" value={`${Number(item.quantity)} ${item.unit_snapshot}`} /><Metric label="Unit price" value={money(item.unit_price, order.currency)} /><Metric label="Discount" value={`${Number(item.discount_percent)}%`} /><Metric label="Tax" value={`${Number(item.tax_rate)}%`} />{item.item_type_snapshot === "stock_item" ? <><Metric label="Fulfilled" value={String(Number(item.fulfilled_quantity || 0))} /><Metric label="Remaining" value={String(Number(item.remaining_quantity || 0))} /></> : null}</div></div>)}
+            <section className="order-lines order-surface">
+              <div className="order-section-heading"><div className="flex items-center gap-2"><PackageCheck className="size-5" /><h2 className="font-semibold">Order items</h2></div><p className="mt-1 text-sm text-neutral-500">Commercial lines captured on this order.</p></div>
+              {order.items.length === 0 ? <p className="order-empty-lines">No line items are available on this order.</p> : null}
+              <div className="order-mobile-lines md:hidden">
+                {order.items.map((item) => <div key={item.id} className="order-mobile-line"><div className="order-line-heading"><div className="min-w-0"><p className="break-words font-medium">{item.item_name_snapshot}</p><p className="mt-1 break-words text-xs text-neutral-500">{item.description}</p></div><p className="order-line-amount">{money(item.line_total, order.currency)}</p></div><div className="order-line-facts"><Metric label="Quantity" value={`${Number(item.quantity)} ${item.unit_snapshot}`} /><Metric label="Unit price" value={money(item.unit_price, order.currency)} /><Metric label="Discount" value={`${Number(item.discount_percent)}%`} /><Metric label="Tax" value={`${Number(item.tax_rate)}%`} />{item.item_type_snapshot === "stock_item" ? <><Metric label="Fulfilled" value={String(Number(item.fulfilled_quantity || 0))} /><Metric label="Remaining" value={String(Number(item.remaining_quantity || 0))} /></> : null}</div></div>)}
               </div>
               <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[900px] text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-5 py-3 text-left font-medium">Item</th><th className="px-3 py-3 text-right font-medium">Qty</th><th className="px-3 py-3 text-right font-medium">Fulfilled</th><th className="px-3 py-3 text-right font-medium">Unit price</th><th className="px-3 py-3 text-right font-medium">Discount</th><th className="px-3 py-3 text-right font-medium">Tax</th><th className="px-5 py-3 text-right font-medium">Total</th></tr></thead><tbody className="divide-y">{order.items.map((item) => <tr key={item.id}><td className="px-5 py-4"><p className="font-medium">{item.item_name_snapshot}</p><p className="mt-1 max-w-xl text-xs text-neutral-500">{item.description}</p></td><td className="px-3 py-4 text-right">{Number(item.quantity)} {item.unit_snapshot}</td><td className="px-3 py-4 text-right">{item.item_type_snapshot === "stock_item" ? `${Number(item.fulfilled_quantity || 0)} / ${Number(item.quantity)}` : "—"}</td><td className="px-3 py-4 text-right">{money(item.unit_price, order.currency)}</td><td className="px-3 py-4 text-right">{Number(item.discount_percent)}%</td><td className="px-3 py-4 text-right">{Number(item.tax_rate)}%</td><td className="px-5 py-4 text-right font-semibold">{money(item.line_total, order.currency)}</td></tr>)}</tbody></table></div>
             </section>
 
-            <section className="grid gap-5 lg:grid-cols-2">
+            <section className="order-snapshots" aria-label="Order address snapshots">
               <Snapshot title="From" name={order.seller_name_snapshot} email={order.seller_email_snapshot} address={order.seller_address_snapshot} tax={order.seller_tax_identifier_snapshot} />
               <Snapshot title="To" name={order.client_name_snapshot} email={order.client_email_snapshot} address={order.client_address_snapshot} tax={order.client_tax_identifier_snapshot} />
             </section>
 
-            {(order.notes || order.terms_conditions || order.internal_notes) ? <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6"><div className="flex items-center gap-2"><FileText className="size-5" /><h2 className="font-semibold">Notes & terms</h2></div><div className="mt-5 grid gap-4 lg:grid-cols-3">{order.notes ? <TextBlock label="Client notes" value={order.notes} /> : null}{order.terms_conditions ? <TextBlock label="Terms & conditions" value={order.terms_conditions} /> : null}{order.internal_notes ? <TextBlock label="Internal notes" value={order.internal_notes} /> : null}</div></section> : null}
+            {(order.notes || order.terms_conditions || order.internal_notes) ? <section className="order-surface order-notes"><div className="flex items-center gap-2"><FileText className="size-5" /><h2 className="font-semibold">Notes & terms</h2></div><div className="order-note-ledger">{order.notes ? <TextBlock label="Client notes" value={order.notes} /> : null}{order.terms_conditions ? <TextBlock label="Terms & conditions" value={order.terms_conditions} /> : null}{order.internal_notes ? <TextBlock label="Internal notes" value={order.internal_notes} /> : null}</div></section> : null}
           </div>
 
-          <aside className="space-y-6 xl:sticky xl:top-6">
-            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
-              <h2 className="font-semibold">Order overview</h2>
+          <aside className="order-detail-aside">
+            <section className="order-surface order-value">
+              <div className="flex items-center gap-2"><BadgeDollarSign className="size-5" /><h2 className="font-semibold">Commercial value</h2></div>
               <dl className="mt-5 space-y-3 text-sm">
+                <AmountRow label="Subtotal" value={money(order.subtotal, order.currency)} />
+                <AmountRow label="Discount" value={money(order.discount_total, order.currency)} />
+                <AmountRow label="Tax" value={money(order.tax_total, order.currency)} />
+                <div className="border-t pt-3"><AmountRow label="Order total" value={money(order.total, order.currency)} strong /></div>
+              </dl>
+            </section>
+
+            <SettlementCard order={order} settlement={settlement} financeAccess={financeAccess} expenseTotal={settlementExpenseTotal} net={settlementNet} totalsUnavailable={settlementTotals.unavailable} settlementHref={canSettle ? settlementHref : undefined} readError={settlementRead.error} readLoading={settlementRead.loading} onRetry={() => void loadSettlement()} />
+
+            <section className="order-surface order-context">
+              <h2 className="font-semibold">Order overview</h2>
+              <dl className="order-context-ledger">
                 <InfoRow label="Client" value={order.client_name_snapshot} href={`/dashboard/clients/${encodeURIComponent(order.client_id)}`} />
                 <InfoRow label="Lead" value={lead ? `${lead.lead.lead_code} · ${lead.lead.company_name || lead.lead.contact_name}` : order.source_lead_id ? (leadAccessRestricted ? "Linked · access restricted" : "Linked lead") : "No source lead"} />
                 <InfoRow label="Quotation" value={order.quotation_number || "Manual order"} href={order.quotation_id ? "/dashboard/quotations" : undefined} />
@@ -537,19 +413,7 @@ export default function OrderDetailPage() {
               </dl>
             </section>
 
-            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
-              <div className="flex items-center gap-2"><BadgeDollarSign className="size-5" /><h2 className="font-semibold">Commercial value</h2></div>
-              <dl className="mt-5 space-y-3 text-sm">
-                <AmountRow label="Subtotal" value={money(order.subtotal, order.currency)} />
-                <AmountRow label="Discount" value={money(order.discount_total, order.currency)} />
-                <AmountRow label="Tax" value={money(order.tax_total, order.currency)} />
-                <div className="border-t pt-3"><AmountRow label="Order total" value={money(order.total, order.currency)} strong /></div>
-              </dl>
-            </section>
-
-            <SettlementCard order={order} settlement={settlement} financeAccess={financeAccess} expenseTotal={settlementExpenseTotal} net={settlementNet} onSettle={canSettle ? openSettlement : undefined} />
-
-            <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6">
+            <section className="order-surface order-lifecycle">
               <h2 className="font-semibold">Lifecycle</h2>
               <div className="mt-5 space-y-4 text-sm"><Lifecycle label="Confirmed" value={order.confirmed_at} done /><Lifecycle label="Started" value={order.started_at} done={Boolean(order.started_at)} /><Lifecycle label="Completed" value={order.completed_at} done={Boolean(order.completed_at)} /><Lifecycle label="Cancelled" value={order.cancelled_at} done={Boolean(order.cancelled_at)} /></div>
             </section>
@@ -557,27 +421,34 @@ export default function OrderDetailPage() {
         </div>
       </div>
 
-      {cancelOpen ? <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingStatus) setCancelOpen(false); }}><div className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6"><div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold">Cancel {order.order_number}</h2><p className="mt-1 text-sm text-neutral-500">A cancellation reason is required and will be kept in the audit trail.</p></div><button disabled={savingStatus} onClick={() => setCancelOpen(false)} className="flex size-9 items-center justify-center rounded-xl border"><X className="size-4" /></button></div><label className="mt-5 block text-sm font-medium">Reason<textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} rows={5} maxLength={1000} className="mt-2 w-full rounded-xl border p-3 text-sm outline-none focus:border-neutral-500" placeholder="Why is this order being cancelled?" /></label><div className="mt-5 flex gap-2"><button disabled={savingStatus} onClick={() => setCancelOpen(false)} className="h-11 flex-1 rounded-xl border text-sm font-semibold">Keep order</button><button disabled={savingStatus || cancelReason.trim().length < 3} onClick={() => void confirmCancellation()} className="h-11 flex-1 rounded-xl bg-red-600 text-sm font-semibold text-white disabled:opacity-40">{savingStatus ? "Cancelling…" : "Cancel order"}</button></div></div></div> : null}
+      {cancelOpen ? <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingStatus) setCancelOpen(false); }}><OrderDialog label={`Cancel ${order.order_number}`} busy={savingStatus} onClose={() => setCancelOpen(false)} className="w-full rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-lg sm:rounded-3xl sm:p-6"><div className="flex items-start justify-between gap-4"><div><h2 className="font-semibold">Cancel {order.order_number}</h2><p className="mt-1 text-sm text-neutral-500">A cancellation reason is required and will be kept in the audit trail.</p></div><button aria-label="Close cancellation" disabled={savingStatus} onClick={() => setCancelOpen(false)} className="flex size-9 items-center justify-center rounded-xl border"><X className="size-4" /></button></div><label className="mt-5 block text-sm font-medium">Reason<textarea value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} rows={5} maxLength={1000} className="mt-2 w-full rounded-xl border p-3 text-sm outline-none focus:border-neutral-500" placeholder="Why is this order being cancelled?" /></label><div className="mt-5 flex gap-2"><button disabled={savingStatus} onClick={() => setCancelOpen(false)} className="h-11 flex-1 rounded-xl border text-sm font-semibold">Keep order</button><button disabled={savingStatus || cancelReason.trim().length < 3} onClick={() => void confirmCancellation()} className="h-11 flex-1 rounded-xl bg-red-600 text-sm font-semibold text-white disabled:opacity-40">{savingStatus ? "Cancelling…" : "Cancel order"}</button></div></OrderDialog></div> : null}
 
-      {settlementOpen ? <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/45 sm:items-center sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget && !settlementSaving) setSettlementOpen(false); }}><div className="max-h-[100dvh] w-full overflow-y-auto bg-white p-5 shadow-2xl sm:max-h-[90vh] sm:max-w-2xl sm:rounded-3xl sm:p-6"><div className="flex items-start justify-between gap-4 border-b pb-5"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">Order settlement</p><h2 className="mt-1 text-xl font-semibold">Create invoice & settle</h2><p className="mt-1 text-sm text-neutral-500">Create the internal invoice, record the full payment and optionally record one related expense.</p></div><button disabled={settlementSaving} onClick={() => setSettlementOpen(false)} className="flex size-9 shrink-0 items-center justify-center rounded-xl border"><X className="size-4" /></button></div>{settlementLoading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : settlementMeta ? <div className="space-y-5 pt-5"><div className="grid grid-cols-2 gap-3"><Metric label="Order total" value={money(order.total, order.currency)} /><Metric label="Net account increase" value={money(Math.max(0, previewNet), order.currency)} /></div><SearchableSelect label="Receive into" value={settlementAccountId} onValueChange={setSettlementAccountId} options={accountOptions} placeholder={`Select ${order.currency} account / wallet`} searchPlaceholder="Search accounts..." required clearable={false} /><div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-medium">Settlement date<input type="date" value={settlementDate} onChange={(event) => setSettlementDate(event.target.value)} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-neutral-500" /><span className="mt-1 block text-xs text-neutral-400">Leave blank to use the company’s current date.</span></label><label className="block text-sm font-medium">Reference<input value={settlementReference} onChange={(event) => setSettlementReference(event.target.value)} maxLength={180} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-neutral-500" placeholder="External order ID or reference" /></label></div><div className="rounded-2xl border bg-neutral-50 p-4"><div className="flex items-center gap-2"><ReceiptText className="size-4" /><p className="font-medium">Optional expense / fee</p></div><div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-sm font-medium">Expense amount<input type="number" min="0" step="0.01" value={expenseAmount} onChange={(event) => setExpenseAmount(event.target.value)} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none focus:border-neutral-500" /></label><SearchableSelect label="Expense category" value={expenseCategoryId} onValueChange={setExpenseCategoryId} options={categoryOptions} placeholder="Select category" searchPlaceholder="Search categories..." disabled={previewExpense <= 0} /></div><label className="mt-4 block text-sm font-medium">Expense description<input value={expenseDescription} onChange={(event) => setExpenseDescription(event.target.value)} disabled={previewExpense <= 0} maxLength={500} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none disabled:bg-neutral-100 disabled:text-neutral-400" placeholder={`Settlement fee for ${order.order_number}`} /></label></div><label className="flex cursor-pointer items-start gap-3 rounded-2xl border p-4"><input type="checkbox" checked={markInvoiceSent} onChange={(event) => setMarkInvoiceSent(event.target.checked)} className="mt-1 size-4 rounded border-neutral-300" /><span><span className="block text-sm font-medium">Mark invoice as sent to client</span><span className="mt-1 block text-xs leading-5 text-neutral-500">Default is off. This is a record-only marker; this action does not email the invoice.</span></span></label><div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">V1 quick settlement supports a settlement account in <strong>{order.currency}</strong>. Cross-currency settlement stays in the existing payment/conversion workflow so exchange-rate data is never guessed.</div>{settlementMeta.accounts.length === 0 ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">No active {order.currency} financial account or wallet is available. Create one in Finance & Accounts before settling this order.</div> : null}{settlementError ? <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{settlementError}</div> : null}<div className="flex flex-col-reverse gap-2 border-t pt-5 sm:flex-row sm:justify-end"><button disabled={settlementSaving} onClick={() => setSettlementOpen(false)} className="h-11 rounded-xl border px-5 text-sm font-semibold">Cancel</button><button disabled={settlementSaving || settlementMeta.accounts.length === 0 || !settlementAccountId} onClick={() => void submitSettlement()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-40">{settlementSaving ? <Loader2 className="size-4 animate-spin" /> : <HandCoins className="size-4" />}{settlementSaving ? "Creating settlement…" : "Create invoice & settle"}</button></div></div> : <div className="py-6">{settlementError ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{settlementError}</div> : null}</div>}</div></div> : null}
-    </main>
+
+    </RelationshipPage>
   );
 }
 
-function BusinessFlow({ order, lead, project, settlement, leadAccessRestricted, projectAccessRestricted }: { order: OrderDetail; lead: LeadDetail | null; project: ProjectDetail | null; settlement: SettlementState | null; leadAccessRestricted: boolean; projectAccessRestricted: boolean }) {
+function BusinessFlow({ order, lead, project, settlement, leadAccessRestricted, projectAccessRestricted, settlementUnavailable }: { order: OrderDetail; lead: LeadDetail | null; project: ProjectDetail | null; settlement: SettlementState | null; leadAccessRestricted: boolean; projectAccessRestricted: boolean; settlementUnavailable?: boolean }) {
   const steps = [
     { label: "Lead", icon: UsersRound, primary: lead?.lead.lead_code || (order.source_lead_id ? "Linked" : "No lead"), secondary: lead ? (lead.lead.company_name || lead.lead.contact_name) : leadAccessRestricted ? "Access restricted" : null, done: Boolean(order.source_lead_id) },
     { label: "Client", icon: UserRound, primary: order.client_name_snapshot, secondary: "Client", done: true, href: `/dashboard/clients/${encodeURIComponent(order.client_id)}` },
     { label: "Quotation", icon: FileText, primary: order.quotation_number || "Manual order", secondary: order.quotation_id ? "Source quotation" : null, done: Boolean(order.quotation_id) },
     { label: "Order", icon: PackageCheck, primary: order.order_number, secondary: statusLabel(order.status), done: true, active: true },
     { label: "Project", icon: FolderKanban, primary: project?.project_number || (projectAccessRestricted ? "Linked" : "Not linked"), secondary: project?.name || (projectAccessRestricted ? "Access restricted" : null), done: Boolean(project || projectAccessRestricted), href: project ? `/dashboard/projects/${encodeURIComponent(project.project_id)}` : undefined },
-    { label: "Invoice", icon: ReceiptText, primary: settlement?.invoice_number || "Not created", secondary: settlement?.invoice_status ? statusLabel(settlement.invoice_status) : null, done: Boolean(settlement?.invoice_id), href: settlement?.invoice_id ? "/dashboard/invoices" : undefined },
+    { label: "Invoice", icon: ReceiptText, primary: settlement?.invoice_number || (settlementUnavailable ? "Unavailable" : "Not created"), secondary: settlement?.invoice_status ? statusLabel(settlement.invoice_status) : null, done: Boolean(settlement?.invoice_id), href: settlement?.invoice_id ? "/dashboard/accounting/invoices" : undefined },
   ];
-  return <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6"><div><h2 className="font-semibold">Business flow</h2><p className="mt-1 text-sm text-neutral-500">Trace this sale from acquisition through execution and finance.</p></div><div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{steps.map((step) => { const Icon = step.icon; const content = <div className={`h-full rounded-2xl border p-4 transition ${step.active ? "border-neutral-950 bg-neutral-950 text-white" : step.done ? "bg-neutral-50" : "border-dashed bg-white"}`}><div className="flex items-center justify-between gap-2"><Icon className={`size-4 ${step.active ? "text-white/70" : "text-neutral-400"}`} />{step.done && !step.active ? <CheckCircle2 className="size-3.5 text-emerald-500" /> : null}</div><p className={`mt-4 text-[11px] font-semibold uppercase tracking-[0.12em] ${step.active ? "text-white/45" : "text-neutral-400"}`}>{step.label}</p><p className="mt-1 break-words text-sm font-semibold">{step.primary}</p>{step.secondary ? <p className={`mt-1 break-words text-xs ${step.active ? "text-white/55" : "text-neutral-500"}`}>{step.secondary}</p> : null}</div>; return step.href ? <Link key={step.label} href={step.href} className="block">{content}</Link> : <div key={step.label}>{content}</div>; })}</div></section>;
+  return <section className="order-trace" aria-label="Business flow">
+    <div className="order-trace-title"><h2>Business flow</h2><p>Linked records</p></div>
+    <ol className="order-trace-steps">{steps.map((step) => {
+      const Icon = step.icon;
+      const content = <><span className="order-trace-label"><Icon aria-hidden="true" />{step.label}{step.done && !step.active ? <CheckCircle2 aria-hidden="true" /> : null}</span><strong>{step.primary}</strong>{step.secondary ? <small>{step.secondary}</small> : null}</>;
+      return <li key={step.label} data-active={step.active || undefined} data-linked={step.done || undefined}>{step.href ? <Link href={step.href}>{content}</Link> : <div>{content}</div>}</li>;
+    })}</ol>
+  </section>;
 }
 
-function SettlementCard({ order, settlement, financeAccess, expenseTotal, net, onSettle }: { order: OrderDetail; settlement: SettlementState | null; financeAccess: boolean; expenseTotal: number; net: number | null; onSettle?: () => void }) {
-  return <section className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6"><div className="flex items-center gap-2"><CircleDollarSign className="size-5" /><h2 className="font-semibold">Invoice & settlement</h2></div>{!financeAccess ? <p className="mt-4 text-sm text-neutral-500">Your role does not have Finance access. Order execution remains available.</p> : settlement?.invoice_id ? <div className="mt-5 space-y-4"><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center gap-2 text-emerald-800"><CheckCircle2 className="size-4" /><p className="font-semibold">{settlement.invoice_number}</p></div><p className="mt-1 text-sm text-emerald-700">{statusLabel(settlement.invoice_status || "invoice")}{settlement.invoice_sent_to_client ? " · marked sent" : " · internal only"}</p></div><dl className="space-y-3 text-sm"><AmountRow label="Invoice total" value={money(settlement.invoice_total, settlement.currency || order.currency)} /><AmountRow label="Paid" value={money(settlement.invoice_amount_paid, settlement.currency || order.currency)} /><AmountRow label="Received into" value={settlement.account_name || "—"} /><AmountRow label="Payment" value={settlement.payment_number || "—"} />{expenseTotal > 0 ? <AmountRow label="Related expense" value={money(expenseTotal, settlement.currency || order.currency)} /> : null}{net != null ? <div className="border-t pt-3"><AmountRow label="Net account increase" value={money(net, settlement.currency || order.currency)} strong /></div> : null}</dl>{settlement.expenses.length ? <div className="mt-4 space-y-2">{settlement.expenses.map((expense) => <div key={expense.id} className="rounded-xl bg-neutral-50 p-3 text-xs"><div className="flex items-center justify-between gap-3"><span className="font-medium">{expense.expense_number} · {expense.category_name}</span><span>{money(expense.amount, expense.currency)}</span></div></div>)}</div> : null}<Link href="/dashboard/invoices" className="mt-4 inline-flex text-xs font-semibold text-neutral-950 underline-offset-4 hover:underline">Open invoices</Link></div> : <div className="mt-5"><p className="text-sm leading-6 text-neutral-500">{settlement?.reason || (order.status === "completed" ? "Create the order invoice, record payment into an account or wallet, and optionally record a related expense." : "Complete the order before settlement.")}</p>{onSettle ? <button type="button" onClick={onSettle} className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><CircleDollarSign className="size-4" />Create invoice & settle</button> : null}</div>}</section>;
+function SettlementCard({ order, settlement, financeAccess, expenseTotal, net, totalsUnavailable, settlementHref, readError, readLoading, onRetry }: { order: OrderDetail; settlement: SettlementState | null; financeAccess: boolean; expenseTotal: string | null; net: string | null; totalsUnavailable?: boolean; settlementHref?: string; readError?: string | null; readLoading?: boolean; onRetry?: () => void }) {
+  return <section className="order-surface order-settlement"><div className="flex items-center gap-2"><CircleDollarSign className="size-5" /><h2 className="font-semibold">Invoice & settlement</h2></div>{!financeAccess ? <p className="mt-4 text-sm text-neutral-500">Your role does not have Finance access. Order execution remains available.</p> : readLoading ? <p role="status" className="mt-4 text-sm">Loading settlement state…</p> : readError ? <div className="mt-4 text-sm"><p role="alert">{readError} No failed read is treated as an unpaid order.</p><button type="button" className="mt-3 min-h-11 underline" onClick={onRetry}>Retry settlement state</button></div> : settlement?.invoice_id ? <div className="mt-5 space-y-4"><div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center gap-2 text-emerald-800"><CheckCircle2 className="size-4" /><p className="font-semibold">{settlement.invoice_number}</p></div><p className="mt-1 text-sm text-emerald-700">{statusLabel(settlement.invoice_status || "invoice")}{settlement.invoice_sent_to_client ? " · marked sent" : " · internal only"}</p></div><dl className="space-y-3 text-sm"><AmountRow label="Invoice total" value={money(settlement.invoice_total, settlement.currency || order.currency)} /><AmountRow label="Paid" value={money(settlement.invoice_amount_paid, settlement.currency || order.currency)} /><AmountRow label="Received into" value={settlement.account_name || "—"} /><AmountRow label="Payment" value={settlement.payment_number || "—"} />{expenseTotal !== null && transferCents(expenseTotal)! > BigInt(0) ? <AmountRow label="Related expense" value={money(expenseTotal, settlement.currency || order.currency)} /> : null}{net != null ? <div className="border-t pt-3"><AmountRow label="Gross less linked expenses" value={money(net, settlement.currency || order.currency)} strong /></div> : null}</dl>{net != null ? <p className="text-xs text-neutral-500">Same-currency gross less linked posted expenses; this is not a verified receiving-account balance change.</p> : null}{totalsUnavailable ? <p className="text-sm text-amber-800">Combined related expense and gross less linked expenses are unavailable: linked amounts use different currencies or could not be verified. Each expense keeps its original currency below; no conversion is inferred.</p> : null}{settlement.expenses.length ? <div className="mt-4 space-y-2">{settlement.expenses.map((expense) => <div key={expense.id} className="rounded-xl bg-neutral-50 p-3 text-xs"><div className="flex items-center justify-between gap-3"><span className="font-medium">{expense.expense_number} · {expense.category_name}</span><span>{money(expense.amount, expense.currency)}</span></div></div>)}</div> : null}<Link href="/dashboard/accounting/invoices" className="mt-4 inline-flex text-xs font-semibold text-neutral-950 underline-offset-4 hover:underline">Open invoices</Link></div> : <div className="mt-5"><p className="text-sm leading-6 text-neutral-500">{settlement?.reason || (order.status === "completed" ? "Create the order invoice, record payment into an account or wallet, and optionally record a related expense." : "Complete the order before settlement.")}</p>{settlementHref ? <a href={settlementHref} className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><CircleDollarSign className="size-4" />Create invoice & settle</a> : null}</div>}</section>;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -586,25 +457,78 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function InfoRow({ label, value, href }: { label: string; value: string; href?: string }) {
-  return <div className="flex items-start justify-between gap-4 rounded-xl bg-neutral-50 px-3 py-2.5"><dt className="shrink-0 text-neutral-500">{label}</dt><dd className="min-w-0 break-words text-right font-medium">{href ? <Link href={href} className="underline-offset-4 hover:underline">{value}</Link> : value}</dd></div>;
+  return <div className="order-info-row"><dt className="shrink-0 text-neutral-500">{label}</dt><dd className="min-w-0 break-words text-right font-medium">{href ? <Link href={href} className="underline-offset-4 hover:underline">{value}</Link> : value}</dd></div>;
 }
 
 function AmountRow({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return <div className="flex items-center justify-between gap-4"><dt className="text-neutral-500">{label}</dt><dd className={strong ? "font-semibold text-neutral-950" : "font-medium"}>{value}</dd></div>;
+  return <div className="order-amount-row"><dt className="text-neutral-500">{label}</dt><dd className={strong ? "font-semibold text-neutral-950" : "font-medium"}>{value}</dd></div>;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl bg-neutral-50 p-3"><p className="text-[11px] uppercase tracking-wide text-neutral-400">{label}</p><p className="mt-1 break-words font-medium text-neutral-800">{value}</p></div>;
+  return <div className="order-fact"><p className="text-[11px] uppercase tracking-wide text-neutral-400">{label}</p><p className="mt-1 break-words font-medium text-neutral-800">{value}</p></div>;
 }
 
 function Snapshot({ title, name, email, address, tax }: { title: string; name: string; email: string | null; address: string | null; tax: string | null }) {
-  return <div className="rounded-3xl border bg-white p-5 shadow-sm sm:p-6"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">{title}</p><p className="mt-3 font-semibold">{name}</p>{email ? <p className="mt-1 break-all text-sm text-neutral-500">{email}</p> : null}{address ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-500">{address}</p> : null}{tax ? <p className="mt-2 text-xs text-neutral-400">Tax ID: {tax}</p> : null}</div>;
+  return <div className="order-snapshot"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">{title}</p><p className="mt-3 font-semibold">{name}</p>{email ? <p className="mt-1 break-all text-sm text-neutral-500">{email}</p> : null}{address ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-500">{address}</p> : null}{tax ? <p className="mt-2 text-xs text-neutral-400">Tax ID: {tax}</p> : null}</div>;
 }
 
 function TextBlock({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-2xl bg-neutral-50 p-4"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{label}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-700">{value}</p></div>;
+  return <div className="order-note"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">{label}</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-700">{value}</p></div>;
 }
 
 function Lifecycle({ label, value, done }: { label: string; value: string | null; done: boolean }) {
-  return <div className="flex items-start gap-3"><div className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full ${done ? "bg-emerald-100 text-emerald-700" : "bg-neutral-100 text-neutral-300"}`}>{done ? <CheckCircle2 className="size-3.5" /> : <span className="size-1.5 rounded-full bg-current" />}</div><div><p className={done ? "font-medium text-neutral-800" : "text-neutral-400"}>{label}</p><p className="mt-0.5 text-xs text-neutral-400">{done ? readableDate(value) : "Not yet"}</p></div></div>;
+  return <div className="order-lifecycle-row"><div className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full ${done ? "bg-emerald-100 text-emerald-700" : "bg-neutral-100 text-neutral-300"}`}>{done ? <CheckCircle2 className="size-3.5" /> : <span className="size-1.5 rounded-full bg-current" />}</div><div><p className={done ? "font-medium text-neutral-800" : "text-neutral-400"}>{label}</p><p className="mt-0.5 text-xs text-neutral-400">{done ? readableDate(value) : "Not yet"}</p></div></div>;
+}
+
+function orderDialogFocusable(dialog: HTMLElement) {
+  return Array.from(dialog.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'))
+    .filter(element => element.getClientRects().length > 0 && !element.closest('[hidden], [inert]'));
+}
+
+function orderDialogKeyDown(event: KeyboardEvent<HTMLDivElement>, busy: boolean, onClose: () => void) {
+  if (event.defaultPrevented) return;
+  const dialog = event.currentTarget;
+  if (event.key === "Escape") {
+    // The existing SearchableSelect owns Escape while its listbox is expanded.
+    if (dialog.querySelector('[aria-expanded="true"][aria-haspopup="listbox"]')) return;
+    event.preventDefault();
+    if (!busy) onClose();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const controls = orderDialogFocusable(dialog);
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (!first) { event.preventDefault(); dialog.focus(); return; }
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+    event.preventDefault(); last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) {
+    event.preventDefault(); first.focus();
+  }
+}
+
+function OrderDialog({ label, busy, onClose, className, children }: { label: string; busy: boolean; onClose: () => void; className: string; children: ReactNode }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusInside = () => (orderDialogFocusable(dialog)[0] || dialog).focus();
+    focusInside();
+    const retainFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && !dialog.contains(event.target)) focusInside();
+    };
+    document.addEventListener("focusin", retainFocus);
+    return () => {
+      document.removeEventListener("focusin", retainFocus);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+  return <div ref={dialogRef} role="dialog" aria-modal="true" aria-label={label} aria-busy={busy} tabIndex={-1} className={`order-dialog ${className}`} onKeyDown={event => orderDialogKeyDown(event, busy, onClose)}>{children}</div>;
+}
+
+
+function OrderBackLink() {
+  const searchParams = useSearchParams();
+  return <Link href={orderReturnHref(searchParams.toString())} className="order-back-link"><ArrowLeft className="size-4" />Back to orders</Link>;
 }

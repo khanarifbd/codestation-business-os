@@ -1,0 +1,16 @@
+// Synthetic data only. No user, account or provider identifiers.
+const stamp='2026-10-26T00:00:00Z';
+const account={id:'syn-bank',name:'Synthetic bank',account_type:'bank',provider_name:null,account_holder_name:null,account_reference:null,currency:'USD',opening_balance:'1000.00',current_balance:'1000.00',gateway_connection_id:null,notes:null,is_active:true,payment_url:null,payment_instructions:null};
+const category={id:'syn-category',name:'Synthetic operating cost',slug:'synthetic-cost',cost_type:'operating',is_active:true,sort_order:0,created_at:stamp,updated_at:stamp};
+const vendor={id:'syn-vendor',vendor_code:'SYN-V',name:'Synthetic supplier',contact_name:null,email:null,phone:null,website:null,tax_identifier:null,country_code:null,currency:'USD',notes:null,is_active:true,created_at:stamp,updated_at:stamp};
+const client={id:'syn-client',code:'SYN-C',name:'Synthetic client',currency:'BDT'};
+const order={id:'syn-order',number:'SYN-O',client_id:client.id,client_name:client.name,currency:'GBP',total:'100',status:'confirmed'};
+const project={id:'syn-project',number:'SYN-P',name:'Synthetic delivery',order_id:order.id,client_id:client.id,client_name:client.name,currency:'EUR',status:'completed'};
+const invoice={id:'syn-invoice',number:'SYN-I',client_id:client.id,client_name:client.name,order_id:order.id,project_id:project.id,currency:'CAD',total:'100',status:'sent'};
+const payment={id:'syn-payment',number:'SYN-PAY',invoice_id:invoice.id,invoice_number:invoice.number,client_id:client.id,client_name:client.name,invoice_currency:'CAD',invoice_amount:'100',payment_date:'2026-10-26',status:'confirmed'};
+const meta={accounts:[account],categories:[category],vendors:[vendor],clients:[client],orders:[order],projects:[project],invoices:[invoice],payments:[payment]};
+const expense={id:'syn-expense',expense_number:'SYN-EXP-001',description:'Synthetic expense',expense_date:'2026-10-26',vendor_id:null,vendor_name:null,category_id:category.id,category_name:category.name,cost_type:'operating',account_id:account.id,account_name:account.name,client_id:null,client_name:null,project_id:null,project_number:null,project_name:null,order_id:null,order_number:null,invoice_id:null,invoice_number:null,payment_id:null,payment_number:null,expense_currency:'USD',expense_amount:'25.00',account_currency:'USD',account_amount:'25.00',exchange_rate:'1.00000000',profitability_currency:'USD',profitability_amount:'25.00',profitability_exchange_rate:'1.00000000',tax_amount:'2.00',payment_method:'bank_transfer',reference:null,status:'posted',document_count:0,created_at:stamp,notes:null,voided_at:null,documents:[]};
+const receipt={id:'syn-receipt',expense_id:expense.id,title:'Synthetic receipt',document_type:'receipt',original_filename:'synthetic.txt',content_type:'text/plain',size_bytes:9,notes:null,uploaded_by_user_id:'syn-user',created_at:stamp};
+const summary={expense_count:2,posted_count:1,voided_count:1,vendor_count:1,receipt_count:1,project_expense_count:1,by_currency:[{currency:'USD',posted_expenses:'25.00',transfer_fees:'1.00'}]};
+const profitability={profit_loss_by_currency:[],projects:[],clients:[]};
+module.exports={account,category,vendor,client,order,project,invoice,payment,meta,expense,receipt,summary,profitability};

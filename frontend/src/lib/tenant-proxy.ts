@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 
 import { setAuthCookies, type TokenPair } from "@/lib/auth-session";
 import { requestContextHeaders } from "@/lib/request-context";
@@ -20,6 +21,8 @@ async function refreshSession(request: NextRequest): Promise<TokenPair | null> {
 }
 
 export async function proxyTenantRequest(request: NextRequest, upstreamPath: string) {
+  const rejected = guardMutationOrigin(request);
+  if (rejected) return rejected;
   const organizationId = request.cookies.get("organization_id")?.value;
   if (!organizationId) {
     return NextResponse.json({ detail: "Select a company workspace first" }, { status: 400 });
@@ -40,6 +43,9 @@ export async function proxyTenantRequest(request: NextRequest, upstreamPath: str
   const body = hasBody ? await request.arrayBuffer() : undefined;
   const contentType = request.headers.get("content-type");
   const contextHeaders = requestContextHeaders(request);
+  // Preserve an explicit operation identity across the business request and its auth retry.
+  // Never forward it to the separate /auth/refresh request or invent a key here.
+  const idempotencyKey = request.headers.get("idempotency-key");
 
   const makeRequest = (token: string) => backendFetch(upstreamPath, {
     method,
@@ -48,6 +54,7 @@ export async function proxyTenantRequest(request: NextRequest, upstreamPath: str
       "X-Organization-ID": organizationId,
       ...contextHeaders,
       ...(contentType ? { "Content-Type": contentType } : {}),
+      ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
     },
     body: body && body.byteLength ? body : undefined,
   });

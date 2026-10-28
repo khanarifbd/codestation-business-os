@@ -12,6 +12,7 @@ from app.api.v1.payables_workspace import router as payables_workspace_router
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.payables import PayableBill, PayablePayment
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.inventory_payables import sync_purchase_settlement
 from app.models.tax import TaxCode
 from app.schemas.payables import PayableBillCreate, PayableBillRead, PayablePaymentCreate, PayablePaymentRead
@@ -105,6 +106,7 @@ def list_payable_bills(db: DbSession, tenant: AccountingViewer, include_paid: bo
 
 @router.post("", response_model=PayableBillRead, status_code=status.HTTP_201_CREATED)
 def create_payable_bill(payload: PayableBillCreate, request: Request, db: DbSession, tenant: AccountingManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     expense = db.scalar(select(LedgerAccount).where(LedgerAccount.id == payload.expense_ledger_account_id, LedgerAccount.organization_id == tenant.organization_id, LedgerAccount.category == "expense", LedgerAccount.is_active.is_(True)))
     if expense is None: raise HTTPException(status_code=404, detail="Active expense category not found")
     if payload.due_date and payload.due_date < payload.bill_date: raise HTTPException(status_code=400, detail="Due date cannot be before bill date")
@@ -129,12 +131,26 @@ def create_payable_bill(payload: PayableBillCreate, request: Request, db: DbSess
 def list_payable_payments(bill_id: str, db: DbSession, tenant: AccountingViewer):
     bill = db.scalar(select(PayableBill).where(PayableBill.id == bill_id, PayableBill.organization_id == tenant.organization_id))
     if bill is None: raise HTTPException(status_code=404, detail="Payable bill not found")
-    rows = db.execute(select(PayablePayment, FinancialAccount.name).join(FinancialAccount, FinancialAccount.id == PayablePayment.financial_account_id).where(PayablePayment.organization_id == tenant.organization_id, PayablePayment.bill_id == bill.id).order_by(PayablePayment.payment_date.desc(), PayablePayment.created_at.desc())).all()
-    return [PayablePaymentRead(id=item.id, bill_id=item.bill_id, financial_account_id=item.financial_account_id, financial_account_name=account_name, payment_date=item.payment_date, currency=item.currency, amount=item.amount, reference=item.reference, notes=item.notes, created_at=item.created_at) for item, account_name in rows]
+    # Keep the original payments visible for audit history, but distinguish
+    # reversals using the same persisted transaction evidence as corrections.
+    # This is read-only metadata; neither payment amounts nor history is edited.
+    reversed_payment = (
+        select(FinancialTransaction.id)
+        .where(
+            FinancialTransaction.organization_id == tenant.organization_id,
+            FinancialTransaction.source_id == PayablePayment.id,
+            FinancialTransaction.source_type.like("payable_payment_reversal%"),
+        )
+        .correlate(PayablePayment)
+        .exists()
+    )
+    rows = db.execute(select(PayablePayment, FinancialAccount.name, reversed_payment).join(FinancialAccount, FinancialAccount.id == PayablePayment.financial_account_id).where(PayablePayment.organization_id == tenant.organization_id, PayablePayment.bill_id == bill.id).order_by(PayablePayment.payment_date.desc(), PayablePayment.created_at.desc())).all()
+    return [PayablePaymentRead(id=item.id, bill_id=item.bill_id, financial_account_id=item.financial_account_id, financial_account_name=account_name, payment_date=item.payment_date, currency=item.currency, amount=item.amount, reference=item.reference, notes=item.notes, status="reversed" if was_reversed else "posted", created_at=item.created_at) for item, account_name, was_reversed in rows]
 
 
 @router.post("/{bill_id}/payments", response_model=PayablePaymentRead, status_code=status.HTTP_201_CREATED)
 def pay_payable_bill(bill_id: str, payload: PayablePaymentCreate, request: Request, db: DbSession, tenant: AccountingManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     bill = db.scalar(select(PayableBill).where(PayableBill.id == bill_id, PayableBill.organization_id == tenant.organization_id).with_for_update())
     if bill is None: raise HTTPException(status_code=404, detail="Payable bill not found")
     amount = _money(payload.amount)

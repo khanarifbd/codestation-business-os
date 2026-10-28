@@ -1,9 +1,13 @@
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 import { NextRequest, NextResponse } from "next/server";
 
 import { clearAuthCookies } from "@/lib/auth-session";
 import { authenticatedBackendFetch } from "@/lib/authenticated-backend";
 
 export async function POST(request: NextRequest) {
+  const rejected = guardMutationOrigin(request);
+  if (rejected) return rejected;
+
   const { upstream } = await authenticatedBackendFetch(request, "/auth/logout", {
     method: "POST",
   });

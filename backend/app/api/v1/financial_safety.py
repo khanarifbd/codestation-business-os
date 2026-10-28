@@ -5,6 +5,12 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
+from app.services.financial_account_constraints import (
+    ensure_payment_receipt_account_supported,
+    ensure_expense_posting_account_supported,
+    ensure_transfer_accounts_supported,
+)
 from app.api.dependencies import DbSession
 from app.api.v1.accounting_money import _read as _money_entry_read, create_income_with_fee, create_money_entry
 from app.api.v1.accounting_loans import (
@@ -24,6 +30,7 @@ from app.api.v1.finance import (
     create_account,
     record_payment,
 )
+from app.api.v1.finance_controls import _read_recurring, post_recurring_expense
 from app.api.v1.finance_expenses import _expense_detail, create_expense, void_expense
 from app.api.v1.finance_transfers import _transfer_read, record_transfer
 from app.api.v1.payables import pay_payable_bill
@@ -56,6 +63,7 @@ from app.schemas.finance import (
     PaymentCreate,
     PaymentRead,
 )
+from app.schemas.finance_controls import RecurringExpensePost, RecurringExpensePostResult
 from app.schemas.payables import PayablePaymentCreate, PayablePaymentRead
 from app.services.accounting_posting import money
 from app.services.journal_reversal import reverse_source_journal
@@ -104,6 +112,8 @@ def safe_create_customer_advance(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,
@@ -139,6 +149,8 @@ def safe_apply_customer_advance(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,
@@ -173,6 +185,8 @@ def safe_create_money_entry(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,
@@ -211,6 +225,8 @@ def safe_create_income_with_fee(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,
@@ -272,6 +288,8 @@ def safe_create_income_with_fee(
 @router.post("/finance/accounts", response_model=FinancialAccountRead, status_code=status.HTTP_201_CREATED)
 def safe_create_account(payload: FinancialAccountCreate, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         result = create_account(payload, request, db, tenant)
         account = _tenant_account(db, tenant.organization_id, result.id)
         if account.account_type == "credit_card" and Decimal(account.opening_balance) < 0:
@@ -296,6 +314,8 @@ def safe_change_invoice_status(
     tenant: FinanceManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         result = change_invoice_status(invoice_id, payload, request, db, tenant)
         invoice = db.scalar(
             select(Invoice).where(
@@ -319,9 +339,10 @@ def safe_change_invoice_status(
 @router.post("/finance/payments", response_model=PaymentRead, status_code=status.HTTP_201_CREATED)
 def safe_record_payment(payload: PaymentCreate, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         payment_account = _tenant_account(db, tenant.organization_id, payload.account_id)
-        if payment_account.account_type == "credit_card":
-            raise HTTPException(status_code=400, detail="Customer payments cannot be received into a credit card account")
+        ensure_payment_receipt_account_supported(payment_account.account_type)
         guard, reused = reserve_posting(
             db,
             request,
@@ -365,15 +386,10 @@ def safe_record_payment(payload: PaymentCreate, request: Request, db: DbSession,
 @router.post("/finance/expenses", response_model=ExpenseDetail, status_code=status.HTTP_201_CREATED)
 def safe_create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         expense_account = _tenant_account(db, tenant.organization_id, payload.account_id)
-        if expense_account.account_type == "credit_card":
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "This expense workflow cannot safely post credit-card liability movements yet. "
-                    "Use Money Out for credit-card spending until the dedicated card workflow is enabled."
-                ),
-            )
+        ensure_expense_posting_account_supported(expense_account.account_type)
         guard, reused = reserve_posting(
             db,
             request,
@@ -414,9 +430,60 @@ def safe_create_expense(payload: ExpenseCreate, request: Request, db: DbSession,
     return result
 
 
+@router.post("/finance/recurring-expenses/{recurring_id}/post", response_model=RecurringExpensePostResult)
+def safe_post_recurring_expense(
+    recurring_id: str,
+    payload: RecurringExpensePost,
+    request: Request,
+    db: DbSession,
+    tenant: FinanceManager,
+):
+    with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
+        guard, reused = reserve_posting(
+            db,
+            request,
+            organization_id=tenant.organization_id,
+            user_id=tenant.user_id,
+            action="finance.recurring_expense.post",
+            payload={"recurring_id": recurring_id, **payload.model_dump(mode="json")},
+        )
+        if reused:
+            expense_id = completed_resource(guard, "expense")
+            expense = db.scalar(select(Expense).where(
+                Expense.id == expense_id,
+                Expense.organization_id == tenant.organization_id,
+            ))
+            if expense is None:
+                raise HTTPException(status_code=409, detail="The original expense result is no longer available")
+            recurring = _read_recurring(db, tenant.organization_id, recurring_id)
+            return RecurringExpensePostResult(
+                recurring_expense=recurring,
+                expense_id=expense.id,
+                expense_number=expense.expense_number,
+                posted_date=expense.expense_date,
+                next_due_date=recurring.next_due_date,
+                is_active=recurring.is_active,
+            )
+        result = post_recurring_expense(recurring_id, payload, request, db, tenant)
+        expense = db.scalar(select(Expense).where(
+            Expense.id == result.expense_id,
+            Expense.organization_id == tenant.organization_id,
+        ))
+        if expense is None:
+            raise HTTPException(status_code=409, detail="Expense was not persisted")
+        post_expense(db, organization_id=tenant.organization_id, user_id=tenant.user_id, expense=expense)
+        complete_posting(db, guard, resource_type="expense", resource_id=expense.id)
+    db.commit()
+    return result
+
+
 @router.post("/finance/expenses/{expense_id}/void", response_model=ExpenseDetail)
 def safe_void_expense(expense_id: str, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         expense = db.scalar(
             select(Expense).where(
                 Expense.id == expense_id,
@@ -448,16 +515,11 @@ def safe_void_expense(expense_id: str, request: Request, db: DbSession, tenant: 
 @router.post("/finance/transfers", response_model=AccountTransferRead, status_code=status.HTTP_201_CREATED)
 def safe_record_transfer(payload: AccountTransferCreate, request: Request, db: DbSession, tenant: FinanceManager):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         source_account = _tenant_account(db, tenant.organization_id, payload.from_account_id)
         destination_account = _tenant_account(db, tenant.organization_id, payload.to_account_id)
-        if source_account.account_type == "credit_card" or destination_account.account_type == "credit_card":
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Credit card settlement is not an account transfer. "
-                    "Use a dedicated card payment/expense workflow so the liability direction remains correct."
-                ),
-            )
+        ensure_transfer_accounts_supported(source_account.account_type, destination_account.account_type)
         guard, reused = reserve_posting(
             db,
             request,
@@ -523,6 +585,8 @@ def safe_pay_payable_bill(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,
@@ -582,6 +646,8 @@ def safe_disburse_loan(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,
@@ -636,6 +702,8 @@ def safe_repay_loan(
     tenant: AccountingManager,
 ):
     with defer_commits(db):
+        acquire_accounting_period_gate(db, tenant.organization_id)
+        db.refresh(tenant.organization)
         guard, reused = reserve_posting(
             db,
             request,

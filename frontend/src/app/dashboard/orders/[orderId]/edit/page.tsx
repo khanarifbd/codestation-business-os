@@ -1,14 +1,20 @@
 "use client";
 
+/* Native exits intentionally preserve the full-document boundary used by the unsaved-changes guard. */
+
 import { ArrowLeft, Loader2, Plus, Save, Trash2 } from "lucide-react";
-import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CurrencySelect } from "@/components/currency-select";
 import { MoneyInput } from "@/components/money-input";
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
+import { orderDocumentHref, orderReturnHref } from "@/lib/order-navigation";
+import { RelationshipHeader } from "@/components/relationships/relationship-ui";
+import { OrderEditorSectionHeading, OrderEditorSummary } from "@/components/commercial/order-editor-ui";
+import "@/components/commercial/order-editor.css";
 
 type ClientOption = { id: string; client_code: string; display_name: string; currency: string | null; contact_name: string | null };
 type EmployeeOption = { id: string; employee_code: string; full_name: string };
@@ -84,7 +90,6 @@ function lineTotal(item: DraftItem, taxMode: string) {
 
 export default function EditOrderPage() {
   const params = useParams<{ orderId: string }>();
-  const router = useRouter();
   const orderId = params.orderId;
 
   const [order, setOrder] = useState<OrderDetail | null>(null);
@@ -113,10 +118,32 @@ export default function EditOrderPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const loadRequestRef = useRef(0);
+  const saveInFlightRef = useRef(false);
+  const [cleanSnapshot, setCleanSnapshot] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const returnHref = orderReturnHref(searchParams.toString());
+  const draftSnapshot = JSON.stringify({ clientId, sourceLeadId, subject, orderDate, currency, taxMode, assignedEmployeeId, orderSource, externalOrderId, notes, terms, internalNotes, items });
+  const hasChanges = !loading && Boolean(meta) && Boolean(order) && Boolean(editState?.can_edit) && (saving || (cleanSnapshot !== null && cleanSnapshot !== draftSnapshot));
+  const navigation = useDocumentNavigationGuard(hasChanges, { documentLabel: "order", isBusy: saving });
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; loadRequestRef.current += 1; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const request = ++loadRequestRef.current;
+    const isCurrent = () => active && mountedRef.current && request === loadRequestRef.current;
     void (async () => {
       setLoading(true);
+      setCleanSnapshot(null);
+      setOrder(null);
+      setEditState(null);
+      setCrmRestricted(false);
+      setLeads([]);
       setError(null);
       try {
         const [orderResponse, stateResponse, metaResponse, clientsResponse] = await Promise.all([
@@ -135,24 +162,13 @@ export default function EditOrderPage() {
         if (!metaResponse.ok) throw new Error(getApiErrorMessage(metaPayload, "Could not load order setup"));
         if (!clientsResponse.ok) throw new Error(getApiErrorMessage(clientsPayload, "Could not load clients"));
 
+        if (!isCurrent()) return;
         const currentOrder = orderPayload as OrderDetail;
         setOrder(currentOrder);
         setEditState(statePayload as EditState);
         setMeta(metaPayload as Meta);
         setClients(clientsPayload as ClientOption[]);
-        setClientId(currentOrder.client_id);
-        setSourceLeadId(currentOrder.source_lead_id || "");
-        setSubject(currentOrder.subject || "");
-        setOrderDate(currentOrder.order_date);
-        setCurrency(currentOrder.currency);
-        setTaxMode(currentOrder.tax_calculation_mode || "exclusive");
-        setAssignedEmployeeId(currentOrder.assigned_employee_id || "");
-        setOrderSource(currentOrder.source || "");
-        setExternalOrderId(currentOrder.external_order_id || "");
-        setNotes(currentOrder.notes || "");
-        setTerms(currentOrder.terms_conditions || "");
-        setInternalNotes(currentOrder.internal_notes || "");
-        setItems(currentOrder.items.map((item) => ({
+        const loadedItems: DraftItem[] = currentOrder.items.map((item) => ({
           product_id: item.product_id,
           item_name: item.item_name_snapshot,
           item_type: item.item_type_snapshot === "non_stock_item" ? "non_stock_item" : "service",
@@ -162,36 +178,71 @@ export default function EditOrderPage() {
           unit_price: String(item.unit_price),
           discount_percent: String(item.discount_percent || 0),
           tax_rate: String(item.tax_rate || 0),
-        })));
+        }));
+        const loadedDraft = {
+          clientId: currentOrder.client_id,
+          sourceLeadId: currentOrder.source_lead_id || "",
+          subject: currentOrder.subject || "",
+          orderDate: currentOrder.order_date,
+          currency: currentOrder.currency,
+          taxMode: currentOrder.tax_calculation_mode || "exclusive",
+          assignedEmployeeId: currentOrder.assigned_employee_id || "",
+          orderSource: currentOrder.source || "",
+          externalOrderId: currentOrder.external_order_id || "",
+          notes: currentOrder.notes || "",
+          terms: currentOrder.terms_conditions || "",
+          internalNotes: currentOrder.internal_notes || "",
+          items: loadedItems,
+        };
+        setClientId(loadedDraft.clientId);
+        setSourceLeadId(loadedDraft.sourceLeadId);
+        setSubject(loadedDraft.subject);
+        setOrderDate(loadedDraft.orderDate);
+        setCurrency(loadedDraft.currency);
+        setTaxMode(loadedDraft.taxMode);
+        setAssignedEmployeeId(loadedDraft.assignedEmployeeId);
+        setOrderSource(loadedDraft.orderSource);
+        setExternalOrderId(loadedDraft.externalOrderId);
+        setNotes(loadedDraft.notes);
+        setTerms(loadedDraft.terms);
+        setInternalNotes(loadedDraft.internalNotes);
+        setItems(loadedDraft.items);
+        setCleanSnapshot(JSON.stringify(loadedDraft));
 
         const leadsResponse = await fetch("/api/crm/leads?converted=true&limit=100", { cache: "no-store" });
+        if (!isCurrent()) return;
         if (leadsResponse.status === 403) {
           setCrmRestricted(true);
         } else {
           const leadsPayload = await leadsResponse.json().catch(() => null);
           if (!leadsResponse.ok) throw new Error(getApiErrorMessage(leadsPayload, "Could not load converted leads"));
-          setLeads((leadsPayload as LeadPage).items);
+          if (isCurrent()) setLeads((leadsPayload as LeadPage).items);
         }
       } catch (reason) {
+        if (!isCurrent()) return;
         setError(reason instanceof Error ? reason.message : "Could not load order");
       } finally {
-        setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     })();
+    return () => { active = false; };
   }, [orderId]);
 
   useEffect(() => {
     if (!currency) return;
+    let active = true;
+    setCatalog([]);
     void (async () => {
       try {
         const response = await fetch(`/api/sales/catalog-options?currency=${encodeURIComponent(currency)}&limit=200`, { cache: "no-store" });
         const payload = await response.json().catch(() => null);
         if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not load products and services"));
-        setCatalog(payload as CatalogOption[]);
+        if (active && mountedRef.current) setCatalog(payload as CatalogOption[]);
       } catch {
-        setCatalog([]);
+        if (active && mountedRef.current) setCatalog([]);
       }
     })();
+    return () => { active = false; };
   }, [currency]);
 
   const canEdit = Boolean(editState?.can_edit);
@@ -243,7 +294,7 @@ export default function EditOrderPage() {
   }
 
   async function save() {
-    if (!order || !canEdit) return;
+    if (saveInFlightRef.current || loading || !order || !canEdit) return;
     setError(null);
     setNotice(null);
     if (!clientId) { setError("Select a client."); return; }
@@ -253,6 +304,7 @@ export default function EditOrderPage() {
       return;
     }
 
+    saveInFlightRef.current = true;
     setSaving(true);
     try {
       const response = await fetch(`/api/sales/orders/${encodeURIComponent(order.id)}/manual`, {
@@ -286,64 +338,70 @@ export default function EditOrderPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not update order"));
-      router.push(`/dashboard/orders/${encodeURIComponent(order.id)}`);
-      router.refresh();
+      if (!mountedRef.current) return;
+      setCleanSnapshot(draftSnapshot);
+      navigation.markClean();
+      navigation.navigate(orderDocumentHref(order.id, "view", returnHref), { discard: true });
     } catch (reason) {
+      if (!mountedRef.current) return;
       setError(reason instanceof Error ? reason.message : "Could not update order");
     } finally {
-      setSaving(false);
+      saveInFlightRef.current = false;
+      if (mountedRef.current) setSaving(false);
     }
   }
 
   if (loading) {
-    return <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10"><div className="mx-auto max-w-6xl"><div className="h-96 animate-pulse rounded-3xl border bg-white" /></div></main>;
+    return <main className="order-editor-page"><div className="order-editor-loading" role="status" aria-label="Loading order editor"><div className="h-96 animate-pulse rounded-3xl border bg-white" /></div></main>;
   }
 
   if (!order) {
-    return <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10"><div className="mx-auto max-w-3xl rounded-3xl border bg-white p-6"><p className="text-sm text-red-600">{error || "Order not found."}</p><Link href="/dashboard/orders" className="mt-4 inline-flex text-sm font-semibold underline">Back to orders</Link></div></main>;
+    return <main className="order-editor-page"><div className="order-editor-unavailable" role="alert"><p className="text-sm text-red-600">{error || "Order not found."}</p><a href={returnHref} className="mt-4 inline-flex text-sm font-semibold underline">Back to orders</a></div></main>;
   }
 
-  const detailHref = `/dashboard/orders/${encodeURIComponent(order.id)}`;
+  const detailHref = orderDocumentHref(order.id, "view", returnHref);
 
-  return <main className="min-h-screen bg-neutral-100 p-5 sm:p-8 lg:p-10">
-    <div className="mx-auto max-w-6xl space-y-6">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div><Link href={detailHref} className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Back to order</Link><p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">Manual order</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Edit {order.order_number}</h1><p className="mt-2 text-sm text-neutral-500">Update the manual order while it is still safe to change its commercial details.</p></div>
-        <div className="flex items-center gap-3"><span className="rounded-full border bg-white px-3 py-1 text-xs font-semibold capitalize text-neutral-600">{order.status.replaceAll("_", " ")}</span><div className="rounded-xl border bg-white px-4 py-3 text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Order total</p><p className="mt-1 whitespace-nowrap text-lg font-semibold">{currency || "—"} {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div></div>
-      </header>
+  return <main className="order-editor-page">
+    <div className="order-editor-content">
+      <div className="order-editor-back"><a href={detailHref} className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" />Back to order</a></div>
+      <RelationshipHeader eyebrow="SALES / MANUAL ORDER" title={`Edit ${order.order_number}`} description="Update the manual order while it is still safe to change its commercial details." />
 
-      {!canEdit && editState?.reason ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900"><strong>Order locked.</strong> {editState.reason}</div> : null}
-      {notice ? <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{notice}</div> : null}
-      {error ? <div role="alert" className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+      {!canEdit && editState?.reason ? <div role="status" className="order-editor-notice order-editor-notice-locked"><strong>Order locked.</strong> {editState.reason}</div> : null}
+      {notice ? <div role="status" className="order-editor-notice order-editor-notice-info">{notice}</div> : null}
+      {error ? <div role="alert" className="order-editor-notice order-editor-notice-error">{error}</div> : null}
 
-      <section className="rounded-2xl border bg-white p-5 sm:p-6">
-        <div className="mb-5"><h2 className="font-semibold">Order details</h2><p className="mt-1 text-sm text-neutral-500">Client, sales source, currency and ownership for this order.</p></div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <SearchableSelect label="Client" required clearable={false} disabled={!canEdit} value={clientId} onValueChange={changeClient} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
-          {crmRestricted ? <Field label="Source lead"><div className="flex h-11 items-center rounded-xl border bg-neutral-50 px-3 text-sm text-neutral-500">{sourceLeadId ? "Linked CRM lead · access restricted" : "No source lead linked"}</div></Field> : <SearchableSelect label="Source lead" disabled={!canEdit} value={sourceLeadId} onValueChange={setSourceLeadId} options={leadOptions} placeholder="No source lead" searchPlaceholder="Search converted leads..." />}
-          <Field label="Subject"><input disabled={!canEdit} value={subject} onChange={(event) => setSubject(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" placeholder="Website development" /></Field>
-          <Field label="Order date"><input disabled={!canEdit} type="date" value={orderDate} onChange={(event) => setOrderDate(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field>
-          <SearchableSelect label="Order source" disabled={!canEdit} value={orderSource} onValueChange={setOrderSource} options={ORDER_SOURCE_OPTIONS} placeholder="Select or type source" searchPlaceholder="Search or type source..." allowCustom />
-          <Field label="External order ID"><input disabled={!canEdit} maxLength={180} value={externalOrderId} onChange={(event) => setExternalOrderId(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" placeholder="Fiverr / Upwork / platform reference" /><p className="mt-1 text-xs text-neutral-400">Optional external marketplace or platform reference.</p></Field>
-          <CurrencySelect label="Currency" required clearable={false} disabled={!canEdit} value={currency} onValueChange={changeCurrency} />
-          <Field label="Tax calculation"><select disabled={!canEdit} value={taxMode} onChange={(event) => setTaxMode(event.target.value)} className="h-11 w-full rounded-xl border bg-white px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></Field>
-          <SearchableSelect label="Assigned employee" disabled={!canEdit} value={assignedEmployeeId} onValueChange={setAssignedEmployeeId} options={employeeOptions} placeholder="Unassigned" searchPlaceholder="Search employee..." />
+      {saving ? <div className="order-editor-notice order-editor-notice-info" role="status">Saving… If you leave now, check the order before retrying because the result may be uncertain.</div> : null}
+      <div className="order-editor-composition">
+      <OrderEditorSummary amount={<>{currency || "—"} {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>} currency={currency} date={orderDate} taxMode={taxMode} status={<span className="order-editor-status">{order.status.replaceAll("_", " ")}</span>} />
+      <div className="order-editor-main">
+      <section className="order-editor-section order-editor-setup">
+        <OrderEditorSectionHeading number="01" title="Client & order details" description="Set the client, source, currency and ownership for this order." />
+        <div className="order-editor-fields">
+          <SearchableSelect label="Client" required clearable={false} disabled={!canEdit || saving} value={clientId} onValueChange={changeClient} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
+          {crmRestricted ? <Field label="Source lead"><div className="flex h-11 items-center rounded-xl border bg-neutral-50 px-3 text-sm text-neutral-500">{sourceLeadId ? "Linked CRM lead · access restricted" : "No source lead linked"}</div></Field> : <SearchableSelect label="Source lead" disabled={!canEdit || saving} value={sourceLeadId} onValueChange={setSourceLeadId} options={leadOptions} placeholder="No source lead" searchPlaceholder="Search converted leads..." />}
+          <Field label="Subject"><input disabled={!canEdit || saving} value={subject} onChange={(event) => setSubject(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" placeholder="Website development" /></Field>
+          <Field label="Order date"><input disabled={!canEdit || saving} type="date" value={orderDate} onChange={(event) => setOrderDate(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field>
+          <SearchableSelect label="Order source" disabled={!canEdit || saving} value={orderSource} onValueChange={setOrderSource} options={ORDER_SOURCE_OPTIONS} placeholder="Select or type source" searchPlaceholder="Search or type source..." allowCustom />
+          <Field label="External order ID"><input disabled={!canEdit || saving} maxLength={180} value={externalOrderId} onChange={(event) => setExternalOrderId(event.target.value)} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" placeholder="Fiverr / Upwork / platform reference" /><p className="mt-1 text-xs text-neutral-400">Optional external marketplace or platform reference.</p></Field>
+          <CurrencySelect label="Currency" required clearable={false} disabled={!canEdit || saving} value={currency} onValueChange={changeCurrency} />
+          <Field label="Tax calculation"><select disabled={!canEdit || saving} value={taxMode} onChange={(event) => setTaxMode(event.target.value)} className="h-11 w-full rounded-xl border bg-white px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500"><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></Field>
+          <SearchableSelect label="Assigned employee" disabled={!canEdit || saving} value={assignedEmployeeId} onValueChange={setAssignedEmployeeId} options={employeeOptions} placeholder="Unassigned" searchPlaceholder="Search employee..." />
         </div>
         {!crmRestricted && clientId ? <p className="mt-4 text-xs leading-5 text-neutral-400">Source Lead only shows CRM leads converted to the selected client. This prevents cross-client sales lineage.</p> : null}
       </section>
 
-      <section className="rounded-2xl border bg-white">
-        <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-semibold">Order lines</h2><p className="mt-1 text-sm text-neutral-500">Update services, quantities, rates, discounts and taxes before execution begins.</p></div><button disabled={!canEdit} type="button" onClick={() => setItems((current) => [...current, blankItem(Number(meta?.default_tax_rate || 0))])} className="inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium disabled:opacity-40"><Plus className="size-4" />Add line</button></div>
-        <div className="space-y-3 p-4 sm:p-5">{items.map((item, index) => { const sourceValue = item.product_id ? `catalog:${item.product_id}` : item.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="rounded-2xl border p-4"><div className="grid gap-4 lg:grid-cols-[1.4fr_1.4fr_.7fr_.7fr]"><SearchableSelect label="Item source" disabled={!canEdit} value={sourceValue} onValueChange={(value) => selectItemSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input disabled={!canEdit || Boolean(item.product_id)} value={item.item_name} onChange={(event) => updateItem(index, { item_name: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input disabled={!canEdit} type="number" min="0.0001" step="any" value={item.quantity} onChange={(event) => updateItem(index, { quantity: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Unit"><input disabled={!canEdit || Boolean(item.product_id)} value={item.unit} onChange={(event) => updateItem(index, { unit: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="mt-4 grid gap-4 lg:grid-cols-[2fr_.9fr_.7fr_.7fr_auto]"><Field label="Description"><input disabled={!canEdit} value={item.description} onChange={(event) => updateItem(index, { description: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Unit price"><MoneyInput disabled={!canEdit} value={item.unit_price} onChange={(value) => updateItem(index, { unit_price: value })} currency={currency} /></Field><Field label="Discount %"><input disabled={!canEdit} type="number" min="0" max="100" step="0.01" value={item.discount_percent} onChange={(event) => updateItem(index, { discount_percent: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Tax %"><input disabled={!canEdit} type="number" min="0" max="100" step="0.01" value={item.tax_rate} onChange={(event) => updateItem(index, { tax_rate: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><div className="flex items-end gap-3"><div className="pb-2 text-right"><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{currency} {lineTotal(item, taxMode).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><button type="button" disabled={!canEdit || items.length === 1} onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" /></button></div></div></div>; })}</div>
+      <section className="order-editor-section order-editor-lines"><OrderEditorSectionHeading number="02" title="Order lines" description="Update services, quantities, rates, discounts and taxes before execution begins." actions={<button disabled={!canEdit || saving} type="button" onClick={() => setItems((current) => [...current, blankItem(Number(meta?.default_tax_rate || 0))])} className="inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium disabled:opacity-40"><Plus className="size-4" />Add line</button>} />
+        <div className="order-editor-lines-content">{items.map((item, index) => { const sourceValue = item.product_id ? `catalog:${item.product_id}` : item.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="order-editor-line"><header className="order-editor-line-header"><span>Line {index + 1}</span><span>{item.product_id ? "Catalog item" : "Custom item"}</span></header><div className="order-editor-line-identity"><SearchableSelect label="Item source" disabled={!canEdit || saving} value={sourceValue} onValueChange={(value) => selectItemSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input disabled={!canEdit || saving || Boolean(item.product_id)} value={item.item_name} onChange={(event) => updateItem(index, { item_name: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input disabled={!canEdit || saving} type="number" min="0.0001" step="any" value={item.quantity} onChange={(event) => updateItem(index, { quantity: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Unit"><input disabled={!canEdit || saving || Boolean(item.product_id)} value={item.unit} onChange={(event) => updateItem(index, { unit: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="order-editor-line-pricing"><Field label="Description"><input disabled={!canEdit || saving} value={item.description} onChange={(event) => updateItem(index, { description: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Unit price"><MoneyInput disabled={!canEdit || saving} value={item.unit_price} onChange={(value) => updateItem(index, { unit_price: value })} currency={currency} /></Field><Field label="Discount %"><input disabled={!canEdit || saving} type="number" min="0" max="100" step="0.01" value={item.discount_percent} onChange={(event) => updateItem(index, { discount_percent: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Tax %"><input disabled={!canEdit || saving} type="number" min="0" max="100" step="0.01" value={item.tax_rate} onChange={(event) => updateItem(index, { tax_rate: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><div className="order-editor-line-total"><div><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{currency} {lineTotal(item, taxMode).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><button type="button" disabled={!canEdit || saving || items.length === 1} onClick={() => setItems((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" aria-hidden="true" /><span className="sr-only">Remove line {index + 1}</span></button></div></div></div>; })}</div>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-3"><Field label="Client notes"><textarea disabled={!canEdit} value={notes} onChange={(event) => setNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Terms & conditions"><textarea disabled={!canEdit} value={terms} onChange={(event) => setTerms(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Internal notes"><textarea disabled={!canEdit} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></section>
+      <section className="order-editor-section order-editor-notes"><OrderEditorSectionHeading number="03" title="Notes & terms" description="Keep client-facing notes, commercial terms and internal context distinct." /><div className="order-editor-notes-fields"><Field label="Client notes"><textarea disabled={!canEdit || saving} value={notes} onChange={(event) => setNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Terms & conditions"><textarea disabled={!canEdit || saving} value={terms} onChange={(event) => setTerms(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Internal notes"><textarea disabled={!canEdit || saving} value={internalNotes} onChange={(event) => setInternalNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div></section>
+      </div></div>
 
-      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Link href={detailHref} className="inline-flex h-11 items-center justify-center rounded-xl border bg-white px-5 text-sm font-medium">Cancel</Link>{canEdit ? <button disabled={saving} onClick={() => void save()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-medium text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}{saving ? "Saving…" : "Save changes"}</button> : null}</div>
+      <footer className="order-editor-footer"><p>{canEdit ? "Review your updates before saving." : "This order is read-only."}</p><div className="order-editor-footer-actions"><a href={detailHref} className="inline-flex h-11 items-center justify-center rounded-xl border bg-white px-5 text-sm font-medium">Cancel</a>{canEdit ? <button disabled={saving} onClick={() => void save()} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 text-sm font-medium text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}{saving ? "Saving…" : "Save changes"}</button> : null}</div></footer>
     </div>
   </main>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label className="block text-sm"><span className="mb-1.5 block font-medium text-neutral-600">{label}</span>{children}</label>;
+  return <label className="order-editor-field"><span className="mb-1.5 block font-medium text-neutral-600">{label}</span>{children}</label>;
 }

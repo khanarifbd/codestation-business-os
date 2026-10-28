@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.db.session import defer_commits
 from app.api.v1.accounting_loans import (
     AccountingLoanCreate,
     LoanAccountingRepaymentCreate,
@@ -34,6 +35,7 @@ from app.models.capital import (
 )
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.projects import Project
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.services.functional_currency import functional_currency_for_date
@@ -476,38 +478,23 @@ def loans(db: DbSession, tenant: CapitalViewer):
 
 @router.post("/loans", status_code=201)
 def create_loan(payload: LoanCreate, request: Request, db: DbSession, tenant: LoanAccountingManager):
-    currency = payload.currency.upper()
-    if payload.account_id:
-        # Preflight the destination before creating the agreement. The canonical
-        # disbursement path performs the authoritative tenant/currency/GL checks.
-        account(db, tenant.organization_id, payload.account_id, currency)
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    with defer_commits(db):
+        currency = payload.currency.upper()
+        if payload.account_id:
+            # Preflight the destination before creating the agreement. The canonical
+            # disbursement path performs the authoritative tenant/currency/GL checks.
+            account(db, tenant.organization_id, payload.account_id, currency)
 
-    agreement = create_accounting_loan(
-        AccountingLoanCreate(
-            lender_name=payload.lender_name,
-            lender_type=payload.lender_type,
-            currency=currency,
-            approved_amount=payload.principal_amount,
-            annual_interest_rate=payload.annual_interest_rate,
-            approval_date=payload.loan_date,
-            maturity_date=payload.maturity_date,
-            reference=payload.reference,
-            notes=payload.notes,
-        ),
-        request,
-        db,
-        tenant,
-    )
-    approve_accounting_loan(agreement["id"], request, db, tenant)
-
-    if payload.account_id:
-        disburse_accounting_loan(
-            agreement["id"],
-            LoanDisbursementCreate(
-                account_id=payload.account_id,
-                disbursement_date=payload.loan_date,
-                principal_amount=payload.principal_amount,
-                fee_withheld_amount=Decimal("0"),
+        agreement = create_accounting_loan(
+            AccountingLoanCreate(
+                lender_name=payload.lender_name,
+                lender_type=payload.lender_type,
+                currency=currency,
+                approved_amount=payload.principal_amount,
+                annual_interest_rate=payload.annual_interest_rate,
+                approval_date=payload.loan_date,
+                maturity_date=payload.maturity_date,
                 reference=payload.reference,
                 notes=payload.notes,
             ),
@@ -515,20 +502,40 @@ def create_loan(payload: LoanCreate, request: Request, db: DbSession, tenant: Lo
             db,
             tenant,
         )
+        approve_accounting_loan(agreement["id"], request, db, tenant)
 
-    row = db.scalar(
-        select(CompanyLoan).where(
-            CompanyLoan.id == agreement["id"],
-            CompanyLoan.organization_id == tenant.organization_id,
+        if payload.account_id:
+            disburse_accounting_loan(
+                agreement["id"],
+                LoanDisbursementCreate(
+                    account_id=payload.account_id,
+                    disbursement_date=payload.loan_date,
+                    principal_amount=payload.principal_amount,
+                    fee_withheld_amount=Decimal("0"),
+                    reference=payload.reference,
+                    notes=payload.notes,
+                ),
+                request,
+                db,
+                tenant,
+            )
+
+        row = db.scalar(
+            select(CompanyLoan).where(
+                CompanyLoan.id == agreement["id"],
+                CompanyLoan.organization_id == tenant.organization_id,
+            )
         )
-    )
-    if row is None:
-        raise HTTPException(409, "Loan agreement could not be reloaded")
-    return loan_json(row)
+        if row is None:
+            raise HTTPException(409, "Loan agreement could not be reloaded")
+        result = loan_json(row)
+    db.commit()
+    return result
 
 
 @router.post("/loans/{loan_id}/repay", status_code=201)
 def repay(loan_id: str, payload: RepaymentCreate, request: Request, db: DbSession, tenant: LoanAccountingManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(
         select(CompanyLoan).where(
             CompanyLoan.id == loan_id,
@@ -614,6 +621,7 @@ def owner_equity_transactions(db: DbSession, tenant: CapitalViewer):
 
 @router.post("/owner-equity", status_code=201)
 def create_owner_equity_transaction(payload: OwnerEquityCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     financial = db.scalar(
         select(FinancialAccount)
         .where(
@@ -729,6 +737,7 @@ def create_company_investor(payload: CompanyInvestorCreate, request: Request, db
 
 @router.post("/company-investors/{investor_id}/fundings", status_code=201)
 def fund_company_investor(investor_id: str, payload: FundingCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestor).where(CompanyInvestor.id == investor_id, CompanyInvestor.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Company investor not found")
     amount = money(payload.amount)
@@ -746,6 +755,7 @@ def fund_company_investor(investor_id: str, payload: FundingCreate, request: Req
 
 @router.post("/company-investors/{investor_id}/payouts", status_code=201)
 def company_investor_payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestor).where(CompanyInvestor.id == investor_id, CompanyInvestor.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Company investor not found")
     principal, profit = money(payload.principal_return_amount), money(payload.profit_share_amount)
@@ -782,6 +792,7 @@ def investments(db: DbSession, tenant: CapitalViewer):
 
 @router.post("/investments", status_code=201)
 def create_investment(payload: InvestmentCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     currency = payload.currency.upper(); amount = money(payload.invested_amount); acc = account(db, tenant.organization_id, payload.account_id, currency)
     if balance(db, acc, tenant.organization_id) < amount: raise HTTPException(409, "Insufficient account balance")
     row = CompanyInvestment(organization_id=tenant.organization_id, investee_name=payload.investee_name.strip(), investment_type=payload.investment_type, currency=currency, invested_amount=amount, carrying_value=amount, ownership_percent=payload.ownership_percent, investment_date=payload.investment_date, expected_exit_date=payload.expected_exit_date, account_id=acc.id, status="active", reference=payload.reference, notes=payload.notes, created_by_user_id=tenant.user_id)
@@ -797,6 +808,7 @@ def create_investment(payload: InvestmentCreate, request: Request, db: DbSession
 
 @router.post("/investments/{investment_id}/fundings", status_code=201)
 def add_investment_funding(investment_id: str, payload: FundingCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestment).where(CompanyInvestment.id == investment_id, CompanyInvestment.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Investment not found")
     amount = money(payload.amount); acc = account(db, tenant.organization_id, payload.account_id, row.currency)
@@ -812,6 +824,7 @@ def add_investment_funding(investment_id: str, payload: FundingCreate, request: 
 
 @router.post("/investments/{investment_id}/returns", status_code=201)
 def add_return(investment_id: str, payload: ReturnCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestment).where(CompanyInvestment.id == investment_id, CompanyInvestment.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Investment not found")
     acc = account(db, tenant.organization_id, payload.account_id, row.currency); principal = money(payload.principal_return_amount); income = money(payload.income_amount)
@@ -854,6 +867,7 @@ def create_project_investor(payload: ProjectInvestorCreate, request: Request, db
 
 @router.post("/project-investors/{investor_id}/fundings", status_code=201)
 def fund_project_investor(investor_id: str, payload: FundingCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(ProjectInvestor).where(ProjectInvestor.id == investor_id, ProjectInvestor.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Project investor not found")
     amount = money(payload.amount)
@@ -870,6 +884,7 @@ def fund_project_investor(investor_id: str, payload: FundingCreate, request: Req
 
 @router.post("/project-investors/{investor_id}/payouts", status_code=201)
 def payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSession, tenant: CapitalManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(ProjectInvestor).where(ProjectInvestor.id == investor_id, ProjectInvestor.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Project investor not found")
     principal, profit = money(payload.principal_return_amount), money(payload.profit_share_amount)

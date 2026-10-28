@@ -1,0 +1,13 @@
+const ledger={id:'ledger-a',code:'1000',name:'Synthetic asset',category:'asset',subtype:null,normal_balance:'debit',parent_id:null,system_key:null,is_system:false,is_active:true,allow_manual_posting:true,notes:null};
+const credit={...ledger,id:'ledger-b',code:'3000',name:'Synthetic equity',category:'equity',normal_balance:'credit'};
+const trial={as_of:'2026-10-26',accounting_currency:'USD',functional_period_start:'2026-01-01',total_debit:'0.00',total_credit:'0.00',rows:[]};
+const debitLine={id:'line-a',ledger_account_id:ledger.id,account_code:ledger.code,account_name:ledger.name,description:'Synthetic reason',currency:'USD',exchange_rate_to_base:'1.00000000',debit:'12.34',credit:'0.00',original_amount:'12.34'};
+const creditLine={...debitLine,id:'line-b',ledger_account_id:credit.id,account_code:credit.code,account_name:credit.name,debit:'0.00',credit:'12.34'};
+const journal={id:'journal-a',entry_number:'SYN-J1',entry_date:'2026-10-26',functional_currency:'USD',status:'posted',source_type:'manual',source_id:null,reference:null,memo:'Synthetic reason',total_debit:'12.34',total_credit:'12.34',created_at:'2026-10-26T12:00:00Z',posted_at:'2026-10-26T12:00:00Z',lines:[debitLine,creditLine]};
+const reversal={...journal,id:'journal-r',entry_number:'RV-SYN',source_type:'reversal',source_id:journal.id,memo:`Reversal of ${journal.entry_number}`,lines:journal.lines.map(line=>({...line,id:`r-${line.id}`,description:`Reversal: ${line.description||journal.entry_number}`,debit:line.credit,credit:line.debit}))};
+const candidate={source_type:'expense',source_id:'expense-a',number:'SYN-E1',date:'2026-10-20',amount:'12.34',currency:'USD',title:'Synthetic expense',subtitle:'Posted expense'};
+const history={id:'history-a',source_type:'expense',source_id:'expense-a',action:'finance.expense.reversed',message:null,reason:'Synthetic correction',reversal_date:'2026-10-26',reversal_journal_id:'journal-r',status:'voided',actor_user_id:null,created_at:'2026-10-26T12:00:00Z'};
+const result={source_type:'expense',source_id:'expense-a',number:'SYN-E1',reversal_date:'2026-10-26',reversal_journal_id:null,accounting_note:'No posted accounting journal existed'};
+const confirmation={title:'Synthetic operation',description:'No real action',warning:'Unkeyed fixture only',details:[],confirmLabel:'Confirm synthetic operation'};
+const {ok,failure,deferred,tick,clone}=require('./reconciliation-fixtures.cjs');
+module.exports={ledger,credit,trial,debitLine,creditLine,journal,reversal,candidate,history,result,confirmation,ok,failure,deferred,tick,clone};

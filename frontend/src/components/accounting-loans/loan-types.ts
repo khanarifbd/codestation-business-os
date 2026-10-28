@@ -1,0 +1,24 @@
+export type DecimalValue = string | number;
+export const lenderTypes = ["bank", "person", "investor", "company", "other"] as const;
+export type LenderType = typeof lenderTypes[number];
+export const loanStatuses = ["draft", "approved", "active", "paid", "closed", "cancelled"] as const;
+export type LoanStatus = typeof loanStatuses[number];
+export type LoanActionKind = "approve" | "close" | "receive" | "repay";
+export type Loan = { id: string; lender_name: string; lender_type: string; currency: string; approved_amount: DecimalValue; disbursed_amount: DecimalValue; undisbursed_amount: DecimalValue; outstanding_principal: DecimalValue; annual_interest_rate: DecimalValue; approval_date: string; maturity_date: string | null; status: string; reference: string | null; notes: string | null };
+export type FinancialAccount = { id: string; name: string; account_type: string; currency: string; current_balance: DecimalValue; is_active: boolean };
+export type ScheduleItem = { id: string; installment_number: number; due_date: string; principal_due: DecimalValue; interest_due: DecimalValue; fee_due: DecimalValue; principal_paid: DecimalValue; interest_paid: DecimalValue; fee_paid: DecimalValue; status: string };
+type HistoryBase = { id: string; date: string; reference: string | null; notes: string | null; created_at: string };
+export type LoanDisbursement = HistoryBase & { account_id: string; account_name: string; principal_amount: DecimalValue; fee_withheld_amount: DecimalValue; net_received_amount: DecimalValue; status: string };
+/** The API deliberately has no repayment fee/cash field or join to the separate fees array. */
+export type LoanRepayment = HistoryBase & { account_id: string; account_name: string; principal_amount: DecimalValue; interest_amount: DecimalValue; status: string };
+export type LoanFee = HistoryBase & { fee_type: string; amount: DecimalValue; payment_status: string };
+export type LoanHistory = { disbursements: LoanDisbursement[]; repayments: LoanRepayment[]; fees: LoanFee[] };
+export type ReceiveResult = { id: string; loan: Loan; principal_amount: DecimalValue; fee_withheld_amount: DecimalValue; net_received_amount: DecimalValue; journal_entry_id: string };
+export type RepayResult = { id: string; loan: Loan; principal_amount: DecimalValue; interest_amount: DecimalValue; fee_amount: DecimalValue; cash_paid: DecimalValue; journal_entry_id: string };
+export type AgreementForm = { lender_name: string; lender_type: LenderType; currency: string; approved_amount: string; annual_interest_rate: string; approval_date: string; maturity_date: string; reference: string; notes: string };
+export type ReceiveForm = { account_id: string; disbursement_date: string; principal_amount: string; fee_withheld_amount: string; reference: string; notes: string };
+export type RepayForm = { account_id: string; payment_date: string; principal_amount: string; interest_amount: string; fee_amount: string; fee_type: string; reference: string; notes: string };
+export type LoanBrowse = { search: string; status: "all" | LoanStatus; page: number; focus: string };
+export const blankAgreement = (date: string, currency: string): AgreementForm => ({ lender_name: "", lender_type: "bank", currency, approved_amount: "", annual_interest_rate: "0", approval_date: date, maturity_date: "", reference: "", notes: "" });
+export const blankReceive = (date: string): ReceiveForm => ({ account_id: "", disbursement_date: date, principal_amount: "", fee_withheld_amount: "0", reference: "", notes: "" });
+export const blankRepay = (date: string): RepayForm => ({ account_id: "", payment_date: date, principal_amount: "", interest_amount: "0", fee_amount: "0", fee_type: "loan_fee", reference: "", notes: "" });

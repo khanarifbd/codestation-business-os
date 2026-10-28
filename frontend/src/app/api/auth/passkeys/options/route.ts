@@ -1,9 +1,13 @@
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
 export async function POST(request: NextRequest) {
+  const rejected = guardMutationOrigin(request);
+  if (rejected) return rejected;
+
   const upstream = await backendFetch("/auth/passkeys/options", {
     method: "POST",
     headers: requestContextHeaders(request),

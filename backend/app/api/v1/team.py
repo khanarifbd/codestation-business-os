@@ -492,7 +492,7 @@ def preview_invitation(token: str, db: DbSession) -> InvitationPreview:
         raise HTTPException(status_code=404, detail="Invitation is invalid or expired")
     organization = db.get(Organization, item.organization_id)
     role = db.get(OrganizationRole, item.role_id)
-    if organization is None or organization.status != ORGANIZATION_STATUS_ACTIVE or role is None or not role.is_active:
+    if organization is None or organization.status != ORGANIZATION_STATUS_ACTIVE or role is None or role.organization_id != item.organization_id or not role.is_active:
         raise HTTPException(status_code=404, detail="Invitation is no longer available")
     return InvitationPreview(company_name=organization.name, email=item.email, full_name=item.full_name,
         role_name=role.name, employee_code=item.employee_code, expires_at=item.expires_at,
@@ -510,17 +510,22 @@ def accept_invitation(payload: InvitationAccept, request: Request, db: DbSession
         raise HTTPException(status_code=404, detail="Invitation is invalid or expired")
     organization = db.get(Organization, item.organization_id)
     role = db.get(OrganizationRole, item.role_id)
-    if organization is None or organization.status != ORGANIZATION_STATUS_ACTIVE or role is None or not role.is_active:
+    if organization is None or organization.status != ORGANIZATION_STATUS_ACTIVE or role is None or role.organization_id != item.organization_id or not role.is_active:
         raise HTTPException(status_code=403, detail="Company or role is unavailable")
 
     user = db.scalar(select(User).where(User.email == item.email))
     if user:
+        if not user.password_hash:
+            raise HTTPException(status_code=401, detail="This account does not support password-based invitation acceptance")
         if not verify_password(payload.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Incorrect password for the existing account")
         if not user.is_active: raise HTTPException(status_code=403, detail="This user account is suspended")
     else:
-        user = User(email=item.email, full_name=item.full_name, password_hash=hash_password(payload.password))
+        user = User(email=item.email, full_name=item.full_name, password_hash=hash_password(payload.password), is_verified=True)
         db.add(user); db.flush()
+
+    # Possession of the unexpired invitation proves control of its email address.
+    user.is_verified = True
 
     membership = db.scalar(select(Membership).where(Membership.organization_id == item.organization_id, Membership.user_id == user.id))
     if membership is None:

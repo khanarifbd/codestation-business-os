@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { ArrowRight, Loader2, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Mail } from "lucide-react";
 
 import { AuthFrame } from "@/components/auth/auth-frame";
+import { AuthNotice } from "@/components/auth/auth-notice";
 import { GoogleAuthSection } from "@/components/auth/google-sign-in";
 import { PasswordField } from "@/components/auth/password-field";
 import type { AuthUser } from "@/lib/auth-session";
@@ -24,11 +25,13 @@ export default function SignupPage() {
     const organizations = await fetch("/api/organizations", { cache: "no-store" });
     if (organizations.ok) {
       const items = (await organizations.json()) as unknown[];
-      router.replace(items.length > 0 ? "/dashboard" : "/onboarding");
-    } else {
-      router.replace("/onboarding");
+      if (items.length > 0) {
+        router.replace("/dashboard");
+        router.refresh();
+        return;
+      }
     }
-    router.refresh();
+    window.location.replace("/onboarding");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -63,70 +66,34 @@ export default function SignupPage() {
   }
 
   return (
-    <AuthFrame
-      eyebrow="Create your workspace"
-      title="Start with one account"
-      description="Create your identity first. Verify your work email, then configure the company, country, timezone and business defaults."
-      asideTitle="Build your operating system around the company."
-      asideDescription="Start simple, then connect clients, quotations, orders, projects, invoices, payments, accounting and reports as your business runs."
+    <AuthFrame variant="signup"
+      eyebrow="CREATE YOUR ACCOUNT"
+      title="Make room for better work."
+      description="Start with your account. Your company workspace comes next."
+      asideTitle="A connected business." asideDescription="Set up your Business OS account."
     >
-      <GoogleAuthSection mode="signup" onAuthenticated={finishGoogleAuthentication} />
-
-      <form className="mt-6 space-y-5" onSubmit={handleSubmit}>
-        <label className="block text-sm font-medium text-neutral-800">
-          Full name
-          <input
-            name="full_name"
-            type="text"
-            autoComplete="name"
-            required
-            minLength={2}
-            autoFocus
-            className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 text-[15px] outline-none transition placeholder:text-neutral-400 hover:border-neutral-300 focus:border-neutral-500 focus:ring-4 focus:ring-neutral-950/[0.04]"
-            placeholder="Your full name"
-          />
+      <form className="login-form" onSubmit={handleSubmit}>
+        <label className="login-field">Full name
+          <input name="full_name" type="text" autoComplete="name" required minLength={2} autoFocus placeholder="Your full name" />
         </label>
-
-        <label className="block text-sm font-medium text-neutral-800">
-          Work email
-          <input
-            name="email"
-            type="email"
-            autoComplete="email"
-            required
-            className="mt-2 h-12 w-full rounded-xl border border-neutral-200 bg-white px-4 text-[15px] outline-none transition placeholder:text-neutral-400 hover:border-neutral-300 focus:border-neutral-500 focus:ring-4 focus:ring-neutral-950/[0.04]"
-            placeholder="you@company.com"
-          />
+        <label className="login-field">Work email
+          <input name="email" type="email" autoComplete="email" required placeholder="you@company.com" />
         </label>
-
-        <div>
-          <PasswordField name="password" label="Password" autoComplete="new-password" placeholder="Create a secure password" />
-          <p className="mt-2 text-xs text-neutral-400">Use at least 8 characters. Password accounts must verify their email before sign-in.</p>
+        <div className="auth-password-field">
+          <PasswordField name="password" label="Password" autoComplete="new-password" placeholder="Create a password" />
+          <p className="auth-field-hint">Use at least 8 characters.</p>
         </div>
-
-        {error ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">{error}</div>
-        ) : null}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus:outline-none focus:ring-4 focus:ring-neutral-950/10 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {loading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+        {error ? <AuthNotice kind="error">{error}</AuthNotice> : null}
+        <button type="submit" disabled={loading} className="login-submit">
+          {loading ? <Loader2 className="size-4 animate-spin" /> : null}
           {loading ? "Creating account…" : "Create account"}
-          {!loading ? <ArrowRight className="size-4" /> : null}
+          {!loading ? <ArrowRight className="size-4" aria-hidden="true" /> : null}
         </button>
       </form>
-
-      <p className="mt-7 text-center text-sm text-neutral-500">
-        Already have a workspace?{" "}
-        <Link href="/login" className="font-semibold text-neutral-950 underline-offset-4 hover:underline">Sign in</Link>
-      </p>
-
-      <p className="mt-4 text-center text-xs leading-5 text-neutral-400">
-        Google accounts are verified by Google. Password accounts require email verification.
-      </p>
+      <p className="auth-next-step"><Mail size={15} aria-hidden="true" /><span>Next: verify your email before signing in.</span></p>
+      <div className="auth-google-option"><GoogleAuthSection mode="signup" onAuthenticated={finishGoogleAuthentication} showEmailDivider={false} /></div>
+      <div className="login-account-links"><p>Already have an account? <Link href="/login">Sign in <ArrowRight size={12} aria-hidden="true" /></Link></p></div>
+      <p className="auth-provider-note">Google accounts are verified by Google. Password accounts require email verification.</p>
     </AuthFrame>
   );
 }

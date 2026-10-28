@@ -645,3 +645,18 @@ def create_income_with_fee(
         fee_amount=fee_amount,
         net_amount=_money(gross_amount - fee_amount),
     )
+
+
+# BEGIN MONEY IN RECEIPT READ
+@router.get("/{entry_id}", response_model=AccountingMoneyEntryRead)
+def get_money_entry(entry_id: str, db: DbSession, tenant: AccountingViewer):
+    item = db.scalar(
+        select(AccountingMoneyEntry).where(
+            AccountingMoneyEntry.organization_id == tenant.organization_id,
+            AccountingMoneyEntry.id == entry_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Money entry not found")
+    return _read(db, tenant.organization_id, item)
+# END MONEY IN RECEIPT READ
