@@ -46,6 +46,10 @@ test('MW02 MW03 NT03 MW04 MW05 real personal search board notification click com
 // decision case mutates the quotation; the read-only cases need no prior test.
 // Keep cold invoice/order compilation outside the quotation decision test budget.
 test('Client portal real billing visibility and quotation decision',async({page},info)=>{
+ // CI's cold real routes consumed 16.8s (quotation list) + 6.2s (detail)
+ // + 14.0s (decision), before login, billing, confirmation and persistence checks.
+ // Budget this entire multi-route journey, not individual assertions or retries.
+ test.setTimeout(90_000);
  const f=fixture();await login(page,f.customer_email);
  // Billing context and quotation cards load independently; await the actual
  // quotation read rather than treating the first visible billing amount as ready.

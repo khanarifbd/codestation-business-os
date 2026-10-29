@@ -104,7 +104,7 @@ test('portal split adds three independent cases, retaining each original privacy
   assert.equal(portal.length, 4);
   for (const row of portal) {
     assert.match(row.body, /const f=fixture\(\);await login\(page,f.customer_email\)/);
-    assert.doesNotMatch(row.body, /test\.(skip|fixme|fail)|setTimeout|waitForTimeout|storageState|route\(|fulfill\(/);
+    assert.doesNotMatch(row.body, /test\.(skip|fixme|fail)|waitForTimeout|storageState|route\(|fulfill\(/);
   }
   const decision = portal.find(row => row.name.endsWith('quotation decision')).body;
   for (const expected of ["expect(pendingQuote.status).toBe('sent')", "expect(Number(pendingQuote.total)).toBe(100)", "expect(quotation.status).toBe('accepted')", "expect(billing.financials).toHaveLength(1)", "expect(billing.financials[0].invoice_count).toBe(1)", "expect(Number(billing.financials[0].balance_due)).toBe(100)", "page.getByText('Hidden customer',{exact:true})).toHaveCount(0)", "Decision workspace locked against repeat submission", "Review rejection"]) assert.ok(decision.includes(expected), expected);
@@ -120,4 +120,26 @@ test('portal split adds three independent cases, retaining each original privacy
   // 49 declarations plus the existing two-entry leads/clients parameterization = 50 executions.
   // Before this split there were 46 declarations / 47 executions; none are excluded.
   assert.equal(files.reduce((count, file) => count + declarations(fs.readFileSync(path.join(root, 'e2e', file), 'utf8')).length, 0), 49);
+});
+
+function assertDecisionBudget(source) {
+  const cases = declarations(source);
+  const budgeted = cases.filter(row => row.body.includes('test.setTimeout('));
+  assert.equal(budgeted.length, 1);
+  assert.equal(budgeted[0].name, 'Client portal real billing visibility and quotation decision');
+  assert.equal((source.match(/test\.setTimeout\(/g) || []).length, 1);
+  assert.ok(budgeted[0].body.includes('test.setTimeout(90_000);'));
+  assert.doesNotMatch(source, /expect\.configure|test\.slow|setDefaultTimeout|setDefaultNavigationTimeout|timeout\s*:/);
+}
+test('only the evidenced cold billing-decision journey receives a 90s total budget', () => {
+  const source = fs.readFileSync(path.join(root, 'e2e/qc-personal-client-portals.spec.mjs'), 'utf8');
+  assertDecisionBudget(source);
+  for (const altered of [
+    source.replace('test.setTimeout(90_000);', ''),
+    source.replace('test.setTimeout(90_000);', 'test.setTimeout(180_000);'),
+    source.replace('test.setTimeout(90_000);', 'test.setTimeout(90_000); test.setTimeout(90_000);'),
+    source.replace("test('Client portal real linked order visibility',async({page})=>{", "test('Client portal real linked order visibility',async({page})=>{ test.setTimeout(90_000);"),
+    source.replace('test.setTimeout(90_000);', 'test.setTimeout(90_000); page.setDefaultTimeout(90_000);'),
+  ]) assert.throws(() => assertDecisionBudget(altered));
+  assertSessionOrdering(readConfig()); // global test45s / expect10s / no retry unchanged
 });
