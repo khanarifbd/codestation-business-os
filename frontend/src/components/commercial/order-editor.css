@@ -1,5 +1,5 @@
 /* Shared new/edit order composition. These styles do not alter order behaviour. */
-.order-editor-page { --rel-ink:#1c3b2d; --rel-muted:#60715f; --oe-line:#dce5d5; padding:27px 31px 40px; color:#24472f; background:#f5f7f2; min-width:0; }
+.order-editor-page { --rel-ink:#1c3b2d; --rel-muted:#60715f; --oe-line:#dce5d5; padding:27px 31px 40px; color:#24472f; background:var(--app-canvas); min-width:0; }
 .order-editor-content { max-width:1460px; margin:auto; min-width:0; }
 .order-editor-back { margin-bottom:17px; }.order-editor-back a { font-size:11px; color:#65795c; }.order-editor-back a:hover { color:#294f34; }
 .order-editor-page .relationship-header { margin-bottom:24px; }.order-editor-page .relationship-header h1 { font-size:29px; }

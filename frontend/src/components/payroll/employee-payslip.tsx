@@ -75,7 +75,7 @@ export function EmployeePayslipContent() {
     ...(payrollPositive(entry.tax_amount || "0") ? [{ name: "Tax / withholding", amount: entry.tax_amount }] : []),
   ];
 
-  return <main className="min-h-screen bg-neutral-100 p-4 print:bg-white print:p-0 sm:p-8">
+  return <main className="min-h-screen bg-[var(--app-canvas)] p-4 print:bg-white print:p-0 sm:p-8">
     <div className="mx-auto max-w-4xl">
       <div className="mb-4 flex items-center justify-between gap-3 print:hidden">
         <Link href="/dashboard/hr/me" className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-3 text-sm font-medium hover:bg-neutral-50"><ArrowLeft className="size-4" />My HR & Pay</Link>

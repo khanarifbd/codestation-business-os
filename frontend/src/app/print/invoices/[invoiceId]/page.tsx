@@ -241,7 +241,7 @@ export default function InvoicePrintPage() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-neutral-100">
+      <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)]">
         <Loader2 className="size-7 animate-spin text-neutral-400" />
       </main>
     );
@@ -249,7 +249,7 @@ export default function InvoicePrintPage() {
 
   if (error || !invoice || !payment) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-neutral-100 p-6">
+      <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)] p-6">
         <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">
           <p className="font-semibold">Invoice unavailable</p>
           <p className="mt-2 text-sm text-neutral-500">{error ?? "Invoice not found"}</p>
@@ -272,7 +272,7 @@ export default function InvoicePrintPage() {
   const sellerContact = invoice.seller_email_snapshot || "";
 
   return (
-    <main className="min-h-screen overflow-x-auto bg-neutral-100 px-4 py-8 text-neutral-950 print:overflow-visible print:bg-white print:p-0">
+    <main className="min-h-screen overflow-x-auto bg-[var(--app-canvas)] px-4 py-8 text-neutral-950 print:overflow-visible print:bg-white print:p-0">
       <style jsx global>{`
         @page {
           size: A4;

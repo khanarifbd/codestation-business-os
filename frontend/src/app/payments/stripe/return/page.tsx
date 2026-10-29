@@ -18,7 +18,7 @@ export default async function StripeCheckoutReturnPage({ searchParams }: ReturnP
   const mode = id?.startsWith("cs_live_") ? "live" : id?.startsWith("cs_test_") ? "test" : "unknown";
   const outcome = params.result === "cancelled" ? "cancelled" : "success";
 
-  return <main className="flex min-h-screen items-center justify-center bg-neutral-100 p-4">
+  return <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)] p-4">
     <section className="w-full max-w-xl rounded-2xl border bg-white p-8 shadow-sm">
       <CreditCard className="size-8 text-violet-700" />
       <h1 className="mt-4 text-2xl font-semibold">

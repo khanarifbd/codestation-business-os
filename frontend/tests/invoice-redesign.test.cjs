@@ -1,3 +1,4 @@
+const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /** Presentation guardrails for the active invoice list/create/detail workflow. */
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -102,11 +103,11 @@ test('Invoice Stripe integrations and QR generation are not altered by the prese
   for(const file of ['src/components/invoice-stripe-sandbox-panel.tsx','src/components/invoice-stripe-live-panel.tsx','src/lib/qrcode-svg.js'])assert.equal(read(root,file),read(baseline,file),file);
   assert.equal(logic(root,files.payment,'LocalPaymentQr'),logic(baseline,files.payment,'LocalPaymentQr'));
 });
-test('All finance API and dedicated invoice print route files remain byte-identical',()=>{
+test('Finance API stays byte-identical; invoice print permits only reviewed canvas change',()=>{
   for(const folder of ['src/app/api/finance','src/app/print/invoices']){
     const previous=fs.readdirSync(path.join(baseline,folder),{recursive:true}).filter(p=>p.endsWith('.ts')||p.endsWith('.tsx')).sort();
     const current=fs.readdirSync(path.join(root,folder),{recursive:true}).filter(p=>p.endsWith('.ts')||p.endsWith('.tsx')).sort();assert.deepEqual(current,previous);
-    for(const file of previous)assert.equal(read(root,folder+'/'+file),read(baseline,folder+'/'+file),file);
+    for(const file of previous)assert.equal(read(root,folder+'/'+file),withReviewedCanvas(folder+'/'+file,read(baseline,folder+'/'+file)),file);
   }
 });
 test('Reversal confirmation retains its guard, pending state, cancel and confirm callbacks',()=>{

@@ -1,3 +1,4 @@
+const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -83,9 +84,9 @@ test('Login form preserves identifier/password names, autocomplete, native valid
  const s=read(candidate,login);
  for(const token of ['name="identifier"','autoComplete="username webauthn"','required autoFocus','name="password"','autoComplete="current-password"','onSubmit={handleSubmit}','handlePasskeySignIn()','disabled={passkeyLoading || loading}','disabled={loading}','role="alert"','role="status"','href="/forgot-password"','href="/signup"','href="/verify-email"','onAuthenticated={finishAuthentication}','onLinkRequired={prepareGoogleLink}']) assert.ok(s.includes(token),token);
 });
-test('Shared auth frame defaults to the original presentation',()=>{
+test('Shared auth frame retains original presentation except reviewed outer canvas',()=>{
  const source=read(candidate,'src/components/auth/auth-frame.tsx');assert.ok(source.includes('variant = "default"'));assert.ok(source.includes('if (variant !== "default")'));
- const old=read(baseline,'src/components/auth/auth-frame.tsx');assert.equal(source.slice(source.indexOf('  return (')),old.slice(old.indexOf('  return (')));
+ const old=withReviewedCanvas('src/components/auth/auth-frame.tsx',read(baseline,'src/components/auth/auth-frame.tsx'));assert.equal(source.slice(source.indexOf('  return (')),old.slice(old.indexOf('  return (')));
 });
 test('Google auth callback and sign-in setup unchanged; optional divider defaults on',()=>{
  const s=read(candidate,'src/components/auth/google-sign-in.tsx'), b=read(baseline,'src/components/auth/google-sign-in.tsx');

@@ -42,7 +42,14 @@ test('MW02 MW03 NT03 MW04 MW05 real personal search board notification click com
  await info.attach('personal-readback.json',{body:JSON.stringify({detail,workspace,notices}),contentType:'application/json'});
 });
 
-test('Client portal real linked visibility public milestone invoice suppression and quotation decision',async({page},info)=>{
+// Each journey authenticates afresh against pre-seeded records. Only the billing/
+// decision case mutates the quotation; the read-only cases need no prior test.
+// Keep cold invoice/order compilation outside the quotation decision test budget.
+test('Client portal real billing visibility and quotation decision',async({page},info)=>{
+ // CI's cold real routes consumed 16.8s (quotation list) + 6.2s (detail)
+ // + 14.0s (decision), before login, billing, confirmation and persistence checks.
+ // Budget this entire multi-route journey, not individual assertions or retries.
+ test.setTimeout(90_000);
  const f=fixture();await login(page,f.customer_email);
  // Billing context and quotation cards load independently; await the actual
  // quotation read rather than treating the first visible billing amount as ready.
@@ -55,13 +62,6 @@ test('Client portal real linked visibility public milestone invoice suppression 
  expect(pendingQuote.status).toBe('sent');expect(Number(pendingQuote.total)).toBe(100);
  await expect(page.getByText('USD 100.00',{exact:true})).toHaveCount(2);
  await page.screenshot({path:info.outputPath('client-dashboard-billing.png'),fullPage:true});
- await page.getByRole('link',{name:'All projects',exact:true}).click();
- await page.getByRole('link').filter({hasText:'Personal test project'}).first().click();
- await expect(page.getByText('Public update',{exact:true})).toBeVisible();await expect(page.getByText('Private update',{exact:true})).toHaveCount(0);
- await page.goto('/dashboard/client/invoices');await expect(page.getByText('INV-SENT',{exact:true})).toBeVisible();
- for(const text of ['INV-DRAFT','INV-CANCELLED','INV-OTHER'])await expect(page.getByText(text,{exact:true})).toHaveCount(0);
- await page.getByRole('row').filter({has:page.getByText('INV-SENT',{exact:true})}).getByRole('link',{name:'View document',exact:true}).click();await expect(page.getByText('INV-SENT',{exact:true}).first()).toBeVisible();
- await page.goto(`/dashboard/client/orders/${f.order_id}`);await expect(page.getByText('O-EXP',{exact:true}).first()).toBeVisible();
  await page.goto(`/dashboard/client/quotations/${f.quotation_id}`);
  await page.getByRole('link',{name:'Review acceptance',exact:true}).click();
  await page.getByRole('button',{name:'Review final confirmation',exact:true}).click();
@@ -74,6 +74,37 @@ test('Client portal real linked visibility public milestone invoice suppression 
  await expect(page.getByRole('link',{name:'Review rejection',exact:true})).toHaveCount(0);
  const quotation=await json(await page.request.get(`/api/client-portal/quotations/${f.quotation_id}`));expect(quotation.status).toBe('accepted');
  await info.attach('client-decision.json',{body:JSON.stringify(quotation),contentType:'application/json'});await page.screenshot({path:info.outputPath('client-accepted-quotation.png'),fullPage:true});
+});
+
+test('Client portal real linked project public milestone privacy',async({page})=>{
+ const f=fixture();await login(page,f.customer_email);
+ await page.goto('/dashboard/client-portal');
+ await page.getByRole('link',{name:'All projects',exact:true}).click();
+ // The detail route compiles independently in CI. Wait for its actual scoped
+ // GET before checking rendered milestones, not for an arbitrary delay.
+ const projectDetailURL=new URL(`/api/client-portal/projects/${f.project_id}`,page.url()).href;
+ const [projectResponse]=await Promise.all([
+   page.waitForResponse(r=>r.url()===projectDetailURL&&r.request().method()==='GET'),
+   page.getByRole('link').filter({hasText:'Personal test project'}).first().click(),
+ ]);
+ expect(projectResponse.status()).toBe(200);
+ const project=await json(projectResponse);expect(project.id).toBe(f.project_id);
+ expect(project.milestones.some(row=>row.title==='Public update')).toBe(true);
+ expect(project.milestones.some(row=>row.title==='Private update')).toBe(false);
+ await expect(page).toHaveURL(url=>url.pathname===`/dashboard/client/projects/${f.project_id}`);
+ await expect(page.getByText('Public update',{exact:true})).toBeVisible();await expect(page.getByText('Private update',{exact:true})).toHaveCount(0);
+});
+
+test('Client portal real invoice suppression and document visibility',async({page})=>{
+ const f=fixture();await login(page,f.customer_email);
+ await page.goto('/dashboard/client/invoices');await expect(page.getByText('INV-SENT',{exact:true})).toBeVisible();
+ for(const text of ['INV-DRAFT','INV-CANCELLED','INV-OTHER'])await expect(page.getByText(text,{exact:true})).toHaveCount(0);
+ await page.getByRole('row').filter({has:page.getByText('INV-SENT',{exact:true})}).getByRole('link',{name:'View document',exact:true}).click();await expect(page.getByText('INV-SENT',{exact:true}).first()).toBeVisible();
+});
+
+test('Client portal real linked order visibility',async({page})=>{
+ const f=fixture();await login(page,f.customer_email);
+ await page.goto(`/dashboard/client/orders/${f.order_id}`);await expect(page.getByText('O-EXP',{exact:true}).first()).toBeVisible();
 });
 
 test('HR08 HR26 HR27 personal remote and correction requests persist with completed review locked',async({page},info)=>{

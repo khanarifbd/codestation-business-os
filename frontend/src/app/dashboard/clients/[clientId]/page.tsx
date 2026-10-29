@@ -106,7 +106,7 @@ export default function ClientWorkspacePage() {
   }, [workspace]);
 
   if (loading) return <main className="client-detail-workspace flex min-h-[70vh] items-center justify-center" role="status" aria-label="Loading client workspace"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
-  if (error || !workspace) return <main className="client-detail-workspace min-h-screen bg-neutral-100 p-4 sm:p-8"><div className="mx-auto max-w-6xl"><Link href="/dashboard/clients" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500"><ArrowLeft className="size-4" />Back to clients</Link><div role="alert" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:mt-6 sm:p-5">{error ?? "Client workspace unavailable."}</div></div></main>;
+  if (error || !workspace) return <main className="client-detail-workspace min-h-screen bg-[var(--app-canvas)] p-4 sm:p-8"><div className="mx-auto max-w-6xl"><Link href="/dashboard/clients" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500"><ArrowLeft className="size-4" />Back to clients</Link><div role="alert" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:mt-6 sm:p-5">{error ?? "Client workspace unavailable."}</div></div></main>;
 
   const { client, access, counts } = workspace;
   const country = COUNTRY_OPTIONS.find((item) => item.value === client.country_code)?.label ?? client.country_code ?? "—";

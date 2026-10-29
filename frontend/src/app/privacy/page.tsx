@@ -46,7 +46,7 @@ const sections = [
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-neutral-100 px-5 py-10 text-neutral-950 sm:px-8 lg:px-10">
+    <main className="min-h-screen bg-[var(--app-canvas)] px-5 py-10 text-neutral-950 sm:px-8 lg:px-10">
       <article className="mx-auto max-w-4xl rounded-3xl border border-neutral-200 bg-white p-6 shadow-sm sm:p-10">
         <div className="border-b border-neutral-200 pb-7">
           <Link href="/" className="text-sm font-semibold text-neutral-500 hover:text-neutral-950">

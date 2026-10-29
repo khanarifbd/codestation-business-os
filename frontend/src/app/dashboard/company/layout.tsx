@@ -5,7 +5,7 @@ import { HistoricalFxDrawer } from "@/components/company/historical-fx-drawer";
 
 export default function CompanyLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-neutral-100">
+    <div className="min-h-screen bg-[var(--app-canvas)]">
       <div className="border-b bg-white">
         <div className="mx-auto flex max-w-[1500px] items-center gap-2 px-5 py-2.5 sm:px-8 lg:px-10">
           <Link

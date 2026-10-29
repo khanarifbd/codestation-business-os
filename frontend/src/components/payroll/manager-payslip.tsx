@@ -48,7 +48,7 @@ export function PayrollPayslipContent() {
   const entry = run.entries.find((item) => item.id === params.entryId);
   if (!entry) return <main className="grid min-h-screen place-items-center p-6"><div className="rounded-xl border px-5 py-4 text-sm">Payslip entry not found.</div></main>;
 
-  return <main className="min-h-screen bg-neutral-100 p-4 print:bg-white print:p-0 sm:p-8">
+  return <main className="min-h-screen bg-[var(--app-canvas)] p-4 print:bg-white print:p-0 sm:p-8">
     <div className="mx-auto max-w-4xl">
       <div className="mb-4 flex items-center justify-between print:hidden"><button onClick={() => window.close()} className="inline-flex h-10 items-center gap-2 rounded-xl border bg-white px-3 text-sm font-medium"><ArrowLeft className="size-4"/>Close</button><button onClick={() => window.print()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><Printer className="size-4"/>Print / Save PDF</button></div>
       <article className="rounded-3xl border bg-white p-6 shadow-sm print:rounded-none print:border-0 print:p-0 print:shadow-none sm:p-10">

@@ -1,3 +1,4 @@
+const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /** Presentation-only dashboard guardrails against the verified QA baseline. */
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -101,8 +102,8 @@ function normalizeNativeBootstrapEntry(value) {
  assert.ok(!value.includes('router.replace("/onboarding")'),'old SPA onboarding entry must not remain');
  return value.replace(native,'router.replace("/onboarding")');
 }
-test('Operational reporting and session/tenant enforcement retain exact bytes except native onboarding entry', () => {
-  for (const file of ['src/components/dashboard/operational-reporting-note.tsx', 'src/components/dashboard-session-context.tsx', 'src/components/tenant-area-guard.tsx', 'src/app/dashboard/layout.tsx']) assert.equal(file==='src/components/dashboard-session-context.tsx'?normalizeNativeBootstrapEntry(read(root,file)):read(root,file), read(baseline, file), file);
+test('Operational reporting and session/tenant enforcement retain exact bytes except native onboarding entry and reviewed guard canvas', () => {
+  for (const file of ['src/components/dashboard/operational-reporting-note.tsx', 'src/components/dashboard-session-context.tsx', 'src/components/tenant-area-guard.tsx', 'src/app/dashboard/layout.tsx']) assert.equal(file==='src/components/dashboard-session-context.tsx'?normalizeNativeBootstrapEntry(read(root,file)):read(root,file), withReviewedCanvas(file, read(baseline, file)), file);
 });
 test('Bootstrap native-entry adapter rejects SPA, duplicate and wrong target and does not hide other enforcement changes',()=>{
  const actual=read(root,'src/components/dashboard-session-context.tsx');

@@ -1,5 +1,5 @@
 /* Presentation-only invoice primitives; all business calculations remain in their owners. */
-.invoice-page { --invoice-ink:#203d30; --invoice-muted:#647366; --invoice-border:#dce5d7; padding:31px 34px 45px; background:#f5f7f2; color:var(--invoice-ink); }
+.invoice-page { --invoice-ink:#203d30; --invoice-muted:#647366; --invoice-border:#dce5d7; padding:31px 34px 45px; background:var(--app-canvas); color:var(--invoice-ink); }
 .invoice-page :is(input,select,textarea,button,a):focus-visible { outline:3px solid #7ea98d; outline-offset:3px; }
 .invoice-heading { align-items:center; }
 .invoice-heading h1 { font-size:32px; letter-spacing:-1px; color:#1c3c2c; }

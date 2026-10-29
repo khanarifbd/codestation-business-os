@@ -25,8 +25,7 @@ export function AuthFrame({
     return <LoginFrame variant={variant} eyebrow={eyebrow} title={title} description={description}>{children}</LoginFrame>;
   }
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#f5f5f3] px-4 py-4 text-neutral-950 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_12%_10%,rgba(255,255,255,0.95),transparent_28%),radial-gradient(circle_at_88%_90%,rgba(228,228,226,0.9),transparent_30%)]" />
+    <main className="relative min-h-screen overflow-hidden bg-[var(--app-canvas)] px-4 py-4 text-neutral-950 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
 
       <div className="relative mx-auto grid min-h-[calc(100vh-2rem)] max-w-[1240px] overflow-hidden rounded-[30px] border border-black/[0.07] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.08)] sm:min-h-[calc(100vh-3rem)] lg:min-h-[calc(100vh-4rem)] lg:grid-cols-[0.92fr_1.08fr]">
         <aside className="relative hidden overflow-hidden bg-neutral-950 p-10 text-white lg:flex lg:flex-col lg:justify-between xl:p-12">
