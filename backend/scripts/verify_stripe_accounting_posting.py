@@ -27,6 +27,7 @@ from app.models.stripe_checkout import StripeCheckoutAttempt
 from app.models.stripe_settlement import StripeSettlementSnapshot
 from app.models.user import User
 from app.services.stripe_accounting import post_verified_live_stripe_settlement
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.exchange_rates import record_rate_snapshot
 from app.tenancy.context import TenantContext
 
@@ -151,6 +152,7 @@ def main():
         before_profitability = next(row for row in profitability_report(db, actor).profit_loss_by_currency if row.currency == "USD")
         before_expenses = db.scalar(select(func.count()).select_from(Expense).where(Expense.organization_id == org.id))
         with patch.object(db, "commit", db.flush):
+            acquire_accounting_period_gate(db, org.id)
             posted = post_verified_live_stripe_settlement(
                 db, organization_id=org.id, actor=actor,
                 snapshot_id=snapshot.id, request=req(),

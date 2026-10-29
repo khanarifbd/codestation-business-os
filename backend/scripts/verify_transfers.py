@@ -19,6 +19,7 @@ from app.schemas.finance import AccountTransferCreate, FinancialAccountCreate
 from app.services.accounting_posting import financial_ledger_account
 from app.services.activity_log import record_activity
 from app.services.exchange_rates import record_rate_snapshot
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.operational_posting import post_financial_account_opening, post_transfer
 
 
@@ -275,6 +276,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        acquire_accounting_period_gate(db, tenant.organization_id)
         post_financial_account_opening(
             db,
             organization_id=tenant.organization_id,
@@ -309,6 +311,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        acquire_accounting_period_gate(db, tenant.organization_id)
         transfer_row = db.scalar(
             select(AccountTransfer).where(
                 AccountTransfer.id == accounting_transfer.id,
@@ -433,6 +436,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        acquire_accounting_period_gate(db, tenant.organization_id)
         post_financial_account_opening(
             db,
             organization_id=tenant.organization_id,
@@ -465,6 +469,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        acquire_accounting_period_gate(db, tenant.organization_id)
         same_transfer_row = db.scalar(
             select(AccountTransfer).where(
                 AccountTransfer.id == same_transfer.id,

@@ -8,6 +8,7 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 from sqlalchemy.orm import Session
 from period_entrypoint_harness import DB, GATE, gate_namespace, gate_sql, load_functions
 
@@ -23,6 +24,12 @@ CASES = (
     ('verify_inventory_payables_migration.py', 'ensure_default_chart', 0),
     ('verify_v1_accounting_integrity.py', 'sync_result', 0),
     ('verify_financial_corrections.py', 'sync_result', 0),
+    ('verify_stripe_accounting_posting.py', 'posted', 0),
+    ('verify_stripe_payout_lifecycle.py', 'post_financial_account_opening', 0),
+    ('verify_transfers.py', 'post_financial_account_opening', 0),
+    ('verify_transfers.py', 'post_financial_account_opening', 1),
+    ('verify_transfers.py', 'transfer_row', 0),
+    ('verify_transfers.py', 'same_transfer_row', 0),
     ('verify_finance.py', 'cancelled_direct', 0),
     ('verify_sales_catalog_flow.py', 'cancelled_invoice', 0),
 )
@@ -50,7 +57,7 @@ class JournalFixtureGateTests(unittest.TestCase):
                 self.assertIsInstance(previous.value, ast.Call)
                 self.assertEqual(getattr(previous.value.func, 'id', None), 'acquire_accounting_period_gate')
                 db = DB()
-                ns = dict(gate_namespace(), db=db, organization=NS(id='synthetic-org'),
+                ns = dict(gate_namespace(), db=db, organization=NS(id='synthetic-org'), org=NS(id='synthetic-org'),
                           tenant=NS(organization_id='synthetic-org'), organization_id='synthetic-org', o=NS(id='synthetic-org'))
                 exec(compile(ast.Module(body=[previous], type_ignores=[]), '<actual fixture gate>', 'exec'), ns)
                 GATE.require_accounting_period_gate(db, 'synthetic-org')
@@ -141,6 +148,55 @@ class JournalFixtureGateTests(unittest.TestCase):
                     self.assertIsNot(checked[0], old_root)
                 return
         self.fail('Cancellation fixture boundary not found')
+
+    def test_direct_posting_fixture_prefixes_reach_real_journal_date_guard(self):
+        tree = ast.parse((ROOT / 'app/services/accounting_posting.py').read_text())
+        adapter = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'ensure_open_period')
+        posting = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'post_journal')
+        cases = [('verify_stripe_accounting_posting.py', 'posted', 0),
+                 ('verify_stripe_payout_lifecycle.py', 'post_financial_account_opening', 0),
+                 ('verify_transfers.py', 'post_financial_account_opening', 0),
+                 ('verify_transfers.py', 'post_financial_account_opening', 1),
+                 ('verify_transfers.py', 'transfer_row', 0),
+                 ('verify_transfers.py', 'same_transfer_row', 0)]
+        for filename, anchor, index in cases:
+            with self.subTest(script=filename, anchor=anchor, index=index):
+                db = DB()
+                ns = dict(gate_namespace(), db=db, org=NS(id='synthetic-org'),
+                          tenant=NS(organization_id='synthetic-org'),
+                          organization_id='synthetic-org', entry_date=date(2026, 10, 29), date=date)
+                exec(compile(ast.Module(body=[adapter], type_ignores=[]), '<actual period adapter>', 'exec'), ns)
+                validation = compile(ast.Module(body=[posting.body[0]], type_ignores=[]), '<actual journal guard>', 'exec')
+                with self.assertRaises(GATE.AccountingPeriodGateError):
+                    exec(validation, ns)
+                self.assertEqual(db.events, [])
+                previous = prefixes(filename, anchor)[index]
+                owned = (isinstance(previous, ast.Expr) and isinstance(previous.value, ast.Call)
+                         and getattr(previous.value.func, 'id', None) == 'acquire_accounting_period_gate')
+                if owned:
+                    exec(compile(ast.Module(body=[previous], type_ignores=[]), '<actual posting fixture prefix>', 'exec'), ns)
+                exec(validation, ns)
+                self.assertEqual(len(gate_sql(db)), 1)
+                self.assertTrue(any(event[0] == 'period_read' for event in db.events))
+
+    def test_stripe_fixture_commit_patch_preserves_root_for_post_and_replay(self):
+        tree = ast.parse((ROOT / 'scripts/verify_stripe_accounting_posting.py').read_text())
+        context = next(node for node in ast.walk(tree) if isinstance(node, ast.With)
+                       and any(isinstance(child, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'posted'
+                               for t in child.targets) for child in node.body))
+        # The real fixture supplies an active root from preceding ORM reads/flushes.
+        # Exercise its exact patch context against real SQLAlchemy commit semantics.
+        body = ast.parse('db.commit(); roots.append(db.get_transaction()); db.commit(); roots.append(db.get_transaction())').body
+        wrapper = ast.With(items=context.items, body=body)
+        module = ast.fix_missing_locations(ast.Module(body=[wrapper], type_ignores=[]))
+        with Session() as db:
+            original = db.begin()
+            roots = []
+            exec(compile(module, '<actual Stripe fixture commit patch>', 'exec'), dict(db=db, patch=patch, roots=roots))
+            self.assertEqual(roots, [original, original])
+            self.assertTrue(original.is_active)
+            db.rollback()
+            self.assertIsNone(db.get_transaction())
 
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):

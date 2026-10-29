@@ -26,6 +26,7 @@ from app.models.stripe_checkout import StripeWebhookEvent
 from app.models.stripe_payout import StripePayoutReconciliation
 from app.models.user import User
 from app.services.exchange_rates import record_rate_snapshot
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.operational_posting import post_financial_account_opening
 from app.tenancy.context import TenantContext
 
@@ -87,6 +88,7 @@ def main():
             created_by_user_id=user.id,
         )
         db.add_all([source, bank]);db.flush()
+        acquire_accounting_period_gate(db, org.id)
         post_financial_account_opening(
             db, organization_id=org.id, user_id=user.id,
             account=source, entry_date=date.today(),
