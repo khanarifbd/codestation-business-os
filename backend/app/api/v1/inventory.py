@@ -167,6 +167,13 @@ def _stock_out(db: DbSession, *, organization_id: str, user_id: str, product: Pr
     new_value=cost(Decimal(bal.inventory_value) - total)
     new_base_value=money(old_base_value - total_base)
     if new_qty == 0:
+        # The final issue must relieve the remaining carrying value, including
+        # rounding accumulated across partial issues. Otherwise zeroing the
+        # balance silently discards value absent from the movement and journal.
+        # Keep unit-cost snapshots as the existing weighted average; the final
+        # movement total includes the residual and may differ from qty * average.
+        total=cost(bal.inventory_value)
+        total_base=money(old_base_value)
         new_value=Decimal("0")
         new_base_value=Decimal("0")
     bal.on_hand_quantity=new_qty

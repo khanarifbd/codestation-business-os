@@ -66,7 +66,10 @@ jobs:
             test_restore_verification_failures_unit.py \
             test_stripe_sandbox_replay_offline.py \
             test_public_checkout_suspension_offline.py \
-            test_hr_document_revocation_offline.py
+            test_hr_document_revocation_offline.py \
+            test_inventory_depletion_cost_offline.py \
+            test_inventory_failure_paths_offline.py \
+            test_payroll_finalization_failure_offline.py
           do
             uv run --offline --no-sync python -m unittest discover -s tests -p "$test_file" -v || exit 1
           done
