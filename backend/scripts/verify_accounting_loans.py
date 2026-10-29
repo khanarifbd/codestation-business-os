@@ -27,6 +27,7 @@ from app.api.v1.accounting_reports import financial_statements
 from app.api.v1.finance import create_account
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.db.session import SessionLocal, engine
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
@@ -195,6 +196,8 @@ def main() -> None:
         )
         db.rollback()
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         disbursement = disburse_loan(
             loan["id"], blocked_payload,
             request("POST", f"/accounting/loans/{loan['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
@@ -223,6 +226,8 @@ def main() -> None:
         )
         db.rollback()
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         repayment = repay_loan(
             loan["id"],
             LoanAccountingRepaymentCreate(
@@ -334,6 +339,8 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         fx_disbursement = disburse_loan(
             fx_loan["id"],
             LoanDisbursementCreate(
@@ -370,6 +377,8 @@ def main() -> None:
             tenant,  # type: ignore[arg-type]
         )
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         fx_repayment = repay_loan(
             fx_loan["id"],
             LoanAccountingRepaymentCreate(
@@ -498,6 +507,8 @@ def main() -> None:
                 + "; ".join(f"{issue.code}: {issue.message}" for issue in loan_integrity_issues)
             )
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         final_repayment = repay_loan(
             fx_loan["id"],
             LoanAccountingRepaymentCreate(
@@ -613,6 +624,8 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         disburse_loan(
             close_loan_row["id"],
             LoanDisbursementCreate(
@@ -623,6 +636,8 @@ def main() -> None:
             ),
             request("POST", f"/accounting/loans/{close_loan_row['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         paid = repay_loan(
             close_loan_row["id"],
             LoanAccountingRepaymentCreate(

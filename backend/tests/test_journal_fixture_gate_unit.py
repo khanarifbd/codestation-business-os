@@ -24,6 +24,13 @@ CASES = (
     ('verify_inventory_payables_migration.py', 'ensure_default_chart', 0),
     ('verify_v1_accounting_integrity.py', 'sync_result', 0),
     ('verify_financial_corrections.py', 'sync_result', 0),
+    ('verify_accounting_loans.py', 'disbursement', 0),
+    ('verify_accounting_loans.py', 'repayment', 0),
+    ('verify_accounting_loans.py', 'fx_disbursement', 0),
+    ('verify_accounting_loans.py', 'fx_repayment', 0),
+    ('verify_accounting_loans.py', 'final_repayment', 0),
+    ('verify_accounting_loans.py', 'disburse_loan', 0),
+    ('verify_accounting_loans.py', 'paid', 0),
     ('verify_finance_controls.py', 'posted', 0),
     ('verify_stripe_accounting_posting.py', 'posted', 0),
     ('verify_stripe_payout_lifecycle.py', 'post_financial_account_opening', 0),
@@ -154,7 +161,15 @@ class JournalFixtureGateTests(unittest.TestCase):
         tree = ast.parse((ROOT / 'app/services/accounting_posting.py').read_text())
         adapter = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'ensure_open_period')
         posting = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'post_journal')
-        cases = [('verify_stripe_accounting_posting.py', 'posted', 0),
+        cases = [
+                 ('verify_accounting_loans.py', 'disbursement', 0),
+                 ('verify_accounting_loans.py', 'repayment', 0),
+                 ('verify_accounting_loans.py', 'fx_disbursement', 0),
+                 ('verify_accounting_loans.py', 'fx_repayment', 0),
+                 ('verify_accounting_loans.py', 'final_repayment', 0),
+                 ('verify_accounting_loans.py', 'disburse_loan', 0),
+                 ('verify_accounting_loans.py', 'paid', 0),
+                 ('verify_stripe_accounting_posting.py', 'posted', 0),
                  ('verify_stripe_payout_lifecycle.py', 'post_financial_account_opening', 0),
                  ('verify_transfers.py', 'post_financial_account_opening', 0),
                  ('verify_transfers.py', 'post_financial_account_opening', 1),
@@ -348,6 +363,47 @@ class JournalFixtureGateTests(unittest.TestCase):
         adapter(db, 'synthetic-org', date(2026, 10, 29))
         self.assertEqual(len(gate_sql(db)), 1)
         self.assertTrue(any(event[0] == 'period_read' for event in db.events))
+
+    def test_loan_direct_posting_prefixes_own_real_request_roots(self):
+        tree = ast.parse((ROOT / 'scripts/verify_accounting_loans.py').read_text())
+        helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'ensure_request_transaction')
+        gate_tree = ast.parse((ROOT / 'app/services/accounting_period_gate.py').read_text())
+        guard_nodes = [n for n in gate_tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))
+                       and n.name in {'_active_root', 'AccountingPeriodGateError'}]
+        ns = {}
+        exec(compile(ast.Module(body=guard_nodes + [helper], type_ignores=[]), '<actual loan root helper>', 'exec'), ns)
+        anchors = {'disbursement', 'repayment', 'fx_disbursement', 'fx_repayment', 'final_repayment', 'paid'}
+        found = 0
+        for parent in ast.walk(tree):
+            for _, body in ast.iter_fields(parent):
+                if not isinstance(body, list):
+                    continue
+                for index, node in enumerate(body):
+                    match = (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id in anchors for t in node.targets))
+                    match |= (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                              and isinstance(node.value.func, ast.Name) and node.value.func.id == 'disburse_loan')
+                    if not match:
+                        continue
+                    found += 1
+                    prefix = body[max(0, index-2):index]
+                    owned = len(prefix) == 2 and ast.unparse(prefix[0]) == 'ensure_request_transaction(db)' and ast.unparse(prefix[1]) == 'acquire_accounting_period_gate(db, tenant.organization_id)'
+                    for state in ('new', 'active', 'committed', 'rolled_back'):
+                        with self.subTest(line=node.lineno, state=state):
+                            with Session() as db:
+                                original = db.begin() if state != 'new' else None
+                                if state == 'committed': db.commit()
+                                if state == 'rolled_back': db.rollback()
+                                def acquire(db, organization_id):
+                                    self.assertEqual(organization_id, 'synthetic-org')
+                                    ns['_active_root'](db)
+                                with patch.object(db, 'commit', side_effect=AssertionError('unexpected commit')), patch.object(db, 'rollback', side_effect=AssertionError('unexpected rollback')):
+                                    if owned:
+                                        exec(compile(ast.Module(body=prefix, type_ignores=[]), '<actual loan posting prefix>', 'exec'), dict(ns, db=db, tenant=NS(organization_id='synthetic-org'), acquire_accounting_period_gate=acquire))
+                                    current = ns['_active_root'](db)
+                                    if state == 'active': self.assertIs(current, original)
+                                    else: self.assertIsNot(current, original)
+                    with self.subTest(line=node.lineno, prefix=True): self.assertTrue(owned)
+        self.assertEqual(found, 7)
 
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):
