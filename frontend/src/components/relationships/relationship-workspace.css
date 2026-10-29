@@ -1,4 +1,4 @@
-.relationship-workspace { --rel-ink:#1c3b2d; --rel-muted:#60715f; --rel-line:#dce5d7; padding:29px 31px 42px; background:#f5f7f2; color:var(--rel-ink); min-width:0; }
+.relationship-workspace { --rel-ink:#1c3b2d; --rel-muted:#60715f; --rel-line:#dce5d7; padding:29px 31px 42px; background:var(--app-canvas); color:var(--rel-ink); min-width:0; }
 .relationship-header { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:23px; }
 .relationship-header>div:first-child { min-width:0; }
 .relationship-eyebrow { font-size:10px; font-weight:550; letter-spacing:1.5px; text-transform:uppercase; color:#576c57; }

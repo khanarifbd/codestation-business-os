@@ -1,4 +1,4 @@
-.cp-page { --cp-ink:#20333c; --cp-muted:#5c7079; --cp-border:#dce5e9; --cp-accent:#286e77; background:#f4f7f8; color:var(--cp-ink); min-height:100%; padding:28px 30px 108px; }
+.cp-page { --cp-ink:#20333c; --cp-muted:#5c7079; --cp-border:#dce5e9; --cp-accent:#286e77; background:var(--app-canvas); color:var(--cp-ink); min-height:100%; padding:28px 30px 108px; }
 .cp-page *, .cp-page *::before, .cp-page *::after { box-sizing:border-box; }
 .cp-container { max-width:1440px; margin:0 auto; min-width:0; }
 .cp-page :is(button,a,input,select,summary,[tabindex]):focus-visible { outline:3px solid #3295a0; outline-offset:3px; }

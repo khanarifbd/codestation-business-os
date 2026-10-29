@@ -1,3 +1,4 @@
+const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /* Actual return component under controlled React lifecycle/fetch scheduling.
  * No browser/provider/session/network/accounting integration is exercised. */
 const test = require('node:test'), assert = require('node:assert/strict');
@@ -111,10 +112,10 @@ test('all original accounting-state messages and presentation remain byte-exact'
   const marker = '  if (!sessionId || mode === "unknown") {';
   assert.equal(source.slice(source.indexOf(marker)), original.slice(original.indexOf(marker)));
 });
-test('public route retains parsing, metadata and status props; only destination/copy change', () => {
+test('public route retains parsing, metadata and status props; only reviewed destination/copy/canvas change', () => {
   const before = fs.readFileSync(path.join(evidence, 'preimages/src/app/payments/stripe/return/page.tsx.txt'), 'utf8');
   const source = fs.readFileSync(path.join(root, 'src/app/payments/stripe/return/page.tsx'), 'utf8');
-  assert.equal(source.replace('href="/dashboard"', 'href="/dashboard/accounting/invoices"').replace('Return to your workspace', 'Return to Invoices'), before);
+  assert.equal(source.replace('href="/dashboard"', 'href="/dashboard/accounting/invoices"').replace('Return to your workspace', 'Return to Invoices'), withReviewedCanvas('src/app/payments/stripe/return/page.tsx', before));
 });
 test('neutral destination delegates actual client/employee/staff routing to unchanged shell', () => {
   const file = path.join(root, 'src/components/dashboard-shell.tsx'), source = fs.readFileSync(file, 'utf8');

@@ -1,4 +1,4 @@
-.or-page { --or-ink:#172c32; --or-muted:#586d74; --or-border:#dce5e7; --or-accent:#146b61; min-height:100%; background:#f3f6f6; color:var(--or-ink); padding:28px 30px 104px; }
+.or-page { --or-ink:#172c32; --or-muted:#586d74; --or-border:#dce5e7; --or-accent:#146b61; min-height:100%; background:var(--app-canvas); color:var(--or-ink); padding:28px 30px 104px; }
 .or-page *, .or-page *::before, .or-page *::after { box-sizing:border-box; }
 .or-container { max-width:1520px; margin:0 auto; min-width:0; }
 .or-page .aa-heading { margin-bottom:22px; }

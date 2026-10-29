@@ -189,7 +189,7 @@ export function SuperAdminShell({ children }: { children: ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen bg-neutral-100 text-neutral-950 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
+    <div className="min-h-screen bg-[var(--app-canvas)] text-neutral-950 lg:grid lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside className="sticky top-0 hidden h-screen flex-col bg-neutral-950 p-4 text-white lg:flex">
         {sidebarContent}
       </aside>

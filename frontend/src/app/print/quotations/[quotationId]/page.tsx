@@ -238,7 +238,7 @@ export default function QuotationPrintPage() {
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-neutral-100">
+      <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)]">
         <Loader2 className="size-7 animate-spin text-neutral-400" />
       </main>
     );
@@ -246,7 +246,7 @@ export default function QuotationPrintPage() {
 
   if (error || !detail) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-neutral-100 p-6">
+      <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)] p-6">
         <div className="rounded-2xl border bg-white p-8 text-center shadow-sm">
           <p className="font-semibold">Quotation unavailable</p>
           <p className="mt-2 text-sm text-neutral-500">{error ?? "Quotation not found"}</p>
@@ -273,7 +273,7 @@ export default function QuotationPrintPage() {
     .join(" · ");
 
   return (
-    <main className="min-h-screen bg-neutral-100 px-4 py-8 text-neutral-950 print:bg-white print:p-0">
+    <main className="min-h-screen bg-[var(--app-canvas)] px-4 py-8 text-neutral-950 print:bg-white print:p-0">
       <style jsx global>{`
         @page {
           size: A4;

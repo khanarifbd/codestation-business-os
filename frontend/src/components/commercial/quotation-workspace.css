@@ -1,5 +1,5 @@
 /* Quotation presentation only. All document behaviour stays in the workspace. */
-.quotation-workspace { --rel-ink:#1c3b2d; --rel-muted:#60715f; --quote-line:#dce5d7; --quote-muted:#61715f; min-width:0; background:#f5f7f2; color:var(--rel-ink); padding:29px 31px 42px; }
+.quotation-workspace { --rel-ink:#1c3b2d; --rel-muted:#60715f; --quote-line:#dce5d7; --quote-muted:#61715f; min-width:0; background:var(--app-canvas); color:var(--rel-ink); padding:29px 31px 42px; }
 .quotation-page-content { max-width:1540px; margin:auto; min-width:0; }
 .quotation-workspace :is(button,a,input,select,textarea,nav,[tabindex]):focus-visible { outline:3px solid #789b67; outline-offset:3px; }
 .quotation-workspace button { cursor:pointer; }

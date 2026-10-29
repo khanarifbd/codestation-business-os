@@ -1,3 +1,4 @@
+const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /** Financial/API invariants survive the intentional route/controller correction. */
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
@@ -40,8 +41,8 @@ for(const name of ['corePayload','commercialPayload'])test(`${name}: financial/A
  function declaration(dir){const ast=parse(dir);let value;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(ast)===name)value=printer.printNode(ts.EmitHint.Unspecified,n.initializer,ast);ts.forEachChild(n,visit);}visit(ast);assert.ok(value,name);return value;}
  assert.equal(declaration(root),declaration(baseline));
 });
-test('Authenticated sales proxy and dedicated saved-document print routes remain unchanged',()=>{
- for(const rel of ['src/app/api/sales/[...segments]/route.ts','src/app/print/quotations/[quotationId]/page.tsx','src/app/print/quotations/[quotationId]/layout.tsx'])assert.equal(read(root,rel),read(baseline,rel),rel);
+test('Sales proxy stays unchanged; saved-document print permits only reviewed canvas change',()=>{
+ for(const rel of ['src/app/api/sales/[...segments]/route.ts','src/app/print/quotations/[quotationId]/page.tsx','src/app/print/quotations/[quotationId]/layout.tsx'])assert.equal(read(root,rel),withReviewedCanvas(rel,read(baseline,rel)),rel);
 });
 for(const [name,names]of [['PricingTab',['line','sourceValue','sourceOptions']],['PaymentsTab',['derivedAmount']]])test(`${name}: nested financial and catalog derivations remain unchanged`,()=>{
  function declarations(dir){const {ast,node}=find(dir,name),out={};function visit(n){if(ts.isVariableDeclaration(n)&&names.includes(n.name.getText(ast)))out[n.name.getText(ast)]=printer.printNode(ts.EmitHint.Unspecified,n.initializer,ast);ts.forEachChild(n,visit);}visit(node);return out;}

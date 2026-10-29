@@ -1,5 +1,5 @@
 /* Shared workspace shell + scoped overview: existing route/role logic is untouched. */
-.workspace-shell { --workspace-ink:#19332f; --workspace-muted:#66776e; --workspace-border:#dfe6df; --workspace-accent:#d7efa9; --app-canvas:#f5f7f2; color:var(--workspace-ink); font-family:var(--font-inter),Arial,sans-serif; }
+.workspace-shell { --workspace-ink:#19332f; --workspace-muted:#66776e; --workspace-border:#dfe6df; --workspace-accent:#d7efa9; color:var(--workspace-ink); font-family:var(--font-inter),Arial,sans-serif; }
 .workspace-shell :is(a,button,select,summary):focus-visible { outline:3px solid #7ea98d; outline-offset:3px; }
 .ws-sidebar { width:244px; background:#142e33; border-right:1px solid #142e33; color:#e0ece5; padding:25px 14px 14px; }
 .ws-brand { gap:11px; padding:0 4px 7px; }

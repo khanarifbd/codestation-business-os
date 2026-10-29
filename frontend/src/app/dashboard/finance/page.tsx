@@ -157,7 +157,7 @@ export default function FinancePage() {
 
   if (loading) return <main className="flex min-h-[70vh] items-center justify-center"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
 
-  return <main className="min-h-screen bg-neutral-100 p-4 sm:p-7 lg:p-9"><div className="mx-auto max-w-[1500px]">
+  return <main className="min-h-screen bg-[var(--app-canvas)] p-4 sm:p-7 lg:p-9"><div className="mx-auto max-w-[1500px]">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-neutral-500">Invoices, payments and accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Finance</h1><p className="mt-2 text-sm text-neutral-500">Invoice balances are driven by confirmed payments and account ledger postings.</p></div><div className="flex gap-2"><button onClick={()=>setModal("account")} className="rounded-xl border bg-white px-4 py-3 text-sm font-semibold">+ Account</button><button onClick={()=>setModal("invoice")} className="rounded-xl bg-neutral-950 px-4 py-3 text-sm font-semibold text-white">+ New invoice</button></div></div>
 
     <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6"><Metric label="Invoices" value={summary?.invoice_count||0} icon={FileText}/><Metric label="Draft" value={summary?.draft_count||0}/><Metric label="Outstanding" value={outstandingCount}/><Metric label="Paid" value={summary?.paid_count||0}/><Metric label="Payments" value={summary?.payment_count||0} icon={Banknote}/><Metric label="Accounts" value={summary?.account_count||0} icon={Building2}/></div>

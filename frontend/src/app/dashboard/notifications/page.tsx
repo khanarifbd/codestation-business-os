@@ -45,7 +45,7 @@ export default function NotificationsPage() {
   const dueCount = items.length - overdueCount;
   const visibleItems = useMemo(() => items.filter((item) => filter === "all" || (filter === "overdue" ? item.kind === "task_overdue" : item.kind === "task_due")), [filter, items]);
 
-  return <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-5xl">
+  return <main className="min-h-screen bg-[var(--app-canvas)] p-4 sm:p-8 lg:p-10"><div className="mx-auto max-w-5xl">
     <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-neutral-500">Work that needs your attention</p><h1 className="mt-1 text-3xl font-semibold">Notifications</h1><p className="mt-2 max-w-2xl text-sm text-neutral-500">Deadline alerts come directly from your assigned tasks. Open an alert to review the task and update your progress.</p></div><button type="button" onClick={() => void load(false)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-medium hover:bg-neutral-50"><RefreshCw className="size-4" />Refresh</button></header>
 
     <section className="mt-6 grid gap-3 sm:grid-cols-3"><Metric icon={Bell} label="Needs attention" value={items.length} /><Metric icon={AlertTriangle} label="Overdue" value={overdueCount} critical={overdueCount > 0} /><Metric icon={Clock3} label="Due soon" value={dueCount} /></section>

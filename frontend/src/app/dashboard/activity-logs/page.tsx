@@ -96,7 +96,7 @@ export default function TenantActivityLogsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-neutral-100 px-4 py-6 text-neutral-950 sm:px-8 lg:px-10">
+    <main className="min-h-screen bg-[var(--app-canvas)] px-4 py-6 text-neutral-950 sm:px-8 lg:px-10">
       <div className="mx-auto max-w-[1400px]">
         <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div><Link href="/dashboard" className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-950"><ArrowLeft className="size-4" /> Company dashboard</Link><h1 className="mt-3 text-3xl font-semibold tracking-tight">Company Activity Logs</h1><p className="mt-2 text-sm text-neutral-500">Admin-only audit history for the currently selected company workspace.</p></div>

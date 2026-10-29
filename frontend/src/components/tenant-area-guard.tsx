@@ -11,7 +11,7 @@ export function TenantAreaGuard({ children }: { children: ReactNode }) {
   if (!loading && profile && tenant) return <>{children}</>;
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-neutral-100 px-5 text-neutral-950">
+    <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)] px-5 text-neutral-950">
       {error ? (
         <div className="w-full max-w-sm rounded-2xl border bg-white p-6 text-center shadow-sm">
           <p className="text-sm font-semibold">Unable to verify account access</p>
