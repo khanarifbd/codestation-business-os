@@ -4,6 +4,7 @@ Run from backend with PYTHONPATH=. No email, payment provider or fixture commits
 """
 from datetime import date
 from pathlib import Path
+import re
 from uuid import uuid4
 
 from app.api.v1.reports import _client_rows, _financials, _project_rows, _trend
@@ -19,6 +20,54 @@ from app.models.user import User
 from app.schemas.reports import ReportsOverview
 
 DAY = date(2026, 10, 20)
+
+
+def verify_frontend_reporting_contract(frontend):
+    """Static import/render contract across the actual refactored composition.
+
+    Rendering/browser behavior is verified separately by frontend tests. Keep the
+    operational-vs-accrual semantics and both route wiring checks here; do not
+    require the shared disclaimer to live inside a financial card's source file.
+    """
+    sources = {}
+    def read(relative):
+        if relative not in sources:
+            sources[relative] = (frontend / relative).read_text()
+        return sources[relative]
+
+    def wired(parent, child, name, module):
+        source = read(parent)
+        imported = re.search(r'import\s*\{[^}]*\b' + re.escape(name) + r'\b[^}]*\}\s*from\s*["\']' + re.escape(module) + r'["\']', source)
+        assert imported, f"Missing import for {name} in {parent}"
+        assert re.search(r'<' + re.escape(name) + r'(?:\s|/|>)', source), f"Missing rendered {name} in {parent}"
+        assert re.search(r'export\s+function\s+' + re.escape(name) + r'\s*\(', read(child)), f"Missing export {name}"
+
+    note_path = "components/dashboard/operational-reporting-note.tsx"
+    dashboard = "app/dashboard/page.tsx"
+    insights = "components/dashboard/financial-insights.tsx"
+    reports = "app/dashboard/reports/page.tsx"
+    workspace = "components/operational-reports/report-workspace.tsx"
+    performance = "components/operational-reports/report-performance.tsx"
+    wired(dashboard, insights, "FinancialPerformanceCard", "@/components/dashboard/financial-insights")
+    wired(dashboard, note_path, "OperationalReportingNote", "@/components/dashboard/operational-reporting-note")
+    wired(reports, workspace, "OperationalReportsWorkspace", "@/components/operational-reports/report-workspace")
+    wired(workspace, performance, "ReportPerformance", "./report-performance")
+    wired(performance, note_path, "OperationalReportingNote", "@/components/dashboard/operational-reporting-note")
+    assert '<CurrencySummary ' in read(performance), "Report performance must render its currency summary"
+    assert 'function CurrencySummary(' in read(performance)
+    for relative, function in ((insights, "FinancialPerformanceCard"), (performance, "CurrencySummary")):
+        body = read(relative).split("function " + function + "(", 1)[1].split("function ", 1)[0]
+        assert re.search(r'>\s*Operational margin\s*</', body), f"Missing operational margin label: {relative}"
+        assert "row.net_profit" in body, f"Operational margin is not bound to reported amount: {relative}"
+    for relative in (dashboard, insights, reports, workspace, performance):
+        source = read(relative)
+        assert not re.search(r'(?:label\s*=\s*["\']Net profit["\']|>\s*Net profit\s*<)', source), f"Misleading accrual label: {relative}"
+    note = read(note_path)
+    for meaning in ("not accrual net profit", "including tax", "direct income", "approved payroll",
+                    "transfer fees", "Supplier bills", "inventory cost of sales", "journal-only adjustments are not included",
+                    "excluding sales tax"):
+        assert meaning in note, f"Operational basis explanation lost: {meaning}"
+    assert '<Link href="/dashboard/accounting/reports"' in note and "accrual Profit &amp; Loss" in note
 
 
 def main():
@@ -91,12 +140,7 @@ def main():
 
     assert ReportsOverview.model_fields["reporting_basis"].default == "operational"
     frontend = Path(__file__).resolve().parents[2] / "frontend/src"
-    note = (frontend / "components/dashboard/operational-reporting-note.tsx").read_text()
-    assert "not accrual net profit" in note and "/dashboard/accounting/reports" in note
-    for relative in ("components/dashboard/financial-insights.tsx", "app/dashboard/reports/page.tsx"):
-        source = (frontend / relative).read_text()
-        assert "OperationalReportingNote" in source and "Operational margin" in source
-        assert 'label="Net profit"' not in source and ">Net profit<" not in source
+    verify_frontend_reporting_contract(frontend)
     print("PASS QA-003 basis, QA-004 order attribution, QA-007 cost-only currencies, QA-013 draft exclusion; rollback-only")
 
 
