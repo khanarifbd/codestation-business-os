@@ -19,7 +19,9 @@ from sqlalchemy import select
 from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.dependencies import CurrentTenantAdmin, DbSession, require_tenant_permission
 from app.core.config import settings
+from app.core.roles import ORGANIZATION_STATUS_ACTIVE
 from app.models.finance import FinancialAccount, Invoice
+from app.models.organization import Organization
 from app.models.payment_gateways import PaymentGatewayConnection
 from app.models.stripe_checkout import StripeCheckoutAttempt, StripeWebhookEvent
 from app.services.activity_log import record_activity
@@ -384,6 +386,15 @@ def open_public_live_invoice_checkout(
     verify_public_invoice_link(organization_id, invoice_id, signature)
     if not settings.stripe_live_collection_enabled:
         raise HTTPException(status_code=503, detail="Online invoice payments are temporarily unavailable")
+    # Public capability links do not pass through get_tenant_context. Check the
+    # current workspace status before either reusing a session or calling Stripe.
+    organization_status = db.scalar(select(Organization.status).where(
+        Organization.id == organization_id,
+    ))
+    if organization_status is None:
+        raise HTTPException(status_code=404, detail="Payment link not found")
+    if organization_status != ORGANIZATION_STATUS_ACTIVE:
+        raise HTTPException(status_code=403, detail="This company workspace is suspended")
     result = _create_checkout(
         invoice_id, request, db, None, mode="live", authorized_organization_id=organization_id,
     )
@@ -393,15 +404,18 @@ def open_public_live_invoice_checkout(
 @router.post("/webhook/{connection_id}", include_in_schema=False)
 async def stripe_sandbox_webhook(connection_id: str, request: Request, db: DbSession):
     """Public webhook: the secret binds it to the specific registered tenant account."""
+    # Read untrusted input before taking a business lock, as in the live handler.
+    body = await request.body()
     connection = db.scalar(select(PaymentGatewayConnection).where(
         PaymentGatewayConnection.id == connection_id,
         PaymentGatewayConnection.provider == "stripe",
         PaymentGatewayConnection.mode == "test",
         PaymentGatewayConnection.is_active.is_(True),
-    ))
+    ).with_for_update().execution_options(populate_existing=True))
+    # Serialize deliveries before the deduplication read. Locking the attempt
+    # afterward is too late: two requests can already have missed the same event.
     if connection is None or not connection.webhook_secret_ciphertext:
         raise HTTPException(status_code=404, detail="Stripe webhook not available")
-    body = await request.body()
     event = verify_stripe_signature(
         body, request.headers.get("stripe-signature"),
         decrypt_gateway_secret(connection.webhook_secret_ciphertext),

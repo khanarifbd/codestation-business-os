@@ -410,6 +410,38 @@ class ClientInvitationUnitTests(unittest.TestCase):
         self.assertEqual(self.action_count("client.invitation.resent"), 0)
         self.assertEqual(self.action_count("client.invitation.revoked"), 0)
 
+    def test_previewed_link_cannot_accept_after_invitation_revocation(self):
+        item, token = self.pending()
+        invitations.preview_client_invitation(token, self.db)
+        invitations.revoke_client_invitation(item.id, None, self.db, self.tenant)
+        self.db.expunge_all()  # Acceptance is a subsequent request, not preview state.
+        self.assert_http_error(404, lambda: self.accept(token))
+        self.assertEqual(self.count(invitations.ClientMembership), 0)
+        self.assertEqual(self.action_count("client.invitation.accepted"), 0)
+        self.assertEqual(self.count(invitations.User), 1)
+
+    def test_previewed_link_cannot_accept_after_company_suspension(self):
+        item, token = self.pending()
+        invitations.preview_client_invitation(token, self.db)
+        self.organization.status = "suspended"
+        self.save_fixture()
+        self.db.expunge_all()
+        self.assert_http_error(403, lambda: self.accept(token))
+        self.assertEqual(self.count(invitations.ClientMembership), 0)
+        self.assertEqual(self.action_count("client.invitation.accepted"), 0)
+        self.assertEqual(self.count(invitations.User), 1)
+
+    def test_previewed_link_cannot_accept_after_client_tenant_mismatch(self):
+        item, token = self.pending()
+        invitations.preview_client_invitation(token, self.db)
+        self.client.organization_id = "foreign-company"
+        self.save_fixture()
+        self.db.expunge_all()
+        self.assert_http_error(403, lambda: self.accept(token))
+        self.assertEqual(self.count(invitations.ClientMembership), 0)
+        self.assertEqual(self.action_count("client.invitation.accepted"), 0)
+        self.assertEqual(self.count(invitations.User), 1)
+
     def test_unknown_token_rejected_without_writes(self):
         self.assert_unavailable("not-an-invitation-token-123456789")
         self.assertEqual(self.count(invitations.User), 1)
