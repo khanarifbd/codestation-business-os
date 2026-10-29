@@ -74,7 +74,9 @@ jobs:
             test_source_invoice_transaction_offline.py \
             test_recurring_scheduler_transaction_offline.py \
             test_expense_void_transaction_offline.py \
-            test_expense_relationship_context.py
+            test_expense_relationship_context.py \
+            test_company_currency_fixture_transaction_unit.py \
+            test_finance_controls_fixture_transaction_unit.py
           do
             uv run --offline --no-sync python -m unittest discover -s tests -p "$test_file" -v || exit 1
           done
@@ -171,6 +173,12 @@ jobs:
       - run: ENVIRONMENT=test uv run python scripts/verify_qc_hr_project_extended.py
       - run: ENVIRONMENT=test uv run python scripts/verify_qc_owner_finance_extended.py
       - run: ENVIRONMENT=test uv run python scripts/verify_qc_recurring_concurrency.py
+      - name: Verify synthetic PostgreSQL payment and void concurrency
+        timeout-minutes: 10
+        env:
+          ENVIRONMENT: test
+          QC_PAYMENT_VOID_CONCURRENCY: "1"
+        run: uv run python scripts/verify_qc_payment_void_concurrency.py
       - run: ENVIRONMENT=test uv run python scripts/verify_qc_statement_reversal_chain.py
       - run: uv run python -c "from app.main import app; print(app.title)"
 

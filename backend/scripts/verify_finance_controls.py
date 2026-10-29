@@ -154,6 +154,9 @@ def main() -> None:
             if "Accounting period is closed" not in str(exc):
                 raise
 
+        # Direct route calls bypass tenant dependency reads on the next request.
+        # The expected database rejection above ended the previous root.
+        db.begin()
         reopened = reopen_accounting_period(
             period.id, AccountingPeriodReopen(reason="CI correction verification"),
             make_request("POST", f"/api/v1/finance/accounting-periods/{period.id}/reopen"), db, tenant,  # type: ignore[arg-type]
