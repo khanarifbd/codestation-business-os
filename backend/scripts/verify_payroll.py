@@ -21,6 +21,7 @@ from app.api.v1.payroll import (
 )
 from app.api.v1.reports import reports_overview
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialTransaction
 from app.models.payroll import PayrollEntry, PayrollRun
@@ -39,7 +40,7 @@ class FixtureOrganization:
 class FixtureTenant:
     organization_id: str
     user_id: str
-    organization: FixtureOrganization
+    organization: Organization
 
 
 def request(method: str, path: str) -> Request:
@@ -90,12 +91,12 @@ def main() -> None:
             VALUES (:id, :org_id, :name, 'bank', 'BDT', 1000000.00, true, :user_id, :now, :now)
         """), {"id": account_id, "org_id": fixture["id"], "name": f"Payroll CI {account_id[:8]}", "user_id": fixture["created_by_user_id"], "now": now})
 
-    tenant = FixtureTenant(
-        organization_id=str(fixture["id"]), user_id=str(fixture["created_by_user_id"]),
-        organization=FixtureOrganization(id=str(fixture["id"]), timezone=str(fixture["timezone"] or "UTC"), currency=str(fixture["currency"] or "BDT")),
-    )
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture['id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = FixtureTenant(organization_id=str(fixture['id']), user_id=str(fixture['created_by_user_id']), organization=organization)
         # Verify the exact four reads used by the Payroll page on initial load.
         bootstrap_meta = payroll_meta(db, tenant)  # type: ignore[arg-type]
         bootstrap_profiles = list_salary_profiles(db, tenant)  # type: ignore[arg-type]

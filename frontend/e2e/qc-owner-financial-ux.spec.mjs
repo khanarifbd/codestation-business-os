@@ -136,7 +136,8 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.goto("/dashboard/accounting/assets");
   await page.getByRole("link", { name: "Record asset", exact: true }).click();
   await page.getByRole("radio", { name: /Existing \/ opening asset/ }).check();
-  for (const [label, value] of [["Asset code", "QC-INVALID"], ["Asset name", "Synthetic invalid asset"], ["Category", "equipment"], ["Acquisition cost", "100"], ["Salvage value", "101"], ["Opening balance date", today], ["Acquisition date", today], ["In-service date", today]]) await page.getByLabel(new RegExp(`^${label}(?:\\s|$)`)).fill(value);
+  // Field labels include adjacent hint text; match the unique caption prefix.
+  for (const [label, value] of [["Asset code", "QC-INVALID"], ["Asset name", "Synthetic invalid asset"], ["Category", "equipment"], ["Acquisition cost", "100"], ["Salvage value", "101"], ["Opening balance date", today], ["Acquisition date", today], ["In-service date", today]]) await page.getByLabel(new RegExp(`^${label}`)).fill(value);
   await page.getByRole("button", { name: "Review asset recording", exact: true }).click();
   await expect(page.locator("body")).toContainText(/salvage.*(?:exceed|greater|lower)|(?:exceed|greater).*salvage/i);
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -148,7 +149,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.getByLabel("Start date", { exact: true }).fill(last);
   const periodEnd = page.getByLabel("End date", { exact: true });
   await periodEnd.fill(first);
-  await page.getByLabel(/^Pay date\b/).fill(last);
+  await page.getByLabel(/^Pay date/).fill(last);
   expect(await periodEnd.evaluate(el => el.validity.rangeUnderflow)).toBe(true);
   await expect(page.getByRole("button", { name: "Create period", exact: true })).toBeDisabled();
   await rejectedAPI(page, "POST", "/payroll/periods", { name: "Synthetic invalid reverse period", period_start: last, period_end: first, pay_date: last }, /period_end|end date|period end/i);
@@ -162,7 +163,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.goto(`/dashboard/payroll/runs/${run.id}/entries/${run.entries[0].id}/edit`);
   const tax = page.getByLabel(/^Tax \/ withholding · USD/);
   await tax.fill("-1");
-  await page.getByLabel(/^Adjustment reason\b/).fill("Synthetic invalid withholding validation");
+  await page.getByLabel(/^Adjustment reason/).fill("Synthetic invalid withholding validation");
   expect(await tax.evaluate(el => el.validity.patternMismatch)).toBe(true);
   await expect(page.getByRole("button", { name: "Save draft adjustment", exact: true })).toBeDisabled();
   await rejectedAPI(page, "PATCH", `/payroll/runs/${run.id}/entries/${run.entries[0].id}`, { tax_amount: "-1", adjustment_reason: "Synthetic invalid withholding validation" }, /tax_amount/);
@@ -286,7 +287,7 @@ test("owner source selectors omit billed work and overpayment is blocked before 
   const amount = page.getByLabel(/Amount received/);
   await amount.fill("121");
   await expect(page.getByRole("status").filter({ hasText: "The amount exceeds the last verified invoice balance due." })).toBeVisible();
-  await page.getByRole("button", { name: "Review money received", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Review money received", exact: true })).toBeDisabled();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(amount).toHaveValue("121");
   const unchanged = await api(page, "GET", `/finance/invoices/${billed.id}`);

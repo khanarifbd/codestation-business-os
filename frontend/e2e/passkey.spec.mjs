@@ -54,14 +54,19 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
     // an existing Business OS access/refresh session. The virtual authenticator
     // keeps the discoverable credential exactly like a device passkey would.
     await context.clearCookies();
+    const verified = page.waitForResponse(response => new URL(response.url()).pathname === "/api/auth/passkeys/verify" && response.request().method() === "POST");
     await page.goto("/login", { waitUntil: "domcontentloaded" });
 
-    // Conditional WebAuthn may complete automatically in supporting Chrome
-    // versions. Otherwise exercise the explicit passkey button.
-    await page.waitForTimeout(500);
-    if (page.url().includes("/login")) {
-      await page.getByRole("button", { name: "Sign in with a passkey" }).click();
-    }
+    // Conditional WebAuthn can navigate while Playwright is actioning the
+    // explicit button. Observe both legitimate paths, not a 500ms URL snapshot.
+    const signedIn = page.waitForURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
+    await Promise.all([
+      verified.then(response => expect(response.status()).toBe(200)),
+      Promise.race([
+        signedIn,
+        page.getByRole("button", { name: "Sign in with a passkey" }).click().then(() => signedIn),
+      ]),
+    ]);
     await expect(page).toHaveURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
   } finally {
     await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }).catch(() => undefined);

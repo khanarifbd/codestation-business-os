@@ -10,6 +10,7 @@ from app.api.v1.finance import create_account
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.api.v1.reports import reports_overview
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.schemas.accounting_money import AccountingMoneyEntryCreate
 from app.schemas.finance import FinancialAccountCreate
 from app.services.accounting_posting import system_account
@@ -26,7 +27,7 @@ class FixtureOrganization:
 class FixtureTenant:
     organization_id: str
     user_id: str
-    organization: FixtureOrganization
+    organization: Organization
 
 
 def make_request(method: str, path: str) -> Request:
@@ -52,17 +53,12 @@ def main() -> None:
             ORDER BY created_at DESC LIMIT 1
         """)).mappings().one()
 
-    tenant = FixtureTenant(
-        organization_id=str(fixture["organization_id"]),
-        user_id=str(fixture["user_id"]),
-        organization=FixtureOrganization(
-            timezone=str(fixture["timezone"] or "UTC"),
-            currency=str(fixture["currency"] or "USD"),
-            name=str(fixture["name"]),
-        ),
-    )
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = FixtureTenant(organization_id=str(fixture['organization_id']), user_id=str(fixture['user_id']), organization=organization)
         report = reports_overview(
             db=db,
             tenant=tenant,  # type: ignore[arg-type]

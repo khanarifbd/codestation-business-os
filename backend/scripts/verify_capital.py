@@ -35,6 +35,7 @@ from app.api.v1.capital import (
 )
 from app.api.v1.capital_insights import insights
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.company_defaults import OrganizationExchangeRate
 from app.models.loan_accounting import LoanDisbursement
@@ -56,7 +57,7 @@ class Tenant:
     user_id: str
     membership_id: str
     role: str
-    organization: Org
+    organization: Organization
 
 
 def request(method: str, path: str) -> Request:
@@ -66,9 +67,12 @@ def request(method: str, path: str) -> Request:
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.timezone,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
-    tenant = Tenant(str(row["organization_id"]), str(row["user_id"]), str(row["membership_id"]), "admin", Org(str(row["organization_id"]), str(row["timezone"] or "UTC"), str(row["currency"] or "BDT")))
     db = SessionLocal(); marker = uuid4().hex[:8]
     try:
+        organization = db.get(Organization, str(row['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(row['organization_id']), str(row['user_id']), str(row['membership_id']), 'admin', organization)
         project = db.scalar(select(Project).where(Project.organization_id == tenant.organization_id).order_by(Project.created_at.asc()))
         if project is None: raise AssertionError("capital fixture requires a project")
         acc = db.scalar(select(FinancialAccount).where(FinancialAccount.organization_id == tenant.organization_id, FinancialAccount.is_active.is_(True), FinancialAccount.currency == project.currency).order_by(FinancialAccount.created_at.asc()))

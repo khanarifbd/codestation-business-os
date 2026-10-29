@@ -22,6 +22,7 @@ from app.api.v1.financial_safety import (
     safe_create_money_entry,
 )
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.accounting_money import AccountingMoneyEntry
 from app.models.customer_advances import CustomerAdvanceApplication
@@ -52,7 +53,7 @@ class Tenant:
     user_id: str
     membership_id: str
     role: str
-    organization: Org
+    organization: Organization
 
 
 def request(method: str, path: str, idempotency_key: str | None = None) -> Request:
@@ -130,20 +131,6 @@ def main() -> None:
             ORDER BY o.created_at DESC LIMIT 1
         """)).mappings().one()
 
-    tenant = Tenant(
-        organization_id=str(row["organization_id"]),
-        user_id=str(row["user_id"]),
-        membership_id=str(row["membership_id"]),
-        role="admin",
-        organization=Org(
-            id=str(row["organization_id"]),
-            timezone=str(row["timezone"] or "UTC"),
-            currency=str(row["currency"] or "BDT").upper(),
-            name=str(row["name"]),
-            country_code=str(row["country_code"] or "BD").upper(),
-            financial_year_start_month=int(row["financial_year_start_month"] or 1),
-        ),
-    )
 
     # Numeric(18,2) financial records must never accept a positive value that
     # later becomes a zero-value posting.
@@ -176,6 +163,10 @@ def main() -> None:
     db = SessionLocal()
     marker = uuid4().hex[:8]
     try:
+        organization = db.get(Organization, str(row['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(organization_id=str(row['organization_id']), user_id=str(row['user_id']), membership_id=str(row['membership_id']), role='admin', organization=organization)
         base_account = safe_create_account(
             FinancialAccountCreate(
                 name=f"CI Money Integrity {marker}",

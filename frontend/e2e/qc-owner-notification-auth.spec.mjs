@@ -6,7 +6,8 @@ import { expect, test } from '@playwright/test';
 import { captureJsonResponse } from './support/capture-json-response.mjs';
 
 // Fresh owner-only local fixtures. No My Work, employee/client portals, invites,
-// external SMTP, payment rails, auth bypasses or route interception are used.
+// external SMTP, payment rails or auth bypasses are used. Mutation receipt
+// instrumentation forwards once and returns the unchanged upstream response.
 const email = process.env.E2E_QC_NOTIFICATION_EMAIL ?? 'qc-notification@example.com';
 const password = process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!';
 const backend = fileURLToPath(new URL('../../backend/', import.meta.url));

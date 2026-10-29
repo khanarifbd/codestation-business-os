@@ -6,7 +6,8 @@ import { writeFile } from "node:fs/promises";
 // Local-only owner QC: all business requests hit the real application and DB.
 // Only the empty company and fictional cash account are setup via API. Supplier,
 // warehouse, stock item, receipt, settlements and adjustments are created in UI.
-// Never reuse the manual-review company or intercept/mock financial endpoints.
+// Never reuse the manual-review company or mock financial responses. Receipt
+// instrumentation forwards once and releases the unchanged upstream response.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
 const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
 const appUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";

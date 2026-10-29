@@ -2,8 +2,8 @@ import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
-// Real application + PostgreSQL journey. No page.route(), API mocks, or direct
-// database writes. Only company isolation is API setup; business mutations below
+// Real application + PostgreSQL journey. No synthetic API responses or direct
+// database writes. Receipt instrumentation forwards once and releases real bytes. Only company isolation is API setup; business mutations below
 // are performed through the owner UI and checked through persisted API reads.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
 const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";

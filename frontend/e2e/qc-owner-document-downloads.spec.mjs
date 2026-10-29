@@ -5,7 +5,8 @@ import { captureJsonResponse } from "./support/capture-json-response.mjs";
 
 // API-only setup creates an isolated synthetic company and, where needed, its
 // client/order/project. Uploads and download clicks are actual owner-browser UI
-// actions against Next.js + FastAPI + PostgreSQL. No routes are intercepted.
+// actions against Next.js + FastAPI + PostgreSQL. Mutation receipt capture
+// forwards the original request once and fulfills its unchanged upstream response.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
 const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
 

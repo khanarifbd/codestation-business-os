@@ -10,6 +10,7 @@ from starlette.requests import Request
 from app.api.v1.accounting_assets import AssetCreate, DepreciationRun, create_asset, run_depreciation
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
@@ -27,7 +28,7 @@ class Tenant:
     organization_id: str
     user_id: str
     membership_id: str
-    organization: Org
+    organization: Organization
     role: str = "admin"
 
 
@@ -38,9 +39,12 @@ def request(method: str, path: str) -> Request:
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
-    tenant = Tenant(str(row["organization_id"]), str(row["user_id"]), str(row["membership_id"]), Org(str(row["organization_id"]), str(row["currency"] or "BDT")))
     db=SessionLocal(); marker=uuid4().hex[:8]
     try:
+        organization = db.get(Organization, str(row['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(row['organization_id']), str(row['user_id']), str(row['membership_id']), organization)
         account=FinancialAccount(organization_id=tenant.organization_id,name=f"CI Asset Bank {marker}",account_type="bank",currency=tenant.organization.currency,opening_balance=Decimal("100000"),is_active=True,created_by_user_id=tenant.user_id)
         db.add(account); db.flush()
         record_activity(db,action="ci.fixed_asset.fixture.create",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="financial_account",entity_id=account.id,after={"account_id":account.id,"opening_balance":"100000.00"},request=request("POST","/ci/fixed-asset-fixture"))

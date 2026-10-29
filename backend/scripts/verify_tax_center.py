@@ -10,6 +10,7 @@ from app.api.v1.financial_corrections import CorrectionRequest, reverse_business
 from app.api.v1.payables import create_payable_bill
 from app.api.v1.tax import TaxCodeCreate, TaxSettlementCreate, create_code, create_settlement, tax_report
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.payables import PayableBill
@@ -24,6 +25,7 @@ class Tenant:
     organization_id: str
     user_id: str
     membership_id: str
+    organization: Organization
     role: str = "admin"
 
 
@@ -34,9 +36,12 @@ def request(method: str, path: str) -> Request:
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
-    tenant = Tenant(str(row["organization_id"]), str(row["user_id"]), str(row["membership_id"]))
     db = SessionLocal(); marker = uuid4().hex[:8]
     try:
+        organization = db.get(Organization, str(row['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(row['organization_id']), str(row['user_id']), str(row['membership_id']), organization=organization)
         expense = system_account(db, tenant.organization_id, "operating_expenses")
         purchase = create_code(TaxCodeCreate(code=f"PT{marker}", name="CI Purchase VAT", tax_kind="purchase", rate=Decimal("15"), recoverable_percent=Decimal("80"), country_code="BD", effective_from=date(2099,1,1)), request("POST","/accounting/tax/codes"), db, tenant)  # type: ignore[arg-type]
         withholding = create_code(TaxCodeCreate(code=f"WT{marker}", name="CI Withholding", tax_kind="withholding", rate=Decimal("10"), country_code="BD", effective_from=date(2099,1,1)), request("POST","/accounting/tax/codes"), db, tenant)  # type: ignore[arg-type]

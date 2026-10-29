@@ -13,6 +13,7 @@ from app.api.v1.finance import create_account
 from app.api.v1.finance_transfers import record_transfer
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction
 from app.schemas.finance import AccountTransferCreate, FinancialAccountCreate
@@ -35,7 +36,7 @@ class FixtureOrganization:
 class FixtureTenant:
     organization_id: str
     user_id: str
-    organization: FixtureOrganization
+    organization: Organization
 
 
 def make_request(method: str, path: str) -> Request:
@@ -92,18 +93,12 @@ def main() -> None:
         if connection.execute(text("SELECT to_regclass('public.account_transfers')")).scalar_one() is None:
             raise AssertionError("account_transfers table missing")
 
-    tenant = FixtureTenant(
-        organization_id=str(fixture["organization_id"]),
-        user_id=str(fixture["user_id"]),
-        organization=FixtureOrganization(
-            timezone=str(fixture["timezone"] or "UTC"),
-            currency=str(fixture["currency"] or "USD"),
-            name=str(fixture["name"]),
-            financial_year_start_month=int(fixture["financial_year_start_month"] or 1),
-        ),
-    )
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = FixtureTenant(organization_id=str(fixture['organization_id']), user_id=str(fixture['user_id']), organization=organization)
         source = db.scalar(select(FinancialAccount).where(
             FinancialAccount.organization_id == tenant.organization_id,
             FinancialAccount.name == "CI USD Bank",

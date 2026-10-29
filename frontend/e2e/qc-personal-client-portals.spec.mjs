@@ -13,7 +13,10 @@ test('MW02 MW03 NT03 MW04 MW05 real personal search board notification click com
  await page.goto('/dashboard/my-work');
  const search=page.getByPlaceholder('Search tasks or projects');await search.fill('nonexistent-synthetic-zzzz');await page.getByRole('button',{name:'Apply search',exact:true}).click();
  await expect(page.getByRole('heading',{name:'No tasks match these filters',exact:true})).toBeVisible();
- await search.fill('');await page.getByRole('button',{name:'Apply search',exact:true}).click();await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'Board',exact:true}).click();
+ await search.fill('');await page.getByRole('button',{name:'Apply search',exact:true}).click();
+ // Wait for the submitted search state before changing another URL-backed filter.
+ await expect(page.getByRole('button').filter({has:page.getByText('Assigned personal task',{exact:true})})).toBeVisible();
+ await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'Board',exact:true}).click();
  for(const [status,title] of [['To do','Assigned personal task'],['In progress','Board in_progress'],['Blocked','Board blocked'],['In review','Board review']]){
    const card=page.getByRole('button').filter({has:page.getByText(title,{exact:true})});await expect(card).toBeVisible();
    await expect(card.locator('..').locator('..').getByRole('heading',{name:status,exact:true})).toBeVisible();
@@ -50,7 +53,7 @@ test('Client portal real linked visibility public milestone invoice suppression 
  await expect(page.getByText('Public update',{exact:true})).toBeVisible();await expect(page.getByText('Private update',{exact:true})).toHaveCount(0);
  await page.goto('/dashboard/client/invoices');await expect(page.getByText('INV-SENT',{exact:true})).toBeVisible();
  for(const text of ['INV-DRAFT','INV-CANCELLED','INV-OTHER'])await expect(page.getByText(text,{exact:true})).toHaveCount(0);
- await page.getByRole('link').filter({hasText:'INV-SENT'}).first().click();await expect(page.getByText('INV-SENT',{exact:true}).first()).toBeVisible();
+ await page.getByRole('row').filter({has:page.getByText('INV-SENT',{exact:true})}).getByRole('link',{name:'View document',exact:true}).click();await expect(page.getByText('INV-SENT',{exact:true}).first()).toBeVisible();
  await page.goto(`/dashboard/client/orders/${f.order_id}`);await expect(page.getByText('O-EXP',{exact:true}).first()).toBeVisible();
  await page.goto(`/dashboard/client/quotations/${f.quotation_id}`);
  await page.getByRole('link',{name:'Review acceptance',exact:true}).click();

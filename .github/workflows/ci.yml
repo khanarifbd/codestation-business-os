@@ -207,7 +207,7 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
-      - run: node --test tests/*.cjs
+      - run: node --test tests/*.cjs tests/capture-json-response.test.mjs
       - run: pnpm build
         env:
           NEXT_PUBLIC_API_URL: https://api-os.example.com/api/v1
@@ -239,7 +239,7 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://business_os:business_os_e2e@127.0.0.1:5432/codestation_business_os
       JWT_SECRET_KEY: e2e-only-secret-change-me-32-bytes-minimum
-      GOOGLE_OAUTH_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+      GOOGLE_OAUTH_CLIENT_ID: ""
       PROJECT_CREDENTIAL_ENCRYPTION_KEY: e2e-only-project-credential-key-0123456789abcdef
       SUPER_ADMIN_EMAIL: e2e-super-admin@example.com
       SUPER_ADMIN_PASSWORD: E2E-Launch-Password-123!
@@ -291,7 +291,7 @@ jobs:
         working-directory: frontend
         env:
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
-          NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
         run: |
           pnpm install --frozen-lockfile
           pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
@@ -301,7 +301,7 @@ jobs:
         env:
           INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
-          NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
         run: nohup pnpm exec next dev --turbopack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
       - name: Wait for frontend
         run: |

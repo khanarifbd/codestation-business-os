@@ -14,6 +14,7 @@ from app.api.v1.finance import create_account
 from app.api.v1.financial_corrections import CorrectionRequest, correction_candidates, reverse_business_transaction
 from app.api.v1.payables import pay_payable_bill
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.finance import FinancialAccount, FinancialTransaction
@@ -42,7 +43,7 @@ class Tenant:
     user_id: str
     membership_id: str
     role: str
-    organization: Org
+    organization: Organization
 
 
 def request(method: str, path: str) -> Request:
@@ -99,22 +100,13 @@ def main() -> None:
             ORDER BY o.created_at DESC LIMIT 1
         """)).mappings().one()
 
-    tenant = Tenant(
-        organization_id=str(row["organization_id"]),
-        user_id=str(row["user_id"]),
-        membership_id=str(row["membership_id"]),
-        role="admin",
-        organization=Org(
-            id=str(row["organization_id"]),
-            timezone=str(row["timezone"] or "UTC"),
-            currency=str(row["currency"] or "BDT"),
-            name=str(row["name"]),
-            financial_year_start_month=int(row["financial_year_start_month"] or 1),
-        ),
-    )
 
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(row['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(organization_id=str(row['organization_id']), user_id=str(row['user_id']), membership_id=str(row['membership_id']), role='admin', organization=organization)
         marker = uuid4().hex[:8]
         bill_date = date(2099, 11, 1)
         first_payment_date = date(2099, 11, 2)

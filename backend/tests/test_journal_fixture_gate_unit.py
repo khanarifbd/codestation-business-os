@@ -198,6 +198,66 @@ class JournalFixtureGateTests(unittest.TestCase):
             db.rollback()
             self.assertIsNone(db.get_transaction())
 
+    def test_correction_fixture_tenants_use_same_session_mapped_organization(self):
+        from dataclasses import dataclass
+        from sqlalchemy import inspect
+        from sqlalchemy.orm import make_transient_to_detached
+        from app.models.organization import Organization
+        files = ['transfers', 'fixed_assets', 'capital', 'accounting_loans',
+                 'accounting_money_integrity', 'financial_corrections',
+                 'financial_corrections_part2', 'payroll', 'reports', 'tax_center']
+        fixture = dict(id='synthetic-org', organization_id='synthetic-org',
+                       user_id='synthetic-user', created_by_user_id='synthetic-user',
+                       membership_id='synthetic-member', timezone='UTC', currency='USD',
+                       name='Synthetic fixture', country_code='US', financial_year_start_month=1)
+        for name in files:
+            with self.subTest(script=name):
+                tree = ast.parse((ROOT / 'scripts' / f'verify_{name}.py').read_text())
+                classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+                constructor = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                                   and any(isinstance(t, ast.Name) and t.id == 'tenant' for t in node.targets))
+                ns = dict(dataclass=dataclass, Organization=Organization, fixture=fixture, row=fixture)
+                exec(compile(ast.Module(body=classes, type_ignores=[]), '<actual fixture classes>', 'exec'), ns)
+                with Session() as db:
+                    org = Organization(id='synthetic-org', timezone='UTC', currency='USD', name='Synthetic fixture')
+                    make_transient_to_detached(org)
+                    db.add(org)
+                    # Execute the exact mapped lookup/absence check when present,
+                    # then the original tenant constructor. Identity-map GET needs no DB.
+                    bindings = []
+                    for parent in ast.walk(tree):
+                        for _, body in ast.iter_fields(parent):
+                            if isinstance(body, list) and constructor in body:
+                                idx = body.index(constructor)
+                                bindings = body[max(0, idx-2):idx]
+                    mapped = [node for node in bindings if isinstance(node, (ast.Assign, ast.If))
+                              and ('organization = db.get(Organization' in ast.unparse(node)
+                                   or ast.unparse(node).startswith('if organization is None:'))]
+                    ns['db'] = db
+                    exec(compile(ast.Module(body=mapped + [constructor], type_ignores=[]), '<actual fixture tenant>', 'exec'), ns)
+                    tenant = ns['tenant']
+                    self.assertIs(tenant.organization, org)
+                    self.assertIs(inspect(tenant.organization).session, db)
+                    self.assertTrue(inspect(tenant.organization).persistent)
+                    self.assertEqual(tenant.organization_id, org.id)
+                    self.assertEqual(tenant.user_id, 'synthetic-user')
+                    self.assertEqual((tenant.organization.currency, tenant.organization.timezone), ('USD', 'UTC'))
+                    with patch.object(db, 'get', return_value=None):
+                        with self.assertRaisesRegex(AssertionError, 'Fixture organization is missing'):
+                            exec(compile(ast.Module(body=mapped + [constructor], type_ignores=[]), '<missing fixture organization>', 'exec'), ns)
+
+    def test_correction_actual_refresh_still_rejects_unmapped_organization(self):
+        from sqlalchemy.orm.exc import UnmappedInstanceError
+        tree = ast.parse((ROOT / 'app/api/v1/financial_corrections.py').read_text())
+        handler = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name == 'reverse_business_transaction')
+        refresh = handler.body[1]
+        self.assertEqual(ast.unparse(refresh), "db.refresh(tenant.organization, attribute_names=['currency', 'timezone'])")
+        with Session() as db:
+            with self.assertRaises(UnmappedInstanceError):
+                exec(compile(ast.Module(body=[refresh], type_ignores=[]), '<actual correction refresh>', 'exec'),
+                     dict(db=db, tenant=NS(organization=NS(currency='USD', timezone='UTC'))))
+
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):
             GATE.require_accounting_period_gate(DB(), 'synthetic-org')
