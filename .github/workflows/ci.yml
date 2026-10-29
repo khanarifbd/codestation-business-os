@@ -302,7 +302,7 @@ jobs:
           INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
-        run: nohup pnpm exec next dev --webpack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
+        run: nohup pnpm exec next dev --turbopack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
       - name: Wait for frontend
         run: |
           for i in {1..30}; do

@@ -13,6 +13,7 @@ from app.api.v1.finance import change_invoice_status, create_invoice_from_order
 from app.api.v1.orders import change_order_status, create_order_from_quotation
 from app.api.v1.sales import change_quotation_status, create_quotation, update_quotation
 from app.db.session import SessionLocal, engine
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import InvoiceItem
 from app.models.inventory import StockMovement
@@ -348,6 +349,8 @@ def main() -> None:
         )
         db.rollback()
 
+        db.begin()
+        acquire_accounting_period_gate(db, tenant.organization_id)
         cancelled_invoice = change_invoice_status(
             invoice.id,
             InvoiceStatusAction(action="cancel", reason="Verify invoice cancellation reversal"),

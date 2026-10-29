@@ -8,7 +8,8 @@ from datetime import date
 from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
-from period_entrypoint_harness import DB, GATE, gate_namespace, gate_sql
+from sqlalchemy.orm import Session
+from period_entrypoint_harness import DB, GATE, gate_namespace, gate_sql, load_functions
 
 ROOT = Path(__file__).resolve().parents[1]
 # Each anchor is the first accounting fixture effect/read in a new transaction.
@@ -22,6 +23,8 @@ CASES = (
     ('verify_inventory_payables_migration.py', 'ensure_default_chart', 0),
     ('verify_v1_accounting_integrity.py', 'sync_result', 0),
     ('verify_financial_corrections.py', 'sync_result', 0),
+    ('verify_finance.py', 'cancelled_direct', 0),
+    ('verify_sales_catalog_flow.py', 'cancelled_invoice', 0),
 )
 
 def prefixes(filename, anchor):
@@ -77,6 +80,67 @@ class JournalFixtureGateTests(unittest.TestCase):
                 exec(compile(ast.Module(body=body, type_ignores=[]), '<actual direct sync boundary>', 'exec'), ns)
                 self.assertEqual(len(gate_sql(db)), 1)
                 self.assertTrue(any(item[0] == 'period_read' for item in db.events))
+
+    def test_direct_cancellation_prefix_reaches_real_reversal_guard(self):
+        # Compile the actual reversal, stopping at its first DB read: the missing
+        # transaction ownership must be rejected before that read, not waived.
+        class ReachedOriginalLookup(Exception):
+            pass
+        class ReversalDB(DB):
+            def scalar(self, statement):
+                raise ReachedOriginalLookup
+        reverse = load_functions('app/services/journal_reversal.py', ['reverse_source_journal'],
+                                 gate_namespace())['reverse_source_journal']
+        for filename, anchor in (('verify_finance.py', 'cancelled_direct'),
+                                 ('verify_sales_catalog_flow.py', 'cancelled_invoice')):
+            with self.subTest(script=filename):
+                db = ReversalDB()
+                kwargs = dict(organization_id='synthetic-org', user_id='synthetic-user',
+                              source_type='invoice_issue', source_id='synthetic-invoice',
+                              reversal_date=date(2026, 10, 29), reason='Synthetic cancellation')
+                with self.assertRaises(GATE.AccountingPeriodGateError):
+                    reverse(db, **kwargs)
+                self.assertEqual(db.events, [])
+                previous = prefixes(filename, anchor)[0]
+                owned = (isinstance(previous, ast.Expr) and isinstance(previous.value, ast.Call)
+                         and getattr(previous.value.func, 'id', None) == 'acquire_accounting_period_gate')
+                if owned:
+                    ns = dict(gate_namespace(), db=db, tenant=NS(organization_id='synthetic-org'))
+                    exec(compile(ast.Module(body=[previous], type_ignores=[]), '<actual cancel fixture gate>', 'exec'), ns)
+                with self.assertRaises(ReachedOriginalLookup):
+                    reverse(db, **kwargs)
+                self.assertEqual(len(gate_sql(db)), 1)
+
+    def test_catalog_cancel_after_rollback_starts_real_session_root(self):
+        source = ast.parse((ROOT / 'scripts/verify_sales_catalog_flow.py').read_text())
+        guard_source = ast.parse((ROOT / 'app/services/accounting_period_gate.py').read_text())
+        nodes = [node for node in guard_source.body if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+                 and node.name in {'AccountingPeriodGateError', '_active_root'}]
+        guard = {}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<actual root guard>', 'exec'), guard)
+        for parent in ast.walk(source):
+            for _, body in ast.iter_fields(parent):
+                if not isinstance(body, list):
+                    continue
+                end = next((i for i, node in enumerate(body) if isinstance(node, ast.Assign)
+                            and any(isinstance(t, ast.Name) and t.id == 'cancelled_invoice' for t in node.targets)), None)
+                if end is None:
+                    continue
+                start = max(i for i, node in enumerate(body[:end])
+                            if ast.unparse(node) == 'db.rollback()')
+                with Session() as db:
+                    old_root = db.begin()
+                    checked = []
+                    def acquire(db, organization_id):
+                        checked.append(guard['_active_root'](db))
+                        self.assertEqual(organization_id, 'synthetic-org')
+                    ns = dict(db=db, tenant=NS(organization_id='synthetic-org'),
+                              acquire_accounting_period_gate=acquire)
+                    exec(compile(ast.Module(body=body[start:end], type_ignores=[]), '<actual catalog rollback prefix>', 'exec'), ns)
+                    self.assertEqual(len(checked), 1)
+                    self.assertIsNot(checked[0], old_root)
+                return
+        self.fail('Cancellation fixture boundary not found')
 
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):

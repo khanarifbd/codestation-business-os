@@ -17,6 +17,7 @@ from app.api.v1.finance import (
 )
 from app.api.v1.finance_invoice_payments import get_invoice_payment_instructions, update_invoice_payment_instructions
 from app.db.session import SessionLocal, engine
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
 from app.models.orders import Order
 from app.schemas.finance import FinancialAccountCreate, InvoiceCreate, InvoiceItemInput, InvoiceSourceCreate, InvoiceStatusAction, PaymentCreate
@@ -208,6 +209,7 @@ def main() -> None:
             ),
         )
         cancellation_reason = "CI client cancelled before payment"
+        acquire_accounting_period_gate(db, tenant.organization_id)
         cancelled_direct = change_invoice_status(
             direct_invoice.id, InvoiceStatusAction(action="cancel", reason=cancellation_reason),
             make_request("PATCH", f"/api/v1/finance/invoices/{direct_invoice.id}/status"), db, tenant,  # type: ignore[arg-type]
