@@ -509,6 +509,17 @@ class SourceInvoiceLockingTests(unittest.TestCase):
 
 
 
+# Exact additive schema delta from published commit 69b64cf804ff1c7ced5e1a299c0d7fe469b01b62.
+# The original baseline pins remain unchanged; this is not an alternate golden file.
+APPROVED_DERIVED_PAYMENT_GUARD = '''        # Derived values can round to zero just like explicitly supplied values.
+        if account_amount is not None and account_amount <= 0:
+            raise ValueError("account_amount must be at least 0.01")
+        if exchange_rate is not None and exchange_rate <= 0:
+            raise ValueError("exchange_rate is too small for the supported 8-decimal precision")
+
+'''
+
+
 class PreservationTests(unittest.TestCase):
     def text(self, root, path):
         return (root / path).read_text()
@@ -625,6 +636,14 @@ class PreservationTests(unittest.TestCase):
                      'app/api/v1/manual_orders.py', 'app/api/v1/orders.py',
                      'app/api/v1/order_settlements.py', 'app/api/v1/router.py']:
             current = self.text(ROOT, path)
+            if path == 'app/schemas/finance.py':
+                # Require both the reviewed bytes and their post-derivation position.
+                before = ('        elif exchange_rate is None and account_amount is not None:\n'
+                          '            exchange_rate = (account_amount / invoice_amount).quantize(PAYMENT_RATE, rounding=ROUND_HALF_UP)\n\n')
+                after = '        if account_amount is not None and exchange_rate is not None:\n'
+                self.assertEqual(current.count(APPROVED_DERIVED_PAYMENT_GUARD), 1)
+                self.assertIn(before + APPROVED_DERIVED_PAYMENT_GUARD + after, current)
+                current = current.replace(APPROVED_DERIVED_PAYMENT_GUARD, '', 1)
             if path == 'app/api/v1/order_settlements.py':
                 current = restore_v31(path, current)
                 addition = 'from app.services.accounting_period_gate import acquire_accounting_period_gate\n'
@@ -637,6 +656,35 @@ class PreservationTests(unittest.TestCase):
                 current = current.replace(addition, '', 1).replace(prefix, '', 1)
             self.assertEqual(current, self.text(BASE, path), path)
 
+
+    def assert_schema_mutation_rejected(self, changed):
+        actual_text = self.text
+        with patch.object(self, 'text', side_effect=lambda root, path:
+                          changed if root == ROOT and path == 'app/schemas/finance.py'
+                          else actual_text(root, path)):
+            with self.assertRaises(AssertionError):
+                self.test_manual_and_staged_invoice_schema_models_and_handlers_unchanged()
+
+    def test_missing_derived_payment_guard_is_not_waived(self):
+        source = self.text(ROOT, 'app/schemas/finance.py')
+        self.assert_schema_mutation_rejected(source.replace(APPROVED_DERIVED_PAYMENT_GUARD, '', 1))
+
+    def test_modified_derived_payment_guard_is_not_waived(self):
+        source = self.text(ROOT, 'app/schemas/finance.py')
+        changed_guard = APPROVED_DERIVED_PAYMENT_GUARD.replace('account_amount <= 0', 'account_amount < 0')
+        self.assert_schema_mutation_rejected(source.replace(APPROVED_DERIVED_PAYMENT_GUARD, changed_guard, 1))
+
+    def test_moved_derived_payment_guard_is_not_waived(self):
+        source = self.text(ROOT, 'app/schemas/finance.py').replace(APPROVED_DERIVED_PAYMENT_GUARD, '', 1)
+        marker = '        if account_amount is None and exchange_rate is not None:\n'
+        self.assertEqual(source.count(marker), 1)
+        self.assert_schema_mutation_rejected(source.replace(marker, APPROVED_DERIVED_PAYMENT_GUARD + marker, 1))
+
+    def test_unrelated_schema_change_is_not_waived(self):
+        source = self.text(ROOT, 'app/schemas/finance.py')
+        marker = '    invoice_amount: Decimal = Field(gt=0)'
+        self.assertEqual(source.count(marker), 1)
+        self.assert_schema_mutation_rejected(source.replace(marker, '    invoice_amount: Decimal = Field(ge=0)', 1))
 
     def test_approved_gate_additions_are_not_broad_preservation_waivers(self):
         cases = [
