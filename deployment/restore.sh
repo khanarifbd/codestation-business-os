@@ -4,7 +4,7 @@ umask 077
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${BUSINESS_OS_ENV_FILE:-${ROOT_DIR}/.env.staging}"
-COMPOSE_FILE="${ROOT_DIR}/deployment/docker-compose.yml"
+COMPOSE_FILE="${BUSINESS_OS_COMPOSE_FILE:-${ROOT_DIR}/deployment/docker-compose.yml}"
 
 cd "${ROOT_DIR}"
 
@@ -28,6 +28,7 @@ Usage:
 
 --verify performs a full database restore into a temporary validation database and
 validates the uploads archive without touching production data.
+BUSINESS_OS_COMPOSE_FILE may select an isolated Compose file for --verify only.
 
 --apply first creates a fresh safety backup, stops application writers, replaces the
 production database/uploads with the selected backup, restarts services, and runs
@@ -41,6 +42,13 @@ mode="${2:---verify}"
 [[ "${mode}" == "--verify" || "${mode}" == "--apply" ]] || { usage; exit 2; }
 [[ -f "${backup_file}" ]] || fail "Backup file not found: ${backup_file}"
 [[ -f "${ENV_FILE}" ]] || fail "Missing ${ENV_FILE}"
+[[ -f "${COMPOSE_FILE}" ]] || fail "Missing ${COMPOSE_FILE}"
+# The canonical deployment flow below owns fixed production resources and does
+# not support arbitrary Compose targets. Do not restore one target then deploy
+# another. Custom Compose files are supported only for isolated verification.
+if [[ "${mode}" == "--apply" && "${COMPOSE_FILE}" != "${ROOT_DIR}/deployment/docker-compose.yml" ]]; then
+  fail "BUSINESS_OS_COMPOSE_FILE override is supported only with --verify"
+fi
 
 POSTGRES_USER="$(env_value POSTGRES_USER)"
 POSTGRES_DB="$(env_value POSTGRES_DB)"
@@ -116,7 +124,7 @@ scratch_db="business_os_restore_verify_$(date -u +%Y%m%d%H%M%S)_${RANDOM}"
   -U "${POSTGRES_USER}" -d "${scratch_db}" --no-owner --no-privileges \
   < "${database_dump}"
 
-restored_users_table="$(${COMPOSE[@]} exec -T postgres psql -U "${POSTGRES_USER}" -d "${scratch_db}" -Atc \
+restored_users_table="$("${COMPOSE[@]}" exec -T postgres psql -U "${POSTGRES_USER}" -d "${scratch_db}" -Atc \
   "SELECT to_regclass('public.users') IS NOT NULL;" 2>/dev/null || true)"
 if grep -q '^alembic_version=' "${manifest}" && ! grep -q '^alembic_version=uninitialized$' "${manifest}"; then
   [[ "${restored_users_table}" == "t" ]] || fail "Restored validation database is missing the users table"

@@ -157,6 +157,16 @@ sudo bash deployment/restore.sh /var/backups/codestation-business-os/business-os
 
 Verification checks the checksum/decryption/uploads archive and performs a real PostgreSQL restore into a disposable validation database, then removes it.
 
+For isolated verification, set `BUSINESS_OS_ENV_FILE` to a synthetic environment
+file and `BUSINESS_OS_COMPOSE_FILE` to an explicitly isolated Compose file. Use
+absolute paths. This override is supported only for `--verify`; a non-default
+Compose file with `--apply` is rejected before any Docker action because the
+canonical deployment flow uses fixed production resources. A different project
+name alone is not isolation: the supplied Compose file must also use distinct
+database/upload volumes and must not contain production credentials or mounts.
+Verification starts PostgreSQL and creates/removes a scratch database; it is not
+a read-only operation.
+
 A full operational verification runs the read-only accounting integrity audit when configured, checks SMTP reachability, and performs the latest restore drill:
 
 ```bash
