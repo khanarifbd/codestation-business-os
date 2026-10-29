@@ -251,10 +251,11 @@ jobs:
       E2E_BASE_URL: http://localhost:3000
       PUBLIC_APP_URL: http://localhost:3000
       QC_BROWSER_FIXTURE: "1"
-      BROWSER_FIXTURE: ${{ runner.temp }}/business-os-browser-fixture.json
       SMTP_HOST: ""
     steps:
       - uses: actions/checkout@v4
+      - name: Configure isolated browser fixture path
+        run: echo "BROWSER_FIXTURE=$RUNNER_TEMP/business-os-browser-fixture.json" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v6
         with:
           version: latest
