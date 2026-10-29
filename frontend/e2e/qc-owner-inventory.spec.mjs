@@ -228,7 +228,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await page.goto("/dashboard/accounting/advanced/corrections");
     await page.locator(`#correction-row-${finalPayment.id}`).getByRole("link", { name: "Open correction", exact: true }).click();
     const reason = `QC owner correction of final supplier payment ${suffix}`;
-    await page.getByLabel("Reason for correction", { exact: true }).fill(reason);
+    await page.getByLabel(/^Reason for correction/).fill(reason);
     await page.getByRole("button", { name: "Review business reversal", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText("USD 40.00");

@@ -206,7 +206,7 @@ class JournalFixtureGateTests(unittest.TestCase):
         from app.models.organization import Organization
         files = ['transfers', 'fixed_assets', 'capital', 'accounting_loans',
                  'accounting_money_integrity', 'financial_corrections',
-                 'financial_corrections_part2', 'payroll', 'reports', 'tax_center', 'financial_idempotency']
+                 'financial_corrections_part2', 'payroll', 'reports', 'tax_center', 'financial_idempotency', 'sales_catalog_flow']
         fixture = dict(id='synthetic-org', organization_id='synthetic-org',
                        user_id='synthetic-user', created_by_user_id='synthetic-user',
                        membership_id='synthetic-member', timezone='UTC', currency='USD',
@@ -217,7 +217,7 @@ class JournalFixtureGateTests(unittest.TestCase):
                 classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
                 constructor = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
                                    and any(isinstance(t, ast.Name) and t.id == 'tenant' for t in node.targets))
-                ns = dict(dataclass=dataclass, Organization=Organization, fixture=fixture, row=fixture)
+                ns = dict(dataclass=dataclass, Organization=Organization, fixture=fixture, row=fixture, currency='USD')
                 exec(compile(ast.Module(body=classes, type_ignores=[]), '<actual fixture classes>', 'exec'), ns)
                 with Session() as db:
                     org = Organization(id='synthetic-org', timezone='UTC', currency='USD', name='Synthetic fixture')
@@ -276,6 +276,15 @@ class JournalFixtureGateTests(unittest.TestCase):
 
     def test_payroll_fixture_requests_own_roots(self):
         self.assert_direct_request_roots('verify_payroll.py', 5, ['reverse_business_transaction', 'approve_run', 'pay_run', 'pay_payroll_withholding'])
+
+    def test_tax_fixture_requests_own_roots(self):
+        self.assert_direct_request_roots('verify_tax_center.py', 3, ['create_payable_bill', 'create_settlement', 'reverse_business_transaction'])
+
+    def test_reports_fixture_requests_own_roots(self):
+        self.assert_direct_request_roots('verify_reports.py', 1, ['reverse_business_transaction'])
+
+    def test_sales_catalog_fixture_sync_owns_root(self):
+        self.assert_direct_request_roots('verify_sales_catalog_flow.py', 1, ['sync_accounting'])
 
     def assert_direct_request_roots(self, filename, expected_count, handlers=None):
         tree = ast.parse((ROOT / 'scripts' / filename).read_text())

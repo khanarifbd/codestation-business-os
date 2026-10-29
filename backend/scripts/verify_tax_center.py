@@ -33,6 +33,13 @@ def request(method: str, path: str) -> Request:
     return Request({"type":"http","method":method,"path":path,"raw_path":path.encode(),"headers":[],"query_string":b"","scheme":"https","server":("testserver",443),"client":("127.0.0.1",50000)})
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls lack HTTP tenant dependency reads that start a request root.
+    # Preserve existing fixture work; never hide failures with commit/rollback.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
@@ -45,6 +52,7 @@ def main() -> None:
         expense = system_account(db, tenant.organization_id, "operating_expenses")
         purchase = create_code(TaxCodeCreate(code=f"PT{marker}", name="CI Purchase VAT", tax_kind="purchase", rate=Decimal("15"), recoverable_percent=Decimal("80"), country_code="BD", effective_from=date(2099,1,1)), request("POST","/accounting/tax/codes"), db, tenant)  # type: ignore[arg-type]
         withholding = create_code(TaxCodeCreate(code=f"WT{marker}", name="CI Withholding", tax_kind="withholding", rate=Decimal("10"), country_code="BD", effective_from=date(2099,1,1)), request("POST","/accounting/tax/codes"), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         bill = create_payable_bill(PayableBillCreate(supplier_name="CI Tax Supplier", bill_date=date(2099,2,1), due_date=date(2099,2,28), currency="BDT", amount=Decimal("1000"), tax_code_id=purchase["id"], withholding_tax_code_id=withholding["id"], expense_ledger_account_id=expense.id, description="Tax center verification"), request("POST","/accounting/payables"), db, tenant)  # type: ignore[arg-type]
         if bill.input_tax_amount != Decimal("150.00") or bill.recoverable_tax_amount != Decimal("120.00"): raise AssertionError("input tax calculation failed")
         if bill.withholding_tax_amount != Decimal("100.00") or bill.original_amount != Decimal("1150.00") or bill.net_payable_amount != Decimal("1050.00") or bill.balance_due != Decimal("1050.00"): raise AssertionError("withholding/net payable calculation failed")
@@ -81,6 +89,7 @@ def main() -> None:
             request=request("POST", "/ci/tax-fixture"),
         )
         db.commit()
+        ensure_request_transaction(db)
         settlement = create_settlement(
             TaxSettlementCreate(
                 settlement_type="withholding_tax_payment",
@@ -110,6 +119,7 @@ def main() -> None:
         if settlement_row is None or settlement_journal is None or settlement_cash is None or settlement_cash.direction != "debit":
             raise AssertionError("withholding tax settlement did not post journal/cash movement")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(source_type="tax_settlement",source_id=settlement["id"],reason="CI tax settlement correction",reversal_date=date(2099,2,16)),
             request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]

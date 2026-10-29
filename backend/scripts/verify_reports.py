@@ -44,6 +44,13 @@ def make_request(method: str, path: str) -> Request:
     })
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls lack HTTP tenant dependency reads that start a request root.
+    # Preserve existing fixture work; never hide failures with commit/rollback.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as connection:
         fixture = connection.execute(text("""
@@ -158,6 +165,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="money_entry",
