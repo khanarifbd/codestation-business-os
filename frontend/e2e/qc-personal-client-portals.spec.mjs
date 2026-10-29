@@ -56,7 +56,18 @@ test('Client portal real linked visibility public milestone invoice suppression 
  await expect(page.getByText('USD 100.00',{exact:true})).toHaveCount(2);
  await page.screenshot({path:info.outputPath('client-dashboard-billing.png'),fullPage:true});
  await page.getByRole('link',{name:'All projects',exact:true}).click();
- await page.getByRole('link').filter({hasText:'Personal test project'}).first().click();
+ // The detail route compiles independently in CI. Wait for its actual scoped
+ // GET before checking rendered milestones, not for an arbitrary delay.
+ const projectDetailURL=new URL(`/api/client-portal/projects/${f.project_id}`,page.url()).href;
+ const [projectResponse]=await Promise.all([
+   page.waitForResponse(r=>r.url()===projectDetailURL&&r.request().method()==='GET'),
+   page.getByRole('link').filter({hasText:'Personal test project'}).first().click(),
+ ]);
+ expect(projectResponse.status()).toBe(200);
+ const project=await json(projectResponse);expect(project.id).toBe(f.project_id);
+ expect(project.milestones.some(row=>row.title==='Public update')).toBe(true);
+ expect(project.milestones.some(row=>row.title==='Private update')).toBe(false);
+ await expect(page).toHaveURL(url=>url.pathname===`/dashboard/client/projects/${f.project_id}`);
  await expect(page.getByText('Public update',{exact:true})).toBeVisible();await expect(page.getByText('Private update',{exact:true})).toHaveCount(0);
  await page.goto('/dashboard/client/invoices');await expect(page.getByText('INV-SENT',{exact:true})).toBeVisible();
  for(const text of ['INV-DRAFT','INV-CANCELLED','INV-OTHER'])await expect(page.getByText(text,{exact:true})).toHaveCount(0);

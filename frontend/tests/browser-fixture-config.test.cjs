@@ -28,3 +28,22 @@ test('separate personal manager context inherits configured URL and Origin, not 
   assert.doesNotMatch(source, /localhost:3100|storageState:/);
   assert.match(source, /BROWSER_FIXTURE is required/);
 });
+test('client project navigation awaits the exact real detail GET before visibility assertions', () => {
+  const source = fs.readFileSync(path.join(root, 'e2e/qc-personal-client-portals.spec.mjs'), 'utf8');
+  const start = source.indexOf(' const projectDetailURL=');
+  const end = source.indexOf(" await page.goto('/dashboard/client/invoices')", start);
+  assert.ok(start >= 0 && end > start);
+  const detail = source.slice(start, end);
+  assert.match(detail, /new URL\(`\/api\/client-portal\/projects\/\$\{f\.project_id\}`,page\.url\(\)\)\.href/);
+  assert.match(detail, /Promise\.all\(\[\s*page\.waitForResponse\(r=>r\.url\(\)===projectDetailURL&&r\.request\(\)\.method\(\)==='GET'\),\s*page\.getByRole\('link'\)/);
+  assert.match(detail, /expect\(projectResponse\.status\(\)\)\.toBe\(200\)/);
+  assert.match(detail, /await json\(projectResponse\);expect\(project\.id\)\.toBe\(f\.project_id\)/);
+  for (const [title, present] of [['Public update', true], ['Private update', false]]) {
+    assert.ok(detail.includes(`expect(project.milestones.some(row=>row.title==='${title}')).toBe(${present})`));
+  }
+  assert.ok(detail.includes('toHaveURL(url=>url.pathname===`/dashboard/client/projects/${f.project_id}`)'));
+  assert.ok(detail.indexOf('await json(projectResponse)') < detail.indexOf("page.getByText('Public update'"));
+  assert.ok(detail.includes("page.getByText('Public update',{exact:true})).toBeVisible()"));
+  assert.ok(detail.includes("page.getByText('Private update',{exact:true})).toHaveCount(0)"));
+  assert.doesNotMatch(detail, /timeout:|waitForTimeout|route\(|fulfill\(/);
+});
