@@ -8,6 +8,17 @@ export default {
   retries: 0,
   workers: 1,
   reporter: "line",
+  // The real session-activity limiter is shared by client IP (120 / 600s).
+  // Verify a fresh browser's heartbeat before the bulk suite spends that bucket.
+  // Dependencies, not filename ordering, guarantee this across workers/projects.
+  projects: [
+    { name: "session-contract", testMatch: "**/session-idle.spec.mjs" },
+    {
+      name: "browser-journeys",
+      testIgnore: "**/session-idle.spec.mjs",
+      dependencies: ["session-contract"],
+    },
+  ],
   use: {
     baseURL,
     // APIRequestContext does not synthesize the browser Origin header. Keep
