@@ -895,7 +895,7 @@ def update_expense(expense_id: str, payload: ExpenseUpdate, request: Request, db
 
 @router.post("/expenses/{expense_id}/void", response_model=ExpenseDetail)
 def void_expense(expense_id: str, request: Request, db: DbSession, tenant: FinanceManager):
-    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update())
+    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if item is None:
         raise HTTPException(status_code=404, detail="Expense not found")
     if item.status != "posted":

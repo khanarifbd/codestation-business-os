@@ -9,6 +9,7 @@ from pathlib import Path
 import runpy
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).parents[1]
 SCHEMA = runpy.run_path(str(ROOT / "app/schemas/expenses.py"))
@@ -138,6 +139,13 @@ class ExpenseContextTests(unittest.TestCase):
         source=(ROOT/'app/api/v1/finance_expenses.py').read_text()
         self.assertIn('FinanceViewer = Annotated[TenantContext, Depends(require_tenant_permission("finance.view"))]',source)
         self.assertIn('@router.get("/expense-meta", response_model=ExpenseMeta)\ndef expense_meta(db: DbSession, tenant: FinanceViewer)',source)
+        # The void wrapper can preload this row before waiting on its row lock.
+        # Permit only the exact first-query refresh; retain the historical bytes below.
+        void_signature = 'def void_expense(expense_id: str, request: Request, db: DbSession, tenant: FinanceManager):\n'
+        void_old = '    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update())'
+        void_fresh = void_old[:-1] + '.execution_options(populate_existing=True))'
+        self.assertEqual(source.count(void_signature + void_fresh), 1)
+        source = source.replace(void_signature + void_fresh, void_signature + void_old, 1)
         # Explicit later transaction-safety layer; preserve the historical hash
         # after reversing exactly these audited changes, not a broad hash waiver.
         approved_period_changes=[
@@ -160,6 +168,28 @@ class ExpenseContextTests(unittest.TestCase):
             self.assertEqual(source.count(approved_fx_guard), 1)
             source=source.replace(approved_fx_guard, '')
         self.assertEqual(hashlib.sha256(source.encode()).hexdigest(),'6098ca1cbbb397ef53c49aa585f2bde058a7b38744d6a627b04218bcb9b9fc4d')
+
+    def assert_void_lock_mutation_rejected(self, transform):
+        source = (ROOT/'app/api/v1/finance_expenses.py').read_text()
+        signature = 'def void_expense(expense_id: str, request: Request, db: DbSession, tenant: FinanceManager):\n'
+        query = '    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))'
+        self.assertEqual(source.count(signature + query), 1)
+        changed = source.replace(signature + query, signature + transform(query), 1)
+        with patch.object(Path, 'read_text', return_value=changed):
+            with self.assertRaises(AssertionError):
+                self.test_existing_api_permission_route_and_suggestion_queries_are_exact()
+
+    def test_void_refresh_cannot_be_removed_from_preservation_contract(self):
+        self.assert_void_lock_mutation_rejected(lambda query: query.replace('.execution_options(populate_existing=True)', ''))
+
+    def test_void_lock_cannot_move_after_an_effect(self):
+        self.assert_void_lock_mutation_rejected(lambda query: '    db.flush()\n' + query)
+
+    def test_void_tenant_filter_cannot_change(self):
+        self.assert_void_lock_mutation_rejected(lambda query: query.replace('Expense.organization_id == tenant.organization_id', 'Expense.organization_id == "foreign"'))
+
+    def test_void_row_lock_cannot_change(self):
+        self.assert_void_lock_mutation_rejected(lambda query: query.replace('.with_for_update()', '.with_for_update(nowait=True)'))
 
     def test_no_mutation_network_config_or_per_record_query_loop(self):
         tree=ast.parse((ROOT/'app/services/expense_relationship_context.py').read_text())

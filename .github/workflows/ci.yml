@@ -71,7 +71,10 @@ jobs:
             test_inventory_failure_paths_offline.py \
             test_payroll_finalization_failure_offline.py \
             test_quotation_order_failure_offline.py \
-            test_source_invoice_transaction_offline.py
+            test_source_invoice_transaction_offline.py \
+            test_recurring_scheduler_transaction_offline.py \
+            test_expense_void_transaction_offline.py \
+            test_expense_relationship_context.py
           do
             uv run --offline --no-sync python -m unittest discover -s tests -p "$test_file" -v || exit 1
           done
