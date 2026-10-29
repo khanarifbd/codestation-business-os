@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from starlette.requests import Request
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.v1.accounting_reports import financial_statements
 from app.api.v1.organizations import create_organization
 from app.db.session import SessionLocal
@@ -81,6 +82,8 @@ def main() -> None:
         accounting_currency = organization.currency.upper()
         reporting_currency = "JPY" if accounting_currency != "JPY" else "AUD"
 
+        # Direct journal fixtures own the same gate as API financial writers.
+        acquire_accounting_period_gate(db, organization.id)
         financial = db.scalar(
             select(OrganizationFinancialSettings).where(
                 OrganizationFinancialSettings.organization_id == organization.id

@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from starlette.requests import Request
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.v1.accounting import trial_balance
 from app.api.v1.accounting_reports import financial_statements
 from app.api.v1.finance import create_account
@@ -150,6 +151,8 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        # Account creation committed; its response read established this root.
+        acquire_accounting_period_gate(db, tenant.organization_id)
         expense = system_account(db, tenant.organization_id, "operating_expenses")
         payable_account = system_account(db, tenant.organization_id, "accounts_payable")
         withholding_account = system_account(db, tenant.organization_id, "taxes_payable")

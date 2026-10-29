@@ -5,6 +5,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import func, select, text
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalLine
 from app.models.company_defaults import OrganizationExchangeRate
@@ -33,6 +34,8 @@ def main() -> None:
 
     db = SessionLocal()
     try:
+        db.begin()
+        acquire_accounting_period_gate(db, organization_id)
         exchange_rate = db.scalar(
             select(OrganizationExchangeRate).where(
                 OrganizationExchangeRate.organization_id == organization_id,

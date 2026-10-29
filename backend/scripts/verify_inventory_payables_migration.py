@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import uuid4
 from sqlalchemy import create_engine, text, select, func
 from sqlalchemy.orm import Session
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.db.session import engine
 
 
@@ -22,6 +23,7 @@ def seed_legacy():
         db.add(u); db.flush()
         o = Organization(name="Synthetic Migration", slug="synthetic-inventory-migration", currency="USD", created_by_user_id=u.id)
         db.add(o); db.flush()
+        acquire_accounting_period_gate(db, o.id)
         ensure_default_chart(db, o.id, u.id)
         ensure_initial_functional_currency_period(db, o, u.id)
         w = Warehouse(organization_id=o.id, code="QA", name="QA", created_by_user_id=u.id)

@@ -76,7 +76,8 @@ jobs:
             test_expense_void_transaction_offline.py \
             test_expense_relationship_context.py \
             test_company_currency_fixture_transaction_unit.py \
-            test_finance_controls_fixture_transaction_unit.py
+            test_finance_controls_fixture_transaction_unit.py \
+            test_journal_fixture_gate_unit.py
           do
             uv run --offline --no-sync python -m unittest discover -s tests -p "$test_file" -v || exit 1
           done
