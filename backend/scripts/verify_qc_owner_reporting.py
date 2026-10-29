@@ -14,6 +14,7 @@ not a payout or a journal liability. No investor funding/payment is performed.
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from scripts.secondary_profitability_contract import verify_expense_profitability_contract
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -263,7 +264,7 @@ def main():
         frontend = Path(__file__).resolve().parents[2] / "frontend/src"
         note = (frontend / "components/dashboard/operational-reporting-note.tsx").read_text()
         assert "not accrual net profit" in note and "/dashboard/accounting/reports" in note
-        assert "Operational margin by currency" in (frontend / "app/dashboard/expenses/page.tsx").read_text()
+        verify_expense_profitability_contract(frontend)
         print("PASS auth/tenant isolation: independent B revenue/AR 9999; A IDs hidden; reports and exact financial/audit rows unchanged; five balanced A journals; operational basis documented", flush=True)
     finally:
         http.close()

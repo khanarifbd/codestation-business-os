@@ -2,6 +2,7 @@
 from datetime import date
 from decimal import Decimal as D
 from pathlib import Path
+from scripts.secondary_profitability_contract import verify_expense_profitability_contract
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -96,9 +97,7 @@ def main():
         db.rollback()
 
     frontend = Path(__file__).resolve().parents[2] / "frontend/src"
-    expenses = (frontend / "app/dashboard/expenses/page.tsx").read_text()
-    assert "Operational margin by currency" in expenses and "not accrual net profit" in expenses
-    assert "All-time issued invoice totals" in expenses and "/dashboard/accounting/reports" in expenses
+    verify_expense_profitability_contract(frontend)
     note = (frontend / "components/dashboard/operational-reporting-note.tsx").read_text()
     assert "Stripe processing fees posted only to the ledger" in note
     print("PASS secondary profitability: issued-only, order fallback, override, cost-only, Stripe fee once, tenant isolation, capital parity/entitlements, truthful basis")
