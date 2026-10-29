@@ -23,7 +23,7 @@ const movement={id:'syn-movement',movement_date:'2026-10-25',movement_type:'purc
 const overview={base_currency:'USD',stock_products:1,service_items:1,inventory_values:[{currency:'USD',value:'40'},{currency:'BDT',value:'400'}],low_stock_count:0,out_of_stock_count:0,active_suppliers:1,active_warehouses:2,low_stock:[]};
 function harness(){
  const filename=path.join(root,'src/hooks/use-inventory-workspace.ts');let source=fs.readFileSync(filename,'utf8');const ast=ts.createSourceFile(filename,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='useInventoryWorkspace');assert.ok(fn);const declarations=fn.body.statements.filter(ts.isVariableStatement).flatMap(s=>s.declarationList.declarations),stateNames=declarations.filter(d=>ts.isArrayBindingPattern(d.name)&&d.initializer?.getText(ast).startsWith('useState')).map(d=>d.name.elements[0].name.text);const names=fn.body.statements.flatMap(n=>ts.isFunctionDeclaration(n)?[n.name.text]:ts.isVariableStatement(n)?n.declarationList.declarations.flatMap(d=>ts.isIdentifier(d.name)?[d.name.text]:[]):[]);const returned=fn.body.statements.find(ts.isReturnStatement);source=source.slice(0,returned.getStart(ast))+'__current={'+names.join(',')+'};\n'+source.slice(returned.getStart(ast));source+='\nlet __current;export const getTestController=()=>__current;';
- const states=[],refs=[],effects=[],requests=[],navigation=[],guardCalls=[];let cursor=0,refCursor=0,query=new URLSearchParams(),pathname='/dashboard/inventory',params={},confirm=true,permissions=['finance.manage'],organizationId='synthetic-tenant',navigationFails=false,navigationThrows=false,respond;
+ const states=[],refs=[],effects=[],requests=[],navigation=[],guardCalls=[],listeners=new Map();let cursor=0,refCursor=0,query=new URLSearchParams(),pathname='/dashboard/inventory',params={},confirm=true,permissions=['finance.manage'],organizationId='synthetic-tenant',navigationFails=false,navigationThrows=false,respond;
  const hooks={useId:()=> 'synthetic-field-id',useState:initial=>{const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:initial=>refs[refCursor++]??=({current:initial}),useMemo:fn=>fn(),useCallback:fn=>fn,useEffect:fn=>effects.push(fn)};
  const modules=new Map();function load(file,custom){if(modules.has(file))return modules.get(file).exports;const m=new Module(file,module);m.filename=file;m.paths=module.paths;modules.set(file,m);m.require=id=>{
   if(id==='react')return hooks;
@@ -40,8 +40,8 @@ function harness(){
  const exported=load(filename,source),model=load(path.join(root,'src/components/inventory/inventory-model.ts'));
  const defaultResponse=(url,options)=>options?.method?success({id:'syn-created',...JSON.parse(options.body||'{}')}):success(url.includes('dashboard-summary')?overview:url.includes('/products')?[product,service]:url.includes('/warehouses')?[warehouse,destination]:url.includes('/categories')?[category]:url.includes('/suppliers')?[supplier]:url.includes('/tax/codes')?taxes:url.includes('/services/catalog')?[{product_id:service.id,duration_months:6}]:url.includes('/purchases')?[purchase]:url.includes('/movements')?[movement]:url.includes('/stock')?[stock]:{});respond=defaultResponse;
  const aliases={itemForm:'itemDraft',supplierForm:'supplierDraft',warehouseForm:'warehouseDraft',categoryDraft:'categoryDraftValue',adjustForm:'adjustDraft',purchaseForm:'purchaseDraft',purchaseLines:'purchaseLinesDraft',transferForm:'transferDraft'};
- const original={fetch:global.fetch,window:global.window,document:global.document};global.fetch=async(url,options)=>{requests.push({url,options});return respond(url,options);};global.window={location:{href:'https://example.invalid/dashboard/inventory',origin:'https://example.invalid',search:'',assign:url=>navigation.push(['assign',url]),replace:url=>navigation.push(['location.replace',url])},confirm:()=>confirm};global.document={getElementById:()=>null};
- let result;return{requests,effects,navigation,guardCalls,model,load,defaultResponse,render:options=>{cursor=0;refCursor=0;effects.length=0;result=exported.useInventoryWorkspace(options);return result;},api:()=>({...result,...exported.getTestController()}),state:key=>{if(aliases[key])return states[stateNames.indexOf(aliases[key])]??result[key];if(!stateNames.includes(key))return exported.getTestController()[key];return states[stateNames.indexOf(key)];},set:(key,value)=>{if(['search','itemFilter','lowStockOnly','tab'].includes(key)){const field={search:'search',itemFilter:'type',lowStockOnly:'low',tab:'tab'}[key];query.set(field,key==='lowStockOnly'?(value?'1':'0'):value);return;}if(key==='modal'){const section={item:'items',supplier:'suppliers',warehouse:'warehouses',categories:'categories',purchase:'purchases',adjustment:'adjustments',transfer:'transfers'}[value];pathname=section?'/dashboard/inventory/'+section+'/new':'/dashboard/inventory';return;}if(key==='editingId'){pathname=value?'/dashboard/inventory/'+(pathname.split('/')[3]||'items')+'/'+encodeURIComponent(value)+'/edit':'/dashboard/inventory';return;}const stateKey=aliases[key]||key;assert.ok(stateNames.includes(stateKey),stateKey);states[stateNames.indexOf(stateKey)]=value;if(key==='loadedTabs'&&exported.getTestController()?.loadedTabsRef)exported.getTestController().loadedTabsRef.current=value;},response:fn=>{respond=fn;},query:value=>{query=new URLSearchParams(value);global.window.location.search=query.size?'?'+query:'';},pathname:value=>{pathname=value;global.window.location.href='https://example.invalid'+pathname+(query.size?'?'+query:'');},params:value=>{params=value;},permissions:value=>{permissions=value;},tenantId:value=>{organizationId=value;},renderComponent:fn=>{cursor=0;refCursor=0;effects.length=0;return fn();},navigationFails:value=>{navigationFails=value;},navigationThrows:value=>{navigationThrows=value;},confirm:value=>{confirm=value;},cleanup:()=>Object.assign(global,original)};
+ const original={fetch:global.fetch,window:global.window,document:global.document};global.fetch=async(url,options)=>{requests.push({url,options});return respond(url,options);};global.window={addEventListener:(name,fn)=>listeners.set(name,fn),removeEventListener:(name,fn)=>{if(listeners.get(name)===fn)listeners.delete(name);},location:{href:'https://example.invalid/dashboard/inventory',origin:'https://example.invalid',search:'',assign:url=>navigation.push(['assign',url]),replace:url=>navigation.push(['location.replace',url])},confirm:()=>confirm};global.document={getElementById:()=>null};
+ let result;return{requests,effects,navigation,guardCalls,model,load,defaultResponse,listeners,dispatch:name=>listeners.get(name)?.(),render:options=>{cursor=0;refCursor=0;effects.length=0;result=exported.useInventoryWorkspace(options);return result;},api:()=>({...result,...exported.getTestController()}),state:key=>{if(aliases[key])return states[stateNames.indexOf(aliases[key])]??result[key];if(!stateNames.includes(key))return exported.getTestController()[key];return states[stateNames.indexOf(key)];},set:(key,value)=>{if(['search','itemFilter','lowStockOnly','tab'].includes(key)){const field={search:'search',itemFilter:'type',lowStockOnly:'low',tab:'tab'}[key];query.set(field,key==='lowStockOnly'?(value?'1':'0'):value);global.window.location.search=query.size?'?'+query:'';return;}if(key==='modal'){const section={item:'items',supplier:'suppliers',warehouse:'warehouses',categories:'categories',purchase:'purchases',adjustment:'adjustments',transfer:'transfers'}[value];pathname=section?'/dashboard/inventory/'+section+'/new':'/dashboard/inventory';return;}if(key==='editingId'){pathname=value?'/dashboard/inventory/'+(pathname.split('/')[3]||'items')+'/'+encodeURIComponent(value)+'/edit':'/dashboard/inventory';return;}const stateKey=aliases[key]||key;assert.ok(stateNames.includes(stateKey),stateKey);states[stateNames.indexOf(stateKey)]=value;if(key==='loadedTabs'&&exported.getTestController()?.loadedTabsRef)exported.getTestController().loadedTabsRef.current=value;},response:fn=>{respond=fn;},query:value=>{query=new URLSearchParams(value);global.window.location.search=query.size?'?'+query:'';},pathname:value=>{pathname=value;global.window.location.href='https://example.invalid'+pathname+(query.size?'?'+query:'');},params:value=>{params=value;},permissions:value=>{permissions=value;},tenantId:value=>{organizationId=value;},renderComponent:fn=>{cursor=0;refCursor=0;effects.length=0;return fn();},navigationFails:value=>{navigationFails=value;},navigationThrows:value=>{navigationThrows=value;},confirm:value=>{confirm=value;},cleanup:()=>Object.assign(global,original)};
 }
 function check(title,run){test(`inventory: ${title}`,async()=>{const h=harness();try{await run(h);}finally{h.cleanup();}});}
 function setup(h){h.render();for(const[k,v]of Object.entries({products:[product,service],warehouses:[warehouse,destination],suppliers:[supplier],categories:[category],taxCodes:taxes,stock:[stock],purchases:[purchase],movements:[movement],baseCurrency:'USD',loading:false,coreReady:true,loadedTabs:new Set(['overview','items','suppliers','warehouses','categories','service_sales','stock','purchases','movements'])}))h.set(k,v);return h.render();}
@@ -193,3 +193,88 @@ for(const operation of ['Refresh','activation write'])check(`a delayed ${operati
 
 for(const[section,wrongId,submit]of [['items',supplier.id,'submitItem'],['suppliers',product.id,'submitSupplier'],['warehouses',product.id,'submitWarehouse'],['categories',supplier.id,'saveCategory']])check(`${section} edit rejects an ID belonging only to another entity collection`,async h=>{setup(h);h.pathname(`/dashboard/inventory/${section}/${wrongId}/edit`);h.render();assert.equal(h.api().recordExists,false);assert.equal(h.api().documentReady,false);await h.api()[submit](event());assert.equal(h.requests.length,0);const tree=workspace(h);assert.equal(nodes(tree,'InventoryEditor').length,0);assert.equal(nodes(tree,'InventoryState')[0].props.title,'Record unavailable');});
 check('new core refresh invalidates a pending service-term response from the previous product snapshot',async h=>{h.pathname('/dashboard/inventory/items/syn-service/edit');h.render();await h.api().loadCore();h.render();let resolve;h.response(()=>new Promise(r=>{resolve=r;}));const older=h.api().loadTab('items');h.response(h.defaultResponse);await h.api().loadCore();resolve(success([{product_id:service.id,duration_months:6}]));assert.equal(await older,false);h.render();assert.equal(h.state('loadedTabs').has('items'),false);assert.equal(h.api().documentReady,false);assert.equal(h.state('products').find(p=>p.id===service.id).service_duration_months,null);});
+
+// Exercise the actual hook callbacks without letting useSearchParams commit in
+// between: rapid controls must compose, rather than resurrect an earlier filter.
+for (const reverse of [false, true]) check(`pending browse composes clear search and all types (${reverse})`, h => {
+ h.query('tab=items&search=GAP-SVC&type=stock_item&focus=old'); setup(h);
+ if(reverse){h.api().setItemFilter('all');h.api().setSearch('');}
+ else{h.api().setSearch('');h.api().setItemFilter('all');}
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items');assert.equal(h.requests.length,0);
+});
+check('older own URL commit preserves the newer pending filter intent', h => {
+ h.query('tab=items&search=old&type=stock_item');setup(h);
+ h.api().setSearch('');const first=h.navigation.at(-1)[1];h.api().setItemFilter('all');
+ h.query(new URL(first,'https://example.invalid').search);h.render();h.api().setSearch('new');
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=new');assert.equal(h.requests.length,0);
+});
+check('new unrelated URL overrides pending browse state and resets focus', h => {
+ h.query('tab=items&search=old');setup(h);h.api().setSearch('pending');
+ h.query('tab=items&search=external&type=service&focus=old');h.render();h.api().setLowStockOnly(true);
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=external&type=service&low=1');
+});
+check('Back/Forward to an older own URL discards pending state before React commits', h => {
+ h.query('tab=items&search=old&type=stock_item');setup(h);
+ const cleanup=h.effects.find(fn=>fn.toString().includes('resetBrowseIntent'))();
+ h.api().setSearch('');const first=h.navigation.at(-1)[1];h.api().setItemFilter('all');
+ h.query(new URL(first,'https://example.invalid').search);h.dispatch('popstate');
+ h.api().setLowStockOnly(true);
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&type=stock_item&low=1');
+ cleanup();assert.equal(h.listeners.size,0);assert.equal(h.state('browseIntentRef').current,null);
+});
+check('duplicate canonical URLs and A-to-B-to-A retain the latest accepted intent', h => {
+ h.query('tab=items&search=A');setup(h);h.api().setSearch('B');h.api().setSearch('B');h.api().setSearch('A');
+ assert.equal(h.state('browseIntentRef').current.pending.length,2);
+ h.query('tab=items&search=B');h.render();h.api().setItemFilter('service');
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=A&type=service');
+});
+check('functional low-stock toggles compose before URL commit', h => {
+ h.query('tab=stock');setup(h);h.api().setLowStockOnly(v=>!v);h.api().setLowStockOnly(v=>!v);
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=stock');
+});
+check('new item and record return links use the pending tab and filter intent', h => {
+ setup(h);h.api().setTab('items');h.api().setSearch('pending');h.api().openNewItem();
+ const url=new URL(h.navigation.at(-1)[1],'https://example.invalid');
+ assert.equal(url.searchParams.get('returnTo'),'/dashboard/inventory?tab=items&search=pending');
+ h.api().openView('items','syn-product');
+ assert.equal(new URL(h.navigation.at(-1)[1],'https://example.invalid').searchParams.get('returnTo'),'/dashboard/inventory?tab=items&search=pending&focus=syn-product');
+});
+check('denied navigation does not overwrite earlier accepted browse intent', h => {
+ h.query('tab=items');setup(h);h.api().setSearch('accepted');h.set('saving',true);h.render();
+ h.api().setSearch('denied');assert.equal(h.navigation.length,1);
+ h.set('saving',false);h.render();h.api().setItemFilter('service');
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=accepted&type=service');
+});
+check('external document takeover abandons pending intent and blocks stale callbacks', h => {
+ setup(h);h.api().setSearch('pending');global.window.location.href='https://example.invalid/dashboard/clients';
+ h.api().setItemFilter('service');h.api().openNewItem();assert.equal(h.navigation.length,1);
+ assert.equal(h.state('browseIntentRef').current,null);assert.equal(h.requests.length,0);
+});
+check('pending browse memory is bounded and unrelated URL remains authoritative', h => {
+ setup(h);for(let i=0;i<100;i++)h.api().setSearch('search-'+i);
+ assert.equal(h.state('browseIntentRef').current.pending.length,64);
+ h.query('tab=items&search=external');h.render();h.api().setItemFilter('service');
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=external&type=service');
+});
+check('unmounted inventory ignores retained browse and editor callbacks', async h => {
+ setup(h);const cleanup=h.effects.find(fn=>fn.toString().includes('mountedRef.current = true'))();const browseCleanup=h.effects.find(fn=>fn.toString().includes('resetBrowseIntent'))();await settle();
+ h.api().setSearch('pending');cleanup();browseCleanup();const count=h.navigation.length,reads=h.requests.length;
+ h.api().setSearch('after');h.api().setLowStockOnly(v=>!v);h.api().openNewItem();assert.equal(h.navigation.length,count);assert.equal(h.requests.length,reads);assert.equal(h.listeners.size,0);assert.equal(h.state('browseIntentRef').current,null);
+});
+
+check('B-A-B duplicate cycles survive each older router commit', h => {
+ h.query('tab=items&search=initial');setup(h);h.api().setSearch('B');h.api().setSearch('A');h.api().setSearch('B');
+ h.query('tab=items&search=B');h.render();h.api().setItemFilter('service');
+ h.query('tab=items&search=A');h.render();h.api().setLowStockOnly(true);
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=B&type=service&low=1');
+});
+
+check('SSR-style missing window cannot dispatch stale browse callbacks', h => {
+ setup(h);global.window=undefined;h.api().setSearch('ignored');h.api().openNewItem();
+ assert.equal(h.navigation.length,0);assert.equal(h.requests.length,0);
+});
+
+check('browse updates preserve canonical reset of focus and unsupported page/cursor state', h => {
+ h.query('tab=items&search=old&focus=previous&page=99&cursor=old');setup(h);h.api().setSearch('new');
+ assert.equal(h.navigation.at(-1)[1],'/dashboard/inventory?tab=items&search=new');assert.equal(h.requests.length,0);
+});

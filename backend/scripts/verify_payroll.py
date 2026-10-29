@@ -51,6 +51,13 @@ def request(method: str, path: str) -> Request:
     })
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls do not run HTTP tenant dependencies to start a request root.
+    # Preserve active fixture work and let failed sessions remain visibly failed.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     now = datetime.now(timezone.utc)
     with engine.begin() as connection:
@@ -139,6 +146,7 @@ def main() -> None:
         if run.gross_total != Decimal("55000.00") or run.deduction_total != Decimal("3000.00") or run.tax_total != Decimal("2000.00") or run.net_total != Decimal("50000.00"):
             raise AssertionError("payroll gross/deduction/tax/net totals do not reconcile")
 
+        ensure_request_transaction(db)
         approved = approve_run(run.id, request("POST", f"/api/v1/payroll/runs/{run.id}/approve"), db, tenant)  # type: ignore[arg-type]
         if approved.status != "approved":
             raise AssertionError("payroll approval failed")
@@ -162,6 +170,7 @@ def main() -> None:
             raise AssertionError("net payroll payable accrual is incorrect")
         if Decimal(by_key["payroll_withholdings"].credit) != Decimal("5000.00"):
             raise AssertionError("payroll deductions/tax liability accrual is incorrect")
+        ensure_request_transaction(db)
         paid = pay_run(run.id, PayrollPayRequest(account_id=account_id), request("POST", f"/api/v1/payroll/runs/{run.id}/pay"), db, tenant)  # type: ignore[arg-type]
         if paid.status != "paid":
             raise AssertionError("payroll payment failed")
@@ -191,6 +200,7 @@ def main() -> None:
         if persisted is None or persisted.paid_account_id != account_id:
             raise AssertionError("payroll paid account was not persisted")
 
+        ensure_request_transaction(db)
         withholding_payment = pay_payroll_withholding(
             PayrollWithholdingPaymentCreate(
                 account_id=account_id,
@@ -235,6 +245,7 @@ def main() -> None:
         if bdt is None or bdt.expenses < Decimal("55000.00"):
             raise AssertionError("approved/paid payroll cost is missing from Reports expenses")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="payroll_withholding_payment",
@@ -246,6 +257,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="payroll_run",

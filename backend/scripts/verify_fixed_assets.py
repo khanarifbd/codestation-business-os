@@ -36,6 +36,13 @@ def request(method: str, path: str) -> Request:
     return Request({"type":"http","method":method,"path":path,"raw_path":path.encode(),"headers":[],"query_string":b"","scheme":"https","server":("testserver",443),"client":("127.0.0.1",50000)})
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls do not run HTTP tenant dependencies to start a request root.
+    # Preserve active fixture work and let failed sessions remain visibly failed.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
@@ -49,17 +56,20 @@ def main() -> None:
         db.add(account); db.flush()
         record_activity(db,action="ci.fixed_asset.fixture.create",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="financial_account",entity_id=account.id,after={"account_id":account.id,"opening_balance":"100000.00"},request=request("POST","/ci/fixed-asset-fixture"))
         db.commit()
+        ensure_request_transaction(db)
         asset=create_asset(AssetCreate(asset_code=f"FA-{marker}",name="CI Laptop",category="computer",currency=tenant.organization.currency,acquisition_cost=Decimal("12000"),salvage_value=Decimal("0"),acquisition_date=date(2098,1,1),in_service_date=date(2098,1,1),useful_life_months=12,record_mode="purchase",purchase_account_id=account.id,reference=f"FA-REF-{marker}"),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
         if asset["book_value"]!=Decimal("12000.00"): raise AssertionError("asset initial book value failed")
         tx=db.scalar(select(FinancialTransaction).where(FinancialTransaction.organization_id==tenant.organization_id,FinancialTransaction.source_type=="fixed_asset_acquisition",FinancialTransaction.source_id==asset["id"]))
         journal=db.scalar(select(JournalEntry).where(JournalEntry.organization_id==tenant.organization_id,JournalEntry.source_type=="fixed_asset_acquisition",JournalEntry.source_id==asset["id"],JournalEntry.status=="posted"))
         if tx is None or tx.direction!="debit" or journal is None: raise AssertionError("asset purchase cash/journal posting failed")
+        ensure_request_transaction(db)
         result=run_depreciation(DepreciationRun(period_date=date(2098,1,31)),request("POST","/accounting/assets/depreciation"),db,tenant)  # type: ignore[arg-type]
         posted=next((x for x in result["posted"] if x["asset_id"]==asset["id"]),None)
         if posted is None or posted["amount"]!=Decimal("1000.00") or posted["book_value"]!=Decimal("11000.00"): raise AssertionError("straight-line depreciation failed")
         stored=db.scalar(select(FixedAsset).where(FixedAsset.id==asset["id"])); dep=db.scalar(select(AssetDepreciationEntry).where(AssetDepreciationEntry.asset_id==asset["id"])); dep_journal=db.scalar(select(JournalEntry).where(JournalEntry.id==dep.journal_entry_id)) if dep else None
         if stored is None or stored.accumulated_depreciation!=Decimal("1000.00") or dep_journal is None: raise AssertionError("depreciation persistence/journal failed")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(source_type="asset_depreciation",source_id=dep.id,reason="CI depreciation correction",reversal_date=date(2098,2,1)),
             request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]
@@ -67,6 +77,7 @@ def main() -> None:
         db.refresh(dep); db.refresh(stored)
         if dep.status!="reversed" or stored.accumulated_depreciation!=Decimal("0.00"):
             raise AssertionError("depreciation reversal did not restore accumulated depreciation")
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(source_type="fixed_asset",source_id=asset["id"],reason="CI fixed asset correction",reversal_date=date(2098,2,1)),
             request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]
@@ -80,6 +91,7 @@ def main() -> None:
         if stored.status!="reversed" or reversal_cash is None or reversal_cash.direction!="credit":
             raise AssertionError("fixed asset acquisition reversal did not restore cash / historical status")
 
+        ensure_request_transaction(db)
         opening=create_asset(AssetCreate(asset_code=f"FA-OPEN-{marker}",name="CI Opening Laptop",category="computer",currency=tenant.organization.currency,acquisition_cost=Decimal("12000"),salvage_value=Decimal("0"),acquisition_date=date(2097,1,1),in_service_date=date(2097,1,1),useful_life_months=12,record_mode="opening",opening_accumulated_depreciation=Decimal("9000"),opening_balance_date=date(2098,1,31),reference=f"FA-OPEN-{marker}"),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
         if opening["accumulated_depreciation"]!=Decimal("9000.00") or opening["book_value"]!=Decimal("3000.00") or opening["record_mode"]!="opening":
             raise AssertionError("opening fixed asset carrying values failed")
@@ -89,6 +101,7 @@ def main() -> None:
         opening_lines=db.execute(select(JournalLine).where(JournalLine.organization_id==tenant.organization_id,JournalLine.journal_entry_id==opening_journal.id)).scalars().all()
         if sum((Decimal(x.debit) for x in opening_lines),Decimal("0"))!=Decimal("12000.00") or sum((Decimal(x.credit) for x in opening_lines),Decimal("0"))!=Decimal("12000.00"):
             raise AssertionError("opening fixed asset journal is not balanced")
+        ensure_request_transaction(db)
         opening_skip=run_depreciation(DepreciationRun(period_date=date(2098,1,31)),request("POST","/accounting/assets/depreciation"),db,tenant)  # type: ignore[arg-type]
         if not any(x["asset_id"]==opening["id"] and x["reason"]=="before_or_at_opening_balance" for x in opening_skip["skipped"]):
             raise AssertionError("opening asset must not double-depreciate its opening balance month")
@@ -96,6 +109,7 @@ def main() -> None:
         credit_card=FinancialAccount(organization_id=tenant.organization_id,name=f"CI Asset Card {marker}",account_type="credit_card",currency=tenant.organization.currency,opening_balance=Decimal("0"),is_active=True,created_by_user_id=tenant.user_id)
         db.add(credit_card); db.flush()
         try:
+            ensure_request_transaction(db)
             create_asset(AssetCreate(asset_code=f"FA-CC-{marker}",name="CI Card Asset",category="computer",currency=tenant.organization.currency,acquisition_cost=Decimal("100"),salvage_value=Decimal("0"),acquisition_date=date(2098,2,1),in_service_date=date(2098,2,1),useful_life_months=12,record_mode="purchase",purchase_account_id=credit_card.id),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
         except HTTPException as exc:
             if exc.status_code != 400:
@@ -142,7 +156,9 @@ def main() -> None:
                         updated_at=CURRENT_TIMESTAMP
                 """), {"id":str(uuid4()),"organization_id":tenant.organization_id,"foreign_currency":foreign_currency,"base_currency":tenant.organization.currency.upper(),"effective_date":effective_date,"rate":rate})
 
+        ensure_request_transaction(db)
         fx_asset=create_asset(AssetCreate(asset_code=f"FA-FX-{marker}",name="CI FX Laptop",category="computer",currency=foreign_currency,acquisition_cost=Decimal("120"),salvage_value=Decimal("0"),acquisition_date=date(2098,3,1),in_service_date=date(2098,3,1),useful_life_months=12,record_mode="purchase",purchase_account_id=fx_account.id),request("POST","/accounting/assets"),db,tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         run_depreciation(DepreciationRun(period_date=date(2098,4,30)),request("POST","/accounting/assets/depreciation"),db,tenant)  # type: ignore[arg-type]
         fx_dep=db.scalar(select(AssetDepreciationEntry).where(AssetDepreciationEntry.organization_id==tenant.organization_id,AssetDepreciationEntry.asset_id==fx_asset["id"],AssetDepreciationEntry.period_date==date(2098,4,1)))
         if fx_dep is None:

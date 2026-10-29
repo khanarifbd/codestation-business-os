@@ -64,6 +64,13 @@ def request(method: str, path: str) -> Request:
     return Request({"type": "http", "method": method, "path": path, "raw_path": path.encode(), "headers": [], "query_string": b"", "scheme": "https", "server": ("testserver", 443), "client": ("127.0.0.1", 50000)})
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls do not run HTTP tenant dependencies to start a request root.
+    # Preserve active fixture work and let failed sessions remain visibly failed.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.timezone,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
@@ -132,7 +139,9 @@ def main() -> None:
 
         # Legacy debt endpoints are compatibility wrappers over the canonical Accounting
         # loan workflow. They must never bypass Journal/Ledger posting.
+        ensure_request_transaction(db)
         loan = create_loan(LoanCreate(lender_name=f"CI Bank {marker}", lender_type="bank", currency=currency, principal_amount=Decimal("100000"), annual_interest_rate=Decimal("10"), loan_date=date(2096, 1, 1), account_id=acc.id, reference=f"LN-{marker}"), request("POST", "/capital/loans"), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         paid = repay(loan["id"], RepaymentCreate(account_id=acc.id, payment_date=date(2096, 2, 1), principal_amount=Decimal("10000"), interest_amount=Decimal("1000"), reference=f"LR-{marker}"), request("POST", f"/capital/loans/{loan['id']}/repay"), db, tenant)  # type: ignore[arg-type]
         if paid["outstanding_principal"] != Decimal("90000.00"): raise AssertionError("loan outstanding calculation failed")
 
@@ -177,9 +186,12 @@ def main() -> None:
 
         # Company invests externally. Initial and additional funding must reduce cash,
         # increase the investment asset and preserve carrying value history.
+        ensure_request_transaction(db)
         inv = create_investment(InvestmentCreate(investee_name=f"CI Venture {marker}", investment_type="equity", currency=currency, invested_amount=Decimal("20000"), investment_date=date(2096, 3, 1), account_id=acc.id, reference=f"INV-{marker}"), request("POST", "/capital/investments"), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         extra = add_investment_funding(inv["id"], FundingCreate(account_id=acc.id, funding_date=date(2096, 3, 15), amount=Decimal("5000"), reference=f"INV2-{marker}"), request("POST", f"/capital/investments/{inv['id']}/fundings"), db, tenant)  # type: ignore[arg-type]
         if extra["carrying_value"] != Decimal("25000.00"): raise AssertionError("additional investment funding failed")
+        ensure_request_transaction(db)
         ret = add_return(inv["id"], ReturnCreate(account_id=acc.id, return_date=date(2096, 4, 1), return_type="profit", cash_amount=Decimal("7000"), principal_return_amount=Decimal("5000"), income_amount=Decimal("2000"), reference=f"RET-{marker}"), request("POST", f"/capital/investments/{inv['id']}/returns"), db, tenant)  # type: ignore[arg-type]
         if ret["carrying_value"] != Decimal("20000.00"): raise AssertionError("investment carrying value failed")
 
@@ -207,8 +219,10 @@ def main() -> None:
         # Company-level investor: commitment itself must not move cash. Funding does.
         ci = create_company_investor(CompanyInvestorCreate(investor_name=f"CI Company Investor {marker}", investor_type="individual", instrument="profit_share", currency=currency, committed_amount=Decimal("40000"), ownership_percent=Decimal("10"), agreement_date=date(2096, 5, 1), agreement_reference=f"CI-{marker}"), request("POST", "/capital/company-investors"), db, tenant)  # type: ignore[arg-type]
         if ci["funded_amount"] != Decimal("0.00"): raise AssertionError("company investor commitment moved cash")
+        ensure_request_transaction(db)
         cif = fund_company_investor(ci["id"], FundingCreate(account_id=acc.id, funding_date=date(2096, 5, 5), amount=Decimal("15000"), reference=f"CIF-{marker}"), request("POST", f"/capital/company-investors/{ci['id']}/fundings"), db, tenant)  # type: ignore[arg-type]
         if cif["funded_amount"] != Decimal("15000.00") or cif["outstanding_commitment"] != Decimal("25000.00"): raise AssertionError("company investor funding totals failed")
+        ensure_request_transaction(db)
         company_payout = company_investor_payout(ci["id"], PayoutCreate(account_id=acc.id, payout_date=date(2096, 5, 20), principal_return_amount=Decimal("1000"), profit_share_amount=Decimal("500"), reference=f"CIP-{marker}"), request("POST", f"/capital/company-investors/{ci['id']}/payouts"), db, tenant)  # type: ignore[arg-type]
         company_payout_journal = db.scalar(select(JournalEntry).where(
             JournalEntry.organization_id == tenant.organization_id,
@@ -236,8 +250,10 @@ def main() -> None:
         # Project investor: agreement and actual funding are separate lifecycle events.
         pi = create_project_investor(ProjectInvestorCreate(project_id=project.id, investor_name=f"CI Project Investor {marker}", currency=currency, committed_amount=Decimal("30000"), investment_date=date(2096, 6, 1), share_type="profit_percent", share_value=Decimal("25"), agreement_reference=f"PI-{marker}"), request("POST", "/capital/project-investors"), db, tenant)  # type: ignore[arg-type]
         if pi["funded_amount"] != Decimal("0.00"): raise AssertionError("project commitment moved cash")
+        ensure_request_transaction(db)
         pif = fund_project_investor(pi["id"], FundingCreate(account_id=acc.id, funding_date=date(2096, 6, 5), amount=Decimal("12000"), reference=f"PIF-{marker}"), request("POST", f"/capital/project-investors/{pi['id']}/fundings"), db, tenant)  # type: ignore[arg-type]
         if pif["funded_amount"] != Decimal("12000.00") or pif["outstanding_commitment"] != Decimal("18000.00"): raise AssertionError("project funding totals failed")
+        ensure_request_transaction(db)
         po = payout(pi["id"], PayoutCreate(account_id=acc.id, payout_date=date(2096, 7, 1), principal_return_amount=Decimal("2000"), profit_share_amount=Decimal("1000"), reference=f"PO-{marker}"), request("POST", f"/capital/project-investors/{pi['id']}/payouts"), db, tenant)  # type: ignore[arg-type]
         if po["profit_share_amount"] != Decimal("1000.00"): raise AssertionError("project investor payout failed")
 
@@ -264,6 +280,7 @@ def main() -> None:
         pistatement = project_investor_statement(pi["id"], db, tenant)  # type: ignore[arg-type]
         if pistatement["outstanding_capital"] != Decimal("10000.00"): raise AssertionError("project investor statement failed")
 
+        ensure_request_transaction(db)
         owner_contribution = create_owner_equity_transaction(
             OwnerEquityCreate(
                 transaction_type="contribution",
@@ -276,6 +293,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         owner_drawing = create_owner_equity_transaction(
             OwnerEquityCreate(
                 transaction_type="drawing",
@@ -322,6 +340,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         equity_funding = fund_company_investor(
             equity_investor["id"],
             FundingCreate(account_id=base_account.id, funding_date=date(2096, 8, 3), amount=Decimal("5000"), reference=f"EQF-{marker}"),
@@ -329,6 +348,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         equity_payout = company_investor_payout(
             equity_investor["id"],
             PayoutCreate(account_id=base_account.id, payout_date=date(2096, 8, 4), principal_return_amount=Decimal("1000"), profit_share_amount=Decimal("500"), reference=f"EQP-{marker}"),
@@ -353,6 +373,7 @@ def main() -> None:
         if equity_funding["funded_amount"] != Decimal("5000.00"):
             raise AssertionError("equity investor funding failed")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(source_type="owner_equity",source_id=owner_drawing["id"],reason="CI owner drawing correction",reversal_date=date(2096,8,5)),
             request("POST","/accounting/corrections/reverse"),db,tenant,  # type: ignore[arg-type]

@@ -558,9 +558,8 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       actual: 'Service SKU + stock type mismatch yields empty'
     });
     await search.fill('');
-    // Both controls update URL-backed browse state. Commit clearing search
-    // before changing type, otherwise the second update can retain the old SKU.
-    await page.waitForURL(url => url.pathname === '/dashboard/inventory' && !url.searchParams.has('search'));
+    // Exercise the pending-intent app fix without serializing the two controls.
+    // Actual-hook regressions deterministically cover both events before commit.
     await page.locator('select').filter({
       has: page.getByRole('option', {
         name: 'All items',
@@ -568,6 +567,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       })
     }).selectOption('all');
     await page.waitForURL(url => url.pathname === '/dashboard/inventory' && !url.searchParams.has('search') && !url.searchParams.has('type'));
+    await expect(search).toHaveValue('');
     row = page.getByRole('row').filter({
       hasText: 'GAP-STOCK'
     });

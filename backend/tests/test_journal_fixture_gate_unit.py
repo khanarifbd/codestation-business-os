@@ -265,7 +265,19 @@ class JournalFixtureGateTests(unittest.TestCase):
     def test_idempotency_fixture_each_direct_request_owns_root_without_committing(self):
         self.assert_direct_request_roots('verify_financial_idempotency.py', 8)
 
-    def assert_direct_request_roots(self, filename, expected_count):
+    def test_fixed_assets_fixture_requests_own_roots(self):
+        self.assert_direct_request_roots('verify_fixed_assets.py', 9, ['create_asset', 'run_depreciation', 'reverse_business_transaction'])
+
+    def test_capital_fixture_requests_own_roots(self):
+        self.assert_direct_request_roots('verify_capital.py', 14, ['reverse_business_transaction', 'add_investment_funding', 'add_return', 'company_investor_payout', 'create_investment', 'create_loan', 'create_owner_equity_transaction', 'fund_company_investor', 'fund_project_investor', 'payout', 'repay'])
+
+    def test_accounting_loans_fixture_requests_own_roots(self):
+        self.assert_direct_request_roots('verify_accounting_loans.py', 1, ['reverse_business_transaction'])
+
+    def test_payroll_fixture_requests_own_roots(self):
+        self.assert_direct_request_roots('verify_payroll.py', 5, ['reverse_business_transaction', 'approve_run', 'pay_run', 'pay_payroll_withholding'])
+
+    def assert_direct_request_roots(self, filename, expected_count, handlers=None):
         tree = ast.parse((ROOT / 'scripts' / filename).read_text())
         helper = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
                        and node.name == 'ensure_request_transaction'), None)
@@ -282,7 +294,8 @@ class JournalFixtureGateTests(unittest.TestCase):
                 for index, node in enumerate(body):
                     call = node.value if isinstance(node, (ast.Assign, ast.Expr)) else None
                     if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
-                            and (call.func.id.startswith('safe_') or call.func.id == 'reverse_business_transaction')):
+                            and (call.func.id in handlers if handlers is not None else
+                                 (call.func.id.startswith('safe_') or call.func.id == 'reverse_business_transaction'))):
                         continue
                     found += 1
                     previous = body[index-1] if index else None

@@ -49,6 +49,7 @@ export function useInventoryWorkspace() {
   const tabRequestRef = useRef(0);
   const activeTabRef = useRef(tab);
   const mountedRef = useRef(true);
+  const browseIntentRef = useRef<{ observed: string; pending: string[] } | null>(null);
   const saveInFlightRef = useRef(false);
   const committedDocumentRef = useRef(false);
   const [documentCommitted, setDocumentCommitted] = useState(false);
@@ -232,20 +233,65 @@ export function useInventoryWorkspace() {
   const hasChanges = isEditor && !documentCommitted && documentReady && (saving || persistedProductId !== null || baselineSnapshot !== draftSnapshot);
   const navigation = useDocumentNavigationGuard(hasChanges, { documentLabel: "inventory", isBusy: saving, enabled: isEditor });
 
+  useEffect(() => {
+    // Back/Forward is an authoritative user choice, including a URL we emitted
+    // earlier. Never mistake it for an intermediate pending router commit.
+    const resetBrowseIntent = () => { browseIntentRef.current = null; };
+    window.addEventListener("popstate", resetBrowseIntent);
+    return () => { window.removeEventListener("popstate", resetBrowseIntent); resetBrowseIntent(); };
+  }, []);
+
+  function isCurrentInventoryDocument() {
+    const current = typeof window !== "undefined" &&
+      (pathname === "/dashboard/inventory" || pathname.startsWith("/dashboard/inventory/")) &&
+      new URL(window.location.href).pathname === pathname;
+    if (!current) browseIntentRef.current = null;
+    return current;
+  }
+  function latestBrowseState() {
+    if (!mountedRef.current || !isCurrentInventoryDocument()) {
+      browseIntentRef.current = null;
+      return { ...queryState, tab };
+    }
+    // Read history at event time: a second control can fire before React receives
+    // the first router update through useSearchParams. No render-time ref writes.
+    const current = inventoryBrowseState(window.location.search);
+    const observed = inventoryBrowseHref({ ...current, tab: route.mode === "list" ? current.tab : tab });
+    let intent = browseIntentRef.current;
+    if (!intent) intent = { observed, pending: [] };
+    else if (intent.observed !== observed) {
+      const committed = intent.pending.indexOf(observed);
+      intent.pending = committed < 0 ? [] : intent.pending.slice(committed + 1);
+      intent.observed = observed;
+    }
+    browseIntentRef.current = intent;
+    return inventoryBrowseState((intent.pending.at(-1) || observed).split("?")[1] || "");
+  }
   function browse(update: InventoryBrowse, replace = false) {
-    const next = inventoryBrowseHref({ ...queryState, tab, ...update, focus: update.focus || "" });
-    if (!navigation.confirmLeave()) return;
-    if (replace) router.replace(next, { scroll: false }); else router.push(next, { scroll: false });
+    if (!mountedRef.current || !isCurrentInventoryDocument() || !navigation.confirmLeave()) return;
+    const next = inventoryBrowseHref({ ...latestBrowseState(), ...update, focus: update.focus || "" });
+    // Record only accepted intent, before the next control can run. Router keeps
+    // ownership of URL/history; intermediate commits must not lose later edits.
+    const intent = browseIntentRef.current!;
+    const previous = [...intent.pending];
+    if (intent.pending.at(-1) !== next) intent.pending.push(next);
+    // Bound history retained while a router transition is stalled. An unknown
+    // later URL always wins rather than reviving an arbitrarily old intent.
+    if (intent.pending.length > 64) intent.pending.shift();
+    try {
+      if (replace) router.replace(next, { scroll: false }); else router.push(next, { scroll: false });
+    } catch (error) { intent.pending = previous; throw error; }
   }
   function setTab(value: Tab) { browse({ tab: value, search: "", lowStockOnly: false }); }
   function setSearch(value: string) { browse({ search: value }, true); }
   function setItemFilter(value: string) { browse({ itemFilter: value }); }
-  function setLowStockOnly(value: boolean | ((current: boolean) => boolean)) { browse({ lowStockOnly: typeof value === "function" ? value(lowStockOnly) : value }); }
-  function rowReturn(id: string) { return inventoryBrowseHref({ ...queryState, tab, focus: id }); }
-  function openView(section: "items" | "suppliers" | "warehouses" | "purchases", id: string) { router.push(inventoryDocumentHref(section, id, "view", rowReturn(id))); }
+  function setLowStockOnly(value: boolean | ((current: boolean) => boolean)) { browse({ lowStockOnly: typeof value === "function" ? value(latestBrowseState().lowStockOnly) : value }); }
+  function rowReturn(id: string) { return inventoryBrowseHref({ ...latestBrowseState(), focus: id }); }
+  function openView(section: "items" | "suppliers" | "warehouses" | "purchases", id: string) { if (!mountedRef.current || !isCurrentInventoryDocument()) return; router.push(inventoryDocumentHref(section, id, "view", rowReturn(id))); }
   function enterEditor(section: InventorySection, id: string | null = null, type?: string) {
+    if (!mountedRef.current || !isCurrentInventoryDocument()) return;
     if (!canManage) { setError("Your company role does not have permission to manage inventory."); return; }
-    const context = route.mode === "list" ? id ? rowReturn(id) : listHref : returnHref;
+    const context = route.mode === "list" ? id ? rowReturn(id) : inventoryBrowseHref(latestBrowseState()) : returnHref;
     navigation.navigate(inventoryDocumentHref(section, id, id ? "edit" : "create", context, type));
   }
   function openNewItem(type = "stock_item") { enterEditor("items", null, type); }

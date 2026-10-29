@@ -78,6 +78,13 @@ def expect_conflict(fn, label: str) -> None:
     raise AssertionError(f"{label}: expected HTTP 409")
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls do not run HTTP tenant dependencies to start a request root.
+    # Preserve active fixture work and let failed sessions remain visibly failed.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""
@@ -440,6 +447,7 @@ def main() -> None:
         if fx_loss != Decimal("2000.00"):
             raise AssertionError(f"foreign loan realized FX loss should be 2000.00, got {fx_loss}")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="loan_repayment",
