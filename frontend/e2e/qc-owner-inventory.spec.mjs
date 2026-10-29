@@ -198,7 +198,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     // Acknowledgment retains identity; current status requires an explicit read.
     await page.getByRole("button", { name: "Read current bill & history", exact: true }).click();
     await expect(page.getByRole("article").filter({ hasText: `Reference: ${reference}` })).toContainText(`USD ${amount.toFixed(2)}`);
-    await page.getByRole("button", { name: "Back to payables", exact: true }).click();
+    await page.locator(".pb-actions").getByRole("button", { name: "Back to payables", exact: true }).click();
   }
 
   await test.step("Reject overpayment, cancel review safely, then partially settle USD 20", async () => {

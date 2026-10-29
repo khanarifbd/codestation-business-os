@@ -24,6 +24,7 @@ CASES = (
     ('verify_inventory_payables_migration.py', 'ensure_default_chart', 0),
     ('verify_v1_accounting_integrity.py', 'sync_result', 0),
     ('verify_financial_corrections.py', 'sync_result', 0),
+    ('verify_finance_controls.py', 'posted', 0),
     ('verify_stripe_accounting_posting.py', 'posted', 0),
     ('verify_stripe_payout_lifecycle.py', 'post_financial_account_opening', 0),
     ('verify_transfers.py', 'post_financial_account_opening', 0),
@@ -308,6 +309,23 @@ class JournalFixtureGateTests(unittest.TestCase):
                     with self.subTest(line=node.lineno, prefix=True):
                         self.assertTrue(owned, 'Direct financial request lacks explicit root ownership')
         self.assertEqual(found, expected_count)
+
+    def test_recurring_fixture_prefix_reaches_actual_period_adapter(self):
+        adapter = load_functions('app/api/v1/finance_controls.py', ['_ensure_open_period'],
+                                 gate_namespace())['_ensure_open_period']
+        db = DB()
+        with self.assertRaises(GATE.AccountingPeriodGateError):
+            adapter(db, 'synthetic-org', date(2026, 10, 29))
+        self.assertEqual(db.events, [])
+        previous = prefixes('verify_finance_controls.py', 'posted')[0]
+        owned = (isinstance(previous, ast.Expr) and isinstance(previous.value, ast.Call)
+                 and getattr(previous.value.func, 'id', None) == 'acquire_accounting_period_gate')
+        if owned:
+            ns = dict(gate_namespace(), db=db, tenant=NS(organization_id='synthetic-org'))
+            exec(compile(ast.Module(body=[previous], type_ignores=[]), '<actual recurring fixture gate>', 'exec'), ns)
+        adapter(db, 'synthetic-org', date(2026, 10, 29))
+        self.assertEqual(len(gate_sql(db)), 1)
+        self.assertTrue(any(event[0] == 'period_read' for event in db.events))
 
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):

@@ -17,6 +17,7 @@ from app.api.v1.finance_controls import (
 )
 from app.api.v1.finance_expenses import create_expense, create_vendor
 from app.db.session import SessionLocal, engine
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.models.expenses import ExpenseCategory
 from app.schemas.expenses import ExpenseCreate, VendorCreate
 from app.schemas.finance import FinancialAccountCreate
@@ -113,6 +114,7 @@ def main() -> None:
         )
         if updated.notes != "CI recurring schedule":
             raise AssertionError("recurring expense update failed")
+        acquire_accounting_period_gate(db, tenant.organization_id)
         posted = post_recurring_expense(
             recurring.id,
             RecurringExpensePost(expense_date=today),
