@@ -1,0 +1,1682 @@
+[
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "0.02",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.50000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "0.02",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "1.01",
+      "exchange_rate": "50.50000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "122.35",
+      "exchange_rate": "6117.50000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.004",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "0.02",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.004",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.50000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.004",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "0.02",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.004",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "1.01",
+      "exchange_rate": "50.50000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.004",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.00",
+      "net_source_amount": "0.02",
+      "destination_amount": "122.35",
+      "exchange_rate": "6117.50000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.005",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "0.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.005",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "0.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.005",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "0.02",
+      "exchange_rate": "2.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.005",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "1.01",
+      "exchange_rate": "101.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.005",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "122.35",
+      "exchange_rate": "12235.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.01",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "0.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.01",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "0.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.01",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "0.02",
+      "exchange_rate": "2.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.01",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "1.01",
+      "exchange_rate": "101.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "0.015",
+      "fee": "0.01",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "0.02",
+      "fee_amount": "0.01",
+      "net_source_amount": "0.01",
+      "destination_amount": "122.35",
+      "exchange_rate": "12235.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "1.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00990099"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.01980198"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "1.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "122.35",
+      "exchange_rate": "121.13861386"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.004",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "1.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.004",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00990099"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.004",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.01980198"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.004",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "1.01",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.004",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.00",
+      "net_source_amount": "1.01",
+      "destination_amount": "122.35",
+      "exchange_rate": "121.13861386"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.005",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "1.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.005",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.01000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.005",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.02000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.005",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "1.01000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.005",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "122.35000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.01",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "1.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.01",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.01000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.01",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.02000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.01",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "1.01000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1.005",
+      "fee": "0.01",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1.01",
+      "fee_amount": "0.01",
+      "net_source_amount": "1.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "122.35000000"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "25.13",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00039793"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00079586"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.04019101"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "122.35",
+      "exchange_rate": "4.86868285"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.004",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "25.13",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.004",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00039793"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.004",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00079586"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.004",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.04019101"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.004",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.00",
+      "net_source_amount": "25.13",
+      "destination_amount": "122.35",
+      "exchange_rate": "4.86868285"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.005",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "25.12",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.005",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00039809"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.005",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00079618"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.005",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.04020701"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.005",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "122.35",
+      "exchange_rate": "4.87062102"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.01",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "25.12",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.01",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00039809"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.01",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00079618"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.01",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.04020701"
+    }
+  },
+  {
+    "input": {
+      "source": "25.125",
+      "fee": "0.01",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "25.13",
+      "fee_amount": "0.01",
+      "net_source_amount": "25.12",
+      "destination_amount": "122.35",
+      "exchange_rate": "4.87062102"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "100.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00010000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00020000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.01010000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "1.22350000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.004",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "100.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.004",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00010000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.004",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00020000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.004",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.01010000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.004",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "100.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "1.22350000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.005",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "99.99",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.005",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00010001"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.005",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00020002"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.005",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.01010101"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.005",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "122.35",
+      "exchange_rate": "1.22362236"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.01",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "99.99",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.01",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00010001"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.01",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00020002"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.01",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.01010101"
+    }
+  },
+  {
+    "input": {
+      "source": "100.00",
+      "fee": "0.01",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "100.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "99.99",
+      "destination_amount": "122.35",
+      "exchange_rate": "1.22362236"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1000000000000.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.004",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1000000000000.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.004",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.004",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.004",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.004",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.005",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "999999999999.99",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.005",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.005",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.005",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.005",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.01",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "999999999999.99",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.01",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.01",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.01",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "999999999999.995",
+      "fee": "0.01",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1000000000000.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.004",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1000000000000.00",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.004",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.004",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.004",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.004",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.00",
+      "net_source_amount": "1000000000000.00",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.005",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "999999999999.99",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.005",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.005",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.005",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.005",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.01",
+      "received": null
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "999999999999.99",
+      "exchange_rate": "1.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.01",
+      "received": "0.01"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.01",
+      "received": "0.015"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "0.02",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.01",
+      "received": "1.005"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "1.01",
+      "exchange_rate": "0.00000000"
+    }
+  },
+  {
+    "input": {
+      "source": "1000000000000",
+      "fee": "0.01",
+      "received": "122.345"
+    },
+    "expected": {
+      "source_amount": "1000000000000.00",
+      "fee_amount": "0.01",
+      "net_source_amount": "999999999999.99",
+      "destination_amount": "122.35",
+      "exchange_rate": "0.00000000"
+    }
+  }
+]

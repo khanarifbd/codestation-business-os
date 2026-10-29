@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const ts=require('typescript');
 const root=path.resolve(__dirname,'..');
-const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.resolve(root,'../business-os-reconcile-20261025/baseline-source/frontend');
+const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.join(root,'../test-fixtures/frontend-original');
 const file='src/app/dashboard/quotations/quotation-v2-workspace.tsx';
 const read=(dir,rel=file)=>fs.readFileSync(path.join(dir,rel),'utf8');
 const parse=dir=>ts.createSourceFile(file,read(dir),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);

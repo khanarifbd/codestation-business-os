@@ -7,7 +7,7 @@ const ts=require('typescript');
 const root=path.resolve(__dirname,'..');
 const baseline=process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
-  : path.resolve(root,'../business-os-reconcile-20261025/baseline-source/frontend');
+  : path.join(root,'../test-fixtures/frontend-original');
 const files={crm:'src/app/dashboard/crm/page.tsx',clients:'src/app/dashboard/clients/page.tsx',detail:'src/app/dashboard/clients/[clientId]/page.tsx'};
 const read=(dir,file)=>fs.readFileSync(path.join(dir,file),'utf8');
 const ast=(dir,file)=>ts.createSourceFile(file,read(dir,file),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);

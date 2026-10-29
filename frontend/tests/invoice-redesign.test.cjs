@@ -7,7 +7,7 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
 const baseline = process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
-  : path.resolve(__dirname, '../../business-os-reconcile-20261025/baseline-source/frontend');
+  : path.join(__dirname, '../../test-fixtures/frontend-original');
 const files = { list: 'src/components/invoices-workspace-v2.tsx', detail: 'src/components/invoice-detail-workspace.tsx', payment: 'src/components/invoice-payment-workspace.tsx', workspace: 'src/components/invoice-workspace.tsx' };
 const read = (dir, file) => fs.readFileSync(path.join(dir, file), 'utf8');
 const parse = (dir, file) => ts.createSourceFile(file, read(dir, file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

@@ -7,7 +7,7 @@ const ts = require('typescript');
 const root = path.resolve(__dirname, '..');
 const baseline = process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
-  : path.resolve(__dirname, '../../business-os-reconcile-20261025/baseline-source/frontend');
+  : path.join(__dirname, '../../test-fixtures/frontend-original');
 const dashboard = 'src/app/dashboard/page.tsx';
 const shell = 'src/components/dashboard-shell.tsx';
 const insights = 'src/components/dashboard/financial-insights.tsx';

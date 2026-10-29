@@ -1,0 +1,83 @@
+{
+  "status": "FROZEN_ISOLATED_CANDIDATE_NOT_INTEGRATED",
+  "utc": "2026-10-27T05:13:55.177260+00:00",
+  "owned": [
+    {
+      "path": "src/hooks/use-advanced-resource.ts",
+      "before_sha256": "534293022ccaca1a01a1c7c74ffaa19cb9371710eb6c698e74ece6c24835f7ed",
+      "after_sha256": "8ca43e0aa82f4c7a13c811f2f6531bfb496036c8c24c8fd34d74d442c01a6603"
+    },
+    {
+      "path": "tests/shared-read-safety-independent.test.cjs",
+      "before_sha256": null,
+      "after_sha256": "0fd9c165f5bdb6d20c72cfd3342a0afe3818b81443a0121399d8bf69e5e90a97"
+    }
+  ],
+  "source_copy_files": 737,
+  "nonowned_originals_unchanged": 736,
+  "main_helper_unchanged": true,
+  "patch_sha256": "c3cddf81d8487459097837563e2b5e9cf923e760cf19281824e1c31047ecc6aa",
+  "reconstructed_sha256": {
+    "src/hooks/use-advanced-resource.ts": "8ca43e0aa82f4c7a13c811f2f6531bfb496036c8c24c8fd34d74d442c01a6603",
+    "tests/shared-read-safety-independent.test.cjs": "0fd9c165f5bdb6d20c72cfd3342a0afe3818b81443a0121399d8bf69e5e90a97"
+  },
+  "exact_patch_reconstruction": true,
+  "checks": {
+    "initial_regressions": {
+      "tests": 2,
+      "pass": 0,
+      "fail": 2
+    },
+    "first_after": {
+      "tests": 45,
+      "pass": 44,
+      "fail": 1,
+      "classification": "UI query fixture used as_of instead of actual asOf; test-only correction, original evidence preserved"
+    },
+    "final_independent": {
+      "tests": 45,
+      "pass": 45,
+      "fail": 0,
+      "skipped": 0
+    },
+    "scoped_lint": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "inherited_impacted_runner": "PREPARED_NOT_RUN",
+    "aggregate": "NOT_RUN",
+    "types": "NOT_RUN",
+    "build": "NOT_RUN",
+    "browser": "NOT_RUN",
+    "postgresql": "BLOCKED_NOT_RUN"
+  },
+  "evidence_sha256": {
+    "README.md": "f3d4992a18d08f3ac875d163767d1b5296d25f685e6ef5760e0039abed045432",
+    "after-first-focused.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "after-first-focused.log": "1ca09e04a13ebc5aa1a4bbbeabee9a571dd250666e775267a32db864acb597ab",
+    "before-final-checks.json": "0595ed8f7099487ba994b01b54feee31b3bc9812b38a39e5ee76b1dede60a0da",
+    "before-focused-regressions.exit": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "before-focused-regressions.log": "05944a69079f4d4205cc4ccfbb4e50e3b855f6db58cec794bab6c0d76224b984",
+    "final-focused.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "final-focused.log": "1ef7edcc833bf874a5b048c72ee2c0e80f48fba6e9daa3d501cfecf6c9fe101d",
+    "first-test-preimage.cjs.txt": "b7f5a4c5e5de917f9975108c18d51e20e08088839635d9d69f803d4470e14e8c",
+    "focused-corrected.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "focused-corrected.log": "5b61b91f5d28dd8a6aa475f31afd453d7a18c12035e1152068e9ad26e2b5840d",
+    "impacted-consumers.md": "3fb64359a92f94fe4686f067b7d50909ea9375ae6e76dad38f253e77ec5f6dcb",
+    "impacted-source-pins.json": "b25c433c83c1ad843defe25706ea8703c090d941e9667dfae7c5cb48631c50d5",
+    "offline-network.cjs": "7a1ae9acc289053a17c9f0e3bfd3319532c2a82fef9716d4208df64935dbde6a",
+    "patch-apply.log": "a9fc3cb734650ec01a5291b8123648b7a629362f12740118ea82dc8f284b877b",
+    "preimages/src/hooks/use-advanced-resource.ts.txt": "534293022ccaca1a01a1c7c74ffaa19cb9371710eb6c698e74ece6c24835f7ed",
+    "run_impacted_consumers.cjs": "24b7679b1a95a19e272524c327f099cd858e28a1a4261adeb14740f61c664bba",
+    "scoped-lint.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "scoped-lint.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "shared-read-safety.patch": "c3cddf81d8487459097837563e2b5e9cf923e760cf19281824e1c31047ecc6aa",
+    "source-copy-proof.json": "14a48c12372d3683fab75999a0a5ca218c5eb20b55a7789acd0e2600c697f762"
+  },
+  "limitations": [
+    "Actual hooks executed under deterministic fake React scheduling, session, router and fetch; not browser or API proof.",
+    "Only8 consumer families executable-probed;30calls/17files priorinventory is source-only.",
+    "No shared consumer rewrite, financial formula, API or permission changes.",
+    "Requires later independently reviewed composition and inherited consumer/aggregate/type/build/browser gates."
+  ]
+}

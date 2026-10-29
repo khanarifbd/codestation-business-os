@@ -14,6 +14,7 @@ from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.expenses import Expense
 from app.models.finance import AccountTransfer, FinancialAccount, FinancialTransaction, Invoice, Payment
 from app.services.accounting_sync import sync_operational_accounting
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.activity_log import record_activity
 
 
@@ -139,6 +140,7 @@ def main() -> None:
         if payment is None or expense is None or transfer is None:
             raise AssertionError("correction verification requires a cross-currency payment, expense and transfer fixtures")
 
+        acquire_accounting_period_gate(db, tenant.organization_id)
         sync_result = sync_operational_accounting(
             db,
             organization_id=tenant.organization_id,

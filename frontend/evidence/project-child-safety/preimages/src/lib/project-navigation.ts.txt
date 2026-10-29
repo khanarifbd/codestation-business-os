@@ -1,0 +1,43 @@
+export const PROJECTS_PATH = "/dashboard/projects";
+export const PROJECT_STATUSES = ["planned", "active", "on_hold", "completed", "cancelled"] as const;
+export const PROJECT_TABS = ["overview", "milestones", "tasks", "work", "documents", "notes", "credentials", "team", "review_tips"] as const;
+export type ProjectBrowse = { search?: string; status?: string; pages?: number; focus?: string };
+function browsePageCount(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(1, Math.floor(parsed))) : 1;
+}
+export function projectBrowseState(search: string | URLSearchParams): Required<ProjectBrowse> {
+  const p = new URLSearchParams(search), status = p.get("status") || "";
+  return { search: (p.get("search") || "").slice(0, 500), status: PROJECT_STATUSES.includes(status as typeof PROJECT_STATUSES[number]) ? status : "", pages: browsePageCount(p.get("pages")), focus: (p.get("focus") || "").slice(0, 200) };
+}
+export function projectBrowseHref(value: ProjectBrowse = {}) {
+  const p = new URLSearchParams();
+  if (value.search) p.set("search", value.search.slice(0, 500));
+  if (value.status && PROJECT_STATUSES.includes(value.status as typeof PROJECT_STATUSES[number])) p.set("status", value.status);
+  if (value.pages && value.pages > 1) p.set("pages", String(browsePageCount(value.pages)));
+  if (value.focus) p.set("focus", value.focus.slice(0, 200));
+  return `${PROJECTS_PATH}${p.size ? `?${p}` : ""}`;
+}
+export function safeProjectsReturnHref(raw: string | null | undefined) {
+  if (!raw || raw !== PROJECTS_PATH && !raw.startsWith(`${PROJECTS_PATH}?`)) return PROJECTS_PATH;
+  return projectBrowseHref(projectBrowseState(raw.split("?")[1] || ""));
+}
+export function projectCreateHref(orderId: string, returnTo?: string) {
+  return `${PROJECTS_PATH}/new?${new URLSearchParams({ order_id: orderId, returnTo: safeProjectsReturnHref(returnTo) })}`;
+}
+export function projectDetailHref(projectId: string, tab = "overview", returnTo?: string) {
+  const p = new URLSearchParams({ returnTo: safeProjectsReturnHref(returnTo) });
+  if (PROJECT_TABS.includes(tab as typeof PROJECT_TABS[number]) && tab !== "overview") p.set("tab", tab);
+  return `${PROJECTS_PATH}/${encodeURIComponent(projectId)}?${p}`;
+}
+export function safeProjectWorkspaceReturnHref(raw: string | null | undefined, projectId: string) {
+  const base = `${PROJECTS_PATH}/${encodeURIComponent(projectId)}`;
+  if (!raw || raw !== base && !raw.startsWith(`${base}?`)) return projectDetailHref(projectId);
+  const p = new URLSearchParams(raw.split("?")[1] || "");
+  return projectDetailHref(projectId, p.get("tab") || "overview", p.get("returnTo") || undefined);
+}
+export function projectEditorHref(projectId: string, suffix: string, returnTo?: string) {
+  const clean = suffix.replace(/^\/+|\/+$/g, "");
+  if (!clean || clean.split("/").some(part => part === "." || part === ".." || /[?#\\]/.test(part))) return projectDetailHref(projectId);
+  return `${PROJECTS_PATH}/${encodeURIComponent(projectId)}/${clean}?${new URLSearchParams({ returnTo: safeProjectWorkspaceReturnHref(returnTo, projectId) })}`;
+}

@@ -6,7 +6,7 @@ const path = require('node:path');
 const ts = require('typescript');
 const baseline = process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
-  : path.resolve(__dirname, '../../business-os-reconcile-20261025/baseline-source/frontend');
+  : path.join(__dirname, '../../test-fixtures/frontend-original');
 const candidate = path.resolve(__dirname, '..');
 const read = (root, file) => fs.readFileSync(path.join(root, file), 'utf8');
 const parse = (root, file) => ts.createSourceFile(file, read(root, file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

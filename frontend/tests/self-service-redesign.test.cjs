@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const ts=require('typescript');
 const root=path.resolve(__dirname,'..');
-const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.resolve(root,'../business-os-my-work-recovery-20261026/baseline-source/frontend');
+const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.join(root,'../test-fixtures/frontend-original');
 const original=path.join(baseline,'src/app/dashboard/hr/me/page.tsx');
 const model=path.join(root,'src/components/self-service/self-service-model.ts');
 function parse(file){return ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);}

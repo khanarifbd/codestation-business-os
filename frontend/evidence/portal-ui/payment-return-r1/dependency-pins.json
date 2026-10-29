@@ -1,0 +1,7 @@
+{
+  "files": {
+    "src/components/dashboard-shell.tsx": "455b017dc7218c9239e61b214bcdf566af4ea478124ea97f75c2883fd05835b4",
+    "src/components/dashboard-session-context.tsx": "7d61854df0d253f303aec1a8302a3474a264012ec45cd91cbb4a9387e133bb63",
+    "src/app/api/stripe-checkout/return-status/[sessionId]/route.ts": "757fa9a3b8368f2ce7b88512c68e4e1f4c4a39d6fe06161aeef9fa738040643f"
+  }
+}

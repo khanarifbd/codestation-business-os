@@ -51,7 +51,7 @@ function harness(target='useSelfServiceWorkspace',file='src/hooks/use-self-servi
 function check(name,run,target,file){test(`Self service: ${name}`,async()=>{const h=harness(target,file);try{await run(h);}finally{h.cleanup();}});}
 function effect(h,pattern){const fn=h.effects.find(fn=>pattern.test(fn.toString()));assert.ok(fn,`effect ${pattern}`);return fn();}
 const modelFile='src/components/self-service/self-service-model.ts',navFile='src/lib/self-service-navigation.ts';
-const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.resolve(root,'../business-os-my-work-recovery-20261026/baseline-source/frontend');
+const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.join(root,'../test-fixtures/frontend-original');
 const originalFile=path.join(baseline,'src/app/dashboard/hr/me/page.tsx');
 function originalFunction(name){const source=fs.readFileSync(originalFile,'utf8'),ast=ts.createSourceFile(originalFile,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let node;const visit=n=>{if(ts.isFunctionDeclaration(n)&&n.name?.text===name)node=n;ts.forEachChild(n,visit);};visit(ast);assert.ok(node,name);return{node,ast};}
 function originalPayload(name,values){const{node,ast}=originalFunction(name);let payload;const visit=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ast)==='JSON.stringify')payload=n.arguments[0].getText(ast);ts.forEachChild(n,visit);};visit(node);assert.ok(payload,name);return new Function('values','text','return '+payload)({get:key=>values[key]??null},values.self_review);}

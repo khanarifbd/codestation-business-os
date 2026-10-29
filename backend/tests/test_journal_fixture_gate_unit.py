@@ -20,6 +20,8 @@ CASES = (
     ('verify_accounting_multicurrency.py', 'exchange_rate', 0),
     ('verify_financial_corrections_part2.py', 'expense', 0),
     ('verify_inventory_payables_migration.py', 'ensure_default_chart', 0),
+    ('verify_v1_accounting_integrity.py', 'sync_result', 0),
+    ('verify_financial_corrections.py', 'sync_result', 0),
 )
 
 def prefixes(filename, anchor):
@@ -50,6 +52,31 @@ class JournalFixtureGateTests(unittest.TestCase):
                 exec(compile(ast.Module(body=[previous], type_ignores=[]), '<actual fixture gate>', 'exec'), ns)
                 GATE.require_accounting_period_gate(db, 'synthetic-org')
                 self.assertEqual(len(gate_sql(db)), 1)
+
+    def test_direct_sync_fixture_prefix_reaches_real_journal_date_guard(self):
+        for filename in ('verify_v1_accounting_integrity.py', 'verify_financial_corrections.py'):
+            with self.subTest(script=filename):
+                tree = ast.parse((ROOT / 'scripts' / filename).read_text())
+                call = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                            and any(isinstance(target, ast.Name) and target.id == 'sync_result' for target in node.targets))
+                previous = prefixes(filename, 'sync_result')[0]
+                # Run the actual adjacent acquisition if present; otherwise the actual
+                # call reaches the real leaf guard unowned, reproducing the CI failure.
+                owned_prefix = (isinstance(previous, ast.Expr) and isinstance(previous.value, ast.Call)
+                                and getattr(previous.value.func, 'id', None) == 'acquire_accounting_period_gate')
+                db = DB()
+                today = date(2026, 10, 29)
+                def sync(db, *, organization_id, **kwargs):
+                    GATE.ensure_accounting_period_open(db, organization_id, today)
+                    return {'counts': {}, 'errors': []}
+                ns = dict(gate_namespace(), db=db, business_today=today,
+                          organization=NS(id='synthetic-org'), user=NS(id='synthetic-user'),
+                          tenant=NS(organization_id='synthetic-org', user_id='synthetic-user',
+                                    organization=NS(currency='BDT')), sync_operational_accounting=sync)
+                body = ([previous] if owned_prefix else []) + [call]
+                exec(compile(ast.Module(body=body, type_ignores=[]), '<actual direct sync boundary>', 'exec'), ns)
+                self.assertEqual(len(gate_sql(db)), 1)
+                self.assertTrue(any(item[0] == 'period_read' for item in db.events))
 
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):

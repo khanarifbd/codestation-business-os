@@ -1,7 +1,7 @@
 /** Source-contract checks only. BASELINE_FRONTEND must name the verified source baseline. */
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript');
 const {root,account,harness}=require('./accounting-accounts-harness.cjs');
-const baseline=process.env.BASELINE_FRONTEND;
+const baseline=process.env.BASELINE_FRONTEND || path.resolve(root,'../test-fixtures/frontend-original');
 assert.ok(baseline&&path.isAbsolute(baseline),'Set BASELINE_FRONTEND to the verified baseline frontend.');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 function find(file,predicate){const source=fs.readFileSync(file,'utf8'),ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let found;function visit(node){if(!found&&predicate(node,ast))found=node;ts.forEachChild(node,visit);}visit(ast);assert.ok(found,'Source node found in '+file);return{node:found,ast};}

@@ -40,7 +40,7 @@ function harness(target='usePeopleWorkspace',file='src/hooks/use-people-workspac
 }
 function check(name,run,target,file){test(`People: ${name}`,async()=>{const h=harness(target,file);try{await run(h);}finally{h.cleanup();}});}
 function effect(h,pattern){const fn=h.effects.find(fn=>pattern.test(fn.toString()));assert.ok(fn,`effect ${pattern}`);return fn();}
-const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.resolve(root,'../business-os-my-work-recovery-20261026/baseline-source/frontend');
+const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.join(root,'../test-fixtures/frontend-original');
 const originalFile=path.join(baseline,'src/app/dashboard/hr/people/page.tsx');
 function originalDeclaration(name){const source=fs.readFileSync(originalFile,'utf8'),ast=ts.createSourceFile(originalFile,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let node;const visit=n=>{if((ts.isVariableDeclaration(n)||ts.isFunctionDeclaration(n))&&n.name?.getText(ast)===name)node=n;ts.forEachChild(n,visit);};visit(ast);assert.ok(node,name);return{node,ast};}
 function originalPayload(name,values){const {node,ast}=originalDeclaration(name);let payload;const visit=n=>{if(ts.isCallExpression(n)&&n.expression.getText(ast)==='JSON.stringify')payload=n.arguments[0].getText(ast);ts.forEachChild(n,visit);};visit(node);assert.ok(payload,name);return new Function('form','return '+payload)({get:key=>values[key]??null});}

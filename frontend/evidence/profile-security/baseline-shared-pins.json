@@ -1,0 +1,11 @@
+{
+  "src/app/api/profile/[[...path]]/route.ts": "6fa7f1fa00ce9a75baede378f791f430988403acfcf9def923ca28e56cf55596",
+  "src/components/auth/google-reauth-button.tsx": "50989c8046a8ad57cc8a9bc57d041e7612de635e61aa0c0951df7ad16b2e45ad",
+  "src/components/auth/password-field.tsx": "1050ebc0e8e5ced79ef1182ec20fdb0e5c46664ed41d28799cd5c7587db41531",
+  "src/components/dashboard-session-context.tsx": "79fe92739934fc430557bb14772a8acafa3d81b57471b52fff45f999267a74da",
+  "src/components/dashboard-shell.tsx": "455b017dc7218c9239e61b214bcdf566af4ea478124ea97f75c2883fd05835b4",
+  "src/components/searchable-select.tsx": "4e5b0e7e5caacbc687d250e84eceb1855df1ebdb8c54f43b106458138f836434",
+  "src/hooks/use-quotation-navigation-guard.ts": "4d6259f31a035dfb1794ad0d76d7dbf82332e4d6c21e70de294ff29b4f4a5881",
+  "src/lib/authenticated-backend.ts": "5ef6075bce17e3a42c9abc19c3c55e8e0620bcd5d2575bb9727ce8748850d80a",
+  "src/lib/passkeys.ts": "77b13f6cb7413ce2203d71d347ae3c3ac44865417752b9626d7566131463ca88"
+}

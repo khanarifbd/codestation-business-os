@@ -1,0 +1,430 @@
+{
+  "result": "PASS",
+  "author_run": true,
+  "numeric_string_parity": [
+    {
+      "kind": "bill",
+      "input": "0.01",
+      "parsed_decimal": "0.01",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "payment",
+      "input": "0.01",
+      "parsed_decimal": "0.01",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "bill",
+      "input": "12.20",
+      "parsed_decimal": "12.20",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "payment",
+      "input": "12.20",
+      "parsed_decimal": "12.20",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "bill",
+      "input": "1.005",
+      "parsed_decimal": "1.005",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "payment",
+      "input": "1.005",
+      "parsed_decimal": "1.005",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "bill",
+      "input": "1000000000000",
+      "parsed_decimal": "1000000000000",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "payment",
+      "input": "1000000000000",
+      "parsed_decimal": "1000000000000",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "bill",
+      "input": "999999999999.99",
+      "parsed_decimal": "999999999999.99",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "payment",
+      "input": "999999999999.99",
+      "parsed_decimal": "999999999999.99",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "bill",
+      "input": "9007199254740.91",
+      "parsed_decimal": "9007199254740.91",
+      "numeric_string_equal": true
+    },
+    {
+      "kind": "payment",
+      "input": "9007199254740.91",
+      "parsed_decimal": "9007199254740.91",
+      "numeric_string_equal": true
+    }
+  ],
+  "exact_string_precision_cases": [
+    {
+      "kind": "bill",
+      "input": "9999999999999999.99",
+      "string_decimal": "9999999999999999.99",
+      "old_number_decimal": "1E+16",
+      "same_schema_accepts_exact_string": true
+    },
+    {
+      "kind": "payment",
+      "input": "9999999999999999.99",
+      "string_decimal": "9999999999999999.99",
+      "old_number_decimal": "1E+16",
+      "same_schema_accepts_exact_string": true
+    },
+    {
+      "kind": "bill",
+      "input": "99999999999999.99",
+      "string_decimal": "99999999999999.99",
+      "old_number_decimal": "99999999999999.98",
+      "same_schema_accepts_exact_string": true
+    },
+    {
+      "kind": "payment",
+      "input": "99999999999999.99",
+      "string_decimal": "99999999999999.99",
+      "old_number_decimal": "99999999999999.98",
+      "same_schema_accepts_exact_string": true
+    }
+  ],
+  "schema_rejections": [
+    {
+      "kind": "bill",
+      "input": "0"
+    },
+    {
+      "kind": "payment",
+      "input": "0"
+    },
+    {
+      "kind": "bill",
+      "input": "-0.01"
+    },
+    {
+      "kind": "payment",
+      "input": "-0.01"
+    },
+    {
+      "kind": "bill",
+      "input": "NaN"
+    },
+    {
+      "kind": "payment",
+      "input": "NaN"
+    },
+    {
+      "kind": "bill",
+      "input": "Infinity"
+    },
+    {
+      "kind": "payment",
+      "input": "Infinity"
+    },
+    {
+      "kind": "bill",
+      "input": "-Infinity"
+    },
+    {
+      "kind": "payment",
+      "input": "-Infinity"
+    }
+  ],
+  "actual_backend_calculator_vectors": [
+    {
+      "amount": "12.20",
+      "purchase_rate": "17.5",
+      "recoverable_percent": "100",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "12.20",
+        "input_tax": "2.14",
+        "recoverable": "2.14",
+        "nonrecoverable": "0.00",
+        "gross": "14.34",
+        "withholding": "0.00",
+        "net_payable": "14.34"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "13.40",
+      "purchase_rate": "17.5",
+      "recoverable_percent": "50",
+      "withholding_rate": "2.5",
+      "expected": {
+        "subtotal": "13.40",
+        "input_tax": "2.35",
+        "recoverable": "1.18",
+        "nonrecoverable": "1.17",
+        "gross": "15.75",
+        "withholding": "0.34",
+        "net_payable": "15.41"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "13.70",
+      "purchase_rate": "15",
+      "recoverable_percent": "0",
+      "withholding_rate": "5",
+      "expected": {
+        "subtotal": "13.70",
+        "input_tax": "2.06",
+        "recoverable": "0.00",
+        "nonrecoverable": "2.06",
+        "gross": "15.76",
+        "withholding": "0.69",
+        "net_payable": "15.07"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "14.50",
+      "purchase_rate": "15",
+      "recoverable_percent": "33.33",
+      "withholding_rate": "7.5",
+      "expected": {
+        "subtotal": "14.50",
+        "input_tax": "2.18",
+        "recoverable": "0.73",
+        "nonrecoverable": "1.45",
+        "gross": "16.68",
+        "withholding": "1.09",
+        "net_payable": "15.59"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "14.60",
+      "purchase_rate": "17.5",
+      "recoverable_percent": "100",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "14.60",
+        "input_tax": "2.56",
+        "recoverable": "2.56",
+        "nonrecoverable": "0.00",
+        "gross": "17.16",
+        "withholding": "0.00",
+        "net_payable": "17.16"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "0.01",
+      "purchase_rate": "50",
+      "recoverable_percent": "50",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "0.01",
+        "input_tax": "0.01",
+        "recoverable": "0.01",
+        "nonrecoverable": "0.00",
+        "gross": "0.02",
+        "withholding": "0.00",
+        "net_payable": "0.02"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "0.03",
+      "purchase_rate": "50",
+      "recoverable_percent": "50",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "0.03",
+        "input_tax": "0.02",
+        "recoverable": "0.01",
+        "nonrecoverable": "0.01",
+        "gross": "0.05",
+        "withholding": "0.00",
+        "net_payable": "0.05"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "1.005",
+      "purchase_rate": "17.5",
+      "recoverable_percent": "33.333",
+      "withholding_rate": "5",
+      "expected": {
+        "subtotal": "1.01",
+        "input_tax": "0.18",
+        "recoverable": "0.06",
+        "nonrecoverable": "0.12",
+        "gross": "1.19",
+        "withholding": "0.05",
+        "net_payable": "1.14"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "110.005",
+      "purchase_rate": "7.125",
+      "recoverable_percent": "62.5",
+      "withholding_rate": "2.5",
+      "expected": {
+        "subtotal": "110.01",
+        "input_tax": "7.84",
+        "recoverable": "4.90",
+        "nonrecoverable": "2.94",
+        "gross": "117.85",
+        "withholding": "2.75",
+        "net_payable": "115.10"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "999999999999.99",
+      "purchase_rate": "17.5",
+      "recoverable_percent": "100",
+      "withholding_rate": "5",
+      "expected": {
+        "subtotal": "999999999999.99",
+        "input_tax": "175000000000.00",
+        "recoverable": "175000000000.00",
+        "nonrecoverable": "0.00",
+        "gross": "1174999999999.99",
+        "withholding": "50000000000.00",
+        "net_payable": "1124999999999.99"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "1000000000000",
+      "purchase_rate": "0",
+      "recoverable_percent": "0",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "1000000000000.00",
+        "input_tax": "0.00",
+        "recoverable": "0.00",
+        "nonrecoverable": "0.00",
+        "gross": "1000000000000.00",
+        "withholding": "0.00",
+        "net_payable": "1000000000000.00"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "9999999999999999.99",
+      "purchase_rate": "0",
+      "recoverable_percent": "0",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "9999999999999999.99",
+        "input_tax": "0.00",
+        "recoverable": "0.00",
+        "nonrecoverable": "0.00",
+        "gross": "9999999999999999.99",
+        "withholding": "0.00",
+        "net_payable": "9999999999999999.99"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "9999999999999999.99",
+      "purchase_rate": "0.01",
+      "recoverable_percent": "0",
+      "withholding_rate": "0",
+      "expected": {
+        "subtotal": "9999999999999999.99",
+        "input_tax": "1000000000000.00",
+        "recoverable": "0.00",
+        "nonrecoverable": "1000000000000.00",
+        "gross": "10000999999999999.99",
+        "withholding": "0.00",
+        "net_payable": "10000999999999999.99"
+      },
+      "fits_numeric18_2": false,
+      "existing_ui_allows_positive_net": true
+    },
+    {
+      "amount": "100",
+      "purchase_rate": "0",
+      "recoverable_percent": "0",
+      "withholding_rate": "100",
+      "expected": {
+        "subtotal": "100.00",
+        "input_tax": "0.00",
+        "recoverable": "0.00",
+        "nonrecoverable": "0.00",
+        "gross": "100.00",
+        "withholding": "100.00",
+        "net_payable": "0.00"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": false
+    },
+    {
+      "amount": "100",
+      "purchase_rate": "10",
+      "recoverable_percent": "50",
+      "withholding_rate": "110",
+      "expected": {
+        "subtotal": "100.00",
+        "input_tax": "10.00",
+        "recoverable": "5.00",
+        "nonrecoverable": "5.00",
+        "gross": "110.00",
+        "withholding": "110.00",
+        "net_payable": "0.00"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": false
+    },
+    {
+      "amount": "12.20",
+      "purchase_rate": null,
+      "recoverable_percent": null,
+      "withholding_rate": null,
+      "expected": {
+        "subtotal": "12.20",
+        "input_tax": "0.00",
+        "recoverable": "0.00",
+        "nonrecoverable": "0.00",
+        "gross": "12.20",
+        "withholding": "0.00",
+        "net_payable": "12.20"
+      },
+      "fits_numeric18_2": true,
+      "existing_ui_allows_positive_net": true
+    }
+  ],
+  "excess_withholding_rejected400": true,
+  "source_sha256": {
+    "app/schemas/payables.py": "05006773f5a00b72301f34b1a1b1e6010c74f3bbdc22b9e242f82ea13218cfe3",
+    "app/api/v1/payables.py": "b8d296ab08b795e455bdb03d498e0a02e3cb73e479a3e32be1bccfe0080c247f"
+  },
+  "scope": "Actual existing Pydantic classes and unchanged extracted pure Decimal financial block; independent Fraction HALF_UP oracle. No app/config import, environment read, database/network/server/provider action. Storage flags are source-based limits, not persistence tests."
+}
