@@ -120,6 +120,13 @@ def journal_rows(db, organization_id: str, journal_id: str):
     ).all()
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls have no HTTP tenant dependency to start the next request root.
+    # Preserve fixture reads already in progress; never commit or roll them back.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""
@@ -167,6 +174,7 @@ def main() -> None:
         if organization is None:
             raise AssertionError("Fixture organization is missing")
         tenant = Tenant(organization_id=str(row['organization_id']), user_id=str(row['user_id']), membership_id=str(row['membership_id']), role='admin', organization=organization)
+        ensure_request_transaction(db)
         base_account = safe_create_account(
             FinancialAccountCreate(
                 name=f"CI Money Integrity {marker}",
@@ -192,12 +200,14 @@ def main() -> None:
             description="CI two legitimate identical receipts",
             reference=f"CI-KEYLESS-{marker}",
         )
+        ensure_request_transaction(db)
         keyless_one = safe_create_money_entry(
             duplicate_payload,
             request("POST", "/accounting/money"),
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         keyless_two = safe_create_money_entry(
             duplicate_payload,
             request("POST", "/accounting/money"),
@@ -217,12 +227,14 @@ def main() -> None:
             reference=f"CI-MONEY-IN-{marker}",
         )
         income_key = f"ci-money-in-{marker}"
+        ensure_request_transaction(db)
         first_income = safe_create_money_entry(
             income_payload,
             request("POST", "/accounting/money", income_key),
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         replay_income = safe_create_money_entry(
             income_payload,
             request("POST", "/accounting/money", income_key),
@@ -257,6 +269,7 @@ def main() -> None:
             description="CI direct operating expense",
             reference=f"CI-MONEY-OUT-{marker}",
         )
+        ensure_request_transaction(db)
         expense = safe_create_money_entry(
             expense_payload,
             request("POST", "/accounting/money", f"ci-money-out-{marker}"),
@@ -279,6 +292,7 @@ def main() -> None:
         if project is None:
             raise AssertionError("money integrity verification requires a project fixture")
         mismatch_currency = "EUR" if project.currency.upper() != "EUR" else "USD"
+        ensure_request_transaction(db)
         mismatch_account = safe_create_account(
             FinancialAccountCreate(
                 name=f"CI Money FX Mismatch {marker}",
@@ -301,6 +315,7 @@ def main() -> None:
             source_id=project.id,
         )
         try:
+            ensure_request_transaction(db)
             safe_create_money_entry(
                 mismatch_payload,
                 request("POST", "/accounting/money", f"ci-money-fx-{marker}"),
@@ -331,6 +346,7 @@ def main() -> None:
         if first_income_row is None or expense_row is None:
             raise AssertionError("direct money fixtures disappeared after validation rollback")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="money_entry",
@@ -385,12 +401,14 @@ def main() -> None:
             reference=f"CI-INCOME-FEE-{marker}",
         )
         income_with_fee_key = f"ci-income-fee-{marker}"
+        ensure_request_transaction(db)
         income_with_fee = safe_create_income_with_fee(
             income_with_fee_payload,
             request("POST", "/accounting/money/income-with-fee", income_with_fee_key),
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         replay_income_with_fee = safe_create_income_with_fee(
             income_with_fee_payload,
             request("POST", "/accounting/money/income-with-fee", income_with_fee_key),
@@ -458,6 +476,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         foreign_account = safe_create_account(
             FinancialAccountCreate(
                 name=f"CI Advance Bank {marker}",
@@ -477,12 +496,14 @@ def main() -> None:
             reference=f"CI-ADV-{marker}",
         )
         advance_key = f"ci-advance-{marker}"
+        ensure_request_transaction(db)
         advance = safe_create_customer_advance(
             advance_payload,
             request("POST", "/accounting/customer-advances", advance_key),
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         replay_advance = safe_create_customer_advance(
             advance_payload,
             request("POST", "/accounting/customer-advances", advance_key),
@@ -513,6 +534,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         sent = safe_change_invoice_status(
             invoice.id,
             InvoiceStatusAction(action="send"),
@@ -521,6 +543,7 @@ def main() -> None:
             tenant,  # type: ignore[arg-type]
         )
         try:
+            ensure_request_transaction(db)
             safe_apply_customer_advance(
                 advance.id,
                 CustomerAdvanceApply(
@@ -545,6 +568,7 @@ def main() -> None:
             amount=Decimal("100.00"),
         )
         application_key = f"ci-advance-apply-{marker}"
+        ensure_request_transaction(db)
         applied = safe_apply_customer_advance(
             advance.id,
             application_payload,
@@ -552,6 +576,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         replay_applied = safe_apply_customer_advance(
             advance.id,
             application_payload,
@@ -602,6 +627,7 @@ def main() -> None:
         # Receipt reversal is dependency-aware: an applied customer credit must
         # first be detached from the invoice.
         try:
+            ensure_request_transaction(db)
             reverse_business_transaction(
                 CorrectionRequest(
                     source_type="customer_advance",
@@ -620,6 +646,7 @@ def main() -> None:
         else:
             raise AssertionError("customer advance receipt reversal must be blocked while an application is active")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="customer_advance_application",
@@ -644,6 +671,7 @@ def main() -> None:
                 Invoice.organization_id == tenant.organization_id,
             )
         )
+        ensure_request_transaction(db)
         refreshed_advance = safe_create_customer_advance(
             advance_payload,
             request("POST", "/accounting/customer-advances", advance_key),
@@ -657,6 +685,7 @@ def main() -> None:
         if account_balance(db, tenant.organization_id, foreign_account.id) != Decimal("100.00"):
             raise AssertionError("advance application reversal incorrectly moved cash")
 
+        ensure_request_transaction(db)
         reapplied = safe_apply_customer_advance(
             advance.id,
             CustomerAdvanceApply(

@@ -258,6 +258,51 @@ class JournalFixtureGateTests(unittest.TestCase):
                 exec(compile(ast.Module(body=[refresh], type_ignores=[]), '<actual correction refresh>', 'exec'),
                      dict(db=db, tenant=NS(organization=NS(currency='USD', timezone='UTC'))))
 
+    def test_money_fixture_each_direct_request_owns_root_without_committing(self):
+        tree = ast.parse((ROOT / 'scripts/verify_accounting_money_integrity.py').read_text())
+        helper = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
+                       and node.name == 'ensure_request_transaction'), None)
+        guard_tree = ast.parse((ROOT / 'app/services/accounting_period_gate.py').read_text())
+        guard_nodes = [node for node in guard_tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+                       and node.name in {'AccountingPeriodGateError', '_active_root'}]
+        ns = {}
+        exec(compile(ast.Module(body=guard_nodes + ([helper] if helper else []), type_ignores=[]), '<actual request root>', 'exec'), ns)
+        found = 0
+        for parent in ast.walk(tree):
+            for _, body in ast.iter_fields(parent):
+                if not isinstance(body, list):
+                    continue
+                for index, node in enumerate(body):
+                    call = node.value if isinstance(node, (ast.Assign, ast.Expr)) else None
+                    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                            and (call.func.id.startswith('safe_') or call.func.id == 'reverse_business_transaction')):
+                        continue
+                    found += 1
+                    previous = body[index-1] if index else None
+                    owned = previous is not None and ast.unparse(previous) == 'ensure_request_transaction(db)'
+                    for state in ('new', 'active', 'committed', 'rolled_back'):
+                        with self.subTest(line=node.lineno, handler=call.func.id, state=state):
+                            with Session() as db:
+                                original = None
+                                if state != 'new':
+                                    original = db.begin()
+                                if state == 'committed':
+                                    db.commit()
+                                elif state == 'rolled_back':
+                                    db.rollback()
+                                with patch.object(db, 'commit', side_effect=AssertionError('fixture must not commit')), \
+                                     patch.object(db, 'rollback', side_effect=AssertionError('fixture must not rollback')):
+                                    if owned:
+                                        exec(compile(ast.Module(body=[previous], type_ignores=[]), '<actual request prefix>', 'exec'), dict(ns, db=db))
+                                    current = ns['_active_root'](db)
+                                    if state == 'active':
+                                        self.assertIs(current, original)
+                                    else:
+                                        self.assertIsNot(current, original)
+                    with self.subTest(line=node.lineno, prefix=True):
+                        self.assertTrue(owned, 'Direct financial request lacks explicit root ownership')
+        self.assertEqual(found, 22)
+
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):
             GATE.require_accounting_period_gate(DB(), 'synthetic-org')
