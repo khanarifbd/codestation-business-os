@@ -192,7 +192,7 @@ def verify_mail_disabled():
     import json, socket, os
     assert_local_test_database()
     assert not settings.smtp_host.strip() and not settings.smtp_configured
-    guarded=socket.socket.connect.__module__=='sitecustomize' and socket.socket.connect_ex.__module__=='sitecustomize'
+    guarded=getattr(socket.socket.connect, '__module__', None)=='sitecustomize' and getattr(socket.socket.connect_ex, '__module__', None)=='sitecustomize'
     # Local QA requires its existing guard; portable CI has no SMTP transport
     # configured and account_email._send_message returns False before sockets.
     if 'no-network' in os.environ.get('PYTHONPATH',''):

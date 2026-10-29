@@ -22,10 +22,27 @@ from app.services.activity_log import record_activity
 
 import json, os
 from app.core.security import hash_password
+def assert_browser_fixture_target():
+    """Retain the dedicated local target; admit only the explicit disposable CI target."""
+    assert settings.environment == 'test', 'Explicit test environment required'
+    assert engine.url.get_backend_name() == 'postgresql', 'PostgreSQL fixture required'
+    assert engine.url.host in {'127.0.0.1', 'localhost'}, 'Loopback database required'
+    local_target = engine.url.port == 55433 and engine.url.database == 'business_os_qc_expanded20261022'
+    ci_target = (
+        os.environ.get('GITHUB_ACTIONS') == 'true'
+        and os.environ.get('QC_BROWSER_FIXTURE') == '1'
+        and engine.url.port == 5432
+        and engine.url.database == 'codestation_business_os'
+    )
+    assert local_target or ci_target, 'Only dedicated local QC or explicitly opted-in disposable CI database is permitted'
+    assert not settings.smtp_host.strip() and not settings.smtp_configured, 'Mail must remain disabled'
+
+
 def main():
-    assert settings.environment == 'test' and engine.url.port == 55433
-    assert engine.url.host in {'127.0.0.1','localhost'} and engine.url.database == 'business_os_qc_expanded20261022'
-    assert not settings.smtp_host and not app.dependency_overrides
+    assert_browser_fixture_target()
+    assert not app.dependency_overrides
+    fixture_path = os.environ.get('BROWSER_FIXTURE', '').strip()
+    assert fixture_path, 'BROWSER_FIXTURE output path is required before creating synthetic records'
     password='E2E-Launch-Password-123!'
     db=SessionLocal(); http=TestClient(app); headers={}
     def call(method,path,payload=None,expected=200):
@@ -99,7 +116,7 @@ def main():
         r=http.get('/api/v1/workspace/me',headers=employee_headers)
         assert len(r.json()['tasks'])==4
         print('PASS standard non-admin employee workspace/self-service access and manager endpoint denial')
-        with open(os.environ['BROWSER_FIXTURE'],'w') as f:json.dump(result,f)
+        with open(fixture_path,'w') as f:json.dump(result,f)
         print('Created isolated synthetic persistent browser fixtures')
     finally:
         http.close();db.close()

@@ -77,7 +77,8 @@ jobs:
             test_expense_relationship_context.py \
             test_company_currency_fixture_transaction_unit.py \
             test_finance_controls_fixture_transaction_unit.py \
-            test_journal_fixture_gate_unit.py
+            test_journal_fixture_gate_unit.py \
+            test_browser_fixture_safety_unit.py
           do
             uv run --offline --no-sync python -m unittest discover -s tests -p "$test_file" -v || exit 1
           done
@@ -249,6 +250,9 @@ jobs:
       E2E_PASSWORD: E2E-Launch-Password-123!
       E2E_BASE_URL: http://localhost:3000
       PUBLIC_APP_URL: http://localhost:3000
+      QC_BROWSER_FIXTURE: "1"
+      BROWSER_FIXTURE: ${{ runner.temp }}/business-os-browser-fixture.json
+      SMTP_HOST: ""
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -268,6 +272,7 @@ jobs:
           E2E_EMAIL=qc-hr-project@example.com uv run python scripts/seed_browser_e2e.py
           E2E_EMAIL=qc-financial-ux@example.com uv run python scripts/seed_browser_e2e.py
           E2E_EMAIL=qc-notification@example.com uv run python scripts/seed_browser_e2e.py
+          uv run python scripts/seed_qc_personal_client_browser.py
           nohup uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/business-os-backend.log 2>&1 &
       - name: Wait for backend
         run: |
@@ -290,11 +295,13 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
           pnpm build
-      - name: Start frontend
+      - name: Start isolated development frontend for functional browser QA
         working-directory: frontend
         env:
           INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
-        run: nohup pnpm exec next start -H 0.0.0.0 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: business-os-ci.apps.googleusercontent.com
+        run: nohup pnpm exec next dev --webpack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
       - name: Wait for frontend
         run: |
           for i in {1..30}; do

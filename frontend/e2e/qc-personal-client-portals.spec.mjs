@@ -1,8 +1,8 @@
 // Integrated UI suite: business outcomes use live local APIs/PostgreSQL.
-// Execution currently blocked before browser launch by sandbox socket restrictions.
+// The CI workflow seeds BROWSER_FIXTURE in its disposable PostgreSQL service.
 import {readFileSync} from 'node:fs';
 import {test,expect} from '@playwright/test';
-const fixture=()=>JSON.parse(readFileSync(process.env.BROWSER_FIXTURE,'utf8'));
+const fixture=()=>{const path=process.env.BROWSER_FIXTURE;if(!path)throw new Error('BROWSER_FIXTURE is required; run seed_qc_personal_client_browser.py against the isolated test database first');return JSON.parse(readFileSync(path,'utf8'));};
 async function json(response){const value=await response.json();expect(response.ok(),JSON.stringify(value)).toBeTruthy();return value;}
 async function login(page,email){const f=fixture();await json(await page.request.post('/api/auth/login',{data:{email,password:f.password}}));await json(await page.request.get('/api/organizations'));}
 
@@ -68,7 +68,7 @@ test('HR08 HR26 HR27 personal remote and correction requests persist with comple
  await correction.getByLabel('Work date',{exact:true}).fill(yesterday);await correction.getByLabel('Actual check-in').fill(`${yesterday}T09:00`);await correction.getByLabel('Actual check-out').fill(`${yesterday}T17:00`);await correction.getByLabel('Reason',{exact:true}).fill('Synthetic browser correction request');
  saved=page.waitForResponse(r=>r.url().includes('/hr/self/attendance-requests')&&r.request().method()==='POST');await correction.getByRole('button',{name:'Submit correction'}).click();expect((await saved).status()).toBe(201);
  expect((await page.request.get('/api/hr/attendance/requests')).status()).toBe(403);
- const ownerContext=await page.context().browser().newContext({baseURL:'http://localhost:3100'});const ownerPage=await ownerContext.newPage();await login(ownerPage,f.owner_email);
+ const ownerContext=await page.context().browser().newContext({baseURL:info.project.use.baseURL,extraHTTPHeaders:info.project.use.extraHTTPHeaders});const ownerPage=await ownerContext.newPage();await login(ownerPage,f.owner_email);
  const queue=await json(await ownerPage.request.get('/api/hr/attendance/requests'));await ownerContext.close();expect(JSON.stringify(queue)).toContain('Synthetic browser remote request');expect(JSON.stringify(queue)).toContain('Synthetic browser correction request');
  await page.reload();await expect(page.getByText('Synthetic browser remote request',{exact:true})).toBeVisible();await expect(page.getByText('Synthetic browser correction request',{exact:true})).toBeVisible();
  await info.attach('personal-hr-manager-queue.json',{body:JSON.stringify(queue),contentType:'application/json'});await page.screenshot({path:info.outputPath('personal-hr-requests.png'),fullPage:true});
