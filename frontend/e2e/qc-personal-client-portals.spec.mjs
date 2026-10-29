@@ -43,9 +43,16 @@ test('MW02 MW03 NT03 MW04 MW05 real personal search board notification click com
 });
 
 test('Client portal real linked visibility public milestone invoice suppression and quotation decision',async({page},info)=>{
- const f=fixture();await login(page,f.customer_email);await page.goto('/dashboard/client-portal');
+ const f=fixture();await login(page,f.customer_email);
+ // Billing context and quotation cards load independently; await the actual
+ // quotation read rather than treating the first visible billing amount as ready.
+ const quotesRead=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/client-portal/quotations'&&r.request().method()==='GET');
+ await page.goto('/dashboard/client-portal');
  await expect(page.getByText('Visible customer',{exact:true})).toBeVisible();await expect(page.getByText('Hidden customer',{exact:true})).toHaveCount(0);
  const billing=await json(await page.request.get('/api/client-portal'));expect(billing.financials).toHaveLength(1);expect(billing.financials[0].invoice_count).toBe(1);expect(Number(billing.financials[0].balance_due)).toBe(100);
+ const quotesResponse=await quotesRead;expect(quotesResponse.status()).toBe(200);
+ const quotes=await json(quotesResponse);const pendingQuote=quotes.find(row=>row.id===f.quotation_id);
+ expect(pendingQuote.status).toBe('sent');expect(Number(pendingQuote.total)).toBe(100);
  await expect(page.getByText('USD 100.00',{exact:true})).toHaveCount(2);
  await page.screenshot({path:info.outputPath('client-dashboard-billing.png'),fullPage:true});
  await page.getByRole('link',{name:'All projects',exact:true}).click();

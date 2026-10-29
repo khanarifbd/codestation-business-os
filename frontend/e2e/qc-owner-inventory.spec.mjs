@@ -234,9 +234,21 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await expect(dialog).toContainText("USD 40.00");
     await expect(dialog).toContainText(names.supplier);
     const requestPromise = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/accounting/corrections/reverse" && request.method() === "POST");
-    await postUi(page, "/api/accounting/corrections/reverse", dialog.getByRole("button", { name: "Confirm business reversal", exact: true }));
+    const correction = await postUi(page, "/api/accounting/corrections/reverse", dialog.getByRole("button", { name: "Confirm business reversal", exact: true }));
     expect((await requestPromise).postDataJSON()).toMatchObject({ source_type: "payable_payment", source_id: finalPayment.id, reason });
-    await expect(page.getByRole("heading", { name: "Repeat posting is locked in this workspace.", exact: true })).toBeVisible();
+    expect(correction).toMatchObject({ source_type: "payable_payment", source_id: finalPayment.id });
+    expect(correction.reversal_journal_id).toEqual(expect.any(String));
+    expect(correction.reversal_journal_id).not.toBe("");
+    // Successful corrections navigate to their verified journal; the retained
+    // acknowledgment is a fallback only when automatic navigation cannot finish.
+    await expect(page).toHaveURL((url) => url.pathname === `/dashboard/accounting/advanced/journals/${correction.reversal_journal_id}`);
+    const reversalJournal = await api(page, `/api/accounting/journals/${correction.reversal_journal_id}`);
+    expect(reversalJournal).toMatchObject({ id: correction.reversal_journal_id, status: "posted", functional_currency: "USD" });
+    expect(Number(reversalJournal.total_debit)).toBe(40);
+    expect(Number(reversalJournal.total_credit)).toBe(40);
+    await expect(page.getByRole("heading", { name: reversalJournal.entry_number, exact: true })).toBeVisible();
+    await expect(page.getByText("Read-only posted journal", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Confirm business reversal", exact: true })).toHaveCount(0);
     await reconcile("final payment reversed", { due: 40, cash: 980, quantity: 10, journals: 5, movements: 1 });
     const reversedHistory = await api(page, `/api/accounting/payables/${bill.id}/payments`);
     expect(reversedHistory.find((item) => item.id === finalPayment.id).status).toBe("reversed");

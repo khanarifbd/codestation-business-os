@@ -207,14 +207,30 @@ test("Client invoice PDF includes the saved Payoneer link and scannable QR", asy
   await page.goto("/login");
   await page.getByLabel(/email or username/i).fill(process.env.E2E_EMAIL ?? "e2e-owner@example.com");
   await page.locator('input[name="password"]').fill(process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!");
+  // The dashboard URL is not workspace readiness: bootstrap selects the tenant
+  // and sets organization_id after login. Observe that real read, without retry.
+  const workspaceReady = page.waitForResponse(response =>
+    new URL(response.url()).pathname === "/api/dashboard-bootstrap" && response.request().method() === "GET"
+  ).then(async response => {
+    expect(response.status(), "Dashboard bootstrap must succeed before binding the portal fixture").toBe(200);
+    const bootstrap = await response.json();
+    await response.finished();
+    expect(bootstrap.tenant?.organization?.id).toBeTruthy();
+    expect(bootstrap.tenant?.membership_id).toBeTruthy();
+    return bootstrap.tenant;
+  });
   await page.getByRole("button", { name: /sign in securely/i }).click();
   await expect(page).toHaveURL(new RegExp("dashboard"), { timeout: 15_000 });
+
+  const initializedTenant = await workspaceReady;
 
   // Bind the synthetic portal relationship to the authenticated tenant. The
   // portal verifies this scope before it requests a linked client's document.
   const tenantResponse = await page.request.get("/api/tenant");
-  expect(tenantResponse.ok()).toBeTruthy();
+  expect(tenantResponse.status(), `Tenant read after bootstrap: ${await tenantResponse.text()}`).toBe(200);
   const tenant = await tenantResponse.json();
+  expect(tenant.organization.id).toBe(initializedTenant.organization.id);
+  expect(tenant.membership_id).toBe(initializedTenant.membership_id);
   await page.route("**/api/client-portal", route => route.fulfill({ json: {
     organization_id: tenant.organization.id,
     organization_name: tenant.organization.name,
