@@ -25,6 +25,7 @@ from app.services.stripe_accounting import post_verified_live_stripe_settlement
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.tenancy.context import TenantContext
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.core.config import settings
 from app.models.payment_gateways import PaymentGatewayConnection
@@ -86,7 +87,7 @@ def live_webhook_url(connection_id: str, db: DbSession, tenant: Manager):
 
 def _system_tenant(db: DbSession, connection: PaymentGatewayConnection) -> TenantContext:
     """Post as gateway's connected active organization member, never an unknown user."""
-    organization = db.get(Organization, connection.organization_id)
+    organization = db.get(Organization, connection.organization_id, populate_existing=True)
     member = db.scalar(select(Membership).where(
         Membership.organization_id == connection.organization_id,
         Membership.user_id == connection.connected_by_user_id,
@@ -265,17 +266,28 @@ def _review_full_refund(db: DbSession, connection: PaymentGatewayConnection, eve
 
 @router.post("/webhook/{connection_id}", include_in_schema=False)
 async def review_live_stripe_event(connection_id: str, request: Request, db: DbSession):
-    # Signed webhook processing is distinct from authenticated tenant APIs.
-    # Locking the connection prevents duplicate insert races for this gateway.
-    conn = db.scalar(select(PaymentGatewayConnection).where(
+    # Do not hold tenant or domain locks while waiting for an untrusted request body.
+    body = await request.body()
+    # Resolve only the tenant hint without a business lock; never trust payload tenant IDs.
+    organization_id = db.scalar(select(PaymentGatewayConnection.organization_id).where(
         PaymentGatewayConnection.id == connection_id,
         PaymentGatewayConnection.provider == "stripe",
         PaymentGatewayConnection.mode == "live",
         PaymentGatewayConnection.is_active.is_(True),
-    ).with_for_update())
+    ))
+    if organization_id is None:
+        raise HTTPException(status_code=404, detail="Live Stripe webhook is unavailable")
+    acquire_accounting_period_gate(db, organization_id)
+    # Re-read and lock within that tenant after waiting; signature verification uses fresh state.
+    conn = db.scalar(select(PaymentGatewayConnection).where(
+        PaymentGatewayConnection.id == connection_id,
+        PaymentGatewayConnection.organization_id == organization_id,
+        PaymentGatewayConnection.provider == "stripe",
+        PaymentGatewayConnection.mode == "live",
+        PaymentGatewayConnection.is_active.is_(True),
+    ).with_for_update().execution_options(populate_existing=True))
     if conn is None or not conn.webhook_secret_ciphertext:
         raise HTTPException(status_code=404, detail="Live Stripe webhook is unavailable")
-    body = await request.body()
     if len(body) > 256 * 1024:
         raise HTTPException(status_code=413, detail="Stripe webhook request too large")
     event = verify_stripe_signature(

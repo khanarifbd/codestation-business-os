@@ -1,3 +1,4 @@
+import json
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -15,9 +16,12 @@ from app.services.hr_attendance import effective_attendance_mode, verify_office_
 from app.models.hr_extended import HRAnnouncementAcknowledgement, HRHoliday
 from app.models.membership import Membership
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun
+from app.models.payroll_policy import PayrollEntryAdjustment
+from app.services.payroll_policy_inputs import snapshot_policy_context
 from app.models.team import Employee
 from app.models.user import User
 from app.services.activity_log import record_activity
+from app.services.hr_leave import lock_leave_employee
 from app.services.hr_time import attendance_status_for_check_in, scheduled_presence_minutes, shift_for_date
 from app.tenancy.context import TenantContext
 
@@ -273,6 +277,7 @@ def self_leave_balance(db: DbSession, tenant: HRSelf, year: int | None = None):
 @router.post("/self/leave-requests/{request_id}/cancel")
 def cancel_self_leave(request_id: str, request: Request, db: DbSession, tenant: HRSelf):
     employee = _employee(db, tenant)
+    lock_leave_employee(db, tenant.organization_id, employee.id)
     item = db.scalar(
         select(LeaveRequest)
         .where(
@@ -281,6 +286,7 @@ def cancel_self_leave(request_id: str, request: Request, db: DbSession, tenant: 
             LeaveRequest.employee_id == employee.id,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Leave request not found")
@@ -450,6 +456,11 @@ def self_payslip(entry_id: str, db: DbSession, tenant: HRSelf):
         raise HTTPException(status_code=404, detail="Payslip not found")
 
     entry, run, period, employee_name = row
+    # Only after ownership/status checks; no run-wide employee inputs are exposed.
+    adjustments = db.scalars(select(PayrollEntryAdjustment).where(
+        PayrollEntryAdjustment.organization_id == tenant.organization_id,
+        PayrollEntryAdjustment.entry_id == entry.id,
+    ).order_by(PayrollEntryAdjustment.created_at, PayrollEntryAdjustment.id)).all()
     return {
         "organization": {
             "name": tenant.organization.name,
@@ -465,6 +476,7 @@ def self_payslip(entry_id: str, db: DbSession, tenant: HRSelf):
             "period_end": period.period_end,
             "pay_date": period.pay_date,
             "status": run.status,
+            "calculation_context": snapshot_policy_context(run),
         },
         "entry": {
             "id": entry.id,
@@ -480,6 +492,9 @@ def self_payslip(entry_id: str, db: DbSession, tenant: HRSelf):
             "gross_pay": str(entry.gross_pay),
             "net_pay": str(entry.net_pay),
             "notes": entry.notes,
+            "calculation_snapshot": json.loads(entry.calculation_snapshot) if entry.calculation_snapshot else None,
+            "adjustments": [{"reason": item.reason, "created_at": item.created_at,
+                "before": item.before_values, "after": item.after_values} for item in adjustments],
         },
     }
 

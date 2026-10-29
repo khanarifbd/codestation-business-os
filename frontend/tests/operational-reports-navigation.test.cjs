@@ -1,0 +1,14 @@
+const test=require('node:test'),assert=require('node:assert/strict');
+const {sourceLoader}=require('./reconciliation-harness.cjs');const f=require('./operational-reports-fixtures.cjs');
+const n=sourceLoader().load('src/lib/operational-report-navigation.ts');
+const parse=q=>n.parseReportBrowse(new URLSearchParams(q),f.filters);
+test('organization timezone defaults cross browser UTC midnight correctly',()=>{const now=new Date('2026-10-31T19:00:00Z');assert.deepEqual(n.reportDefaults('Asia/Dhaka',now),{...f.filters,date_from:'2026-11-01',date_to:'2026-11-01'});assert.equal(n.reportDefaults('America/New_York',now).date_to,'2026-10-31');});
+test('invalid organization timezone falls back to UTC',()=>assert.equal(n.reportDefaults('not/a/timezone',new Date('2026-10-31T19:00:00Z')).date_to,'2026-10-31'));
+test('explicit valid dates do not change to organization defaults',()=>{const v=parse('date_from=2025-12-01&date_to=2026-01-02');assert.equal(v.date_from,'2025-12-01');assert.equal(v.date_to,'2026-01-02');});
+for(const section of ['performance','position','projects','clients'])test(`URL ${section} round trip preserves filters and section`,()=>{const state={...f.filters,currency:'USD',client_id:'client-one',project_id:'project-one',section};const url=n.reportHref(state);assert.deepEqual(parse(new URL(url,'https://synthetic.invalid').search),state);assert.equal(n.reportQuery(state).includes('section'),false);});
+for(const q of ['section=edit','section=https://evil.test','section=<script>'])test(`unknown section safely resolves performance ${q}`,()=>assert.equal(parse(q).section,'performance'));
+for(const bad of [{date_from:''},{date_to:'2026-02-30'},{date_to:'2026-09-01'},{currency:'usd'},{currency:'USD,BDT'},{client_id:'../../private'},{project_id:'x?y=1'}])test(`invalid explicit filters do not become broad query ${JSON.stringify(bad)}`,()=>{const values={...f.filters,...bad};assert.ok(n.reportFilterError(values));});
+test('existing client selection resets project only in UI, navigation does not fabricate relation',()=>{const state=parse('client_id=client-one&project_id=project-two');assert.equal(state.client_id,'client-one');assert.equal(state.project_id,'project-two');assert.equal(n.reportFilterError(state),null);});
+test('unlisted valid currency remains valid selected URL filter',()=>assert.equal(n.reportFilterError({...f.filters,currency:'EUR'}),null));
+test('empty explicit date is retained for correction rather than defaulted silently',()=>assert.equal(parse('date_from=').date_from,''));
+test('URL serialization admits only fixed existing filter keys and section',()=>{const url=n.reportHref({...f.filters,section:'clients',next:'https://evil.test',token:'secret-not-real'});assert.doesNotMatch(url,/next|token|evil/);});

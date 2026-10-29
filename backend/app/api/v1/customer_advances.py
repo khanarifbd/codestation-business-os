@@ -382,3 +382,18 @@ def apply_advance(advance_id: str, payload: CustomerAdvanceApply, request: Reque
     record_activity(db, action="accounting.customer_advance.applied", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="customer_advance_application", entity_id=application.id, after={"advance_id":advance.id,"invoice_id":invoice.id,"amount":str(amount),"advance_remaining":str(advance.remaining_amount),"invoice_balance_due":str(invoice.balance_due)}, message=f"Customer advance applied to {invoice.invoice_number}", request=request)
     db.commit(); db.refresh(advance)
     return _read(db, tenant.organization_id, advance)
+
+
+# BEGIN MONEY IN RECEIPT READ
+@router.get("/{advance_id}", response_model=CustomerAdvanceRead)
+def get_customer_advance(advance_id: str, db: DbSession, tenant: Viewer):
+    item = db.scalar(
+        select(CustomerAdvance).where(
+            CustomerAdvance.organization_id == tenant.organization_id,
+            CustomerAdvance.id == advance_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Customer advance not found")
+    return _read(db, tenant.organization_id, item)
+# END MONEY IN RECEIPT READ

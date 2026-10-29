@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 TaskStatus = Literal["todo", "in_progress", "blocked", "review", "completed", "cancelled"]
 TaskPriority = Literal["low", "normal", "high", "urgent"]
@@ -23,6 +23,13 @@ class MilestoneUpdate(BaseModel):
     sort_order: int | None = Field(default=None, ge=0, le=10000)
     status: MilestoneStatus | None = None
 
+
+    @field_validator('status', 'sort_order', mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null; omit it to leave unchanged")
+        return value
 
 class MilestoneRead(BaseModel):
     id: str
@@ -60,6 +67,13 @@ class TaskUpdate(BaseModel):
     estimated_minutes: int | None = Field(default=None, ge=0, le=1000000)
     status: TaskStatus | None = None
 
+
+    @field_validator('priority', 'status', mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null; omit it to leave unchanged")
+        return value
 
 class TaskProgressUpdate(BaseModel):
     progress_percent: int = Field(ge=0, le=100)
@@ -134,6 +148,13 @@ class CredentialUpdate(BaseModel):
     notes: str | None = None
     access_level: CredentialAccess | None = None
 
+
+    @field_validator('access_level', mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null; omit it to leave unchanged")
+        return value
 
 class CredentialRead(BaseModel):
     id: str

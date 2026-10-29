@@ -1,7 +1,11 @@
 "use client";
 
 import { Check, Copy, ExternalLink, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { useProjectChildLifetime } from "@/hooks/use-project-child-lifetime";
+import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
+import { ProjectDialog } from "@/components/projects/project-dialog";
 
 type ProjectNote = {
   id: string;
@@ -27,23 +31,45 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
   const [draft, setDraft] = useState<NoteDraft>(emptyDraft);
   const [modalOpen, setModalOpen] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [writeOutcome, setWriteOutcome] = useState<{ message: string; acknowledged: boolean } | null>(null);
+  const outcomeRef = useRef<typeof writeOutcome>(null);
+  const isCurrent = useProjectChildLifetime(projectId);
+  const pendingRef = useRef(false);
+  const dialogReturnRef = useRef<HTMLElement>(null);
+  const ownerRef = useRef(0);
+  const readRef = useRef(0);
+  const noteDirty = modalOpen && (draft.title !== (editing?.title ?? "") || draft.content !== (editing?.content ?? ""));
+  const navigation = useDocumentNavigationGuard(noteDirty || Boolean(writeOutcome), { enabled: true, isBusy: saving, pendingRef, documentLabel: "project", discardMessage: writeOutcome ? "The note change may already be saved. Leaving loses this tab-only attempt. Check saved notes before repeating it. Leave?" : undefined });
+
+  function closeNote() {
+    if (!isCurrent() || pendingRef.current || !navigation.confirmLeave()) return;
+    setModalOpen(false);
+  }
+
 
   const load = useCallback(async () => {
+    if (!isCurrent()) return false;
+    const owner = ownerRef.current;
+    const read = ++readRef.current;
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/notes`, { cache: "no-store" });
       const payload = await response.json().catch(() => null);
+      if (!isCurrent() || owner !== ownerRef.current || read !== readRef.current) return false;
       if (!response.ok) throw new Error(payload?.detail ?? "Unable to load project notes.");
+      if (!Array.isArray(payload) || !payload.every(item => item && typeof item.id === "string" && typeof item.title === "string" && typeof item.content === "string" && typeof item.updated_at === "string")) throw new Error("Saved notes could not be verified.");
       setNotes(payload as ProjectNote[]);
+      return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load project notes.");
+      if (isCurrent() && owner === ownerRef.current && read === readRef.current) setError(reason instanceof Error ? reason.message : "Unable to load project notes.");
+      return false;
     } finally {
-      setLoading(false);
+      if (isCurrent() && owner === ownerRef.current && read === readRef.current) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, isCurrent]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { const owner = ownerRef; ++owner.current; void load(); return () => { ++owner.current; }; }, [load]);
 
   const sortedNotes = useMemo(
     () => [...notes].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
@@ -51,6 +77,7 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
   );
 
   function openCreate() {
+    if (!isCurrent() || pendingRef.current || outcomeRef.current || !canManage) return;
     setEditing(null);
     setDraft(emptyDraft);
     setError(null);
@@ -59,6 +86,7 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
   }
 
   function openEdit(note: ProjectNote) {
+    if (!isCurrent() || pendingRef.current || outcomeRef.current || !canManage) return;
     setEditing(note);
     setDraft({ title: note.title, content: note.content });
     setError(null);
@@ -67,6 +95,7 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
   }
 
   async function save() {
+    if (!isCurrent() || pendingRef.current || outcomeRef.current || !canManage) return;
     const title = draft.title.trim();
     const content = draft.content.trim();
     if (!title || !content) {
@@ -74,8 +103,11 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
       return;
     }
 
+    pendingRef.current = true;
+    const owner = ownerRef.current;
     setSaving(true);
     setError(null);
+    let acknowledged = false, rejected = false;
     try {
       const path = editing
         ? `/api/projects/${encodeURIComponent(projectId)}/notes/${encodeURIComponent(editing.id)}`
@@ -85,39 +117,70 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, content }),
       });
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      acknowledged = response.ok;
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to save project note.");
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      if (!response.ok) {
+        rejected = [400, 401, 403, 404, 422].includes(response.status) && Boolean(payload?.detail);
+        throw new Error(payload?.detail ?? "Unable to save project note.");
+      }
+      if (!payload || typeof payload.id !== "string" || !payload.id || editing && payload.id !== editing.id || payload.title !== title || payload.content !== content) throw new Error("The note save was acknowledged, but the returned note could not be verified.");
       setModalOpen(false);
       setEditing(null);
       setDraft(emptyDraft);
       setMessage(editing ? "Project note updated." : "Project note added.");
-      await load();
+      if (!await load() && isCurrent()) setMessage("The note was saved, but saved notes could not be reloaded. Do not submit the same note again.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save project note.");
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      const detail = reason instanceof Error ? reason.message : "Unable to save project note.";
+      if (rejected) setError(detail);
+      else { const outcome = { acknowledged, message: acknowledged ? detail : `${detail} The outcome is unknown; this note may already be saved. Do not repeat the save.` }; outcomeRef.current = outcome; setWriteOutcome(outcome); }
     } finally {
-      setSaving(false);
+      if (isCurrent() && owner === ownerRef.current) { pendingRef.current = false; setSaving(false); }
     }
   }
 
   async function remove(note: ProjectNote) {
+    if (!isCurrent() || pendingRef.current || outcomeRef.current || !canManage) return;
     if (!window.confirm(`Delete note “${note.title}”? This cannot be undone.`)) return;
+    pendingRef.current = true;
+    const owner = ownerRef.current;
     setSaving(true);
     setError(null);
     setMessage(null);
+    let acknowledged = false, rejected = false;
     try {
       const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/notes/${encodeURIComponent(note.id)}`, { method: "DELETE" });
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      acknowledged = response.ok;
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
+        if (!isCurrent() || owner !== ownerRef.current) return;
+        rejected = [400, 401, 403, 404, 422].includes(response.status) && Boolean(payload?.detail);
         throw new Error(payload?.detail ?? "Unable to delete project note.");
       }
+      if (response.status !== 204) throw new Error("The delete was acknowledged, but its response could not be verified.");
       setMessage("Project note deleted.");
-      await load();
+      if (!await load() && isCurrent()) setMessage("The note was deleted, but saved notes could not be reloaded. Do not repeat the delete.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to delete project note.");
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      const detail = reason instanceof Error ? reason.message : "Unable to delete project note.";
+      if (rejected) setError(detail);
+      else { const outcome = { acknowledged, message: acknowledged ? detail : `${detail} The delete outcome is unknown. Review saved notes before another action.` }; outcomeRef.current = outcome; setWriteOutcome(outcome); }
     } finally {
-      setSaving(false);
+      if (isCurrent() && owner === ownerRef.current) { pendingRef.current = false; setSaving(false); }
     }
   }
+
+  function discardLocalAttempt() {
+    if (!isCurrent() || pendingRef.current || !writeOutcome || outcomeRef.current !== writeOutcome) return;
+    if (!window.confirm("Discard this local note attempt? The server may already have saved or deleted it. This does not undo anything. Review saved notes before creating or saving another note.")) return;
+    outcomeRef.current = null; setWriteOutcome(null); setModalOpen(false); setEditing(null); setDraft(emptyDraft); setError(null);
+    setMessage("Local attempt discarded, not reversed. Review saved notes before another action.");
+    void load();
+  }
+  const outcomeNotice = writeOutcome ? <div role="status" className="space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{writeOutcome.message}</p><p className="text-xs">The fields and outcome exist only in this tab. A current notes read is not proof of this attempt.</p><div className="flex flex-wrap gap-2"><button type="button" disabled={saving || loading} onClick={() => void load()} className="rounded-lg border bg-white px-3 py-2">Refresh saved notes</button><button type="button" disabled={saving} onClick={discardLocalAttempt} className="rounded-lg border bg-white px-3 py-2">Discard local attempt</button></div></div> : null;
 
   async function copy(text: string, key: string) {
     try {
@@ -129,7 +192,7 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
     }
   }
 
-  return <section className="rounded-2xl border bg-white p-5 shadow-sm sm:p-6">
+  return <section ref={dialogReturnRef} tabIndex={-1} className="rounded-2xl border bg-white p-5 shadow-sm sm:p-6">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 className="text-lg font-semibold">Project Notes</h2>
@@ -138,6 +201,7 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
       {canManage ? <button onClick={openCreate} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white"><Plus className="size-4" />Add note</button> : null}
     </div>
 
+    {writeOutcome && !modalOpen ? outcomeNotice : null}
     {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
     {error && !modalOpen ? <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
@@ -152,16 +216,17 @@ export function ProjectNotesSection({ projectId, canManage }: { projectId: strin
       <div className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-neutral-700"><RichText value={note.content} /></div>
     </article>)}</div> : <div className="mt-5 rounded-2xl border border-dashed px-6 py-14 text-center"><p className="font-medium text-neutral-700">No project notes yet</p><p className="mt-1 text-sm text-neutral-400">Add URLs, store links, deployment details or other project-specific references here.</p></div>}
 
-    {modalOpen ? <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setModalOpen(false); }}>
-      <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b px-5 py-4 sm:px-6"><div><h3 className="text-lg font-semibold">{editing ? "Edit project note" : "Add project note"}</h3><p className="mt-1 text-xs text-neutral-400">Project-level information only. Client-wide facts should stay in Client Notes.</p></div><button disabled={saving} onClick={() => setModalOpen(false)} className="flex size-9 items-center justify-center rounded-xl border disabled:opacity-50"><X className="size-4" /></button></div>
-        <div className="space-y-4 p-5 sm:p-6">
+    {modalOpen ? <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeNote(); }}>
+      <ProjectDialog label={editing ? "Edit project note" : "Add project note"} busy={saving} onClose={closeNote} returnFocusRef={dialogReturnRef} className="flex max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b px-5 py-4 sm:px-6"><div><h3 className="text-lg font-semibold">{editing ? "Edit project note" : "Add project note"}</h3><p className="mt-1 text-xs text-neutral-400">Project-level information only. Client-wide facts should stay in Client Notes.</p></div><button aria-label="Close project note" disabled={saving} onClick={closeNote} className="flex size-11 shrink-0 items-center justify-center rounded-xl border disabled:opacity-50"><X className="size-4" /></button></div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-5 sm:p-6">
+          {outcomeNotice}
           {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-          <label className="block text-sm font-medium text-neutral-700">Title<input maxLength={180} value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} placeholder="e.g. Production URL / App Store URL" className="mt-2 h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-neutral-500" /></label>
-          <label className="block text-sm font-medium text-neutral-700">Content<textarea maxLength={20000} value={draft.content} onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))} placeholder="https://example.com or any project-specific note..." className="mt-2 min-h-40 w-full rounded-xl border px-3 py-3 text-sm outline-none focus:border-neutral-500" /></label>
-          <div className="flex justify-end gap-2 border-t pt-4"><button disabled={saving} onClick={() => setModalOpen(false)} className="h-10 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">Cancel</button><button disabled={saving || !draft.title.trim() || !draft.content.trim()} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : null}{saving ? "Saving…" : editing ? "Save changes" : "Add note"}</button></div>
+          <label className="block text-sm font-medium text-neutral-700">Title<input data-project-dialog-initial disabled={saving || Boolean(writeOutcome)} maxLength={180} value={draft.title} onChange={(event) => { if (!pendingRef.current && !outcomeRef.current) setDraft((current) => ({ ...current, title: event.target.value })); }} placeholder="e.g. Production URL / App Store URL" className="mt-2 h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-neutral-500" /></label>
+          <label className="block text-sm font-medium text-neutral-700">Content<textarea disabled={saving || Boolean(writeOutcome)} maxLength={20000} value={draft.content} onChange={(event) => { if (!pendingRef.current && !outcomeRef.current) setDraft((current) => ({ ...current, content: event.target.value })); }} placeholder="https://example.com or any project-specific note..." className="mt-2 min-h-40 w-full rounded-xl border px-3 py-3 text-sm outline-none focus:border-neutral-500" /></label>
         </div>
-      </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t px-5 py-4 sm:px-6"><button disabled={saving} onClick={closeNote} className="min-h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">Cancel</button><button disabled={saving || Boolean(writeOutcome) || !draft.title.trim() || !draft.content.trim()} onClick={() => void save()} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">{saving ? <Loader2 className="size-4 animate-spin" /> : null}{saving ? "Saving…" : editing ? "Save changes" : "Add note"}</button></div>
+      </ProjectDialog>
     </div> : null}
   </section>;
 }

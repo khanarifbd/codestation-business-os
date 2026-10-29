@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class RoleRead(BaseModel):
@@ -27,6 +27,22 @@ class RoleUpdate(BaseModel):
     permissions: list[str] | None = None
     is_active: bool | None = None
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def reject_explicit_null_name(cls, value):
+        # Omitted PATCH names retain their defaults; supplied names cannot clear.
+        if value is None:
+            raise ValueError("Name cannot be null")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def reject_blank_name(cls, value):
+        # Keep handler trimming and existing length rules unchanged.
+        if not value.strip():
+            raise ValueError("Name cannot be blank")
+        return value
+
 
 class DepartmentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -39,6 +55,22 @@ class DepartmentUpdate(BaseModel):
     code: str | None = Field(default=None, max_length=24)
     description: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def reject_explicit_null_name(cls, value):
+        # Omitted PATCH names retain their defaults; supplied names cannot clear.
+        if value is None:
+            raise ValueError("Name cannot be null")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def reject_blank_name(cls, value):
+        # Keep handler trimming and existing length rules unchanged.
+        if not value.strip():
+            raise ValueError("Name cannot be blank")
+        return value
 
 
 class DepartmentRead(DepartmentCreate):
@@ -59,6 +91,22 @@ class DesignationUpdate(BaseModel):
     code: str | None = Field(default=None, max_length=24)
     description: str | None = Field(default=None, max_length=500)
     is_active: bool | None = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def reject_explicit_null_name(cls, value):
+        # Omitted PATCH names retain their defaults; supplied names cannot clear.
+        if value is None:
+            raise ValueError("Name cannot be null")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def reject_blank_name(cls, value):
+        # Keep handler trimming and existing length rules unchanged.
+        if not value.strip():
+            raise ValueError("Name cannot be blank")
+        return value
 
 
 class DesignationRead(DesignationCreate):

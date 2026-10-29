@@ -181,7 +181,10 @@ def finance_pulse(db: DbSession, tenant: FinanceViewer) -> FinancePulse:
     today = _tenant_today(tenant.organization.timezone)
     open_conditions = [
         Invoice.organization_id == tenant.organization_id,
-        Invoice.status == "sent",
+        # Partial settlements and receipt reversals remain collectable. Match
+        # finance summary eligibility, while excluding legacy residual balances
+        # on draft, cancelled and fully paid documents.
+        Invoice.status.not_in(["draft", "cancelled", "paid"]),
         Invoice.balance_due > 0,
     ]
     rows = db.execute(

@@ -11,8 +11,8 @@ test("foreground activity keeps a browser-session login without persistent auth 
   await expect(page).toHaveURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
 
   await page.goto("/dashboard/profile", { waitUntil: "domcontentloaded" });
-  const securityTab = page.getByRole("tab", { name: /security/i });
-  await expect(securityTab).toBeVisible();
+  const accountHeading = page.getByRole("heading", { name: "Your account", exact: true });
+  await expect(accountHeading).toBeVisible();
   await page.bringToFront();
 
   // A foreground click, not dashboard polling, triggers the session extension.
@@ -21,7 +21,7 @@ test("foreground activity keeps a browser-session login without persistent auth 
       && response.request().method() === "POST",
     { timeout: 15_000 },
   );
-  await securityTab.click();
+  await accountHeading.click();
   const heartbeat = await activityRequest;
   expect(heartbeat.status()).toBe(200);
 

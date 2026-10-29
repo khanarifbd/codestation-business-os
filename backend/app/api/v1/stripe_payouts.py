@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.api.v1.finance_transfers import record_transfer
 from app.db.session import defer_commits
@@ -68,7 +69,10 @@ def confirm_live_payout(payload: PayoutConfirm, request: Request, db: DbSession,
     if len(reference) < 6:
         raise HTTPException(status_code=422, detail="Bank statement reference is required")
 
-    # Lock the gateway connection first to serialize this payout across requests.
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization)
+
+    # The tenant period gate precedes this gateway/domain locking protocol.
     source_account = db.scalar(select(FinancialAccount).where(
         FinancialAccount.id == payload.source_account_id,
         FinancialAccount.organization_id == tenant.organization_id,
@@ -83,7 +87,7 @@ def confirm_live_payout(payload: PayoutConfirm, request: Request, db: DbSession,
         PaymentGatewayConnection.provider == "stripe",
         PaymentGatewayConnection.mode == "live",
         PaymentGatewayConnection.is_active.is_(True),
-    ).with_for_update())
+    ).with_for_update().execution_options(populate_existing=True))
     if connection is None or connection.connection_method != "api_key" or not connection.secret_key_ciphertext:
         raise HTTPException(status_code=409, detail="Active Stripe Live API key is required to verify payout")
 

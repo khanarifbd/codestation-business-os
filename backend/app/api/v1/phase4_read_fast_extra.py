@@ -9,6 +9,7 @@ from sqlalchemy import and_, case, func, select
 
 from app.api.dependencies import CurrentTenant, DbSession, require_tenant_permission
 from app.api.v1.capital import money as capital_money
+from app.api.v1.reports import _invoice_project_id
 from app.api.v1.capital_insights import entitlement, money as insight_money
 from app.api.v1.client_portal import ClientPortalOrder, _client_portal_client_ids
 from app.api.v1.hr_workspace import _admin, _permission, _role
@@ -285,13 +286,13 @@ def capital_insights_fast(
         investors_by_project.setdefault(investor.project_id, []).append(investor)
 
     revenue_rows = db.execute(
-        select(Invoice.project_id, func.coalesce(func.sum(Invoice.total), 0))
+        select(_invoice_project_id(), func.coalesce(func.sum(Invoice.total), 0))
         .where(
             Invoice.organization_id == org,
-            Invoice.project_id.in_(project_ids),
-            Invoice.status != "cancelled",
+            _invoice_project_id().in_(project_ids),
+            Invoice.status.not_in(["draft", "cancelled"]),
         )
-        .group_by(Invoice.project_id)
+        .group_by(_invoice_project_id())
     ).all()
     revenue_by_project = {str(project_id): insight_money(amount) for project_id, amount in revenue_rows if project_id}
 

@@ -10,6 +10,7 @@ from app.api.v1.inventory import create_product, create_warehouse, receive_purch
 from app.api.v1.inventory_workflows import dashboard_summary, transfer_stock
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry
+from app.models.organization import Organization
 from app.models.inventory import InventoryBalance, StockMovement
 from app.schemas.inventory import ProductCreate, PurchaseLineInput, PurchaseReceiptCreate, WarehouseCreate
 from app.schemas.inventory_workflows import InventoryTransferCreate
@@ -29,7 +30,7 @@ class Tenant:
     organization_id: str
     user_id: str
     membership_id: str
-    organization: Org
+    organization: Organization
     role: str = "admin"
 
 
@@ -47,6 +48,12 @@ def request(method: str, path: str) -> Request:
     })
 
 
+def ensure_request_transaction(db):
+    # Direct fixture requests skip HTTP dependencies that normally begin the root.
+    if db.get_transaction() is None:
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""
@@ -57,15 +64,15 @@ def main() -> None:
             ORDER BY o.created_at DESC LIMIT 1
         """)).mappings().one()
 
-    tenant = Tenant(
-        str(row["organization_id"]),
-        str(row["user_id"]),
-        str(row["membership_id"]),
-        Org(str(row["organization_id"]), str(row["currency"] or "BDT")),
-    )
     db = SessionLocal()
     marker = uuid4().hex[:7].upper()
     try:
+        organization = db.get(Organization, str(row["organization_id"]))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(row["organization_id"]), str(row["user_id"]), str(row["membership_id"]), organization)
+        # Verification can run repeatedly against the synthetic tenant.
+        before_values = {item["currency"]: Decimal(item["value"]) for item in dashboard_summary(db, tenant)["inventory_values"]}
         source = create_warehouse(
             WarehouseCreate(code=f"TS{marker[:5]}", name=f"Transfer Source {marker}"),
             request("POST", "/inventory/warehouses"), db, tenant,  # type: ignore[arg-type]
@@ -86,6 +93,7 @@ def main() -> None:
             ),
             request("POST", "/inventory/products"), db, tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         receive_purchase(
             PurchaseReceiptCreate(
                 supplier_name="Transfer Fixture Supplier",
@@ -183,7 +191,7 @@ def main() -> None:
         values = {item["currency"]: Decimal(item["value"]) for item in summary["inventory_values"]}
         if tenant.organization.currency.upper() not in values or foreign_currency not in values:
             raise AssertionError(f"inventory values were not separated by currency: {values}")
-        if values[foreign_currency] != Decimal("50.0000"):
+        if values[foreign_currency] != before_values.get(foreign_currency, Decimal("0")) + Decimal("50.0000"):
             raise AssertionError(f"foreign inventory value incorrect: {values[foreign_currency]}")
     finally:
         db.close()

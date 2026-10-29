@@ -55,6 +55,13 @@ class PurchaseLineInput(BaseModel):
     unit_cost: Decimal = Field(ge=0)
     tax_code_id: str | None = None
 
+    @model_validator(mode="after")
+    def positive_stored_quantity(self):
+        # Match four-decimal HALF_UP zero floor without changing input precision.
+        if self.quantity < Decimal("0.00005"):
+            raise ValueError("Purchase quantity must be at least 0.0001 after rounding")
+        return self
+
 
 class PurchaseReceiptCreate(BaseModel):
     supplier_name: str = Field(min_length=1, max_length=220)
@@ -78,6 +85,7 @@ class AdjustmentCreate(BaseModel):
 
     @model_validator(mode="after")
     def non_zero(self):
-        if self.quantity_delta == 0:
+        # Both signs below half a storage unit become zero with HALF_UP.
+        if -Decimal("0.00005") < self.quantity_delta < Decimal("0.00005"):
             raise ValueError("Adjustment quantity cannot be zero")
         return self

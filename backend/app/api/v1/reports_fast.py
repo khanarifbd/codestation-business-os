@@ -15,6 +15,7 @@ from app.api.v1.reports import (
     _currency_filter,
     _expense_scope,
     _invoice_scope,
+    _invoice_project_id,
     _money_entry_scope,
     _period,
     _tenant_today,
@@ -101,7 +102,7 @@ def _financials_and_trend_fast(
     if client_id:
         payment_query = payment_query.where(Invoice.client_id == client_id)
     if project_id:
-        payment_query = payment_query.where(Invoice.project_id == project_id)
+        payment_query = payment_query.where(_invoice_project_id() == project_id)
     for month, code, amount in db.execute(payment_query).all():
         collected = _money(amount)
         financial_data[code]["collected"] += collected
@@ -324,29 +325,29 @@ def _project_rows_fast(
 
     invoiced_map = dict(
         db.execute(
-            select(Invoice.project_id, func.coalesce(func.sum(Invoice.total), 0))
+            select(_invoice_project_id(), func.coalesce(func.sum(Invoice.total), 0))
             .where(
                 Invoice.organization_id == org_id,
-                Invoice.project_id.in_(project_ids),
+                _invoice_project_id().in_(project_ids),
                 Invoice.issue_date >= start,
                 Invoice.issue_date <= end,
-                Invoice.status != "cancelled",
+                Invoice.status.not_in(["draft", "cancelled"]),
             )
-            .group_by(Invoice.project_id)
+            .group_by(_invoice_project_id())
         ).all()
     )
     collected_map = dict(
         db.execute(
-            select(Invoice.project_id, func.coalesce(func.sum(Payment.invoice_amount), 0))
+            select(_invoice_project_id(), func.coalesce(func.sum(Payment.invoice_amount), 0))
             .join(Invoice, Invoice.id == Payment.invoice_id)
             .where(
                 Payment.organization_id == org_id,
-                Invoice.project_id.in_(project_ids),
+                _invoice_project_id().in_(project_ids),
                 Payment.payment_date >= start,
                 Payment.payment_date <= end,
                 Payment.status == "confirmed",
             )
-            .group_by(Invoice.project_id)
+            .group_by(_invoice_project_id())
         ).all()
     )
     direct_map = dict(
@@ -414,7 +415,7 @@ def _client_rows_fast(
             Invoice.client_id.in_(client_ids),
             Invoice.issue_date >= start,
             Invoice.issue_date <= end,
-            Invoice.status != "cancelled",
+            Invoice.status.not_in(["draft", "cancelled"]),
         )
         .group_by(Invoice.client_id, Invoice.currency)
     )
@@ -430,6 +431,9 @@ def _client_rows_fast(
         )
         .group_by(Invoice.client_id, Payment.invoice_currency)
     )
+    # Explicit client attribution makes any posted category a client cost.
+    # Keep the historical direct_expenses response key for API compatibility;
+    # the UI labels this total "Linked cost" rather than omitting operating costs.
     expense_query = (
         select(Expense.client_id, Expense.profitability_currency, func.coalesce(func.sum(Expense.profitability_amount), 0))
         .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)
@@ -439,7 +443,6 @@ def _client_rows_fast(
             Expense.expense_date >= start,
             Expense.expense_date <= end,
             Expense.status == "posted",
-            ExpenseCategory.cost_type == "direct",
         )
         .group_by(Expense.client_id, Expense.profitability_currency)
     )

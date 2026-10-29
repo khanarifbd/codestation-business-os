@@ -270,6 +270,12 @@ class PaymentCreate(BaseModel):
         elif exchange_rate is None and account_amount is not None:
             exchange_rate = (account_amount / invoice_amount).quantize(PAYMENT_RATE, rounding=ROUND_HALF_UP)
 
+        # Derived values can round to zero just like explicitly supplied values.
+        if account_amount is not None and account_amount <= 0:
+            raise ValueError("account_amount must be at least 0.01")
+        if exchange_rate is not None and exchange_rate <= 0:
+            raise ValueError("exchange_rate is too small for the supported 8-decimal precision")
+
         if account_amount is not None and exchange_rate is not None:
             expected_account_amount = (invoice_amount * exchange_rate).quantize(PAYMENT_MONEY, rounding=ROUND_HALF_UP)
             if expected_account_amount != account_amount:

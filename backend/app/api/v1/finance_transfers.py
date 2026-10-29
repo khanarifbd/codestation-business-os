@@ -14,6 +14,7 @@ from app.models.finance import AccountTransfer, FinancialAccount, FinancialTrans
 from app.schemas.finance import AccountTransferCreate, AccountTransferRead
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
+from app.services.financial_account_constraints import ensure_transfer_accounts_supported
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Finance Transfers"])
@@ -113,6 +114,26 @@ def list_transfers(
     return [_transfer_read(transfer, source_name, destination_name) for transfer, source_name, destination_name in rows]
 
 
+@router.get("/transfers/{transfer_id}", response_model=AccountTransferRead)
+def get_transfer(transfer_id: str, db: DbSession, tenant: FinanceViewer):
+    """Read one posted transfer within the current organization; never mutate it."""
+    source_account = aliased(FinancialAccount)
+    destination_account = aliased(FinancialAccount)
+    row = db.execute(
+        select(AccountTransfer, source_account.name, destination_account.name)
+        .join(source_account, source_account.id == AccountTransfer.from_account_id)
+        .join(destination_account, destination_account.id == AccountTransfer.to_account_id)
+        .where(
+            AccountTransfer.organization_id == tenant.organization_id,
+            AccountTransfer.id == transfer_id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    transfer, source_name, destination_name = row
+    return _transfer_read(transfer, source_name, destination_name)
+
+
 @router.post("/transfers", response_model=AccountTransferRead, status_code=status.HTTP_201_CREATED)
 def record_transfer(
     payload: AccountTransferCreate,
@@ -131,7 +152,7 @@ def record_transfer(
             FinancialAccount.id.in_(account_ids),
         )
         .order_by(FinancialAccount.id.asc())
-        .with_for_update()
+        .with_for_update().execution_options(populate_existing=True)
     ).all()
     accounts = {account.id: account for account in locked}
     source = accounts.get(payload.from_account_id)
@@ -140,6 +161,8 @@ def record_transfer(
         raise HTTPException(status_code=404, detail="Financial account not found")
     if not source.is_active or not destination.is_active:
         raise HTTPException(status_code=409, detail="Transfers require active source and destination accounts")
+
+    ensure_transfer_accounts_supported(source.account_type, destination.account_type)
 
     source_amount = _money(payload.source_amount)
     fee_amount = _money(payload.fee_amount)

@@ -1,0 +1,50 @@
+{
+  "source_sha256": "f787e707fa93488d20114800c5f95ab4905b39d4ba00bf4d14ad76ee9ca6bed2",
+  "public_contract": {
+    "create_accounting_period": {
+      "args": "arguments(posonlyargs=[], args=[arg(arg='payload', annotation=Name(id='AccountingPeriodCreate', ctx=Load())), arg(arg='request', annotation=Name(id='Request', ctx=Load())), arg(arg='db', annotation=Name(id='DbSession', ctx=Load())), arg(arg='tenant', annotation=Name(id='FinanceManager', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns": null,
+      "decorators": [
+        "Call(func=Attribute(value=Name(id='router', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/accounting-periods')], keywords=[keyword(arg='response_model', value=Name(id='AccountingPeriodRead', ctx=Load())), keyword(arg='status_code', value=Attribute(value=Name(id='status', ctx=Load()), attr='HTTP_201_CREATED', ctx=Load()))])"
+      ]
+    },
+    "close_accounting_period": {
+      "args": "arguments(posonlyargs=[], args=[arg(arg='period_id', annotation=Name(id='str', ctx=Load())), arg(arg='payload', annotation=Name(id='AccountingPeriodClose', ctx=Load())), arg(arg='request', annotation=Name(id='Request', ctx=Load())), arg(arg='db', annotation=Name(id='DbSession', ctx=Load())), arg(arg='tenant', annotation=Name(id='FinanceManager', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns": null,
+      "decorators": [
+        "Call(func=Attribute(value=Name(id='router', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/accounting-periods/{period_id}/close')], keywords=[keyword(arg='response_model', value=Name(id='AccountingPeriodRead', ctx=Load()))])"
+      ]
+    },
+    "reopen_accounting_period": {
+      "args": "arguments(posonlyargs=[], args=[arg(arg='period_id', annotation=Name(id='str', ctx=Load())), arg(arg='payload', annotation=Name(id='AccountingPeriodReopen', ctx=Load())), arg(arg='request', annotation=Name(id='Request', ctx=Load())), arg(arg='db', annotation=Name(id='DbSession', ctx=Load())), arg(arg='tenant', annotation=Name(id='FinanceManager', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "returns": null,
+      "decorators": [
+        "Call(func=Attribute(value=Name(id='router', ctx=Load()), attr='post', ctx=Load()), args=[Constant(value='/accounting-periods/{period_id}/reopen')], keywords=[keyword(arg='response_model', value=Name(id='AccountingPeriodRead', ctx=Load()))])"
+      ]
+    }
+  },
+  "unchanged_function_ast_sha256": {
+    "_money": "cee47dc89110ecb2416e1516de5db614d6a3e48fd8f8e9d7ee595d68e21cdfd1",
+    "_rate": "1b3ce5e4a2ada25e042c27a12da6ef10ed1ba2d4c6aed0d5b3345125a6862f69",
+    "_clean": "6e091b291c9fdc776482195bee9da518c177c242eeebf917c5af1496db7486ce",
+    "_tenant_today": "7f76cb6dd41b0423c3eca89eb6484062d9aa5149d7647fedf5741cafc2bd3351",
+    "_account_balance": "7ec4dd7a8f4e2745c0c6345510802fda06698e89d3f326ef44006e57b047ec9a",
+    "_add_months": "6c98420f4255e710b21ac62b938cb7d793546315838067434d0d52bf9faddd9c",
+    "_next_due": "cd92e4dd38ee1e2649decb8613f3f334cff07bec3a3e4cb879be1aab6a193241",
+    "_ensure_open_period": "cc24c664e5b83a1a1487308626d5629643e4d3f87ae0734302f9f9fac93bc591",
+    "_recurring_query": "6f430f4296a3ba3d3fa4ae5df9fe1d919851576f97655a73986792d96ba8d851",
+    "_validate_recurring_tax": "c628d619da7fc2d67e97c76a498895d3aa51a6df1d2ff0c9a10e338150ac341c",
+    "_recurring_read": "88d973a85287ca57ec55fbbc1738726146a8691d0ad13b7178f658f4056c2dc2",
+    "_load_recurring_item": "e5f03c4afdb2af06ec606ee2500a21fb8a6347403c9621485cc6fa0aa5834611",
+    "_read_recurring": "b68ffc172f8caf83ebe033a654ca70c9b691f84b16a6aa52b67b6c30c31b4a90",
+    "_validate_vendor": "0059e91470f23a30b623125bb19579fc72d985617894196098852c896376cd4d",
+    "_validate_category": "6ed66b0a739a59c2a025e36d4897951097242318a61bbbd43d6b0221715badba",
+    "_validate_account": "f72aa3db91c68b772a62b1f297e749f49887126a53300a980fefc0e670e2c134",
+    "_validate_project_client": "a17245e0010eb91548aef4b3b6fb5efaa61ae81425a4f66f20dad35421426c74",
+    "list_recurring_expenses": "7215f04ce11aaaf67268d6acdb21fadccf44aa09303473a12c1e22bf5a99196c",
+    "create_recurring_expense": "9f336dbdf712e03a691e080f469a3b1aab9dbd80a1885884ac3b59e598ae5514",
+    "update_recurring_expense": "3e70cced9fcd028b13fe44a3b95be0f3c504046e10a8a7f9c69cd973bdcd3248",
+    "post_recurring_expense": "5c5b24317c5e1546f582d42012d11ee4a125d220463e13b4b15d2e83048e8bbd",
+    "list_accounting_periods": "f4d876061f87d7ba6bdc0cc75e2540fe39afde53284236b4450a7b25f29b439b"
+  }
+}

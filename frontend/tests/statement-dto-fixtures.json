@@ -1,0 +1,125 @@
+{
+  "provenance": {
+    "synthetic": true,
+    "dto": "app.api.v1.accounting_reports.FinancialStatementsRead",
+    "pydantic_version": "2.13.4",
+    "backend_module_sha256": "efe6a2ade651b78c49fa1cab589062969be307f42ea2db5285debbc0bda72558",
+    "method": "Actual DTO model_dump_json with actual _rate and _convert_rows; network/DB/env-file reads blocked"
+  },
+  "cases": {
+    "tiny_fx": {
+      "base_currency": "BDT",
+      "accounting_currency": "USD",
+      "reporting_currency": "BDT",
+      "reporting_rate": "1E-8",
+      "reporting_rate_applied": true,
+      "reporting_note": "Synthetic fixture: current configured display FX; not live business data.",
+      "functional_period_start": "2026-01-01",
+      "functional_period_end": null,
+      "date_from": "2026-10-01",
+      "date_to": "2026-10-26",
+      "income": [
+        {
+          "code": "4000",
+          "name": "Synthetic retained income line",
+          "amount": "1.00"
+        }
+      ],
+      "expenses": [],
+      "total_income": "1.00",
+      "total_expenses": "0.00",
+      "net_profit": "1.00",
+      "assets": [],
+      "liabilities": [],
+      "equity": [],
+      "total_assets": "0.00",
+      "total_liabilities": "0.00",
+      "recorded_equity": "0.00",
+      "current_earnings": "1.00",
+      "total_equity": "1.00",
+      "total_liabilities_and_equity": "1.00",
+      "cash_flow": {
+        "operating": "1.00",
+        "investing": "0.00",
+        "financing": "0.00",
+        "net_change": "1.00"
+      }
+    },
+    "trailing_zero_fx": {
+      "base_currency": "BDT",
+      "accounting_currency": "USD",
+      "reporting_currency": "BDT",
+      "reporting_rate": "1.0E-7",
+      "reporting_rate_applied": true,
+      "reporting_note": "Synthetic fixture: current configured display FX; not live business data.",
+      "functional_period_start": "2026-01-01",
+      "functional_period_end": null,
+      "date_from": "2026-10-01",
+      "date_to": "2026-10-26",
+      "income": [
+        {
+          "code": "4000",
+          "name": "Synthetic retained income line",
+          "amount": "1.00"
+        }
+      ],
+      "expenses": [],
+      "total_income": "1.00",
+      "total_expenses": "0.00",
+      "net_profit": "1.00",
+      "assets": [],
+      "liabilities": [],
+      "equity": [],
+      "total_assets": "0.00",
+      "total_liabilities": "0.00",
+      "recorded_equity": "0.00",
+      "current_earnings": "1.00",
+      "total_equity": "1.00",
+      "total_liabilities_and_equity": "1.00",
+      "cash_flow": {
+        "operating": "1.00",
+        "investing": "0.00",
+        "financing": "0.00",
+        "net_change": "1.00"
+      }
+    },
+    "rounded_zero_line": {
+      "base_currency": "BDT",
+      "accounting_currency": "USD",
+      "reporting_currency": "BDT",
+      "reporting_rate": "0.10000000",
+      "reporting_rate_applied": true,
+      "reporting_note": "Synthetic fixture: current configured display FX; not live business data.",
+      "functional_period_start": "2026-01-01",
+      "functional_period_end": null,
+      "date_from": "2026-10-01",
+      "date_to": "2026-10-26",
+      "income": [
+        {
+          "code": "4000",
+          "name": "Synthetic retained income line",
+          "amount": "0.00"
+        }
+      ],
+      "expenses": [],
+      "total_income": "0.00",
+      "total_expenses": "0.00",
+      "net_profit": "0.00",
+      "assets": [],
+      "liabilities": [],
+      "equity": [],
+      "total_assets": "0.00",
+      "total_liabilities": "0.00",
+      "recorded_equity": "0.00",
+      "current_earnings": "0.00",
+      "total_equity": "0.00",
+      "total_liabilities_and_equity": "0.00",
+      "cash_flow": {
+        "operating": "0.00",
+        "investing": "0.00",
+        "financing": "0.00",
+        "net_change": "0.00"
+      }
+    }
+  }
+}

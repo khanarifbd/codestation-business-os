@@ -9,6 +9,7 @@ from starlette.requests import Request
 from app.api.v1.inventory import create_product, create_warehouse, receive_purchase
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
+from app.models.organization import Organization
 from app.models.inventory import InventoryBalance, Product, StockMovement
 from app.schemas.inventory import ProductCreate, PurchaseLineInput, PurchaseReceiptCreate, WarehouseCreate
 
@@ -25,7 +26,7 @@ class Tenant:
     organization_id: str
     user_id: str
     membership_id: str
-    organization: Org
+    organization: Organization
     role: str = "admin"
 
 
@@ -33,15 +34,26 @@ def request(method: str, path: str) -> Request:
     return Request({"type":"http","method":method,"path":path,"raw_path":path.encode(),"headers":[],"query_string":b"","scheme":"https","server":("testserver",443),"client":("127.0.0.1",50000)})
 
 
+def ensure_request_transaction(db):
+    # Direct fixture requests skip HTTP dependencies that normally begin the root.
+    if db.get_transaction() is None:
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row=conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
-    tenant=Tenant(str(row["organization_id"]),str(row["user_id"]),str(row["membership_id"]),Org(str(row["organization_id"]),str(row["currency"] or "BDT")))
     db=SessionLocal(); marker=uuid4().hex[:8]
     try:
+        organization = db.get(Organization, str(row["organization_id"]))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(row["organization_id"]), str(row["user_id"]), str(row["membership_id"]), organization)
         warehouse=create_warehouse(WarehouseCreate(code=f"W{marker[:5]}",name=f"CI Warehouse {marker}",is_default=False),request("POST","/inventory/warehouses"),db,tenant)  # type: ignore[arg-type]
         product=create_product(ProductCreate(sku=f"SKU-{marker}",name="CI Inventory Product",item_type="stock_item",unit="pcs",currency=tenant.organization.currency,selling_price=Decimal("200"),standard_cost=Decimal("0"),reorder_level=Decimal("2")),request("POST","/inventory/products"),db,tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         p1=receive_purchase(PurchaseReceiptCreate(supplier_name="CI Supplier",warehouse_id=warehouse.id,receipt_date=date(2099,1,2),currency=tenant.organization.currency,items=[PurchaseLineInput(product_id=product["id"],quantity=Decimal("10"),unit_cost=Decimal("100"))]),request("POST","/inventory/purchases"),db,tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         p2=receive_purchase(PurchaseReceiptCreate(supplier_name="CI Supplier",warehouse_id=warehouse.id,receipt_date=date(2099,1,3),currency=tenant.organization.currency,items=[PurchaseLineInput(product_id=product["id"],quantity=Decimal("10"),unit_cost=Decimal("120"))]),request("POST","/inventory/purchases"),db,tenant)  # type: ignore[arg-type]
         bal=db.scalar(select(InventoryBalance).where(InventoryBalance.organization_id==tenant.organization_id,InventoryBalance.product_id==product["id"],InventoryBalance.warehouse_id==warehouse.id))
         if bal is None or Decimal(bal.on_hand_quantity)!=Decimal("20.0000") or Decimal(bal.average_unit_cost)!=Decimal("110.0000") or Decimal(bal.inventory_value)!=Decimal("2200.0000"):

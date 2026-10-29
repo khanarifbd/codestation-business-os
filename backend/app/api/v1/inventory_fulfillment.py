@@ -14,6 +14,7 @@ from app.models.inventory import Product, Warehouse
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.models.orders import Order, OrderItem
 from app.schemas.orders import FulfillmentCreate, FulfillmentItemRead, FulfillmentRead, FulfillmentReverse
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.accounting_posting import PostingLine, post_journal, system_account
 from app.services.activity_log import record_activity
 from app.services.journal_reversal import reverse_source_journal
@@ -134,6 +135,7 @@ def list_order_fulfillments(order_id: str, db: DbSession, tenant: Viewer) -> lis
 
 @router.post("/orders/{order_id}/fulfillments", response_model=FulfillmentRead, status_code=status.HTTP_201_CREATED)
 def fulfill_order(order_id: str, payload: FulfillmentCreate, request: Request, db: DbSession, tenant: Manager) -> FulfillmentRead:
+    acquire_accounting_period_gate(db, tenant.organization_id)
     idempotency, repeated = reserve_posting(
         db,
         request,
@@ -145,6 +147,7 @@ def fulfill_order(order_id: str, payload: FulfillmentCreate, request: Request, d
     if repeated:
         return _fulfillment_read(db, tenant.organization_id, completed_resource(idempotency, "order_fulfillment"))
 
+    db.refresh(tenant.organization, attribute_names=["currency"])
     order = db.scalar(select(Order).where(Order.id == order_id, Order.organization_id == tenant.organization_id).with_for_update())
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -299,6 +302,7 @@ def fulfill_order(order_id: str, payload: FulfillmentCreate, request: Request, d
 
 @router.post("/orders/{order_id}/fulfillments/{fulfillment_id}/reverse", response_model=FulfillmentRead)
 def reverse_fulfillment(order_id: str, fulfillment_id: str, payload: FulfillmentReverse, request: Request, db: DbSession, tenant: Manager) -> FulfillmentRead:
+    acquire_accounting_period_gate(db, tenant.organization_id)
     idempotency, repeated = reserve_posting(
         db,
         request,

@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import json
+import hmac
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Annotated
 
@@ -11,6 +13,7 @@ from app.models.accounting import JournalEntry, JournalLine
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.membership import Membership
 from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun, PayrollWithholdingPayment, SalaryProfile
+from app.models.payroll_policy import PayrollEntryAdjustment, PayrollPolicyVersion
 from app.models.team import Employee
 from app.models.user import User
 from app.schemas.payroll import (
@@ -29,6 +32,16 @@ from app.schemas.payroll import (
     SalaryProfileCreate,
     SalaryProfileRead,
     SalaryProfileUpdate,
+)
+from app.schemas.payroll_policy_api import (
+    PayrollPolicyRead, PayrollPolicyVersionCreate, PayrollPolicyVersionRead,
+    PayrollRunPreviewRead, PayrollRunPreviewRequest,
+)
+from app.services.accounting_period_gate import acquire_accounting_period_gate
+from app.services.payroll_policy import PayrollCalculationError
+from app.services.payroll_policy_inputs import (
+    lock_payroll_inputs, locked_payroll_organization, locked_payroll_period,
+    payroll_local_today, policy_for_date, resolve_payroll_calculation, snapshot_policy_context,
 )
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
@@ -151,8 +164,22 @@ def _entry_reads(db: DbSession, organization_id: str, run_id: str) -> list[Payro
         .order_by(PayrollEntry.created_at.asc())
     ).all()
     names = _employee_name_map(db, organization_id, {item.employee_id for item in entries})
+    adjustments = {}
+    entry_ids = [item.id for item in entries]
+    if entry_ids:
+        rows = db.scalars(select(PayrollEntryAdjustment).where(
+            PayrollEntryAdjustment.organization_id == organization_id,
+            PayrollEntryAdjustment.entry_id.in_(entry_ids),
+        ).order_by(PayrollEntryAdjustment.created_at, PayrollEntryAdjustment.id)).all()
+        for row in rows:
+            adjustments.setdefault(row.entry_id, []).append({
+                "id": row.id, "reason": row.reason, "created_by_user_id": row.created_by_user_id,
+                "created_at": row.created_at, "before": row.before_values, "after": row.after_values,
+            })
     return [
         PayrollEntryRead(
+            calculation_snapshot=json.loads(item.calculation_snapshot) if item.calculation_snapshot else None,
+            adjustments=adjustments.get(item.id, []),
             id=item.id,
             employee_id=item.employee_id,
             employee_code=names.get(item.employee_id, ("—", "—"))[0],
@@ -180,6 +207,10 @@ def _run_read(db: DbSession, organization_id: str, run: PayrollRun, include_entr
         )
     )
     return PayrollRunRead(
+        policy_version_id=run.policy_version_id,
+        calculation_engine_version=run.calculation_engine_version,
+        calculation_hash=run.calculation_hash,
+        calculation_context=snapshot_policy_context(run),
         id=run.id,
         run_number=run.run_number,
         period_id=run.period_id,
@@ -325,6 +356,143 @@ def _payroll_withholding_balance(db: DbSession, organization_id: str, as_of) -> 
     return _money(Decimal(credit) - Decimal(debit))
 
 
+
+def _entry_monetary_values(entry) -> dict:
+    return {
+        "base_salary": str(entry.base_salary), "allowances": entry.allowances,
+        "deductions": entry.deductions, "allowance_total": str(entry.allowance_total),
+        "deduction_total": str(entry.deduction_total), "tax_amount": str(entry.tax_amount),
+        "gross_pay": str(entry.gross_pay), "net_pay": str(entry.net_pay),
+    }
+
+
+def _policy_read(policy) -> PayrollPolicyVersionRead:
+    return PayrollPolicyVersionRead(
+        id=policy.id, version=policy.version, effective_from=policy.effective_from,
+        configuration=policy.configuration, activation_reason=policy.activation_reason,
+        created_by_user_id=policy.created_by_user_id, created_at=policy.created_at,
+    )
+
+
+def _calculate_policy(db, organization, period, currency, policy):
+    try:
+        return resolve_payroll_calculation(db, organization, period, currency, policy)
+    except PayrollCalculationError as exc:
+        raise HTTPException(status_code=409, detail={
+            "code": "PAYROLL_SETUP_REQUIRED", "issues": [issue.model_dump(mode="json") for issue in exc.issues],
+        }) from None
+
+
+def _create_versioned_run(payload, request, db, tenant, organization, period, currency, policy):
+    if payload.expected_calculation_hash is None:
+        raise HTTPException(status_code=409, detail={"code": "PAYROLL_PREVIEW_REQUIRED", "message": "Preview this versioned payroll before creating a draft"})
+    calculated = _calculate_policy(db, organization, period, currency, policy)
+    if not hmac.compare_digest(payload.expected_calculation_hash, calculated.calculation_hash):
+        raise HTTPException(status_code=409, detail={"code": "PAYROLL_PREVIEW_STALE", "message": "Payroll inputs changed; review a fresh preview before creating the draft"})
+    if not calculated.entries:
+        raise HTTPException(status_code=409, detail="No eligible payroll entries for this currency and period")
+    _ensure_payroll_sequence(db, tenant.organization_id)
+    run = PayrollRun(
+        organization_id=tenant.organization_id, run_number=next_sequence_code(db, tenant.organization_id, "payroll"),
+        period_id=period.id, currency=currency, created_by_user_id=tenant.user_id,
+        policy_version_id=policy.id, calculation_engine_version=calculated.engine_version,
+        calculation_hash=calculated.calculation_hash, calculation_input_snapshot=calculated.input_snapshot_json,
+        calculation_output_snapshot=calculated.output_snapshot_json,
+    )
+    db.add(run)
+    db.flush()
+    for row in calculated.entries:
+        db.add(PayrollEntry(
+            organization_id=tenant.organization_id, run_id=run.id, employee_id=row.employee_id,
+            salary_profile_id=row.salary_profile_id, currency=row.currency, base_salary=row.base_salary,
+            allowances=[{"name": item.name, "amount": str(item.amount)} for item in row.allowances],
+            deductions=[{"name": item.name, "amount": str(item.amount)} for item in row.deductions],
+            allowance_total=row.allowance_total, deduction_total=row.deduction_total, tax_amount=row.tax_amount,
+            gross_pay=row.gross_pay, net_pay=row.net_pay, calculation_snapshot=row.calculation_snapshot_json,
+        ))
+    db.flush()
+    _recalculate_run(db, run)
+    db.flush()
+    record_activity(db, action="payroll.run.created", scope="tenant", actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id, entity_type="payroll_run", entity_id=run.id,
+        after={"run_number": run.run_number, "currency": run.currency, "employee_count": run.employee_count,
+            "net_total": str(run.net_total), "policy_version": policy.version, "calculation_hash": calculated.calculation_hash},
+        request=request)
+    db.commit()
+    db.refresh(run)
+    return _run_read(db, tenant.organization_id, run)
+
+
+@router.get("/policy", response_model=PayrollPolicyRead)
+def get_payroll_policy(db: DbSession, tenant: PayrollViewer, period_id: str | None = None):
+    organization = tenant.organization
+    if period_id is not None:
+        period = db.scalar(select(PayrollPeriod).where(PayrollPeriod.organization_id == tenant.organization_id, PayrollPeriod.id == period_id))
+        if period is None:
+            raise HTTPException(status_code=404, detail="Payroll period not found")
+        as_of = period.period_start
+    else:
+        as_of = payroll_local_today(organization)
+    effective = policy_for_date(db, tenant.organization_id, as_of)
+    latest = db.scalar(select(PayrollPolicyVersion).where(PayrollPolicyVersion.organization_id == tenant.organization_id).order_by(PayrollPolicyVersion.version.desc()).limit(1))
+    scheduled = db.scalars(select(PayrollPolicyVersion).where(
+        PayrollPolicyVersion.organization_id == tenant.organization_id, PayrollPolicyVersion.effective_from > as_of,
+    ).order_by(PayrollPolicyVersion.effective_from, PayrollPolicyVersion.version)).all()
+    return PayrollPolicyRead(as_of=as_of, legacy_manual=effective is None,
+        effective_policy=_policy_read(effective) if effective else None,
+        latest_version=latest.version if latest else 0, scheduled_versions=[_policy_read(row) for row in scheduled])
+
+
+@router.post("/policy-versions", response_model=PayrollPolicyVersionRead, status_code=status.HTTP_201_CREATED)
+def create_payroll_policy_version(payload: PayrollPolicyVersionCreate, request: Request, db: DbSession, tenant: PayrollManager):
+    lock_payroll_inputs(db, tenant.organization_id)
+    organization = locked_payroll_organization(db, tenant.organization_id)
+    today = payroll_local_today(organization)
+    latest = db.scalar(select(PayrollPolicyVersion).where(PayrollPolicyVersion.organization_id == tenant.organization_id).order_by(PayrollPolicyVersion.version.desc()).limit(1))
+    prior_version = latest.version if latest else 0
+    if payload.expected_prior_version != prior_version:
+        raise HTTPException(status_code=409, detail="Payroll policy changed; reload the latest version before activating")
+    if payload.effective_from < today:
+        raise HTTPException(status_code=409, detail="Payroll policy activation cannot be retroactive")
+    if latest and payload.effective_from < latest.effective_from:
+        raise HTTPException(status_code=409, detail="Use the latest scheduled effective date or a later date; replace a scheduled policy by appending a version at the same date")
+    item = PayrollPolicyVersion(organization_id=tenant.organization_id, version=prior_version + 1,
+        effective_from=payload.effective_from, configuration=payload.configuration.model_dump(mode="json"),
+        activation_reason=payload.activation_reason, created_by_user_id=tenant.user_id)
+    db.add(item)
+    db.flush()
+    record_activity(db, action="payroll.policy.activated", scope="tenant", actor_user_id=tenant.user_id,
+        organization_id=tenant.organization_id, entity_type="payroll_policy_version", entity_id=item.id,
+        after={"version": item.version, "effective_from": str(item.effective_from), "configuration": item.configuration},
+        metadata={"reason": item.activation_reason, "expected_prior_version": prior_version}, request=request)
+    db.commit()
+    db.refresh(item)
+    return _policy_read(item)
+
+
+@router.post("/runs/preview", response_model=PayrollRunPreviewRead)
+def preview_payroll_run(payload: PayrollRunPreviewRequest, db: DbSession, tenant: PayrollManager):
+    lock_payroll_inputs(db, tenant.organization_id)
+    organization = locked_payroll_organization(db, tenant.organization_id)
+    period = locked_payroll_period(db, tenant.organization_id, payload.period_id, for_create=False)
+    currency = payload.currency.upper()
+    if db.scalar(select(PayrollRun.id).where(PayrollRun.organization_id == tenant.organization_id,
+        PayrollRun.period_id == period.id, PayrollRun.currency == currency, PayrollRun.status != "reversed")):
+        raise HTTPException(status_code=409, detail=f"A {currency} payroll run already exists for this period")
+    policy = policy_for_date(db, tenant.organization_id, period.period_start)
+    try:
+        calculated = resolve_payroll_calculation(db, organization, period, currency, policy)
+    except PayrollCalculationError as exc:
+        return PayrollRunPreviewRead(ready=False, policy_version=policy.version if policy else 0,
+            mode=policy.configuration["mode"] if policy else "manual", setup_issues=[issue.model_dump(mode="json") for issue in exc.issues])
+    # Full input snapshot is persisted on create, not exposed through self-service.
+    result = calculated.model_dump(mode="json", exclude={"input_snapshot_json", "output_snapshot_json"})
+    for entry in result["entries"]:
+        entry["calculation_snapshot"] = json.loads(entry.pop("calculation_snapshot_json"))
+    return PayrollRunPreviewRead(ready=True, policy_version=calculated.policy_version, mode=calculated.mode,
+        calculation_hash=calculated.calculation_hash, calculation=result)
+
+
 @router.get("/withholdings/meta")
 def payroll_withholding_meta(payment_date: str, db: DbSession, tenant: PayrollViewer):
     target_date = datetime.strptime(payment_date, "%Y-%m-%d").date()
@@ -375,6 +543,7 @@ def list_payroll_withholding_payments(db: DbSession, tenant: PayrollViewer):
 
 @router.post("/withholdings/payments", response_model=PayrollWithholdingPaymentRead, status_code=status.HTTP_201_CREATED)
 def pay_payroll_withholding(payload: PayrollWithholdingPaymentCreate, request: Request, db: DbSession, tenant: PayrollManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     base_currency = functional_currency_for_date(db, tenant.organization_id, payload.payment_date)
     amount = _money(payload.amount)
     available = _payroll_withholding_balance(db, tenant.organization_id, payload.payment_date)
@@ -499,6 +668,7 @@ def list_salary_profiles(db: DbSession, tenant: PayrollViewer):
 
 @router.post("/salary-profiles", response_model=SalaryProfileRead, status_code=status.HTTP_201_CREATED)
 def create_salary_profile(payload: SalaryProfileCreate, request: Request, db: DbSession, tenant: PayrollManager):
+    lock_payroll_inputs(db, tenant.organization_id)
     employee = db.execute(
         select(Employee.id, Employee.employee_code, User.full_name)
         .join(Membership, Membership.id == Employee.membership_id)
@@ -560,6 +730,7 @@ def create_salary_profile(payload: SalaryProfileCreate, request: Request, db: Db
 
 @router.patch("/salary-profiles/{profile_id}", response_model=SalaryProfileRead)
 def update_salary_profile(profile_id: str, payload: SalaryProfileUpdate, request: Request, db: DbSession, tenant: PayrollManager):
+    lock_payroll_inputs(db, tenant.organization_id)
     profile = db.scalar(
         select(SalaryProfile)
         .where(SalaryProfile.id == profile_id, SalaryProfile.organization_id == tenant.organization_id)
@@ -567,6 +738,8 @@ def update_salary_profile(profile_id: str, payload: SalaryProfileUpdate, request
     )
     if profile is None:
         raise HTTPException(status_code=404, detail="Salary profile not found")
+    if payload.effective_to is not None and payload.effective_to < profile.effective_from:
+        raise HTTPException(status_code=400, detail="Effective end cannot be before effective start")
     before = {"base_salary": str(profile.base_salary), "is_active": profile.is_active}
     changes = payload.model_dump(exclude_unset=True)
     if changes.get("base_salary") is not None:
@@ -609,6 +782,7 @@ def list_periods(db: DbSession, tenant: PayrollViewer):
 
 @router.post("/periods", response_model=PayrollPeriodRead, status_code=status.HTTP_201_CREATED)
 def create_period(payload: PayrollPeriodCreate, request: Request, db: DbSession, tenant: PayrollManager):
+    lock_payroll_inputs(db, tenant.organization_id)
     overlap = db.scalar(
         select(PayrollPeriod.id).where(
             PayrollPeriod.organization_id == tenant.organization_id,
@@ -671,6 +845,8 @@ def get_run(run_id: str, db: DbSession, tenant: PayrollViewer):
 
 @router.post("/runs", response_model=PayrollRunRead, status_code=status.HTTP_201_CREATED)
 def create_run(payload: PayrollRunCreate, request: Request, db: DbSession, tenant: PayrollManager):
+    lock_payroll_inputs(db, tenant.organization_id)
+    organization = locked_payroll_organization(db, tenant.organization_id)
     period = db.scalar(
         select(PayrollPeriod)
         .where(PayrollPeriod.id == payload.period_id, PayrollPeriod.organization_id == tenant.organization_id)
@@ -691,6 +867,10 @@ def create_run(payload: PayrollRunCreate, request: Request, db: DbSession, tenan
         )
     ):
         raise HTTPException(status_code=409, detail=f"A {currency} payroll run already exists for this period")
+
+    policy = policy_for_date(db, tenant.organization_id, period.period_start)
+    if policy is not None:
+        return _create_versioned_run(payload, request, db, tenant, organization, period, currency, policy)
 
     profiles = db.scalars(
         select(SalaryProfile).where(
@@ -793,6 +973,18 @@ def update_entry(run_id: str, entry_id: str, payload: PayrollEntryUpdate, reques
     if entry is None:
         raise HTTPException(status_code=404, detail="Payroll entry not found")
 
+    before_amounts = _entry_monetary_values(entry)
+    versioned = run.policy_version_id is not None
+    monetary_fields = {"base_salary", "allowances", "deductions", "tax_amount"}
+    monetary_submission = any(getattr(payload, name) is not None for name in monetary_fields)
+    reason = (payload.adjustment_reason or "").strip()
+    if "base_salary" in payload.model_fields_set and not versioned:
+        raise HTTPException(status_code=409, detail="Base salary overrides require a versioned payroll draft")
+    if versioned and monetary_submission and not reason:
+        raise HTTPException(status_code=422, detail="An adjustment reason is required for versioned payroll amounts")
+    if versioned and payload.base_salary is not None:
+        entry.base_salary = _money(payload.base_salary)
+
     if payload.allowances is not None:
         entry.allowances = _component_dicts(payload.allowances)
         entry.allowance_total = _component_total(entry.allowances)
@@ -809,6 +1001,13 @@ def update_entry(run_id: str, entry_id: str, payload: PayrollEntryUpdate, reques
     if entry.net_pay < 0:
         raise HTTPException(status_code=400, detail="Net pay cannot be negative")
 
+    after_amounts = _entry_monetary_values(entry)
+    reasoned_submission = monetary_submission and bool(reason)
+    if reasoned_submission and before_amounts != after_amounts:
+        db.add(PayrollEntryAdjustment(
+            organization_id=tenant.organization_id, entry_id=entry.id, reason=reason,
+            before_values=before_amounts, after_values=after_amounts, created_by_user_id=tenant.user_id,
+        ))
     db.flush()
     _recalculate_run(db, run)
     db.flush()
@@ -820,7 +1019,9 @@ def update_entry(run_id: str, entry_id: str, payload: PayrollEntryUpdate, reques
         organization_id=tenant.organization_id,
         entity_type="payroll_entry",
         entity_id=entry.id,
-        after={"net_pay": str(entry.net_pay), "tax_amount": str(entry.tax_amount)},
+        before=before_amounts if versioned or reasoned_submission else None,
+        after=after_amounts if versioned or reasoned_submission else {"net_pay": str(entry.net_pay), "tax_amount": str(entry.tax_amount)},
+        metadata={"adjustment_reason": reason} if reasoned_submission else None,
         request=request,
     )
     db.commit()
@@ -830,6 +1031,7 @@ def update_entry(run_id: str, entry_id: str, payload: PayrollEntryUpdate, reques
 
 @router.post("/runs/{run_id}/approve", response_model=PayrollRunRead)
 def approve_run(run_id: str, request: Request, db: DbSession, tenant: PayrollManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     run = db.scalar(
         select(PayrollRun)
         .where(PayrollRun.id == run_id, PayrollRun.organization_id == tenant.organization_id)
@@ -870,6 +1072,7 @@ def approve_run(run_id: str, request: Request, db: DbSession, tenant: PayrollMan
 
 @router.post("/runs/{run_id}/pay", response_model=PayrollRunRead)
 def pay_run(run_id: str, payload: PayrollPayRequest, request: Request, db: DbSession, tenant: PayrollManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
     run = db.scalar(
         select(PayrollRun)
         .where(PayrollRun.id == run_id, PayrollRun.organization_id == tenant.organization_id)

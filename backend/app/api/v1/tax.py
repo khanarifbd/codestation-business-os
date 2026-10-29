@@ -7,14 +7,16 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import case, func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
-from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
+from app.models.accounting import LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice
 from app.models.inventory import PurchaseReceipt
 from app.models.payables import PayableBill
 from app.models.tax import TaxCode, TaxSettlement
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account
 from app.services.activity_log import record_activity
-from app.services.functional_currency import functional_currency_for_date
+from app.services.functional_currency import functional_currency_for_date, assert_current_functional_posting_period
+from app.services.tax_settlement_safety import lock_tax_settlements, tax_ledger_capacity
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/tax", tags=["Accounting - Tax"])
@@ -105,13 +107,13 @@ def tax_report(db: DbSession, tenant: Viewer, date_from: date, date_to: date):
     rows = []
     for currency in sorted(currencies):
         output_tax = money(db.scalar(select(func.coalesce(func.sum(Invoice.tax_total), 0)).where(Invoice.organization_id == tenant.organization_id, Invoice.currency == currency, Invoice.issue_date >= date_from, Invoice.issue_date <= date_to, Invoice.status.not_in(["draft", "cancelled"]))))
-        payable_input = money(db.scalar(select(func.coalesce(func.sum(PayableBill.input_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
-        payable_recoverable = money(db.scalar(select(func.coalesce(func.sum(PayableBill.recoverable_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
+        payable_input = money(db.scalar(select(func.coalesce(func.sum(PayableBill.input_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.purchase_receipt_id.is_(None), PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
+        payable_recoverable = money(db.scalar(select(func.coalesce(func.sum(PayableBill.recoverable_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.purchase_receipt_id.is_(None), PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
         inventory_input = money(db.scalar(select(func.coalesce(func.sum(PurchaseReceipt.tax_total), 0)).where(PurchaseReceipt.organization_id == tenant.organization_id, PurchaseReceipt.currency == currency, PurchaseReceipt.receipt_date >= date_from, PurchaseReceipt.receipt_date <= date_to, PurchaseReceipt.status != "cancelled")))
         inventory_recoverable = money(db.scalar(select(func.coalesce(func.sum(PurchaseReceipt.recoverable_tax_total), 0)).where(PurchaseReceipt.organization_id == tenant.organization_id, PurchaseReceipt.currency == currency, PurchaseReceipt.receipt_date >= date_from, PurchaseReceipt.receipt_date <= date_to, PurchaseReceipt.status != "cancelled")))
         input_tax = money(payable_input + inventory_input)
         recoverable = money(payable_recoverable + inventory_recoverable)
-        withholding = money(db.scalar(select(func.coalesce(func.sum(PayableBill.withholding_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
+        withholding = money(db.scalar(select(func.coalesce(func.sum(PayableBill.withholding_tax_amount), 0)).where(PayableBill.organization_id == tenant.organization_id, PayableBill.purchase_receipt_id.is_(None), PayableBill.currency == currency, PayableBill.bill_date >= date_from, PayableBill.bill_date <= date_to)))
         rows.append({"currency": currency, "output_tax": output_tax, "input_tax": input_tax, "recoverable_input_tax": recoverable, "withholding_tax": withholding, "net_indirect_tax_payable": money(output_tax - recoverable)})
     return {"date_from": date_from, "date_to": date_to, "rows": rows}
 
@@ -145,34 +147,6 @@ def _tax_ledger_existing(db: DbSession, organization_id: str, system_key: str) -
     if row is None:
         raise HTTPException(status_code=409, detail=f"No posted tax balance exists for {system_key.replace('_', ' ')}")
     return row
-
-
-def _ledger_balance_as_of(
-    db: DbSession,
-    organization_id: str,
-    ledger_account_id: str,
-    as_of: date,
-    *,
-    normal_balance: Literal["debit", "credit"],
-) -> Decimal:
-    debit, credit = db.execute(
-        select(
-            func.coalesce(func.sum(JournalLine.debit), 0),
-            func.coalesce(func.sum(JournalLine.credit), 0),
-        )
-        .join(
-            JournalEntry,
-            (JournalEntry.id == JournalLine.journal_entry_id)
-            & (JournalEntry.organization_id == JournalLine.organization_id),
-        )
-        .where(
-            JournalLine.organization_id == organization_id,
-            JournalLine.ledger_account_id == ledger_account_id,
-            JournalEntry.status == "posted",
-            JournalEntry.entry_date <= as_of,
-        )
-    ).one()
-    return money((Decimal(debit) - Decimal(credit)) if normal_balance == "debit" else (Decimal(credit) - Decimal(debit)))
 
 
 def _financial_balance(db: DbSession, account: FinancialAccount) -> Decimal:
@@ -245,8 +219,11 @@ def list_settlements(db: DbSession, tenant: Viewer, limit: int = 100):
 
 @router.post("/settlements", status_code=201)
 def create_settlement(payload: TaxSettlementCreate, request: Request, db: DbSession, tenant: Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    lock_tax_settlements(db, tenant.organization_id)
+    period = assert_current_functional_posting_period(db, tenant.organization_id, payload.settlement_date)
     amount = money(payload.amount)
-    base_currency = functional_currency_for_date(db, tenant.organization_id, payload.settlement_date)
+    base_currency = period.currency.upper()
     account: FinancialAccount | None = None
     cash_ledger: LedgerAccount | None = None
     direction: str | None = None
@@ -259,7 +236,7 @@ def create_settlement(payload: TaxSettlementCreate, request: Request, db: DbSess
                 FinancialAccount.organization_id == tenant.organization_id,
                 FinancialAccount.is_active.is_(True),
             )
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
         if account is None:
             raise HTTPException(status_code=404, detail="Active financial account not found")
@@ -272,9 +249,9 @@ def create_settlement(payload: TaxSettlementCreate, request: Request, db: DbSess
     lines: list[PostingLine] = []
     if payload.settlement_type == "indirect_tax_payment":
         tax_payable = system_account(db, tenant.organization_id, "taxes_payable")
-        available = _ledger_balance_as_of(db, tenant.organization_id, tax_payable.id, payload.settlement_date, normal_balance="credit")
+        available = tax_ledger_capacity(db, tenant.organization_id, tax_payable.id, payload.settlement_date, period=period, normal_balance="credit")
         if amount > available:
-            raise HTTPException(status_code=409, detail=f"Settlement exceeds indirect tax payable balance {available} {base_currency}")
+            raise HTTPException(status_code=409, detail=f"Settlement exceeds indirect tax payable capacity {available} {base_currency}")
         assert account is not None and cash_ledger is not None
         if _financial_balance(db, account) < amount:
             raise HTTPException(status_code=409, detail="Insufficient financial account balance")
@@ -285,9 +262,9 @@ def create_settlement(payload: TaxSettlementCreate, request: Request, db: DbSess
         direction = "debit"
     elif payload.settlement_type == "withholding_tax_payment":
         withholding = _tax_ledger_existing(db, tenant.organization_id, "withholding_tax_payable")
-        available = _ledger_balance_as_of(db, tenant.organization_id, withholding.id, payload.settlement_date, normal_balance="credit")
+        available = tax_ledger_capacity(db, tenant.organization_id, withholding.id, payload.settlement_date, period=period, normal_balance="credit")
         if amount > available:
-            raise HTTPException(status_code=409, detail=f"Settlement exceeds withholding tax payable balance {available} {base_currency}")
+            raise HTTPException(status_code=409, detail=f"Settlement exceeds withholding tax payable capacity {available} {base_currency}")
         assert account is not None and cash_ledger is not None
         if _financial_balance(db, account) < amount:
             raise HTTPException(status_code=409, detail="Insufficient financial account balance")
@@ -298,9 +275,9 @@ def create_settlement(payload: TaxSettlementCreate, request: Request, db: DbSess
         direction = "debit"
     elif payload.settlement_type == "input_tax_refund":
         input_tax = _tax_ledger_existing(db, tenant.organization_id, "input_tax_receivable")
-        available = _ledger_balance_as_of(db, tenant.organization_id, input_tax.id, payload.settlement_date, normal_balance="debit")
+        available = tax_ledger_capacity(db, tenant.organization_id, input_tax.id, payload.settlement_date, period=period, normal_balance="debit")
         if amount > available:
-            raise HTTPException(status_code=409, detail=f"Refund exceeds input tax receivable balance {available} {base_currency}")
+            raise HTTPException(status_code=409, detail=f"Refund exceeds input tax receivable capacity {available} {base_currency}")
         assert account is not None and cash_ledger is not None
         lines = [
             PostingLine(ledger_account_id=cash_ledger.id, debit=amount, currency=base_currency, original_amount=amount, description="Input tax refund received"),
@@ -310,12 +287,12 @@ def create_settlement(payload: TaxSettlementCreate, request: Request, db: DbSess
     else:
         tax_payable = system_account(db, tenant.organization_id, "taxes_payable")
         input_tax = _tax_ledger_existing(db, tenant.organization_id, "input_tax_receivable")
-        payable_available = _ledger_balance_as_of(db, tenant.organization_id, tax_payable.id, payload.settlement_date, normal_balance="credit")
-        input_available = _ledger_balance_as_of(db, tenant.organization_id, input_tax.id, payload.settlement_date, normal_balance="debit")
+        payable_available = tax_ledger_capacity(db, tenant.organization_id, tax_payable.id, payload.settlement_date, period=period, normal_balance="credit")
+        input_available = tax_ledger_capacity(db, tenant.organization_id, input_tax.id, payload.settlement_date, period=period, normal_balance="debit")
         if amount > payable_available or amount > input_available:
             raise HTTPException(
                 status_code=409,
-                detail=f"Offset exceeds available balances (tax payable {payable_available}, input tax {input_available}) {base_currency}",
+                detail=f"Offset exceeds available date-safe capacities (tax payable {payable_available}, input tax {input_available}) {base_currency}",
             )
         lines = [
             PostingLine(ledger_account_id=tax_payable.id, debit=amount, currency=base_currency, original_amount=amount, description="Input tax offset against indirect tax payable"),

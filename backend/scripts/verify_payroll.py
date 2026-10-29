@@ -21,6 +21,7 @@ from app.api.v1.payroll import (
 )
 from app.api.v1.reports import reports_overview
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialTransaction
 from app.models.payroll import PayrollEntry, PayrollRun
@@ -39,7 +40,7 @@ class FixtureOrganization:
 class FixtureTenant:
     organization_id: str
     user_id: str
-    organization: FixtureOrganization
+    organization: Organization
 
 
 def request(method: str, path: str) -> Request:
@@ -48,6 +49,13 @@ def request(method: str, path: str) -> Request:
         "headers": [], "query_string": b"", "scheme": "https",
         "server": ("testserver", 443), "client": ("127.0.0.1", 50000),
     })
+
+
+def ensure_request_transaction(db) -> None:
+    # Direct calls do not run HTTP tenant dependencies to start a request root.
+    # Preserve active fixture work and let failed sessions remain visibly failed.
+    if not db.in_transaction():
+        db.begin()
 
 
 def main() -> None:
@@ -90,12 +98,12 @@ def main() -> None:
             VALUES (:id, :org_id, :name, 'bank', 'BDT', 1000000.00, true, :user_id, :now, :now)
         """), {"id": account_id, "org_id": fixture["id"], "name": f"Payroll CI {account_id[:8]}", "user_id": fixture["created_by_user_id"], "now": now})
 
-    tenant = FixtureTenant(
-        organization_id=str(fixture["id"]), user_id=str(fixture["created_by_user_id"]),
-        organization=FixtureOrganization(id=str(fixture["id"]), timezone=str(fixture["timezone"] or "UTC"), currency=str(fixture["currency"] or "BDT")),
-    )
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture['id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = FixtureTenant(organization_id=str(fixture['id']), user_id=str(fixture['created_by_user_id']), organization=organization)
         # Verify the exact four reads used by the Payroll page on initial load.
         bootstrap_meta = payroll_meta(db, tenant)  # type: ignore[arg-type]
         bootstrap_profiles = list_salary_profiles(db, tenant)  # type: ignore[arg-type]
@@ -138,6 +146,7 @@ def main() -> None:
         if run.gross_total != Decimal("55000.00") or run.deduction_total != Decimal("3000.00") or run.tax_total != Decimal("2000.00") or run.net_total != Decimal("50000.00"):
             raise AssertionError("payroll gross/deduction/tax/net totals do not reconcile")
 
+        ensure_request_transaction(db)
         approved = approve_run(run.id, request("POST", f"/api/v1/payroll/runs/{run.id}/approve"), db, tenant)  # type: ignore[arg-type]
         if approved.status != "approved":
             raise AssertionError("payroll approval failed")
@@ -161,6 +170,7 @@ def main() -> None:
             raise AssertionError("net payroll payable accrual is incorrect")
         if Decimal(by_key["payroll_withholdings"].credit) != Decimal("5000.00"):
             raise AssertionError("payroll deductions/tax liability accrual is incorrect")
+        ensure_request_transaction(db)
         paid = pay_run(run.id, PayrollPayRequest(account_id=account_id), request("POST", f"/api/v1/payroll/runs/{run.id}/pay"), db, tenant)  # type: ignore[arg-type]
         if paid.status != "paid":
             raise AssertionError("payroll payment failed")
@@ -190,6 +200,7 @@ def main() -> None:
         if persisted is None or persisted.paid_account_id != account_id:
             raise AssertionError("payroll paid account was not persisted")
 
+        ensure_request_transaction(db)
         withholding_payment = pay_payroll_withholding(
             PayrollWithholdingPaymentCreate(
                 account_id=account_id,
@@ -234,6 +245,7 @@ def main() -> None:
         if bdt is None or bdt.expenses < Decimal("55000.00"):
             raise AssertionError("approved/paid payroll cost is missing from Reports expenses")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="payroll_withholding_payment",
@@ -245,6 +257,7 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="payroll_run",

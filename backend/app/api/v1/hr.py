@@ -1,9 +1,10 @@
+from app.services.hr_records_queries import documents_page, lifecycle_page, parse_records_page
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
@@ -16,6 +17,9 @@ from app.models.payroll import PayrollEntry, PayrollPeriod, PayrollRun
 from app.models.team import Department, Employee
 from app.models.user import User
 from app.services.activity_log import record_activity
+from app.services.hr_leave import ensure_no_leave_overlap, lock_leave_employee
+from app.schemas.hr_time import LeaveReview
+from app.services.hr_time_queries import attendance_page, leave_page, parse_time_page
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/hr", tags=["HR"])
@@ -66,11 +70,6 @@ class LeaveRequestCreate(BaseModel):
     employee_id: str | None = None
 
 
-class LeaveReview(BaseModel):
-    status: str
-    review_notes: str | None = None
-
-
 class DocumentCreate(BaseModel):
     employee_id: str
     title: str
@@ -103,8 +102,17 @@ class PerformanceUpdate(BaseModel):
     self_review: str | None = None
     manager_review: str | None = None
     rating: Decimal | None = Field(default=None, ge=0, le=5)
-    status: str | None = None
+    status: str | None = Field(default=None, max_length=24)
     goals: list[dict] | None = None
+
+    @field_validator("status", "goals")
+    @classmethod
+    def reject_explicit_null(cls, value):
+        # Omitted fields keep their defaults and remain absent from exclude_unset.
+        # Explicit null cannot satisfy the stored status/list-valued goals contract.
+        if value is None:
+            raise ValueError("Field cannot be null when provided")
+        return value
 
 
 class AnnouncementCreate(BaseModel):
@@ -116,27 +124,35 @@ class AnnouncementCreate(BaseModel):
 
 
 class JobCreate(BaseModel):
-    title: str
+    title: str = Field(max_length=180)
     department_id: str | None = None
-    employment_type: str = "full_time"
-    location: str | None = None
+    employment_type: str = Field(default="full_time", max_length=32)
+    location: str | None = Field(default=None, max_length=180)
     description: str | None = None
     openings: int = Field(default=1, ge=1)
 
 
 class CandidateCreate(BaseModel):
     job_opening_id: str
-    full_name: str
-    email: str
-    phone: str | None = None
-    resume_url: str | None = None
+    full_name: str = Field(max_length=180)
+    email: str = Field(max_length=320)
+    phone: str | None = Field(default=None, max_length=80)
+    resume_url: str | None = Field(default=None, max_length=1000)
     notes: str | None = None
 
 
 class CandidateUpdate(BaseModel):
-    stage: str | None = None
+    stage: str | None = Field(default=None, max_length=24)
     rating: Decimal | None = Field(default=None, ge=0, le=5)
     notes: str | None = None
+
+    @field_validator("stage")
+    @classmethod
+    def reject_explicit_null_stage(cls, value):
+        # Omitted stage stays unchanged; explicit null cannot satisfy storage.
+        if value is None:
+            raise ValueError("Stage cannot be null when provided")
+        return value
 
 
 def _employee(db: DbSession, org_id: str, employee_id: str) -> Employee:
@@ -190,8 +206,10 @@ def hr_dashboard(db: DbSession, tenant: HRViewer):
 
 
 @router.get("/attendance")
-def list_attendance(db: DbSession, tenant: HRViewer):
+def list_attendance(db: DbSession, tenant: HRViewer, request: Request = None):
     names = _employee_names(db, tenant.organization_id)
+    if request is not None and request.query_params.get("mode") == "page":
+        return attendance_page(db, tenant.organization_id, parse_time_page(request.query_params), names)
     rows = db.scalars(select(AttendanceRecord).where(AttendanceRecord.organization_id == tenant.organization_id).order_by(AttendanceRecord.attendance_date.desc(), AttendanceRecord.created_at.desc()).limit(200)).all()
     return [{"id": x.id, "employee_id": x.employee_id, "employee_name": names.get(x.employee_id), "attendance_date": x.attendance_date, "status": x.status, "attendance_mode": x.attendance_mode, "check_in_at": x.check_in_at, "check_out_at": x.check_out_at, "work_minutes": x.work_minutes, "overtime_minutes": x.overtime_minutes, "notes": x.notes} for x in rows]
 
@@ -218,9 +236,11 @@ def create_leave_type(payload: LeaveTypeCreate, request: Request, db: DbSession,
 
 
 @router.get("/leave-requests")
-def list_leave_requests(db: DbSession, tenant: HRViewer):
+def list_leave_requests(db: DbSession, tenant: HRViewer, request: Request = None):
     names = _employee_names(db, tenant.organization_id)
     types = {x.id: x.name for x in db.scalars(select(LeaveType).where(LeaveType.organization_id == tenant.organization_id)).all()}
+    if request is not None and request.query_params.get("mode") == "page":
+        return leave_page(db, tenant.organization_id, parse_time_page(request.query_params), names, types)
     rows = db.scalars(select(LeaveRequest).where(LeaveRequest.organization_id == tenant.organization_id).order_by(LeaveRequest.created_at.desc()).limit(200)).all()
     return [{"id": x.id, "employee_id": x.employee_id, "employee_name": names.get(x.employee_id), "leave_type_id": x.leave_type_id, "leave_type_name": types.get(x.leave_type_id), "start_date": x.start_date, "end_date": x.end_date, "days": str(x.days), "reason": x.reason, "status": x.status, "review_notes": x.review_notes} for x in rows]
 
@@ -238,6 +258,8 @@ def create_leave_request(payload: LeaveRequestCreate, request: Request, db: DbSe
         raise HTTPException(status_code=400, detail="End date cannot be before start date")
     lt = db.scalar(select(LeaveType).where(LeaveType.id == payload.leave_type_id, LeaveType.organization_id == tenant.organization_id, LeaveType.is_active.is_(True)))
     if lt is None: raise HTTPException(status_code=404, detail="Leave type not found")
+    lock_leave_employee(db, tenant.organization_id, employee.id)
+    ensure_no_leave_overlap(db, tenant.organization_id, employee.id, payload.start_date, payload.end_date)
     days = Decimal((payload.end_date - payload.start_date).days + 1)
     item = LeaveRequest(organization_id=tenant.organization_id, employee_id=employee.id, leave_type_id=lt.id, start_date=payload.start_date, end_date=payload.end_date, days=days, reason=payload.reason, status="pending" if lt.requires_approval else "approved")
     db.add(item); db.flush(); _audit(db, request, tenant, "hr.leave.requested", "leave_request", item.id, {"employee_id": employee.id, "days": str(days)}); db.commit(); db.refresh(item); return {"id": item.id, "status": item.status}
@@ -246,8 +268,15 @@ def create_leave_request(payload: LeaveRequestCreate, request: Request, db: DbSe
 @router.patch("/leave-requests/{request_id}")
 def review_leave(request_id: str, payload: LeaveReview, request: Request, db: DbSession, tenant: HRManager):
     if payload.status not in {"approved", "rejected", "cancelled"}: raise HTTPException(status_code=400, detail="Unsupported leave status")
-    item = db.scalar(select(LeaveRequest).where(LeaveRequest.id == request_id, LeaveRequest.organization_id == tenant.organization_id).with_for_update())
+    employee_id = db.scalar(select(LeaveRequest.employee_id).where(LeaveRequest.id == request_id, LeaveRequest.organization_id == tenant.organization_id))
+    if employee_id is None: raise HTTPException(status_code=404, detail="Leave request not found")
+    lock_leave_employee(db, tenant.organization_id, employee_id)
+    item = db.scalar(select(LeaveRequest).where(LeaveRequest.id == request_id, LeaveRequest.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if item is None: raise HTTPException(status_code=404, detail="Leave request not found")
+    if payload.expected_status is not None and item.status != payload.expected_status:
+        raise HTTPException(status_code=409, detail="Leave status changed; reload before reviewing")
+    if payload.status == "approved":
+        ensure_no_leave_overlap(db, tenant.organization_id, item.employee_id, item.start_date, item.end_date, exclude_request_id=item.id)
     item.status = payload.status; item.review_notes = payload.review_notes; item.reviewed_by_user_id = tenant.user_id; item.reviewed_at = datetime.now(timezone.utc)
     _audit(db, request, tenant, "hr.leave.reviewed", "leave_request", item.id, {"status": item.status}); db.commit(); return {"id": item.id, "status": item.status}
 
@@ -270,8 +299,10 @@ def assign_shift(payload: ShiftAssign, request: Request, db: DbSession, tenant: 
 
 
 @router.get("/documents")
-def list_documents(db: DbSession, tenant: HRViewer):
+def list_documents(db: DbSession, tenant: HRViewer, request: Request = None):
     names = _employee_names(db, tenant.organization_id)
+    if request is not None and "mode" in request.query_params:
+        return documents_page(db, tenant.organization_id, parse_records_page(request.query_params, "documents"), names)
     rows = db.scalars(select(EmployeeHRDocument).where(EmployeeHRDocument.organization_id == tenant.organization_id).order_by(EmployeeHRDocument.created_at.desc()).limit(200)).all()
     return [{"id": x.id, "employee_id": x.employee_id, "employee_name": names.get(x.employee_id), "title": x.title, "document_type": x.document_type, "reference_number": x.reference_number, "issued_on": x.issued_on, "expires_on": x.expires_on, "file_url": x.file_url, "notes": x.notes} for x in rows]
 
@@ -282,7 +313,9 @@ def create_document(payload: DocumentCreate, request: Request, db: DbSession, te
 
 
 @router.get("/lifecycle")
-def list_lifecycle(db: DbSession, tenant: HRViewer):
+def list_lifecycle(db: DbSession, tenant: HRViewer, request: Request = None):
+    if request is not None and "mode" in request.query_params:
+        return lifecycle_page(db, tenant.organization_id, parse_records_page(request.query_params, "lifecycle"), _employee_names(db, tenant.organization_id))
     names = _employee_names(db, tenant.organization_id); rows = db.scalars(select(EmployeeLifecycleEvent).where(EmployeeLifecycleEvent.organization_id == tenant.organization_id).order_by(EmployeeLifecycleEvent.effective_date.desc()).limit(200)).all()
     return [{"id": x.id, "employee_id": x.employee_id, "employee_name": names.get(x.employee_id), "event_type": x.event_type, "effective_date": x.effective_date, "title": x.title, "details": x.details, "notes": x.notes} for x in rows]
 
@@ -302,7 +335,10 @@ def list_performance(db: DbSession, tenant: HRViewer):
 
 @router.post("/performance", status_code=201)
 def create_performance(payload: PerformanceCreate, request: Request, db: DbSession, tenant: HRManager):
-    _employee(db, tenant.organization_id, payload.employee_id); item = PerformanceReview(organization_id=tenant.organization_id, **payload.model_dump()); db.add(item); db.flush(); _audit(db, request, tenant, "hr.performance.created", "performance_review", item.id); db.commit(); return {"id": item.id}
+    _employee(db, tenant.organization_id, payload.employee_id)
+    if payload.reviewer_employee_id is not None:
+        _employee(db, tenant.organization_id, payload.reviewer_employee_id)
+    item = PerformanceReview(organization_id=tenant.organization_id, **payload.model_dump()); db.add(item); db.flush(); _audit(db, request, tenant, "hr.performance.created", "performance_review", item.id); db.commit(); return {"id": item.id}
 
 
 @router.patch("/performance/{review_id}")
@@ -331,6 +367,13 @@ def list_jobs(db: DbSession, tenant: HRViewer):
 
 @router.post("/jobs", status_code=201)
 def create_job(payload: JobCreate, request: Request, db: DbSession, tenant: HRManager):
+    if payload.department_id is not None:
+        department = db.scalar(select(Department.id).where(
+            Department.id == payload.department_id,
+            Department.organization_id == tenant.organization_id,
+        ))
+        if department is None:
+            raise HTTPException(status_code=404, detail="Department not found")
     item = JobOpening(organization_id=tenant.organization_id, **payload.model_dump()); db.add(item); db.flush(); _audit(db, request, tenant, "hr.job.created", "job_opening", item.id); db.commit(); return {"id": item.id}
 
 

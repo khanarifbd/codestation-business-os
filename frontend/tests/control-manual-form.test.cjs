@@ -1,0 +1,10 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');
+const {loader,target,payload}=require('./recurring-post-harness.cjs');
+const {manualPostFormError:check}=loader()('src/components/finance-controls/manual-post-form.ts');
+for(const date of ['2026-02-30','2026-1-01','yesterday','2026-12-40'])test(`Manual form rejects malformed date ${date}`,()=>assert.ok(check({...payload,expense_date:date},target,'USD')));
+for(const key of ['expense_amount','account_amount','profitability_amount'])for(const amount of ['-1','0','1e5','1,000','NaN'])test(`Manual form rejects malformed ${key} ${amount}`,()=>assert.ok(check({...payload,[key]:amount},target,'USD')));
+test('Manual form retains six nullable defaults and decimal lexemes without mutation',()=>{const input={expense_date:null,expense_amount:null,account_amount:null,profitability_amount:null,reference:null,notes:null};const before=JSON.stringify(input);assert.equal(check(input,target,'USD'),null);assert.equal(JSON.stringify(input),before);assert.equal(check({...payload,expense_amount:'1.2300'},target,'USD'),null);});
+test('Manual form requires distinct account amount for cross currency',()=>assert.match(check(payload,{...target,account_currency:'GBP'},'USD'),/account currency/));
+test('Manual form requires verified linked profitability amount when distinct',()=>assert.match(check(payload,target,'EUR'),/profitability amount/));
+test('Manual form accepts separate explicit decimal strings without conversion',()=>assert.equal(check({...payload,account_amount:'18.25',profitability_amount:'22.56'},{...target,account_currency:'GBP'},'EUR'),null));
+test('Manual form enforces existing reference length180',()=>{assert.equal(check({...payload,reference:'x'.repeat(180)},target,'USD'),null);assert.ok(check({...payload,reference:'x'.repeat(181)},target,'USD'));});

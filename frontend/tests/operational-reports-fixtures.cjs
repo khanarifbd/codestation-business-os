@@ -1,0 +1,12 @@
+const financial={currency:'USD',invoiced_revenue:'12500.00',direct_income:'700.00',collected_revenue:'9800.00',receivables:'2700.00',expenses:'4200.00',platform_fees:'200.00',transfer_fees:'25.00',net_profit:'8975.00'};
+const trend={period:'2026-10',currency:'USD',invoiced_revenue:'12500.00',direct_income:'700.00',collected_revenue:'9800.00',expenses:'4200.00',transfer_fees:'25.00',net_profit:'8975.00'};
+const project={project_id:'project-synthetic',project_number:'SYN-PR-01',project_name:'Synthetic client portal',client_name:'Synthetic client',currency:'USD',contract_value:'25000.00',invoiced_revenue:'12500.00',collected_revenue:'9800.00',direct_expenses:'3300.00',estimated_profit:'9200.00',margin_percent:'73.60'};
+const client={client_id:'client-synthetic',client_name:'Synthetic client',currency:'USD',invoiced_revenue:'12500.00',collected_revenue:'9800.00',direct_expenses:'4200.00',estimated_profit:'8300.00',margin_percent:'66.40'};
+const overview={reporting_basis:'operational',date_from:'2026-10-01',date_to:'2026-10-26',financials:[financial],trend:[trend],accounts:[{account_id:'account-synthetic',account_name:'Synthetic bank',account_type:'bank',currency:'USD',balance:'15500.00'}],operations:{active_clients:12,open_orders:7,active_projects:8,overdue_tasks:3,due_followups:4,open_invoices:6},projects:[project],clients:[client]};
+const meta={currencies:['USD','BDT'],clients:[{id:client.client_id,label:client.client_name}],projects:[{id:project.project_id,label:project.project_name}]};
+const filters={date_from:'2026-10-01',date_to:'2026-10-26',currency:'',client_id:'',project_id:''};
+const clone=v=>JSON.parse(JSON.stringify(v));
+const ok=(value,status=200)=>({ok:true,status,json:async()=>clone(value)});
+const failure=status=>({ok:false,status,json:async()=>({detail:'Synthetic report rejection'})});
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
+module.exports={financial,trend,project,client,overview,meta,filters,clone,ok,failure,deferred};

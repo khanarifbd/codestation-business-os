@@ -1,0 +1,11 @@
+const code={id:'tax-code-a',code:'SYN-TAX',name:'Synthetic sales tax',tax_kind:'sales',rate:'15.0000',recoverable_percent:'100.0000',country_code:'BD',jurisdiction:'Synthetic jurisdiction',effective_from:'2026-01-01',effective_to:null,is_active:true,notes:'Synthetic configured code'};
+const purchaseCode={...code,id:'tax-code-p',code:'SYN-INPUT',name:'Synthetic purchase tax',tax_kind:'purchase',rate:'7.5000',recoverable_percent:'80.0000'};
+const codeForm={code:code.code,name:code.name,tax_kind:code.tax_kind,rate:'15',recoverable_percent:'100',country_code:'BD',jurisdiction:code.jurisdiction,effective_from:code.effective_from,effective_to:'',notes:code.notes,is_active:true};
+const purchaseForm={...codeForm,code:purchaseCode.code,name:purchaseCode.name,tax_kind:'purchase',rate:'7.5',recoverable_percent:'80'};
+const account={id:'account-a',name:'Synthetic tax bank',balance:'1000.00'};
+const meta={currency:'USD',accounts:[account]};
+const settlement={id:'settlement-a',settlement_type:'indirect_tax_payment',settlement_date:'2026-10-26',currency:'USD',amount:'50.00',account_id:account.id,reference:'SYN-SET',notes:'Synthetic settlement',created_at:'2026-10-26T12:00:00Z'};
+const settlementForm={settlement_type:settlement.settlement_type,settlement_date:settlement.settlement_date,amount:'50',account_id:account.id,reference:settlement.reference,notes:settlement.notes};
+const reportRow={currency:'USD',output_tax:'150.00',input_tax:'80.00',recoverable_input_tax:'60.00',withholding_tax:'10.00',net_indirect_tax_payable:'90.00'};
+const report={date_from:'2026-10-01',date_to:'2026-10-26',rows:[reportRow]};
+module.exports={code,purchaseCode,codeForm,form:codeForm,purchaseForm,account,meta,settlement,settlementForm,reportRow,report};

@@ -1,0 +1,8 @@
+import type {PeopleBrowse,PeopleMode,StructureKind} from "@/components/people/people-model";
+export const PEOPLE_PATH="/dashboard/hr/people";
+export function peopleBrowseState(search:string):PeopleBrowse{const p=new URLSearchParams(search);const view=p.get("view");return {view:view==="structure"||view==="invitations"?view:"directory",search:p.get("search")??"",focus:p.get("focus")??""};}
+export function peopleBrowseHref(state:Partial<PeopleBrowse>={}){const p=new URLSearchParams();if(state.view&&state.view!=="directory")p.set("view",state.view);if(state.search)p.set("search",state.search);if(state.focus)p.set("focus",state.focus);return PEOPLE_PATH+(p.size?`?${p}`:"");}
+export function safePeopleReturnHref(value:string|null){if(!value)return PEOPLE_PATH;try{const url=new URL(value,"https://people.invalid");if(url.origin!=="https://people.invalid"||url.pathname!==PEOPLE_PATH)return PEOPLE_PATH;return peopleBrowseHref(peopleBrowseState(url.search));}catch{return PEOPLE_PATH;}}
+export function peoplePersonHref(id:string,returnTo=PEOPLE_PATH,edit=false){return `${PEOPLE_PATH}/${encodeURIComponent(id)}${edit?"/edit":""}?${new URLSearchParams({returnTo:safePeopleReturnHref(returnTo)})}`;}
+export function peopleCreateHref(kind:"invite"|StructureKind,returnTo=PEOPLE_PATH){return `${PEOPLE_PATH}/${kind==="invite"?"new":"structure/new"}?${new URLSearchParams({...kind!=="invite"?{kind}:{},returnTo:safePeopleReturnHref(returnTo)})}`;}
+export function peopleMode(pathname:string):PeopleMode{if(pathname===`${PEOPLE_PATH}/structure/new`)return "structure";if(pathname===`${PEOPLE_PATH}/new`)return "invite";if(pathname===PEOPLE_PATH)return "register";return pathname.endsWith("/edit")?"edit":"profile";}

@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.dependencies import CurrentTenantAdmin, DbSession
 from app.core.localization import normalize_currency_code
 from app.models.accounting import JournalEntry
@@ -161,8 +162,12 @@ def update_company_currency_settings(
     db: DbSession,
     tenant: CurrentTenantAdmin,
 ) -> CompanyCurrencySettingsRead:
+    acquire_accounting_period_gate(db, tenant.organization_id, exclusive=True)
     organization = tenant.organization
+    db.refresh(organization)
     financial, defaults = _settings_rows(db, tenant.organization_id)
+    db.refresh(financial)
+    db.refresh(defaults)
     period = ensure_initial_functional_currency_period(db, organization, tenant.user_id)
 
     requested_accounting = payload.accounting_currency
@@ -230,8 +235,11 @@ def change_accounting_currency(
     db: DbSession,
     tenant: CurrentTenantAdmin,
 ) -> CompanyCurrencySettingsRead:
+    acquire_accounting_period_gate(db, tenant.organization_id, exclusive=True)
     organization = tenant.organization
+    db.refresh(organization)
     financial, _ = _settings_rows(db, tenant.organization_id)
+    db.refresh(financial)
     ensure_initial_functional_currency_period(db, organization, tenant.user_id)
     before_currency = current_functional_currency_period(db, tenant.organization_id).currency.upper()
     before_financial_currency = financial.accounting_currency.upper()

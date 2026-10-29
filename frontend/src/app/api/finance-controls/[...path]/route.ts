@@ -12,6 +12,8 @@ async function proxy(request: NextRequest, method: "GET" | "POST" | "PATCH", con
   const suffix = path.join("/");
   const search = request.nextUrl.search;
   const headers: Record<string, string> = { "X-Organization-ID": organizationId };
+  const idempotencyKey = request.headers.get("idempotency-key") || request.headers.get("x-idempotency-key");
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const init: RequestInit = { method, headers };
   if (method !== "GET") {
     headers["Content-Type"] = "application/json";

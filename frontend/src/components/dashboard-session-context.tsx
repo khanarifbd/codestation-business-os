@@ -121,7 +121,7 @@ export function DashboardSessionProvider({ children }: { children: ReactNode }) 
       setTenant(bootstrap.tenant ?? null);
 
       if (nextWorkspaces.length === 0) {
-        router.replace("/onboarding");
+        window.location.replace("/onboarding");
         return;
       }
       if (!bootstrap.tenant) {

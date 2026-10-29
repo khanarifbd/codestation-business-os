@@ -28,6 +28,7 @@ from app.schemas.organization import OrganizationCreate
 from app.schemas.payables import PayableBillCreate, PayablePaymentCreate
 from app.services.accounting_posting import financial_ledger_account, money, system_account, to_base_amount
 from app.services.accounting_sync import sync_operational_accounting
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.activity_log import record_activity
 from app.services.exchange_rates import record_rate_snapshot
 
@@ -260,6 +261,7 @@ def main() -> None:
             req("POST", "/finance/payments"), db, tenant,  # type: ignore[arg-type]
         )
 
+        acquire_accounting_period_gate(db, organization.id)
         sync_result = sync_operational_accounting(
             db,
             organization_id=organization.id,

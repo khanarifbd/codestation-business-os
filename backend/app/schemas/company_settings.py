@@ -56,6 +56,22 @@ class CoreCompanyUpdate(BaseModel):
     business_type: str | None = Field(default=None, max_length=80)
     team_size: str | None = Field(default=None, max_length=32)
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def reject_explicit_null_name(cls, value):
+        # Omitted PATCH names retain their defaults; supplied names cannot clear.
+        if value is None:
+            raise ValueError("Name cannot be null")
+        return value
+
+    @field_validator("name")
+    @classmethod
+    def reject_blank_name(cls, value):
+        # Keep handler trimming and existing length rules unchanged.
+        if not value.strip():
+            raise ValueError("Name cannot be blank")
+        return value
+
 
 class IdentifierBase(BaseModel):
     identifier_type: str = Field(min_length=1, max_length=64)

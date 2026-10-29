@@ -13,12 +13,14 @@ class PayableBill(TenantOwnedMixin, Base):
     __tablename__ = "payable_bills"
     __table_args__ = (
         UniqueConstraint("organization_id", "bill_number", name="uq_payable_bills_org_number"),
+        UniqueConstraint("purchase_receipt_id", name="uq_payable_purchase_receipt"),
         Index("ix_payable_bills_org_status_due", "organization_id", "status", "due_date"),
         Index("ix_payable_bills_org_supplier_date", "organization_id", "supplier_name", "bill_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     bill_number: Mapped[str] = mapped_column(String(40), nullable=False)
+    purchase_receipt_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("purchase_receipts.id", ondelete="RESTRICT"), nullable=True)
     vendor_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("vendors.id", ondelete="SET NULL"), nullable=True)
     supplier_name: Mapped[str] = mapped_column(String(220), nullable=False)
     bill_date: Mapped[date] = mapped_column(Date, nullable=False)

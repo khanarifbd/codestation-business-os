@@ -1,0 +1,10 @@
+const row=(code,name,amount)=>({code,name,amount});
+const report={base_currency:'USD',accounting_currency:'USD',reporting_currency:'USD',reporting_rate:'1.00000000',reporting_rate_applied:true,reporting_note:null,functional_period_start:'2026-01-01',functional_period_end:null,date_from:'2026-10-01',date_to:'2026-10-26',income:[row('4000','Synthetic service income','400.00')],expenses:[row('5000','Synthetic operating expense','100.00')],assets:[row('1000','Synthetic assets','1000.00')],liabilities:[row('2000','Synthetic liabilities','200.00')],equity:[row('3000','Synthetic capital','500.00')],total_income:'400.00',total_expenses:'100.00',net_profit:'300.00',total_assets:'1000.00',total_liabilities:'200.00',recorded_equity:'500.00',current_earnings:'300.00',total_equity:'800.00',total_liabilities_and_equity:'1000.00',cash_flow:{operating:'120.00',investing:'-30.00',financing:'0.00',net_change:'90.00'}};
+const account={id:'account-a',name:'Synthetic USD operating bank',account_type:'bank',currency:'USD',current_balance:'1000.00',is_active:true};
+const accountB={...account,id:'account-b',name:'Synthetic BDT bank',currency:'BDT'};
+const movement={id:'movement-a',transaction_date:'2026-10-12',direction:'credit',amount:'25.00',currency:'USD',source_type:'income',source_id:'synthetic-income-a',reference:'SYN-ONLY',description:'Synthetic movement — not live data',created_at:'2026-10-12T10:00:00Z'};
+const ledger={items:[movement],next_cursor:null};
+const ok=(body,status=200)=>({ok:status>=200&&status<300,status,json:async()=>body});
+const failure=status=>ok({detail:`Synthetic read failure ${status}`},status);
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve};};
+module.exports={row,report,account,accountB,movement,ledger,ok,failure,deferred};

@@ -312,7 +312,7 @@ def _invoice_response(invoice: Invoice) -> ClientPortalInvoice:
         currency=invoice.currency,
         total=invoice.total,
         amount_paid=invoice.amount_paid,
-        balance_due=invoice.balance_due,
+        balance_due=Decimal("0.00") if invoice.status == "cancelled" else invoice.balance_due,
     )
 
 

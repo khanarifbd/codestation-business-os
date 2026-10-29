@@ -20,6 +20,7 @@ from app.api.v1.finance import change_invoice_status, create_account, create_inv
 from app.api.v1.financial_safety import safe_disburse_loan, safe_pay_payable_bill, safe_record_payment, safe_repay_loan
 from app.api.v1.payables import create_payable_bill
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
 from app.models.accounting import LedgerAccount
 from app.models.capital import CompanyLoan, LoanRepayment
 from app.models.finance import Invoice, Payment
@@ -42,7 +43,7 @@ class FixtureOrganization:
 class FixtureTenant:
     organization_id: str
     user_id: str
-    organization: FixtureOrganization
+    organization: Organization
 
 
 def make_request(method: str, path: str, idempotency_key: str | None = None) -> Request:
@@ -68,6 +69,13 @@ def run_api_hardening_verifier() -> None:
     subprocess.run([sys.executable, str(verifier)], check=True)
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct retries do not run HTTP tenant dependencies to start the next root.
+    # Keep an existing fixture transaction; never commit or roll it back here.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as connection:
         fixture = connection.execute(text("""
@@ -79,17 +87,12 @@ def main() -> None:
         if connection.execute(text("SELECT to_regclass('public.posting_idempotency')")).scalar_one() is None:
             raise AssertionError("posting_idempotency table is missing")
 
-    tenant = FixtureTenant(
-        organization_id=str(fixture["organization_id"]),
-        user_id=str(fixture["user_id"]),
-        organization=FixtureOrganization(
-            timezone=str(fixture["timezone"] or "UTC"),
-            currency=str(fixture["currency"] or "USD"),
-            name=str(fixture["name"]),
-        ),
-    )
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = FixtureTenant(organization_id=str(fixture['organization_id']), user_id=str(fixture['user_id']), organization=organization)
         active_invoiced_order_ids = select(Invoice.order_id).where(
             Invoice.organization_id == tenant.organization_id,
             Invoice.status != "cancelled",
@@ -176,7 +179,9 @@ def main() -> None:
         payment_amount = min(Decimal("1.00"), Decimal(sent.balance_due))
         payment_payload = PaymentCreate(invoice_id=sent.id, account_id=account.id, invoice_amount=payment_amount, method="bank_transfer", reference=f"CI-IDEM-{suffix}")
         payment_key = f"ci-payment-{suffix}"
+        ensure_request_transaction(db)
         first_payment = safe_record_payment(payment_payload, make_request("POST", "/api/v1/finance/payments", payment_key), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         second_payment = safe_record_payment(payment_payload, make_request("POST", "/api/v1/finance/payments", payment_key), db, tenant)  # type: ignore[arg-type]
         if first_payment.id != second_payment.id:
             raise AssertionError("replayed invoice payment created a second resource")
@@ -198,7 +203,9 @@ def main() -> None:
         )
         payable_payload = PayablePaymentCreate(financial_account_id=account.id, payment_date=date(2098, 1, 10), amount=Decimal("10"), reference=f"CI-PAYABLE-{suffix}")
         payable_key = f"ci-payable-{suffix}"
+        ensure_request_transaction(db)
         first_payable = safe_pay_payable_bill(bill.id, payable_payload, make_request("POST", f"/api/v1/accounting/payables/{bill.id}/payments", payable_key), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         second_payable = safe_pay_payable_bill(bill.id, payable_payload, make_request("POST", f"/api/v1/accounting/payables/{bill.id}/payments", payable_key), db, tenant)  # type: ignore[arg-type]
         if first_payable.id != second_payable.id:
             raise AssertionError("replayed payable payment created a second resource")
@@ -220,7 +227,9 @@ def main() -> None:
 
         disbursement_payload = LoanDisbursementCreate(account_id=account.id, disbursement_date=date(2098, 2, 2), principal_amount=Decimal("100"), fee_withheld_amount=Decimal("2"), reference=f"CI-DISB-{suffix}")
         disbursement_key = f"ci-disburse-{suffix}"
+        ensure_request_transaction(db)
         first_disbursement = safe_disburse_loan(loan["id"], disbursement_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/disburse", disbursement_key), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         second_disbursement = safe_disburse_loan(loan["id"], disbursement_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/disburse", disbursement_key), db, tenant)  # type: ignore[arg-type]
         if first_disbursement["id"] != second_disbursement["id"]:
             raise AssertionError("replayed loan disbursement created a second resource")
@@ -234,7 +243,9 @@ def main() -> None:
 
         repayment_payload = LoanAccountingRepaymentCreate(account_id=account.id, payment_date=date(2098, 2, 15), principal_amount=Decimal("10"), interest_amount=Decimal("1"), fee_amount=Decimal("0.50"), fee_type="processing_fee", reference=f"CI-REPAY-{suffix}")
         repayment_key = f"ci-repay-{suffix}"
+        ensure_request_transaction(db)
         first_repayment = safe_repay_loan(loan["id"], repayment_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/repay", repayment_key), db, tenant)  # type: ignore[arg-type]
+        ensure_request_transaction(db)
         second_repayment = safe_repay_loan(loan["id"], repayment_payload, make_request("POST", f"/api/v1/accounting/loans/{loan['id']}/repay", repayment_key), db, tenant)  # type: ignore[arg-type]
         if first_repayment["id"] != second_repayment["id"]:
             raise AssertionError("replayed loan repayment created a second resource")

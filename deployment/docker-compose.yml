@@ -71,6 +71,7 @@ services:
     restart: unless-stopped
     environment:
       INTERNAL_API_URL: http://backend:8000/api/v1
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?PUBLIC_APP_URL must be the canonical HTTPS app origin}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       REFRESH_TOKEN_EXPIRE_MINUTES: ${REFRESH_TOKEN_EXPIRE_MINUTES:-240}
       AUTH_COOKIE_PERSIST_BROWSER: ${AUTH_COOKIE_PERSIST_BROWSER:-false}

@@ -19,12 +19,15 @@ from app.models.finance import AccountTransfer, FinancialTransaction, Invoice, P
 from app.models.fixed_assets import AssetDepreciationEntry, FixedAsset
 from app.models.loan_accounting import LoanDisbursement, LoanFee
 from app.models.payables import PayableBill, PayablePayment
+from app.services.inventory_payables import sync_purchase_settlement
 from app.models.payroll import PayrollPeriod, PayrollRun, PayrollWithholdingPayment
 from app.models.tax import TaxSettlement
 from app.services.activity_log import record_activity
 from app.services.journal_reversal import reverse_source_journal
+from app.services.tax_settlement_safety import lock_tax_settlements, lock_tax_reversal_accounts
 from app.models.stripe_accounting import StripeAccountingPosting
 from app.services.loan_schedule import refresh_loan_schedule_payment_state
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/accounting/corrections", tags=["Accounting - Corrections"])
@@ -566,6 +569,9 @@ def correction_candidates(db: DbSession, tenant: AccountingViewer, limit: int = 
 
 @router.post("/reverse", status_code=status.HTTP_201_CREATED)
 def reverse_business_transaction(payload: CorrectionRequest, request: Request, db: DbSession, tenant: AccountingManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    # Tenant resolution may predate a queued functional-currency transition.
+    db.refresh(tenant.organization, attribute_names=["currency", "timezone"])
     reversal_date = payload.reversal_date or _today(tenant.organization.timezone)
     reason = payload.reason.strip()
     reversed_number: str
@@ -930,6 +936,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         bill.amount_paid = max(Decimal("0"), Decimal(bill.amount_paid) - Decimal(payment.amount))
         bill.balance_due = max(Decimal("0"), Decimal(bill.net_payable_amount) - Decimal(bill.amount_paid))
         bill.status = "paid" if bill.balance_due == 0 else "partially_paid" if bill.amount_paid > 0 else "open"
+        sync_purchase_settlement(db, bill)
         reversed_number = f"Payment for {bill.bill_number}"
         before_status = "paid_or_partially_paid"
         after_status = bill.status
@@ -1120,6 +1127,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
                 AssetDepreciationEntry.status == "posted",
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if depreciation is None:
             raise HTTPException(status_code=404, detail="Posted asset depreciation entry not found")
@@ -1132,6 +1140,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
                 FixedAsset.organization_id == tenant.organization_id,
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if asset is None:
             raise HTTPException(status_code=409, detail="Fixed asset is no longer available")
@@ -1178,6 +1187,7 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
                 FixedAsset.status != "reversed",
             )
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if asset is None:
             raise HTTPException(status_code=404, detail="Fixed asset not found")
@@ -1223,18 +1233,20 @@ def reverse_business_transaction(payload: CorrectionRequest, request: Request, d
         after_status = asset.status
 
     elif payload.source_type == "tax_settlement":
+        lock_tax_settlements(db, tenant.organization_id)
         settlement = db.scalar(
             select(TaxSettlement)
             .where(
                 TaxSettlement.id == payload.source_id,
                 TaxSettlement.organization_id == tenant.organization_id,
             )
-            .with_for_update()
+            .with_for_update().execution_options(populate_existing=True)
         )
         if settlement is None:
             raise HTTPException(status_code=404, detail="Tax settlement not found")
         if _journal_reversed(db, tenant.organization_id, "tax_settlement", settlement.id):
             raise HTTPException(status_code=409, detail="This tax settlement was already reversed")
+        lock_tax_reversal_accounts(db, tenant.organization_id, settlement.id)
         journal = reverse_source_journal(
             db,
             organization_id=tenant.organization_id,

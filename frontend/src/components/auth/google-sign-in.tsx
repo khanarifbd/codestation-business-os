@@ -48,10 +48,12 @@ export function GoogleAuthSection({
   mode,
   onAuthenticated,
   onLinkRequired,
+  showEmailDivider = true,
 }: {
   mode: "login" | "signup";
   onAuthenticated: (user: AuthUser) => void | Promise<void>;
   onLinkRequired?: (credential: string) => void;
+  showEmailDivider?: boolean;
 }) {
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
   const buttonRef = useRef<HTMLDivElement>(null);
@@ -175,11 +177,11 @@ export function GoogleAuthSection({
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       ) : null}
 
-      <div className="flex items-center gap-3" aria-hidden="true">
+      {showEmailDivider ? <div className="flex items-center gap-3" aria-hidden="true">
         <div className="h-px flex-1 bg-neutral-200" />
         <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">or continue with email</span>
         <div className="h-px flex-1 bg-neutral-200" />
-      </div>
+      </div> : null}
     </div>
   );
 }

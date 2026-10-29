@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from starlette.requests import Request
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.v1.accounting import trial_balance
 from app.api.v1.accounting_reports import financial_statements
 from app.api.v1.company_currencies import (
@@ -83,6 +84,7 @@ def main() -> None:
             organization=organization,
         )
 
+        acquire_accounting_period_gate(db, organization.id)
         ensure_default_chart(db, organization.id, user.id)
         cash = system_account(db, organization.id, "cash_equivalents")
         owner_equity = system_account(db, organization.id, "owners_equity")
@@ -245,6 +247,8 @@ def main() -> None:
             raise AssertionError("historical BDT journal lines were rewritten by the functional currency change")
 
         try:
+            # The currency-change route committed; this is a new transaction.
+            acquire_accounting_period_gate(db, tenant.organization_id)
             post_journal(
                 db,
                 organization_id=tenant.organization_id,
@@ -269,6 +273,7 @@ def main() -> None:
         if organization is None:
             raise AssertionError("organization disappeared after sealed-period test")
         tenant = FixtureTenant(organization_id=organization.id, user_id=user.id, organization=organization)
+        acquire_accounting_period_gate(db, organization.id)
         cash = system_account(db, organization.id, "cash_equivalents")
         owner_equity = system_account(db, organization.id, "owners_equity")
 

@@ -36,6 +36,16 @@ def _request_id(header_value: str | None) -> str:
     return str(uuid4())
 
 
+def _observability_path(request: Request) -> str:
+    """Log a registered route template, never possession tokens or query data.
+
+    Unmatched requests deliberately use a constant instead of their raw path.
+    Uvicorn/ingress access logs require their own independent redaction policy.
+    """
+    route_path = getattr(request.scope.get("route"), "path", None)
+    return route_path if isinstance(route_path, str) else "[unmatched]"
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_super_admin()
@@ -56,7 +66,7 @@ async def safe_http_exception_handler(request: Request, exc: StarletteHTTPExcept
     if detail == VAULT_CONFIGURATION_ERROR:
         logger.error(
             "Credentials Vault unavailable because PROJECT_CREDENTIAL_ENCRYPTION_KEY is not configured",
-            extra={"path": request.url.path},
+            extra={"path": _observability_path(request)},
         )
         detail = VAULT_USER_MESSAGE
         status_code = 503
@@ -69,13 +79,13 @@ async def safe_database_exception_handler(request: Request, exc: DBAPIError) -> 
     if CLOSED_PERIOD_MARKER in database_message:
         logger.info(
             "Blocked financial mutation in closed accounting period",
-            extra={"path": request.url.path, "request_id": getattr(request.state, "request_id", None)},
+            extra={"path": _observability_path(request), "request_id": getattr(request.state, "request_id", None)},
         )
         return JSONResponse(status_code=409, content={"detail": CLOSED_PERIOD_USER_MESSAGE})
     logger.exception(
         "Unhandled database operation error",
         exc_info=exc,
-        extra={"path": request.url.path, "request_id": getattr(request.state, "request_id", None)},
+        extra={"path": _observability_path(request), "request_id": getattr(request.state, "request_id", None)},
     )
     return JSONResponse(status_code=500, content={"detail": "Database operation failed. Please try again or contact your administrator."})
 
@@ -138,7 +148,7 @@ async def request_observability(request: Request, call_next):
             "auth_ms=%.2f tenant_ms=%.2f permission_ms=%.2f application_other_ms=%.2f "
             "request_id=%s",
             request.method,
-            request.url.path,
+            _observability_path(request),
             status_code,
             total_ms,
             breakdown.root_cause,

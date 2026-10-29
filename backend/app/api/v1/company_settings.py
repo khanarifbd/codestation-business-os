@@ -37,6 +37,7 @@ from app.schemas.company_settings import (
 )
 from app.schemas.organization import OrganizationRead
 from app.services.activity_log import record_activity
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 
 router = APIRouter(prefix="/company-settings", tags=["Company Settings"])
 
@@ -399,11 +400,13 @@ def update_financial(
     db: DbSession,
     tenant: CurrentTenantAdmin,
 ) -> FinancialRead:
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization)
     item = _required(
         db.scalar(
             select(OrganizationFinancialSettings).where(
                 OrganizationFinancialSettings.organization_id == tenant.organization_id
-            )
+            ).execution_options(populate_existing=True)
         ),
         "financial",
     )

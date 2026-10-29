@@ -16,7 +16,7 @@ from app.models.accounting import (
     OrganizationFunctionalCurrencyPeriod,
 )
 from app.models.company_settings import OrganizationFinancialSettings
-from app.models.finance_controls import AccountingPeriod
+from app.services.accounting_period_gate import require_accounting_period_gate, ensure_accounting_period_open
 from app.models.organization import Organization
 from app.services.exchange_rates import resolve_exchange_rate
 
@@ -70,6 +70,7 @@ def ensure_initial_functional_currency_period(
         )
         .order_by(OrganizationFunctionalCurrencyPeriod.effective_from.desc())
         .limit(1)
+        .execution_options(populate_existing=True)
     )
     if current is not None:
         return current
@@ -108,6 +109,7 @@ def current_functional_currency_period(db, organization_id: str) -> Organization
         )
         .order_by(OrganizationFunctionalCurrencyPeriod.effective_from.desc())
         .limit(1)
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(
@@ -134,6 +136,7 @@ def functional_currency_period_for_date(
         )
         .order_by(OrganizationFunctionalCurrencyPeriod.effective_from.desc())
         .limit(1)
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(
@@ -306,6 +309,7 @@ def change_functional_currency(
     transition_rate: Decimal | None,
     reason: str,
 ) -> FunctionalCurrencyChangeResult:
+    require_accounting_period_gate(db, organization.id, exclusive=True)
     new_currency = new_currency.upper().strip()
     reason = reason.strip()
     if len(new_currency) != 3:
@@ -335,19 +339,10 @@ def change_functional_currency(
             detail=f"Effective date must be after the current functional-currency period start ({current.effective_from.isoformat()}).",
         )
 
-    closed_period = db.scalar(
-        select(AccountingPeriod.id).where(
-            AccountingPeriod.organization_id == organization.id,
-            AccountingPeriod.status == "closed",
-            AccountingPeriod.start_date <= effective_date,
-            AccountingPeriod.end_date >= effective_date,
-        )
+    ensure_accounting_period_open(
+        db, organization.id, effective_date,
+        detail=f"The accounting period containing {effective_date.isoformat()} is closed.",
     )
-    if closed_period is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"The accounting period containing {effective_date.isoformat()} is closed.",
-        )
 
     later_period = db.scalar(
         select(OrganizationFunctionalCurrencyPeriod.id).where(
@@ -398,6 +393,7 @@ def change_functional_currency(
         select(OrganizationFinancialSettings).where(
             OrganizationFinancialSettings.organization_id == organization.id
         )
+        .execution_options(populate_existing=True)
     )
     if financial is None:
         raise HTTPException(status_code=500, detail="Organization financial settings are missing")

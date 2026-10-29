@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -54,7 +54,31 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
+
+    @model_validator(mode="after")
+    def require_safe_deployed_jwt_key(self) -> "Settings":
+        """Fail closed for known unsafe deployment keys without rotating them.
+
+        Length is only a minimum safety check, not proof of entropy. Operators
+        must generate and retain a cryptographically random signing secret.
+        Explicit local development/test configuration remains compatible.
+        """
+        if self.environment.lower().strip() not in {"production", "staging"}:
+            return self
+        key = self.jwt_secret_key.strip()
+        minimum_bytes = {"HS256": 32, "HS384": 48, "HS512": 64}.get(self.jwt_algorithm, 32)
+        if (
+            not key
+            or key.lower().startswith(("development-only", "replace_with_"))
+            or len(key.encode("utf-8")) < minimum_bytes
+        ):
+            raise ValueError(
+                "Production/staging JWT_SECRET_KEY must be a securely generated "
+                f"non-placeholder secret of at least {minimum_bytes} bytes"
+            )
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -15,6 +15,7 @@ from sqlalchemy import and_, case, func, or_, select
 from starlette.responses import FileResponse, Response
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.v1.reports import _invoice_project_id
 from app.models.crm import Client
 from app.models.expenses import Expense, ExpenseCategory, ExpenseDocument, Vendor
 from app.models.finance import FinancialAccount, FinancialTransaction, Invoice, Payment
@@ -47,9 +48,12 @@ from app.schemas.expenses import (
     VendorRead,
     VendorUpdate,
 )
+from app.services.financial_account_constraints import ensure_expense_posting_account_supported
+from app.services.accounting_period_gate import acquire_accounting_period_gate, ensure_accounting_period_open
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 from app.services.document_storage import storage
+from app.services.expense_relationship_context import expense_relationship_context
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/finance", tags=["Expenses & Profitability"])
@@ -58,6 +62,9 @@ FinanceManager = Annotated[TenantContext, Depends(require_tenant_permission("fin
 MONEY = Decimal("0.01")
 RATE = Decimal("0.00000001")
 PERCENT = Decimal("0.01")
+# Existing Numeric(18, 2) and Numeric(18, 8) storage bounds, not input-policy limits.
+MAX_STORED_MONEY = Decimal("9999999999999999.99")
+MAX_STORED_RATE = Decimal("9999999999.99999999")
 
 PREVIEW_MEDIA_TYPES = {
     "application/pdf",
@@ -75,6 +82,15 @@ def _money(value: Decimal) -> Decimal:
 
 def _rate(value: Decimal) -> Decimal:
     return Decimal(value).quantize(RATE, rounding=ROUND_HALF_UP)
+
+
+def _require_positive_stored(value: Decimal, maximum: Decimal, label: str) -> None:
+    """Reject rounded underflow/overflow rather than clamp a financial conversion."""
+    if not value.is_finite() or value <= 0 or value > maximum:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} must remain positive and fit the supported stored precision after rounding",
+        )
 
 
 def _clean(value: str | None) -> str | None:
@@ -470,6 +486,10 @@ def expense_meta(db: DbSession, tenant: FinanceViewer) -> ExpenseMeta:
         .limit(500)
     ).all()
     return ExpenseMeta(
+        relationship_context=expense_relationship_context(
+            db, tenant.organization_id, invoices=invoices, project_rows=project_rows,
+            orders=orders, payment_rows=payment_rows,
+        ),
         vendors=[_vendor_read(item) for item in vendors],
         categories=[_category_read(item) for item in categories],
         accounts=[
@@ -715,9 +735,10 @@ def get_expense(expense_id: str, db: DbSession, tenant: FinanceViewer):
 
 @router.post("/expenses", response_model=ExpenseDetail, status_code=status.HTTP_201_CREATED)
 def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tenant: FinanceManager):
-    account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == payload.account_id, FinancialAccount.organization_id == tenant.organization_id).with_for_update())
+    account = db.scalar(select(FinancialAccount).where(FinancialAccount.id == payload.account_id, FinancialAccount.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if account is None or not account.is_active:
         raise HTTPException(status_code=404, detail="Active financial account not found")
+    ensure_expense_posting_account_supported(account.account_type)
     category = db.scalar(select(ExpenseCategory).where(ExpenseCategory.id == payload.category_id, ExpenseCategory.organization_id == tenant.organization_id, ExpenseCategory.is_active.is_(True)))
     if category is None:
         raise HTTPException(status_code=404, detail="Active expense category not found")
@@ -731,6 +752,7 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
 
     expense_currency = payload.expense_currency.upper()
     expense_amount = _money(payload.expense_amount)
+    _require_positive_stored(expense_amount, MAX_STORED_MONEY, "Expense amount")
     tax_amount = _money(payload.tax_amount)
     if tax_amount > expense_amount:
         raise HTTPException(status_code=400, detail="Tax amount cannot exceed the expense amount")
@@ -746,6 +768,9 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
         account_amount = _money(expense_amount * exchange_rate)
     else:
         raise HTTPException(status_code=400, detail=f"Actual account amount or exchange rate is required for {expense_currency} to {account.currency}")
+
+    _require_positive_stored(account_amount, MAX_STORED_MONEY, "Account amount")
+    _require_positive_stored(exchange_rate, MAX_STORED_RATE, "Account exchange rate")
 
     profitability_currency = (
         project.currency if project else
@@ -766,6 +791,9 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
         profitability_amount = _money(expense_amount * profitability_exchange_rate)
     else:
         raise HTTPException(status_code=400, detail=f"Profitability conversion is required to report this cost in {profitability_currency}")
+
+    _require_positive_stored(profitability_amount, MAX_STORED_MONEY, "Profitability amount")
+    _require_positive_stored(profitability_exchange_rate, MAX_STORED_RATE, "Profitability exchange rate")
 
     current_balance = _account_balance(db, account)
     if account_amount > current_balance:
@@ -833,11 +861,13 @@ def create_expense(payload: ExpenseCreate, request: Request, db: DbSession, tena
 
 @router.patch("/expenses/{expense_id}", response_model=ExpenseDetail)
 def update_expense(expense_id: str, payload: ExpenseUpdate, request: Request, db: DbSession, tenant: FinanceManager):
-    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update())
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if item is None:
         raise HTTPException(status_code=404, detail="Expense not found")
     if item.status != "posted":
         raise HTTPException(status_code=409, detail="Voided expenses are locked")
+    ensure_accounting_period_open(db, tenant.organization_id, item.expense_date)
     before = {"description": item.description, "vendor_id": item.vendor_id, "category_id": item.category_id, "reference": item.reference}
     changes = payload.model_dump(exclude_unset=True)
     if "vendor_id" in changes and changes["vendor_id"]:
@@ -865,7 +895,7 @@ def update_expense(expense_id: str, payload: ExpenseUpdate, request: Request, db
 
 @router.post("/expenses/{expense_id}/void", response_model=ExpenseDetail)
 def void_expense(expense_id: str, request: Request, db: DbSession, tenant: FinanceManager):
-    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update())
+    item = db.scalar(select(Expense).where(Expense.id == expense_id, Expense.organization_id == tenant.organization_id).with_for_update().execution_options(populate_existing=True))
     if item is None:
         raise HTTPException(status_code=404, detail="Expense not found")
     if item.status != "posted":
@@ -1005,7 +1035,14 @@ def delete_expense_document(expense_id: str, document_id: str, request: Request,
 
 @router.get("/profitability", response_model=ProfitabilityReport)
 def profitability_report(db: DbSession, tenant: FinanceViewer) -> ProfitabilityReport:
-    invoices = db.scalars(select(Invoice).where(Invoice.organization_id == tenant.organization_id, Invoice.status != "cancelled")).all()
+    invoice_rows = db.execute(
+        select(Invoice, _invoice_project_id()).where(
+            Invoice.organization_id == tenant.organization_id,
+            Invoice.status.not_in(["draft", "cancelled"]),
+        )
+    ).all()
+    invoices = [invoice for invoice, _ in invoice_rows]
+    invoice_projects = {invoice.id: project_id for invoice, project_id in invoice_rows}
     expenses = db.scalars(select(Expense).where(Expense.organization_id == tenant.organization_id, Expense.status == "posted")).all()
     projects = db.scalars(select(Project).where(Project.organization_id == tenant.organization_id).order_by(Project.created_at.desc()).limit(500)).all()
     clients = db.scalars(select(Client).where(Client.organization_id == tenant.organization_id).order_by(Client.display_name.asc()).limit(1000)).all()
@@ -1056,7 +1093,7 @@ def profitability_report(db: DbSession, tenant: FinanceViewer) -> ProfitabilityR
 
     project_rows: list[ProjectProfitabilityRow] = []
     for project in projects:
-        project_invoices = [item for item in invoices if item.project_id == project.id and item.currency == project.currency]
+        project_invoices = [item for item in invoices if invoice_projects[item.id] == project.id and item.currency == project.currency]
         project_expenses = [item for item in expenses if item.project_id == project.id and item.profitability_currency == project.currency]
         invoiced = _money(sum((item.total for item in project_invoices), Decimal("0")))
         collected = _money(sum((item.amount_paid for item in project_invoices), Decimal("0")))

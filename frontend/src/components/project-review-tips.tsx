@@ -1,9 +1,14 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gift, Loader2, MessageSquareText, Pencil, Plus, Star } from "lucide-react";
 
+import { useProjectChildLifetime } from "@/hooks/use-project-child-lifetime";
+import { useProjectIncomeOperation } from "@/hooks/use-project-income-operation";
+import { moneyInReceiptHref } from "@/lib/money-in-navigation";
+import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { FinancialConfirmationDialog } from "@/components/financial-confirmation-dialog";
+import { ProjectDialogFocus } from "@/components/projects/project-dialog";
 import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
 
 type ReviewRow = {
@@ -157,36 +162,90 @@ export function ProjectReviewTips({
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [reviewEditing, setReviewEditing] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
-  const [tipSaving, setTipSaving] = useState(false);
-  const [tipConfirmOpen, setTipConfirmOpen] = useState(false);
   const [reviewForm, setReviewForm] = useState<ReviewForm>(() => blankReview(null));
   const [tipForm, setTipForm] = useState<TipForm>(() => blankTip());
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [reviewBaseline, setReviewBaseline] = useState<ReviewForm>(() => blankReview(null));
+  const [tipBaseline, setTipBaseline] = useState<TipForm>(() => blankTip());
+  const [reviewOutcome, setReviewOutcome] = useState<{ message: string; acknowledged: boolean } | null>(null);
+  const reviewOutcomeRef = useRef<typeof reviewOutcome>(null);
+  const isCurrent = useProjectChildLifetime(projectId);
+  const pendingRef = useRef(false);
+  const dialogReturnRef = useRef<HTMLDivElement>(null);
+  const tipReviewButtonRef = useRef<HTMLButtonElement>(null);
+  const previousTipConfirmRef = useRef({ open: false, owner: isCurrent });
+  const ownerRef = useRef(0);
+  const readRef = useRef(0);
+  const reviewEditingRef = useRef(false);
+  async function incomeRecorded() {
+    const cleared = blankTip();
+    setTipForm(cleared); setTipBaseline(cleared);
+    return loadFeedback();
+  }
+  const tipOperation = useProjectIncomeOperation({ canPost: Boolean(feedback?.can_record_tip), isCurrent, pendingRef, onRecorded: incomeRecorded });
+  const { canEdit: canEditTip } = tipOperation;
+  const tipSaving = tipOperation.busy;
+  const tipConfirmOpen = tipOperation.phase === "review" || tipSaving;
+  useEffect(() => {
+    const previous = previousTipConfirmRef.current;
+    previousTipConfirmRef.current = { open: tipConfirmOpen, owner: isCurrent };
+    if (!previous.open || previous.owner !== isCurrent || tipConfirmOpen || tipOperation.phase !== "idle" || !isCurrent()) return;
+    const fallback = dialogReturnRef.current;
+    const trigger = tipReviewButtonRef.current;
+    if (!fallback?.isConnected || document.activeElement !== fallback || !trigger?.isConnected) return;
+    if (trigger.matches(':disabled, [aria-disabled="true"]') || trigger.closest("[hidden], [inert]") || trigger.getClientRects().length === 0 || getComputedStyle(trigger).visibility !== "visible") return;
+    trigger.focus();
+  }, [tipConfirmOpen, tipOperation.phase, isCurrent]);
+  function changeTip(value: SetStateAction<TipForm>) { if (tipOperation.canEdit()) setTipForm(value); }
+  function changeReview(value: SetStateAction<ReviewForm>) { if (isCurrent() && !pendingRef.current && !reviewOutcomeRef.current) setReviewForm(value); }
+  const reviewDirty = reviewEditing && JSON.stringify(reviewForm) !== JSON.stringify(reviewBaseline);
+  const tipDirty = JSON.stringify(tipForm) !== JSON.stringify(tipBaseline);
+  useDocumentNavigationGuard(reviewDirty || tipDirty || tipOperation.unresolved || Boolean(reviewOutcome), {
+    enabled: true, pendingRef,
+    isBusy: reviewSaving || tipSaving, documentLabel: "project",
+    discardMessage: tipOperation.unresolved ? "This project income may already be recorded. Leaving loses the retained request in this tab; check the current company income history before creating another income. Leave this page?" : reviewOutcome ? "This review may already be saved. Leaving loses the local attempt; check the saved review before another edit. Leave?" : undefined,
+  });
+  function cancelReview() {
+    if (!isCurrent() || pendingRef.current) return;
+    // Closing only the review preserves a separate income draft on this page.
+    if ((reviewDirty || reviewOutcome) && !window.confirm(reviewOutcome ? "Close this local review? Its save outcome is unknown; closing does not undo it." : "Discard the unsaved client review changes?")) return;
+    reviewEditingRef.current = false;
+    setReviewEditing(false);
+  }
+
 
   const loadFeedback = useCallback(async () => {
+    if (!isCurrent()) return false;
+    const owner = ownerRef.current;
+    const read = ++readRef.current;
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/projects/${projectId}/feedback`, { cache: "no-store" });
       const payload = await response.json().catch(() => null);
+      if (!isCurrent() || owner !== ownerRef.current || read !== readRef.current) return false;
       if (!response.ok) throw new Error(errorDetail(payload, "Unable to load project review and tips."));
       const next = payload as Feedback;
       setFeedback(next);
-      setReviewForm(blankReview(next.review));
+      if (!reviewEditingRef.current) {
+        const values = blankReview(next.review);
+        setReviewForm(values); setReviewBaseline(values);
+      }
+      return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load project review and tips.");
+      if (isCurrent() && owner === ownerRef.current && read === readRef.current) setError(reason instanceof Error ? reason.message : "Unable to load project review and tips.");
+      return false;
     } finally {
-      setLoading(false);
+      if (isCurrent() && owner === ownerRef.current && read === readRef.current) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, isCurrent]);
+
+  useEffect(() => { const owner = ownerRef; ++owner.current; return () => { ++owner.current; }; }, [projectId, isCurrent]);
+  useEffect(() => { void loadFeedback(); }, [loadFeedback, projectStatus]);
 
   useEffect(() => {
-    void loadFeedback();
-  }, [loadFeedback, projectStatus]);
-
-  useEffect(() => {
-    if (!feedback?.can_record_tip) return;
+    if (!isCurrent() || !feedback?.can_record_tip) return;
     let active = true;
     void (async () => {
       setOptionsLoading(true);
@@ -204,7 +263,7 @@ export function ProjectReviewTips({
         if (!metaResponse.ok) throw new Error(errorDetail(metaPayload, "Unable to load financial accounts."));
         if (!expenseMetaResponse.ok) throw new Error(errorDetail(expenseMetaPayload, "Unable to load expense categories and vendors."));
         if (!coaResponse.ok) throw new Error(errorDetail(coaPayload, "Unable to load accounting categories."));
-        if (!active) return;
+        if (!active || !isCurrent() || !canEditTip()) return;
         const meta = metaPayload as FinanceMeta;
         const expenseMeta = expenseMetaPayload as ExpenseMeta;
         const matchingAccounts = (meta.accounts ?? []).filter(
@@ -218,6 +277,7 @@ export function ProjectReviewTips({
         ) as LedgerAccount[];
         const feeCategories = (expenseMeta.categories ?? []).filter((category) => category.is_active);
         const activeVendors = (expenseMeta.vendors ?? []).filter((vendor) => vendor.is_active);
+        if (matchingAccounts.length === 1) setTipBaseline((current) => ({ ...current, financial_account_id: current.financial_account_id || matchingAccounts[0].id }));
         setAccounts(matchingAccounts);
         setCategories(incomeCategories);
         setExpenseCategories(feeCategories);
@@ -244,15 +304,15 @@ export function ProjectReviewTips({
               : "",
         }));
       } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Unable to load tip options.");
+        if (active && isCurrent() && canEditTip()) setError(reason instanceof Error ? reason.message : "Unable to load tip options.");
       } finally {
-        if (active) setOptionsLoading(false);
+        if (active && isCurrent()) setOptionsLoading(false);
       }
     })();
     return () => {
       active = false;
     };
-  }, [feedback?.can_record_tip, projectCurrency]);
+  }, [feedback?.can_record_tip, projectCurrency, isCurrent, canEditTip]);
 
   const selectedAccount = accounts.find((item) => item.id === tipForm.financial_account_id) ?? null;
   const selectedCategory = categories.find((item) => item.id === tipForm.category_ledger_account_id) ?? null;
@@ -340,7 +400,10 @@ export function ProjectReviewTips({
   );
 
   function startReviewEdit() {
-    setReviewForm(blankReview(feedback?.review ?? null));
+    if (!isCurrent() || pendingRef.current || reviewOutcomeRef.current || !feedback?.can_manage_review) return;
+    const values = blankReview(feedback?.review ?? null);
+    setReviewForm(values); setReviewBaseline(values);
+    reviewEditingRef.current = true;
     setReviewEditing(true);
     setError(null);
     setMessage(null);
@@ -348,40 +411,65 @@ export function ProjectReviewTips({
 
   async function saveReview(event: FormEvent) {
     event.preventDefault();
+    if (!isCurrent() || pendingRef.current || reviewOutcomeRef.current || !feedback?.can_manage_review) return;
     if (!reviewForm.rating && !reviewForm.review_text.trim()) {
       setError("Add a rating or review text.");
       return;
     }
+    pendingRef.current = true;
+    const owner = ownerRef.current;
     setReviewSaving(true);
     setError(null);
     setMessage(null);
-    try {
-      const response = await fetch(`/api/projects/${projectId}/review`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    const submitted = {
           rating: reviewForm.rating || null,
           review_text: reviewForm.review_text.trim() || null,
           source: reviewForm.source || null,
           reviewer_name: reviewForm.reviewer_name.trim() || null,
           received_at: reviewForm.received_at || null,
           notes: reviewForm.notes.trim() || null,
-        }),
+        };
+    let acknowledged = false, rejected = false;
+    try {
+      const response = await fetch(`/api/projects/${projectId}/review`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submitted),
       });
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      acknowledged = response.ok;
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(errorDetail(payload, "Unable to save client review."));
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      if (!response.ok) {
+        rejected = [400, 401, 403, 404, 422].includes(response.status) && Boolean(payload?.detail);
+        throw new Error(errorDetail(payload, "Unable to save client review."));
+      }
+      if (!payload || typeof payload.id !== "string" || !payload.id || Object.entries(submitted).some(([key, value]) => payload[key] !== value)) throw new Error("The review was acknowledged, but the returned saved values could not be verified.");
+      reviewEditingRef.current = false;
       setReviewEditing(false);
       setMessage(feedback?.review ? "Client review updated." : "Client review added.");
-      await loadFeedback();
+      if (!await loadFeedback() && isCurrent()) setMessage("The review was recorded, but the latest saved review could not be loaded. Do not submit it again.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save client review.");
+      if (!isCurrent() || owner !== ownerRef.current) return;
+      const detail = reason instanceof Error ? reason.message : "Unable to save client review.";
+      if (rejected) setError(detail);
+      else { const outcome = { acknowledged, message: acknowledged ? detail : `${detail} The save outcome is unknown. Review the saved review before another edit.` }; reviewOutcomeRef.current = outcome; setReviewOutcome(outcome); }
     } finally {
-      setReviewSaving(false);
+      if (isCurrent() && owner === ownerRef.current) { pendingRef.current = false; setReviewSaving(false); }
     }
+  }
+
+  function discardLocalReview() {
+    if (!isCurrent() || pendingRef.current || !reviewOutcome || reviewOutcomeRef.current !== reviewOutcome) return;
+    if (!window.confirm("Discard this local review attempt? The review may already be saved. This does not undo it; read the saved review before starting another edit.")) return;
+    reviewOutcomeRef.current = null; setReviewOutcome(null); reviewEditingRef.current = false; setReviewEditing(false); setError(null);
+    setMessage("Local review attempt discarded, not reversed. Review the saved values before another edit.");
+    void loadFeedback();
   }
 
   function reviewTip(event: FormEvent) {
     event.preventDefault();
+    if (!isCurrent() || pendingRef.current || !feedback?.can_record_tip) return;
     setError(null);
     setMessage(null);
     if (!(grossAmount > 0 && selectedAccount && selectedAccount.currency === projectCurrency && selectedCategory)) {
@@ -400,19 +488,7 @@ export function ProjectReviewTips({
       setError("Choose an expense category for the processing or platform fee.");
       return;
     }
-    setTipConfirmOpen(true);
-  }
-
-  async function postTip() {
-    if (!validTip || !selectedAccount || !selectedCategory) return;
-    setTipSaving(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/accounting/money/income-with-fee", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    tipOperation.review({
           entry_date: tipForm.entry_date,
           financial_account_id: selectedAccount.id,
           income_category_ledger_account_id: selectedCategory.id,
@@ -426,24 +502,11 @@ export function ProjectReviewTips({
           notes: tipForm.notes.trim() || null,
           source_type: "project",
           source_id: projectId,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(errorDetail(payload, "Unable to record project income."));
-      setTipConfirmOpen(false);
-      setTipForm(blankTip());
-      setMessage(
-        feeAmount > 0
-          ? "Income and fee recorded together. The selected expense category and vendor are saved with the fee."
-          : "Income recorded. Financial account and accounting ledger were updated.",
-      );
-      await loadFeedback();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to record project income.");
-      setTipConfirmOpen(false);
-    } finally {
-      setTipSaving(false);
-    }
+        }, projectCurrency, confirmationDetails);
+  }
+
+  async function postTip() {
+    await tipOperation.submit(tipOperation.token);
   }
 
   if (loading && !feedback) {
@@ -459,7 +522,7 @@ export function ProjectReviewTips({
   const tips = feedback?.tips ?? [];
 
   return (
-    <div className="space-y-5">
+    <div ref={dialogReturnRef} tabIndex={-1} className="min-w-0 space-y-5 [overflow-wrap:anywhere]">
       {!completed ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
           <p className="font-semibold">Review & Tips unlock after project completion</p>
@@ -489,59 +552,62 @@ export function ProjectReviewTips({
           ) : null}
         </div>
 
+        {reviewOutcome ? <div role="status" className="mt-5 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"><p>{reviewOutcome.message}</p><p className="text-xs">A current read does not prove the original save outcome. This local attempt is not restored after reload.</p><div className="flex flex-wrap gap-2"><button type="button" disabled={reviewSaving || tipSaving || loading} onClick={() => void loadFeedback()} className="rounded-lg border bg-white px-3 py-2">Refresh saved review</button><button type="button" disabled={reviewSaving || tipSaving} onClick={discardLocalReview} className="rounded-lg border bg-white px-3 py-2">Discard local review attempt</button></div></div> : null}
         {reviewEditing ? (
           <form onSubmit={saveReview} className="mt-5 border-t pt-5">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="text-sm font-medium sm:col-span-2">
+            <fieldset disabled={reviewSaving || tipSaving || Boolean(reviewOutcome)} className="min-w-0">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <label className="min-w-0 text-sm font-medium sm:col-span-2">
                 Rating
-                <div className="mt-2 flex gap-1.5">
+                <div className="mt-2 flex flex-wrap gap-0.5">
                   {[1, 2, 3, 4, 5].map((rating) => (
                     <button
                       key={rating}
                       type="button"
                       aria-label={`${rating} star rating`}
-                      onClick={() => setReviewForm((current) => ({ ...current, rating }))}
-                      className={`flex size-10 items-center justify-center rounded-lg border ${reviewForm.rating >= rating ? "border-amber-300 bg-amber-50 text-amber-500" : "border-neutral-200 text-neutral-300"}`}
+                      onClick={() => changeReview((current) => ({ ...current, rating }))}
+                      className={`flex size-11 shrink-0 items-center justify-center rounded-lg border ${reviewForm.rating >= rating ? "border-amber-300 bg-amber-50 text-amber-500" : "border-neutral-200 text-neutral-300"}`}
                     >
                       <Star className="size-4" fill={reviewForm.rating >= rating ? "currentColor" : "none"} />
                     </button>
                   ))}
                   {reviewForm.rating ? (
-                    <button type="button" onClick={() => setReviewForm((current) => ({ ...current, rating: 0 }))} className="ml-2 px-2 text-xs font-medium text-neutral-400 hover:text-neutral-700">Clear</button>
+                    <button type="button" onClick={() => changeReview((current) => ({ ...current, rating: 0 }))} className="ml-2 min-h-11 px-2 text-xs font-medium text-neutral-400 hover:text-neutral-700">Clear</button>
                   ) : null}
                 </div>
               </label>
-              <label className="text-sm font-medium">
+              <label className="min-w-0 text-sm font-medium">
                 Reviewer name
-                <input value={reviewForm.reviewer_name} maxLength={180} onChange={(event) => setReviewForm((current) => ({ ...current, reviewer_name: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-neutral-400" placeholder="Client or reviewer name" />
+                <input value={reviewForm.reviewer_name} maxLength={180} onChange={(event) => changeReview((current) => ({ ...current, reviewer_name: event.target.value }))} className="mt-2 h-11 w-full min-w-0 rounded-xl border px-3 text-sm outline-none focus:border-neutral-400" placeholder="Client or reviewer name" />
               </label>
-              <label className="text-sm font-medium">
+              <label className="min-w-0 text-sm font-medium">
                 Review source
-                <select value={reviewForm.source} onChange={(event) => setReviewForm((current) => ({ ...current, source: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none">
+                <select value={reviewForm.source} onChange={(event) => changeReview((current) => ({ ...current, source: event.target.value }))} className="mt-2 h-11 w-full min-w-0 rounded-xl border bg-white px-3 text-sm outline-none">
                   <option value="">Not specified</option>
                   {REVIEW_SOURCES.map((source) => <option key={source} value={source}>{source}</option>)}
                 </select>
               </label>
-              <label className="text-sm font-medium">
+              <label className="min-w-0 text-sm font-medium">
                 Received date
-                <input type="date" value={reviewForm.received_at} onChange={(event) => setReviewForm((current) => ({ ...current, received_at: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm outline-none" />
+                <input type="date" value={reviewForm.received_at} onChange={(event) => changeReview((current) => ({ ...current, received_at: event.target.value }))} className="mt-2 h-11 w-full min-w-0 rounded-xl border px-3 text-sm outline-none" />
               </label>
-              <label className="text-sm font-medium sm:col-span-2">
+              <label className="min-w-0 text-sm font-medium sm:col-span-2">
                 Review
-                <textarea value={reviewForm.review_text} maxLength={10000} onChange={(event) => setReviewForm((current) => ({ ...current, review_text: event.target.value }))} className="mt-2 min-h-32 w-full rounded-xl border p-3 text-sm outline-none focus:border-neutral-400" placeholder="What did the client say about the project?" />
+                <textarea value={reviewForm.review_text} maxLength={10000} onChange={(event) => changeReview((current) => ({ ...current, review_text: event.target.value }))} className="mt-2 min-h-32 w-full rounded-xl border p-3 text-sm outline-none focus:border-neutral-400" placeholder="What did the client say about the project?" />
               </label>
-              <label className="text-sm font-medium sm:col-span-2">
+              <label className="min-w-0 text-sm font-medium sm:col-span-2">
                 Internal notes
-                <textarea value={reviewForm.notes} maxLength={5000} onChange={(event) => setReviewForm((current) => ({ ...current, notes: event.target.value }))} className="mt-2 min-h-24 w-full rounded-xl border p-3 text-sm outline-none focus:border-neutral-400" placeholder="Optional internal context" />
+                <textarea value={reviewForm.notes} maxLength={5000} onChange={(event) => changeReview((current) => ({ ...current, notes: event.target.value }))} className="mt-2 min-h-24 w-full rounded-xl border p-3 text-sm outline-none focus:border-neutral-400" placeholder="Optional internal context" />
               </label>
             </div>
-            <div className="mt-5 flex justify-end gap-2 border-t pt-5">
-              <button type="button" disabled={reviewSaving} onClick={() => setReviewEditing(false)} className="h-10 rounded-xl border px-4 text-sm font-semibold disabled:opacity-50">Cancel</button>
-              <button type="submit" disabled={reviewSaving || (!reviewForm.rating && !reviewForm.review_text.trim())} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">
+            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t pt-5">
+              <button type="button" disabled={reviewSaving} onClick={cancelReview} className="min-h-11 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50">Cancel</button>
+              <button type="submit" disabled={reviewSaving || (!reviewForm.rating && !reviewForm.review_text.trim())} className="inline-flex min-h-11 max-w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 py-2 text-center text-sm font-semibold whitespace-normal text-white disabled:opacity-50">
                 {reviewSaving ? <Loader2 className="size-4 animate-spin" /> : null}
                 {reviewSaving ? "Saving…" : "Save review"}
               </button>
             </div>
+            </fieldset>
           </form>
         ) : review ? (
           <div className="mt-5 rounded-2xl border bg-neutral-50 p-5">
@@ -597,6 +663,7 @@ export function ProjectReviewTips({
           <>
             {completed && feedback.can_record_tip ? (
               <form onSubmit={reviewTip} className="mt-5 rounded-2xl border bg-neutral-50 p-4 sm:p-5">
+                <fieldset disabled={reviewSaving || tipOperation.locked} className="min-w-0">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold">Record tip or additional income</p>
@@ -604,19 +671,19 @@ export function ProjectReviewTips({
                   </div>
                   {optionsLoading ? <Loader2 className="size-4 animate-spin text-neutral-400" /> : null}
                 </div>
-                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  <label className="text-sm font-medium">
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <label className="min-w-0 text-sm font-medium">
                     Date
-                    <input type="date" value={tipForm.entry_date} onChange={(event) => setTipForm((current) => ({ ...current, entry_date: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" required />
+                    <input type="date" value={tipForm.entry_date} onChange={(event) => changeTip((current) => ({ ...current, entry_date: event.target.value }))} className="mt-2 h-11 w-full min-w-0 rounded-xl border bg-white px-3 text-sm outline-none" required />
                   </label>
-                  <label className="text-sm font-medium">
+                  <label className="min-w-0 text-sm font-medium">
                     Gross amount ({projectCurrency})
-                    <input type="number" min="0.01" step="0.01" value={tipForm.amount} onChange={(event) => setTipForm((current) => ({ ...current, amount: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" placeholder="0.00" required />
+                    <input type="number" min="0.01" step="0.01" value={tipForm.amount} onChange={(event) => changeTip((current) => ({ ...current, amount: event.target.value }))} className="mt-2 h-11 w-full min-w-0 rounded-xl border bg-white px-3 text-sm outline-none" placeholder="0.00" required />
                   </label>
                   <SearchableSelect
                     label="Received into"
                     value={tipForm.financial_account_id}
-                    onValueChange={(value) => setTipForm((current) => ({ ...current, financial_account_id: value }))}
+                    onValueChange={(value) => changeTip((current) => ({ ...current, financial_account_id: value }))}
                     options={accountOptions}
                     placeholder={`Select ${projectCurrency} account`}
                     searchPlaceholder="Search financial account..."
@@ -627,7 +694,7 @@ export function ProjectReviewTips({
                   <SearchableSelect
                     label="Income category"
                     value={tipForm.category_ledger_account_id}
-                    onValueChange={(value) => setTipForm((current) => ({ ...current, category_ledger_account_id: value }))}
+                    onValueChange={(value) => changeTip((current) => ({ ...current, category_ledger_account_id: value }))}
                     options={incomeCategoryOptions}
                     placeholder="Select income category"
                     searchPlaceholder="Search Chart of Accounts..."
@@ -635,18 +702,18 @@ export function ProjectReviewTips({
                     clearable={false}
                     disabled={optionsLoading}
                   />
-                  <label className="text-sm font-medium">
+                  <label className="min-w-0 text-sm font-medium">
                     Fee treatment
                     <select
                       value={tipForm.fee_mode}
-                      onChange={(event) => setTipForm((current) => ({
+                      onChange={(event) => changeTip((current) => ({
                         ...current,
                         fee_mode: event.target.value as TipForm["fee_mode"],
                         fee_value: event.target.value === "none" ? "" : current.fee_value,
                         fee_expense_category_id: event.target.value === "none" ? "" : current.fee_expense_category_id,
                         fee_vendor_id: event.target.value === "none" ? "" : current.fee_vendor_id,
                       }))}
-                      className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none"
+                      className="mt-2 h-11 w-full min-w-0 rounded-xl border bg-white px-3 text-sm outline-none"
                     >
                       <option value="none">No fee</option>
                       <option value="percentage">Percentage</option>
@@ -655,7 +722,7 @@ export function ProjectReviewTips({
                   </label>
                   {feeEnabled ? (
                     <>
-                      <label className="text-sm font-medium">
+                      <label className="min-w-0 text-sm font-medium">
                         {tipForm.fee_mode === "percentage" ? "Fee percentage" : `Fee amount (${projectCurrency})`}
                         <div className="relative mt-2">
                           <input
@@ -664,8 +731,8 @@ export function ProjectReviewTips({
                             max={tipForm.fee_mode === "percentage" ? "100" : undefined}
                             step="0.01"
                             value={tipForm.fee_value}
-                            onChange={(event) => setTipForm((current) => ({ ...current, fee_value: event.target.value }))}
-                            className="h-11 w-full rounded-xl border bg-white px-3 pr-10 text-sm outline-none"
+                            onChange={(event) => changeTip((current) => ({ ...current, fee_value: event.target.value }))}
+                            className="h-11 w-full min-w-0 rounded-xl border bg-white px-3 pr-10 text-sm outline-none"
                             placeholder="0.00"
                             required
                           />
@@ -675,7 +742,7 @@ export function ProjectReviewTips({
                       <SearchableSelect
                         label="Expense category"
                         value={tipForm.fee_expense_category_id}
-                        onValueChange={(value) => setTipForm((current) => ({ ...current, fee_expense_category_id: value }))}
+                        onValueChange={(value) => changeTip((current) => ({ ...current, fee_expense_category_id: value }))}
                         options={expenseCategoryOptions}
                         placeholder="Select expense category"
                         searchPlaceholder="Search expense categories..."
@@ -686,7 +753,7 @@ export function ProjectReviewTips({
                       <SearchableSelect
                         label="Vendor (optional)"
                         value={tipForm.fee_vendor_id}
-                        onValueChange={(value) => setTipForm((current) => ({ ...current, fee_vendor_id: value }))}
+                        onValueChange={(value) => changeTip((current) => ({ ...current, fee_vendor_id: value }))}
                         options={vendorOptions}
                         placeholder="Select vendor"
                         searchPlaceholder="Search vendors..."
@@ -694,17 +761,17 @@ export function ProjectReviewTips({
                       />
                     </>
                   ) : null}
-                  <label className="text-sm font-medium">
+                  <label className="min-w-0 text-sm font-medium">
                     Reference
-                    <input value={tipForm.reference} maxLength={180} onChange={(event) => setTipForm((current) => ({ ...current, reference: event.target.value }))} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none" placeholder="Marketplace / bank / transaction reference" />
+                    <input value={tipForm.reference} maxLength={180} onChange={(event) => changeTip((current) => ({ ...current, reference: event.target.value }))} className="mt-2 h-11 w-full min-w-0 rounded-xl border bg-white px-3 text-sm outline-none" placeholder="Marketplace / bank / transaction reference" />
                   </label>
-                  <label className="text-sm font-medium md:col-span-2 xl:col-span-3">
+                  <label className="min-w-0 text-sm font-medium md:col-span-2 xl:col-span-3">
                     Notes
-                    <textarea value={tipForm.notes} onChange={(event) => setTipForm((current) => ({ ...current, notes: event.target.value }))} className="mt-2 min-h-20 w-full rounded-xl border bg-white p-3 text-sm outline-none" placeholder="Optional context about this income or fee" />
+                    <textarea value={tipForm.notes} onChange={(event) => changeTip((current) => ({ ...current, notes: event.target.value }))} className="mt-2 min-h-20 w-full rounded-xl border bg-white p-3 text-sm outline-none" placeholder="Optional context about this income or fee" />
                   </label>
                 </div>
 
-                <div className="mt-4 grid gap-2 rounded-xl border bg-white p-4 text-sm sm:grid-cols-3">
+                <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl border bg-white p-4 text-sm sm:grid-cols-3">
                   <div>
                     <p className="text-xs text-neutral-400">Gross income</p>
                     <p className="mt-1 font-semibold tabular-nums">{money(grossAmount || 0, projectCurrency)}</p>
@@ -726,15 +793,30 @@ export function ProjectReviewTips({
                   <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">No active expense category is available. Add or activate a category in the Expenses section first.</p>
                 ) : null}
                 <div className="mt-5 flex justify-end">
-                  <button type="submit" disabled={!validTip || tipSaving || optionsLoading} className="inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">
+                  <button ref={tipReviewButtonRef} type="submit" disabled={!validTip || tipSaving || optionsLoading} className="inline-flex min-h-11 max-w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 py-2 text-center text-sm font-semibold whitespace-normal text-white disabled:opacity-50">
                     <Plus className="size-4" />
                     Review income & fee
                   </button>
                 </div>
+                </fieldset>
               </form>
             ) : completed ? (
               <div className="mt-5 rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">Finance Manage permission is required to record new project income.</div>
             ) : null}
+
+            {tipOperation.message ? <section role="status" className="mt-5 space-y-3 rounded-xl border bg-neutral-50 p-4 text-sm">
+              <p>{tipOperation.message}</p>
+              {tipOperation.phase === "unknown" || tipOperation.phase === "acknowledged" ? <>
+                <p className="text-xs text-neutral-600">This tab-only acknowledgment and retained request are not restored after reload. History is current information, not proof of this attempt.</p>
+                <p className="break-all text-xs text-neutral-500">Request identity: {tipOperation.key}</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" disabled={reviewSaving || tipSaving} onClick={() => void loadFeedback()} className="rounded-lg border px-3 py-2">Refresh income history</button>
+                  {tipOperation.phase === "unknown" ? <button type="button" disabled={reviewSaving || tipSaving || !feedback?.can_record_tip} onClick={() => void tipOperation.submit(tipOperation.token, true)} className="rounded-lg border px-3 py-2">Retry the same retained request</button> : null}
+                  {tipOperation.incomeId ? <a className="rounded-lg border px-3 py-2" href={moneyInReceiptHref("income", tipOperation.incomeId)}>{tipOperation.verified ? "Open income record" : "Inspect returned income record"}</a> : null}
+                  {tipOperation.verified ? <button type="button" disabled={reviewSaving || tipSaving || !feedback?.can_record_tip} onClick={tipOperation.startAnother} className="rounded-lg border px-3 py-2">Record another income</button> : null}
+                </div>
+              </> : null}
+            </section> : null}
 
             <div className="mt-5 overflow-x-auto">
               <table className="w-full min-w-[820px] text-left text-sm">
@@ -768,17 +850,19 @@ export function ProjectReviewTips({
         )}
       </section>
 
+      {tipConfirmOpen ? <ProjectDialogFocus busy={tipSaving} onClose={() => tipOperation.cancel(tipOperation.token)} returnFocusRef={dialogReturnRef}>
       <FinancialConfirmationDialog
         open={tipConfirmOpen}
         title="Record project income & fee"
         description="This posts gross income and the optional fee together in one atomic accounting operation, linked to this project."
-        details={confirmationDetails}
+        details={tipOperation.details}
         confirmLabel="Post income & fee"
         loading={tipSaving}
         warning={`This action creates posted accounting records in ${projectCurrency}. It is not an invoice payment and cannot be edited from the project page.`}
-        onCancel={() => setTipConfirmOpen(false)}
+        onCancel={() => tipOperation.cancel(tipOperation.token)}
         onConfirm={postTip}
       />
+      </ProjectDialogFocus> : null}
     </div>
   );
 }

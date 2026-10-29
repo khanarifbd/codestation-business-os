@@ -60,19 +60,34 @@ def _currency_filter(value: str | None) -> str | None:
     return value.strip().upper() if value else None
 
 
+def _invoice_project_id():
+    """Prefer explicit attribution, otherwise use the order's unique project.
+
+    A correlated lookup avoids multiplying invoice/payment totals and also
+    handles invoices issued before their order was handed over to a project.
+    """
+    linked_project = (
+        select(Project.id)
+        .where(Project.organization_id == Invoice.organization_id, Project.order_id == Invoice.order_id)
+        .correlate(Invoice)
+        .scalar_subquery()
+    )
+    return func.coalesce(Invoice.project_id, linked_project)
+
+
 def _invoice_scope(query, org_id: str, start: date, end: date, currency: str | None, client_id: str | None, project_id: str | None):
     query = query.where(
         Invoice.organization_id == org_id,
         Invoice.issue_date >= start,
         Invoice.issue_date <= end,
-        Invoice.status != "cancelled",
+        Invoice.status.not_in(["draft", "cancelled"]),
     )
     if currency:
         query = query.where(Invoice.currency == currency)
     if client_id:
         query = query.where(Invoice.client_id == client_id)
     if project_id:
-        query = query.where(Invoice.project_id == project_id)
+        query = query.where(_invoice_project_id() == project_id)
     return query
 
 
@@ -180,7 +195,7 @@ def _financials(db: DbSession, org_id: str, start: date, end: date, currency: st
     if client_id:
         payment_query = payment_query.where(Invoice.client_id == client_id)
     if project_id:
-        payment_query = payment_query.where(Invoice.project_id == project_id)
+        payment_query = payment_query.where(_invoice_project_id() == project_id)
     for code, amount in db.execute(payment_query).all():
         data[code]["collected"] += _money(amount)
 
@@ -285,7 +300,7 @@ def _trend(db: DbSession, org_id: str, start: date, end: date, currency: str | N
     )
     if currency: payment_query = payment_query.where(Payment.invoice_currency == currency)
     if client_id: payment_query = payment_query.where(Invoice.client_id == client_id)
-    if project_id: payment_query = payment_query.where(Invoice.project_id == project_id)
+    if project_id: payment_query = payment_query.where(_invoice_project_id() == project_id)
     for month, code, amount in db.execute(payment_query).all():
         data[(month, code)]["collected"] += _money(amount)
 
@@ -392,8 +407,8 @@ def _project_rows(db: DbSession, org_id: str, start: date, end: date, currency: 
     if project_id: projects = projects.where(Project.id == project_id)
     rows = []
     for project, client_name in db.execute(projects.order_by(Project.created_at.desc()).limit(100)).all():
-        invoiced = db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org_id, Invoice.project_id == project.id, Invoice.issue_date >= start, Invoice.issue_date <= end, Invoice.status != "cancelled")) or 0
-        collected = db.scalar(select(func.coalesce(func.sum(Payment.invoice_amount), 0)).join(Invoice, Invoice.id == Payment.invoice_id).where(Payment.organization_id == org_id, Invoice.project_id == project.id, Payment.payment_date >= start, Payment.payment_date <= end, Payment.status == "confirmed")) or 0
+        invoiced = db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org_id, _invoice_project_id() == project.id, Invoice.issue_date >= start, Invoice.issue_date <= end, Invoice.status.not_in(["draft", "cancelled"]))) or 0
+        collected = db.scalar(select(func.coalesce(func.sum(Payment.invoice_amount), 0)).join(Invoice, Invoice.id == Payment.invoice_id).where(Payment.organization_id == org_id, _invoice_project_id() == project.id, Payment.payment_date >= start, Payment.payment_date <= end, Payment.status == "confirmed")) or 0
         direct = db.scalar(select(func.coalesce(func.sum(Expense.profitability_amount), 0)).join(ExpenseCategory, ExpenseCategory.id == Expense.category_id).where(Expense.organization_id == org_id, Expense.project_id == project.id, Expense.expense_date >= start, Expense.expense_date <= end, Expense.status == "posted", ExpenseCategory.cost_type == "direct")) or 0
         invoiced_d, collected_d, direct_d = _money(invoiced), _money(collected), _money(direct)
         profit = _money(invoiced_d - direct_d)
@@ -403,22 +418,10 @@ def _project_rows(db: DbSession, org_id: str, start: date, end: date, currency: 
 
 
 def _client_rows(db: DbSession, org_id: str, start: date, end: date, currency: str | None, client_id: str | None) -> list[ReportClientRow]:
-    clients = select(Client).where(Client.organization_id == org_id)
-    if client_id: clients = clients.where(Client.id == client_id)
-    rows = []
-    for client in db.scalars(clients.order_by(Client.display_name).limit(100)).all():
-        currencies = [currency] if currency else list(db.scalars(select(Invoice.currency).where(Invoice.organization_id == org_id, Invoice.client_id == client.id).distinct()).all())
-        if not currencies and client.currency: currencies = [client.currency]
-        for code in currencies:
-            invoiced = db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org_id, Invoice.client_id == client.id, Invoice.currency == code, Invoice.issue_date >= start, Invoice.issue_date <= end, Invoice.status != "cancelled")) or 0
-            collected = db.scalar(select(func.coalesce(func.sum(Payment.invoice_amount), 0)).join(Invoice, Invoice.id == Payment.invoice_id).where(Payment.organization_id == org_id, Invoice.client_id == client.id, Payment.invoice_currency == code, Payment.payment_date >= start, Payment.payment_date <= end, Payment.status == "confirmed")) or 0
-            direct = db.scalar(select(func.coalesce(func.sum(Expense.profitability_amount), 0)).join(ExpenseCategory, ExpenseCategory.id == Expense.category_id).where(Expense.organization_id == org_id, Expense.client_id == client.id, Expense.profitability_currency == code, Expense.expense_date >= start, Expense.expense_date <= end, Expense.status == "posted", ExpenseCategory.cost_type == "direct")) or 0
-            invoiced_d, collected_d, direct_d = _money(invoiced), _money(collected), _money(direct)
-            if invoiced_d == 0 and collected_d == 0 and direct_d == 0: continue
-            profit = _money(invoiced_d - direct_d)
-            margin = _money((profit / invoiced_d) * 100) if invoiced_d > 0 else None
-            rows.append(ReportClientRow(client_id=client.id, client_name=client.display_name, currency=code, invoiced_revenue=invoiced_d, collected_revenue=collected_d, direct_expenses=direct_d, estimated_profit=profit, margin_percent=margin))
-    return rows
+    # Import lazily: reports_fast shares the scope helpers from this module.
+    from app.api.v1.reports_fast import _client_rows_fast
+
+    return _client_rows_fast(db, org_id, start, end, currency, client_id)
 
 
 @router.get("/meta", response_model=ReportsMeta)

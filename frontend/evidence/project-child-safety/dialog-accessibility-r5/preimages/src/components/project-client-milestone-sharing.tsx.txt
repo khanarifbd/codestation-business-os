@@ -1,0 +1,192 @@
+"use client";
+
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Eye, EyeOff, Loader2, Share2, X } from "lucide-react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
+import { useProjectChildLifetime } from "@/hooks/use-project-child-lifetime";
+import { useDashboardSession } from "@/components/dashboard-session-context";
+import { requestWorkspaceExit } from "@/lib/workspace-navigation";
+import { projectSharingHref } from "@/lib/project-navigation";
+
+type ProjectDetail = { id: string; project_number: string; name: string; access: { can_manage_project: boolean; is_project_manager: boolean } };
+type MilestoneRow = { id: string; title: string; status: string; progress_percent: number; due_date: string | null; client_visible: boolean };
+type SharingOutcome = { id: string; desired: boolean; acknowledged: boolean; message: string };
+const record = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+function milestonesFrom(value: unknown): MilestoneRow[] | null {
+  if (!record(value) || !Array.isArray(value.milestones)) return null;
+  return value.milestones.every(row => record(row) && typeof row.id === "string" && typeof row.title === "string" && typeof row.status === "string" && typeof row.progress_percent === "number" && (row.due_date === null || typeof row.due_date === "string") && typeof row.client_visible === "boolean") ? value.milestones as MilestoneRow[] : null;
+}
+function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase()); }
+function projectIdFromPath(pathname: string) {
+  const match = pathname.match(/^\/dashboard\/projects\/([^/]+)$/);
+  if (!match) return null;
+  try { const value = decodeURIComponent(match[1]); return value && value !== "new" && !/[/?#]/.test(value) ? value : null; } catch { return null; }
+}
+export function ProjectClientMilestoneSharing() {
+  return <Suspense fallback={null}><ProjectClientMilestoneSharingRoute /></Suspense>;
+}
+function ProjectClientMilestoneSharingRoute() {
+  const pathname = usePathname(), query = useSearchParams();
+  const { tenant } = useDashboardSession();
+  const projectId = projectIdFromPath(pathname), organizationId = tenant?.organization.id;
+  if (!projectId || !organizationId) return null;
+  const search = query.toString(), open = query.getAll("sharing").length === 1 && query.get("sharing") === "milestones";
+  return <ProjectClientMilestoneSharingContent key={JSON.stringify([organizationId, tenant.membership_id, tenant.role_id, tenant.permissions, projectId, search])} projectId={projectId} open={open} entryHref={projectSharingHref(projectId, search, true)} returnHref={projectSharingHref(projectId, search, false)} />;
+}
+function ProjectClientMilestoneSharingContent({ projectId, open, entryHref, returnHref }: { projectId: string; open: boolean; entryHref: string; returnHref: string }) {
+  const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [milestones, setMilestones] = useState<MilestoneRow[]>([]);
+  const [loadingProject, setLoadingProject] = useState(true);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(false);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null), [message, setMessage] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<SharingOutcome | null>(null), [rechecked, setRechecked] = useState(false);
+  const lifecycle = useRef<AbortController | null>(null), workspaceLoading = useRef(false), saving = useRef(false);
+  const rows = useRef(milestones), retainedOutcome = useRef<SharingOutcome | null>(null);
+  const isCurrent = useProjectChildLifetime(projectId);
+  const navigation = useDocumentNavigationGuard(Boolean(outcome), { enabled: open || Boolean(savingId), isBusy: Boolean(savingId), pendingRef: saving, documentLabel: "project", discardMessage: outcome ? "This sharing change may already have been saved. Leaving loses the tab-only outcome; verify current visibility before making another change. Leave?" : undefined });
+  useLayoutEffect(() => { rows.current = milestones; }, [milestones]);
+  useLayoutEffect(() => {
+    const controller = new AbortController(); lifecycle.current = controller;
+    return () => { controller.abort(); if (lifecycle.current === controller) lifecycle.current = null; };
+  }, [projectId]);
+
+  useEffect(() => {
+    const controller = lifecycle.current;
+    let scheduled = true;
+    queueMicrotask(() => { if (!scheduled || !controller || !isCurrent()) return; void (async () => {
+      try {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { cache: "no-store", signal: controller.signal });
+        if (!isCurrent() || controller.signal.aborted) return;
+        const payload: unknown = await response.json().catch(() => null);
+        if (!isCurrent() || controller.signal.aborted) return;
+        if (!response.ok || !record(payload) || payload.id !== projectId || typeof payload.project_number !== "string" || typeof payload.name !== "string" || !record(payload.access) || !(payload.access.can_manage_project === true || payload.access.is_project_manager === true)) throw new Error("Client milestone sharing is unavailable for this project or access level.");
+        setProject(payload as ProjectDetail);
+      } catch (reason) { if (isCurrent() && !controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Project access could not be loaded."); }
+      finally { if (isCurrent() && !controller.signal.aborted) setLoadingProject(false); }
+    })(); });
+    return () => { scheduled = false; };
+  }, [projectId, isCurrent]);
+
+  const loadWorkspace = useCallback(async (force = false) => {
+    const controller = lifecycle.current;
+    if (!isCurrent() || !open || !project || !controller || controller.signal.aborted || saving.current || workspaceLoading.current || workspaceLoaded && !force) return;
+    const expectedOutcome = retainedOutcome.current;
+    workspaceLoading.current = true; setLoadingWorkspace(true); setError(null);
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/workspace`, { cache: "no-store", signal: controller.signal });
+      if (!isCurrent() || controller.signal.aborted || lifecycle.current !== controller) return;
+      const payload: unknown = await response.json().catch(() => null);
+      if (!isCurrent() || controller.signal.aborted || lifecycle.current !== controller) return;
+      const result = milestonesFrom(payload);
+      if (!response.ok || !result) throw new Error("Current milestone visibility could not be verified.");
+      setMilestones(result); setWorkspaceLoaded(true);
+      if (expectedOutcome && retainedOutcome.current === expectedOutcome) setRechecked(true);
+    } catch (reason) { if (isCurrent() && !controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Unable to load project milestones."); }
+    finally { if (isCurrent() && !controller.signal.aborted && lifecycle.current === controller) { workspaceLoading.current = false; setLoadingWorkspace(false); } }
+  }, [isCurrent, open, project, projectId, workspaceLoaded]);
+  useEffect(() => { let scheduled = true; queueMicrotask(() => { if (scheduled) void loadWorkspace(); }); return () => { scheduled = false; }; }, [loadWorkspace]);
+
+  function openSharing() {
+    if (!isCurrent() || !project || !requestWorkspaceExit()) return;
+    navigation.navigate(entryHref, { discard: true });
+  }
+  function closeSharing() {
+    if (!isCurrent() || saving.current || !requestWorkspaceExit()) return;
+    navigation.navigate(returnHref, { discard: true, replace: true });
+  }
+  function acceptCurrentVisibility() {
+    if (!isCurrent() || saving.current || workspaceLoading.current || !rechecked || !retainedOutcome.current || retainedOutcome.current !== outcome) return;
+    retainedOutcome.current = null; setOutcome(null); setRechecked(false); setMessage("Current visibility reviewed. Any new change needs its own explicit action.");
+  }
+  async function toggleVisibility(milestone: MilestoneRow) {
+    const controller = lifecycle.current, currentRow = rows.current.find(row => row.id === milestone.id);
+    if (!isCurrent() || !open || !project || !controller || controller.signal.aborted || saving.current || workspaceLoading.current || retainedOutcome.current || !currentRow || currentRow !== milestone) return;
+    saving.current = true;
+    const nextVisible = !milestone.client_visible;
+    if (nextVisible && !window.confirm(`Share milestone “${milestone.title}” with the client?`)) { saving.current = false; return; }
+    setSavingId(milestone.id); setError(null); setMessage(null); setRechecked(false);
+    let acknowledged = false;
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/milestones/${encodeURIComponent(milestone.id)}/client-visibility`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_visible: nextVisible }), signal: controller.signal,
+      });
+      if (!isCurrent() || controller.signal.aborted || lifecycle.current !== controller) return;
+      acknowledged = response.ok;
+      const payload: unknown = await response.json().catch(() => null);
+      if (!isCurrent() || controller.signal.aborted || lifecycle.current !== controller) return;
+      if (!response.ok || !record(payload) || payload.id !== milestone.id || payload.client_visible !== nextVisible) throw new Error(acknowledged ? "The change was acknowledged, but its returned visibility could not be verified." : "The change did not return a verified result; its outcome may be uncertain.");
+      setMilestones(previous => previous.map(item => item.id === milestone.id ? { ...item, client_visible: nextVisible } : item));
+      setMessage(nextVisible ? `Shared “${milestone.title}” with the client.` : `Hidden “${milestone.title}” from the client.`);
+    } catch (reason) {
+      if (!isCurrent() || controller.signal.aborted || lifecycle.current !== controller) return;
+      const value: SharingOutcome = { id: milestone.id, desired: nextVisible, acknowledged, message: reason instanceof Error ? reason.message : "The sharing outcome could not be verified." };
+      retainedOutcome.current = value; setOutcome(value);
+    } finally { if (isCurrent() && !controller.signal.aborted && lifecycle.current === controller) { saving.current = false; setSavingId(null); } }
+  }
+
+  if (loadingProject || !project) return open ? <div role="status" className="fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border bg-white p-5 shadow-lg"><p>{loadingProject ? "Checking project sharing access…" : error || "Client sharing is unavailable."}</p><button type="button" className="mt-3 rounded-lg border px-3 py-2" onClick={closeSharing}>Back to project</button></div> : null;
+  const sharedCount = milestones.filter((item) => item.client_visible).length;
+
+  return <>
+    {!open ? <button
+      type="button"
+      onClick={() => void openSharing()}
+      className="fixed bottom-20 right-4 z-30 inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-neutral-700 shadow-lg transition hover:border-neutral-300 hover:text-neutral-950 lg:bottom-6 lg:right-6"
+    >
+      <Share2 className="size-4" />
+      Client milestones
+      {workspaceLoaded ? <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] text-neutral-500">{sharedCount}/{milestones.length}</span> : null}
+    </button> : null}
+
+    {open ? <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSharing(); }}>
+      <section className="max-h-[88vh] w-full max-w-2xl overflow-hidden rounded-2xl border bg-white shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b px-5 py-4 sm:px-6">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-neutral-400">{project.project_number}</p>
+            <h2 className="mt-1 text-lg font-semibold">Client milestone sharing</h2>
+            <p className="mt-1 text-sm text-neutral-500">New milestones stay private by default. Only milestones explicitly shared here appear in the Client Portal.</p>
+          </div>
+          <button type="button" disabled={Boolean(savingId)} onClick={closeSharing} className="flex size-9 shrink-0 items-center justify-center rounded-xl border disabled:opacity-40" aria-label="Close client milestone sharing"><X className="size-4" /></button>
+        </header>
+
+        <div className="max-h-[68vh] overflow-y-auto p-5 sm:p-6">
+          {error ? <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+          {message ? <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
+
+          {outcome ? <div role="status" className="mb-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p>{outcome.message}</p>
+            <p className="text-xs">A current visibility read does not prove which request changed it. This tab-only outcome is not restored after reload.</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={Boolean(savingId) || loadingWorkspace} onClick={() => void loadWorkspace(true)} className="rounded-lg border bg-white px-3 py-2">Refresh current visibility</button>
+              {rechecked ? <button type="button" disabled={Boolean(savingId) || loadingWorkspace} onClick={acceptCurrentVisibility} className="rounded-lg border bg-white px-3 py-2">I reviewed current visibility</button> : null}
+            </div>
+          </div> : null}
+
+          {loadingWorkspace ? <div className="flex items-center justify-center gap-2 py-12 text-sm text-neutral-400"><Loader2 className="size-4 animate-spin" />Loading project milestones…</div> : milestones.length ? <div className="space-y-3">{milestones.map((milestone) => <article key={milestone.id} className="rounded-xl border p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-semibold">{milestone.title}</p>
+                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${milestone.client_visible ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-neutral-200 bg-neutral-50 text-neutral-500"}`}>{milestone.client_visible ? "Shared with client" : "Internal only"}</span>
+                </div>
+                <p className="mt-1 text-xs text-neutral-400">{pretty(milestone.status)} · {milestone.progress_percent}% · Due {milestone.due_date || "not set"}</p>
+              </div>
+              <button
+                type="button"
+                disabled={Boolean(savingId) || loadingWorkspace || Boolean(outcome)}
+                onClick={() => void toggleVisibility(milestone)}
+                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold disabled:opacity-50 ${milestone.client_visible ? "border-neutral-200 bg-white text-neutral-700" : "border-neutral-950 bg-neutral-950 text-white"}`}
+              >
+                {savingId === milestone.id ? <Loader2 className="size-3.5 animate-spin" /> : milestone.client_visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                {milestone.client_visible ? "Hide from client" : "Share with client"}
+              </button>
+            </div>
+          </article>)}</div> : workspaceLoaded ? <div className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-neutral-400">No project milestones exist yet. Create milestones in the Project workspace first.</div> : null}
+        </div>
+      </section>
+    </div> : null}
+  </>;
+}

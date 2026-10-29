@@ -9,6 +9,8 @@ from app.api.dependencies import DbSession, require_tenant_permission
 from app.models.expenses import ExpenseCategory, Vendor
 from app.models.finance import FinancialAccount
 from app.models.finance_controls import RecurringExpense
+from app.schemas.finance_auto_post import AutoPostRetry
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.activity_log import record_activity
 from app.services.functional_currency import organization_local_date
 from app.services.recurring_auto_post import auto_post_eligibility, post_due_recurring_expense
@@ -96,6 +98,7 @@ def set_recurring_auto_post(
         select(RecurringExpense)
         .where(RecurringExpense.id == recurring_id, RecurringExpense.organization_id == tenant.organization_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Recurring expense not found")
@@ -133,22 +136,38 @@ def retry_recurring_auto_post(
     request: Request,
     db: DbSession,
     tenant: FinanceManager,
+    payload: AutoPostRetry | None = None,
 ):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["timezone"])
     now = datetime.now(timezone.utc)
     today = organization_local_date(tenant.organization)
     item = db.scalar(
         select(RecurringExpense)
         .where(RecurringExpense.id == recurring_id, RecurringExpense.organization_id == tenant.organization_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if item is None:
         raise HTTPException(status_code=404, detail="Recurring expense not found")
+    if (
+        payload is not None
+        and payload.expected_next_due_date is not None
+        and payload.expected_next_due_date != item.next_due_date
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="The reviewed due occurrence changed. Read the current schedule and review it again before a new attempt.",
+        )
     if not item.auto_post or not item.is_active:
         raise HTTPException(status_code=409, detail="Enable Auto Post and resume this schedule before retrying")
     if item.next_due_date > today:
         raise HTTPException(status_code=409, detail=f"This schedule is not due until {item.next_due_date.isoformat()}")
+    attempted_due_date = item.next_due_date
+    business_completed = False
     try:
         post_due_recurring_expense(db, item, now=now)
+        business_completed = True
         record_activity(
             db,
             action="finance.recurring_expense.auto_post_retried",
@@ -162,19 +181,28 @@ def retry_recurring_auto_post(
             message=f"Auto Post retry succeeded for {item.name}",
             request=request,
         )
-        db.commit()
-        db.refresh(item)
-        return _read(db, item, today)
+        # Materialize/validate response before commit. No postcommit read can
+        # turn an acknowledged expense into a retry-safe failure response.
+        result = _read(db, item, today).model_copy(deep=True)
     except Exception as exc:
         db.rollback()
+        known_rejection = isinstance(exc, ValueError) or (
+            isinstance(exc, HTTPException) and exc.status_code in {400, 404, 409, 422}
+        )
+        if business_completed or not known_rejection:
+            raise
+        message = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
         failed = db.scalar(
             select(RecurringExpense)
             .where(RecurringExpense.id == recurring_id, RecurringExpense.organization_id == tenant.organization_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        if failed is not None:
+        # Another writer can advance after our rollback. Never label its newer
+        # occurrence as the one rejected by this attempt.
+        if failed is not None and failed.next_due_date == attempted_due_date:
             failed.auto_post_last_attempt_at = now
-            failed.auto_post_last_error = str(exc)[:2000]
+            failed.auto_post_last_error = message[:2000]
             record_activity(
                 db,
                 action="finance.recurring_expense.auto_post_retry_failed",
@@ -190,4 +218,16 @@ def retry_recurring_auto_post(
                 request=request,
             )
             db.commit()
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        else:
+            db.rollback()
+        raise HTTPException(status_code=409, detail=message) from exc
+    # A commit exception can mean a lost acknowledgement. Do not record a
+    # definitive failed posting, perform a readback, or retry this transaction.
+    try:
+        db.commit()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The Auto Post commit outcome could not be confirmed. Inspect saved expense records before another attempt.",
+        ) from exc
+    return result

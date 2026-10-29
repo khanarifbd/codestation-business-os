@@ -292,7 +292,10 @@ def create_manual_order(
     )
     identifier = db.scalar(
         select(OrganizationIdentifier)
-        .where(OrganizationIdentifier.organization_id == tenant.organization_id)
+        .where(
+            OrganizationIdentifier.organization_id == tenant.organization_id,
+            OrganizationIdentifier.identifier_type.in_(["tin", "bin", "vat", "gst", "ein", "abn", "tax"]),
+        )
         .order_by(OrganizationIdentifier.is_primary.desc(), OrganizationIdentifier.created_at.asc())
         .limit(1)
     )

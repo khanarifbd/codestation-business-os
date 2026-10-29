@@ -17,6 +17,7 @@ from app.schemas.accounting_assets import (
     AssetRead,
     AssetSummaryRead,
 )
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.accounting_posting import PostingLine, financial_ledger_account, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
 from app.tenancy.context import TenantContext
@@ -34,6 +35,19 @@ def money(value) -> Decimal:
 def account_balance(db: DbSession, account: FinancialAccount, org: str) -> Decimal:
     net = db.scalar(select(func.coalesce(func.sum(case((FinancialTransaction.direction == "credit", FinancialTransaction.amount), else_=-FinancialTransaction.amount)), 0)).where(FinancialTransaction.organization_id == org, FinancialTransaction.account_id == account.id))
     return money(account.opening_balance + Decimal(net or 0))
+
+
+def _lock_asset_purchase_account(db: DbSession, organization_id: str, account_id: str) -> FinancialAccount:
+    """Serialize cooperating cash writers before resolving the ledger or reading balance."""
+    account = db.scalar(
+        select(FinancialAccount)
+        .where(FinancialAccount.id == account_id, FinancialAccount.organization_id == organization_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if account is None or not account.is_active:
+        raise HTTPException(status_code=404, detail="Active financial account not found")
+    return account
 
 
 def asset_json(row: FixedAsset) -> dict:
@@ -100,11 +114,14 @@ def summary(db: DbSession, tenant: Viewer):
 
 @router.post("", response_model=AssetRead, status_code=201)
 def create_asset(payload:AssetCreate,request:Request,db:DbSession,tenant:Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["currency"])
     existing=db.scalar(select(FixedAsset.id).where(FixedAsset.organization_id==tenant.organization_id,func.lower(FixedAsset.asset_code)==payload.asset_code.strip().lower()))
     if existing: raise HTTPException(status_code=409,detail="Asset code already exists")
     currency=payload.currency.upper(); cost=money(payload.acquisition_cost); salvage=money(payload.salvage_value)
     account=None; cash_ledger=None
     if payload.record_mode=="purchase":
+        _lock_asset_purchase_account(db,tenant.organization_id,payload.purchase_account_id or "")
         account,cash_ledger=financial_ledger_account(db,tenant.organization_id,payload.purchase_account_id or "")
         if account.currency!=currency: raise HTTPException(status_code=400,detail="Purchase account currency must match asset currency")
         if account.account_type=="credit_card":
@@ -144,8 +161,12 @@ def create_asset(payload:AssetCreate,request:Request,db:DbSession,tenant:Manager
 
 @router.post("/depreciation", response_model=AssetDepreciationRunRead, status_code=201)
 def run_depreciation(payload:DepreciationRun,request:Request,db:DbSession,tenant:Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["currency"])
     period=date(payload.period_date.year,payload.period_date.month,1)
-    rows=db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id,FixedAsset.status=="active",FixedAsset.in_service_date<=payload.period_date).order_by(FixedAsset.asset_code)).all()
+    # All asset writers serialize on the parent asset. Do not lock existing
+    # depreciation rows here: reversal already locks depreciation -> asset.
+    rows=db.scalars(select(FixedAsset).where(FixedAsset.organization_id==tenant.organization_id,FixedAsset.status=="active",FixedAsset.in_service_date<=payload.period_date).order_by(FixedAsset.asset_code,FixedAsset.id).with_for_update().execution_options(populate_existing=True)).all()
     expense=system_account(db,tenant.organization_id,"depreciation_expense"); accumulated=system_account(db,tenant.organization_id,"accumulated_depreciation")
     posted=[]; skipped=[]
     for row in rows:

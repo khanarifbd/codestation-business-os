@@ -87,7 +87,7 @@ def post_verified_live_stripe_settlement(
         invoice = db.scalar(select(Invoice).where(
             Invoice.organization_id == organization_id,
             Invoice.id == attempt.invoice_id,
-        ).with_for_update())
+        ).with_for_update().execution_options(populate_existing=True))
         if invoice is None or invoice.status not in {"sent", "partially_paid"}:
             raise HTTPException(status_code=409, detail="Invoice is not currently payable")
         gross = money(Decimal(snapshot.gross_minor) / 100)

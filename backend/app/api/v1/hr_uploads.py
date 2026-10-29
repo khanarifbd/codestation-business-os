@@ -1,5 +1,6 @@
 import mimetypes
 import re
+from contextlib import suppress
 from datetime import date
 from pathlib import Path
 from typing import Annotated
@@ -52,18 +53,30 @@ def upload_document(
     except HTTPException as exc:
         record_activity(db, action="hr.document.upload_failed", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="employee_hr_document", outcome="failure", message=str(exc.detail), metadata={"employee_id": employee_id, "filename": file.filename}, request=request)
         db.commit(); raise
-    item = EmployeeHRDocument(
-        organization_id=tenant.organization_id, employee_id=employee_id, title=title.strip(), document_type=document_type.strip().lower(),
-        reference_number=(reference_number or "").strip() or None, issued_on=_date(issued_on), expires_on=_date(expires_on), notes=(notes or "").strip() or None,
-        storage_key=key, original_filename=file.filename or "document", content_type=file.content_type, size_bytes=size,
-    )
-    db.add(item)
     try:
+        item = EmployeeHRDocument(
+            organization_id=tenant.organization_id, employee_id=employee_id, title=title.strip(), document_type=document_type.strip().lower(),
+            reference_number=(reference_number or "").strip() or None, issued_on=_date(issued_on), expires_on=_date(expires_on), notes=(notes or "").strip() or None,
+            storage_key=key, original_filename=file.filename or "document", content_type=file.content_type, size_bytes=size,
+        )
+        db.add(item)
         db.flush(); item.file_url = f"/api/hr-documents/{item.id}/file"
         record_activity(db, action="hr.document.uploaded", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="employee_hr_document", entity_id=item.id, after={"employee_id": employee_id, "title": item.title, "document_type": item.document_type}, metadata={"filename": item.original_filename, "size_bytes": size}, request=request)
+    except Exception:
+        # No commit has been attempted. Cleanup must not hide the original error.
+        with suppress(Exception):
+            db.rollback()
+        with suppress(OSError):
+            storage.delete(key)
+        raise
+    try:
         db.commit()
     except Exception:
-        db.rollback(); storage.delete(key); raise
+        # A commit exception does not prove rollback. Retain the possibly
+        # committed object; the caller must verify the outcome, not re-upload.
+        with suppress(Exception):
+            db.rollback()
+        raise
     return {"id": item.id, "file_url": item.file_url}
 
 

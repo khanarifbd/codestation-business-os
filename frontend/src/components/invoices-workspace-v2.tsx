@@ -1,8 +1,15 @@
 "use client";
 
+import { formatMoneyExact, salesLinePreview, sumMoneyExact } from "@/lib/sales-money-preview";
+
+import { matchesInvoiceBalance } from "@/lib/invoice-balance";
+
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Plus, Search, Trash2, X } from "lucide-react";
+import { Plus, Search, X } from "lucide-react";
+import { AppPage, PageHeader } from "@/components/ui/app-page";
+import { InvoiceCounts, InvoiceField as Field, InvoiceLineEditor, InvoiceRegister } from "@/components/invoices/invoice-ui";
+import "@/components/invoices/invoice-design.css";
 
 import { SearchableSelect } from "@/components/searchable-select";
 import { getApiErrorMessage } from "@/lib/api-error";
@@ -40,9 +47,9 @@ type Line = { product_id: string | null; item_name: string; item_type: "service"
 
 const blank = (): Line => ({ product_id: null, item_name: "", item_type: "service", unit: "unit", description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
 const today = () => new Date().toISOString().slice(0, 10);
-function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function money(value: string | number, currency: string) { return formatMoneyExact(value, currency); }
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
-function lineTotal(line: Line, taxMode: string) { const subtotal = Number(line.quantity || 0) * Number(line.unit_price || 0); const discounted = subtotal * (1 - Number(line.discount_percent || 0) / 100); if (taxMode === "inclusive") return discounted; return discounted * (1 + Number(line.tax_rate || 0) / 100); }
+function lineTotal(line: Line, taxMode: string) { return salesLinePreview(line, taxMode)?.total ?? ""; }
 
 export function InvoicesWorkspaceV2() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -124,14 +131,13 @@ export function InvoicesWorkspaceV2() {
       const balanceDue = Number(invoice.balance_due || 0);
       const overdue = Boolean(invoice.due_date && invoice.due_date < currentDate && balanceDue > 0 && !["draft", "cancelled"].includes(invoice.status));
       if (dueFilter === "overdue" && !overdue) return false;
-      if (dueFilter === "outstanding" && balanceDue <= 0) return false;
-      if (dueFilter === "paid" && balanceDue > 0) return false;
+      if ((dueFilter === "outstanding" || dueFilter === "paid") && !matchesInvoiceBalance(invoice, dueFilter)) return false;
       return true;
     });
   }, [currencyFilter, dueFilter, invoices, query, statusFilter]);
   const overdueCount = useMemo(() => invoices.filter((invoice) => invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
   const outstandingCount = useMemo(() => invoices.filter((invoice) => Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
-  const draftTotal = useMemo(() => form.lines.reduce((sum, line) => sum + lineTotal(line, form.tax_calculation_mode), 0), [form.lines, form.tax_calculation_mode]);
+  const draftTotal = useMemo(() => sumMoneyExact(form.lines.map(line => lineTotal(line, form.tax_calculation_mode))), [form.lines, form.tax_calculation_mode]);
   const selectedDestination = destinations.find((item) => item.id === payment.accountId) ?? null;
   const invoiceCurrency = source === "client" ? form.currency : source === "order"
     ? meta.orders.find((item) => item.id === form.source_id)?.currency
@@ -184,18 +190,20 @@ export function InvoicesWorkspaceV2() {
     finally { setSaving(false); }
   }
 
-  return <main className="p-4 sm:p-6 lg:p-8"><div className="mx-auto max-w-7xl space-y-6">
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-neutral-400">Finance & Accounts</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Invoices</h1><p className="mt-2 max-w-3xl text-sm text-neutral-500">Create from a project/order or bill reusable catalog items and one-time custom work directly.</p></div><button onClick={() => { resetSource("project"); setPayment(blankPayment()); setShowForm(true); }} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white"><Plus className="size-4" />New invoice</button></div>
-    {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-    {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
+  return <AppPage className="invoice-page" width="normal"><div className="space-y-6">
+    <PageHeader className="invoice-heading" eyebrow="Finance & Accounts" title="Invoices" description="From first draft to final payment. Keep every invoice, balance and next step in view." actions={<button onClick={() => { resetSource("project"); setPayment(blankPayment()); setShowForm(true); }} className="invoice-primary"><Plus className="size-4" />New invoice</button>} />
+    {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+    {message ? <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
-    {showForm ? <section className="rounded-2xl border bg-white p-5">
-      <div className="flex items-start justify-between"><div><h2 className="text-lg font-semibold">Create invoice</h2><p className="mt-1 text-sm text-neutral-500">Project and order invoices copy their locked sales snapshot. Manual client invoices can use catalog or custom lines.</p></div><button onClick={() => setShowForm(false)} className="rounded-lg p-2 hover:bg-neutral-100"><X className="size-5" /></button></div>
-      <div className="mt-4 flex flex-wrap gap-2">{(["project", "order", "client"] as Source[]).map((item) => <button type="button" key={item} onClick={() => resetSource(item)} className={`rounded-xl px-4 py-2 text-sm font-medium ${source === item ? "bg-neutral-950 text-white" : "border"}`}>{item === "client" ? "Direct client invoice" : item === "project" ? "From project" : "From order"}</button>)}</div>
-      <form onSubmit={submit} className="mt-5 space-y-4">
+    <InvoiceCounts total={invoices.length} outstanding={outstandingCount} overdue={overdueCount} />
+
+    {showForm ? <section className="invoice-create" aria-labelledby="invoice-create-title">
+      <div className="invoice-create-heading"><div><p className="invoice-eyebrow">NEW DRAFT</p><h2 id="invoice-create-title">Create invoice</h2><p className="mt-1 text-sm text-neutral-500">Project and order invoices copy their locked sales snapshot. Manual client invoices can use catalog or custom lines.</p></div><button type="button" aria-label="Close create invoice" onClick={() => setShowForm(false)} className="invoice-close"><X className="size-5" /></button></div>
+      <div className="invoice-source-tabs" aria-label="Invoice source">{(["project", "order", "client"] as Source[]).map((item) => <button type="button" key={item} aria-pressed={source === item} onClick={() => resetSource(item)} className={`rounded-xl px-4 py-2 text-sm font-medium ${source === item ? "bg-neutral-950 text-white" : "border"}`}>{item === "client" ? "Direct client invoice" : item === "project" ? "From project" : "From order"}</button>)}</div>
+      <form onSubmit={submit} className="invoice-create-form">
         {source === "project" ? <><SearchableSelect label="Project" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={projectOptions} placeholder="Select project" searchPlaceholder="Search project..." />{!projectOptions.length ? <p className="text-xs text-neutral-500">No uninvoiced projects are available. A full active invoice can only be created once per project/order.</p> : null}</> : null}
         {source === "order" ? <><SearchableSelect label="Order" required clearable={false} value={form.source_id} onValueChange={(value) => setForm((v) => ({ ...v, source_id: value }))} options={orderOptions} placeholder="Select order" searchPlaceholder="Search order..." />{!orderOptions.length ? <p className="text-xs text-neutral-500">No uninvoiced orders are available.</p> : null}</> : null}
-        {source === "client" ? <><div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {source === "client" ? <><div className="invoice-recipient-grid">
           <SearchableSelect label="Client" required clearable={false} value={form.client_id} onValueChange={(value) => { const client = meta.clients.find((item) => item.id === value); setForm((v) => ({ ...v, client_id: value })); if (client?.currency) changeManualCurrency(client.currency); }} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
           <Field label="Subject"><input value={form.subject} onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))} className="h-11 w-full rounded-xl border px-3 text-sm" placeholder="Website development" /></Field>
           <SearchableSelect label="Currency" required clearable={false} value={form.currency} onValueChange={changeManualCurrency} options={CURRENCY_OPTIONS} placeholder="Select currency" searchPlaceholder="Search currency..." />
@@ -204,10 +212,10 @@ export function InvoicesWorkspaceV2() {
           <Field label="Tax calculation"><select value={form.tax_calculation_mode} onChange={(e) => setForm((v) => ({ ...v, tax_calculation_mode: e.target.value }))} className="h-11 w-full rounded-xl border bg-white px-3 text-sm"><option value="exclusive">Tax exclusive</option><option value="inclusive">Tax inclusive</option></select></Field>
         </div>
         <div><div className="mb-3 flex items-center justify-between"><div><h3 className="font-medium">Invoice lines</h3><p className="mt-1 text-xs text-neutral-400">Catalog is optional. One-time project/service billing does not create inventory items.</p></div><button type="button" onClick={() => setForm((v) => ({ ...v, lines: [...v.lines, blank()] }))} className="rounded-lg border px-3 py-2 text-sm font-medium">+ Add line</button></div>
-          <div className="space-y-3">{form.lines.map((line, index) => { const sourceValue = line.product_id ? `catalog:${line.product_id}` : line.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="rounded-2xl border p-4"><div className="grid gap-3 lg:grid-cols-[1.4fr_1.4fr_.7fr_.7fr]"><SearchableSelect label="Source" value={sourceValue} onValueChange={(value) => selectLineSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input required disabled={Boolean(line.product_id)} value={line.item_name} onChange={(e) => updateLine(index, { item_name: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input type="number" min="0.0001" step="any" value={line.quantity} onChange={(e) => updateLine(index, { quantity: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={Boolean(line.product_id)} value={line.unit} onChange={(e) => updateLine(index, { unit: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="mt-3 grid gap-3 lg:grid-cols-[2fr_.8fr_.7fr_.7fr_auto]"><Field label="Description"><input required value={line.description} onChange={(e) => updateLine(index, { description: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><input type="number" min="0" step="any" value={line.unit_price} onChange={(e) => updateLine(index, { unit_price: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Discount %"><input type="number" min="0" max="100" step="0.01" value={line.discount_percent} onChange={(e) => updateLine(index, { discount_percent: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input type="number" min="0" max="100" step="0.01" value={line.tax_rate} onChange={(e) => updateLine(index, { tax_rate: e.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="flex items-end gap-3"><div className="pb-2 text-right"><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{money(lineTotal(line, form.tax_calculation_mode), form.currency || "")}</p></div><button type="button" disabled={form.lines.length === 1} onClick={() => setForm((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== index) }))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" /></button></div></div></div>; })}</div>
-          <div className="mt-4 flex justify-end rounded-xl bg-neutral-50 p-4"><div className="text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Estimated total</p><p className="mt-1 text-lg font-semibold">{money(draftTotal, form.currency || "")}</p></div></div>
+          <div className="invoice-lines">{form.lines.map((line, index) => { const sourceValue = line.product_id ? `catalog:${line.product_id}` : line.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <InvoiceLineEditor key={index} line={line} index={index} sourceValue={sourceValue} sourceOptions={lineSourceOptions} total={money(lineTotal(line, form.tax_calculation_mode), form.currency || "")} canRemove={form.lines.length !== 1} onSourceChange={(value) => selectLineSource(index, value)} onChange={(patch) => updateLine(index, patch)} onRemove={() => setForm((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== index) }))} />; })}</div>
+          <div className="mt-4 flex justify-end rounded-xl bg-neutral-50 p-4"><div className="text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Estimated total</p><p className="mt-1 text-lg font-semibold">{money(draftTotal, form.currency || "")}</p>{draftTotal === "" ? <p role="status" className="mt-2 text-xs text-amber-800">Estimate unavailable. Check quantity, price, discount and tax.</p> : null}</div></div>
         </div><Field label="Client notes"><textarea value={form.notes} onChange={(e) => setForm((v) => ({ ...v, notes: e.target.value }))} className="min-h-24 w-full rounded-xl border p-3 text-sm" /></Field></> : null}
-        <section className="space-y-4 rounded-2xl border bg-neutral-50/50 p-4 sm:p-5">
+        <section className="invoice-payment-instructions space-y-4">
           <div><h3 className="font-semibold">Payment instructions</h3><p className="mt-1 text-xs text-neutral-500">Set the payment method, destination and link now. These details are saved with the draft and locked when it is sent.</p></div>
           {destinationsError ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{destinationsError} You can still enter a custom payment link.</p> : null}
           <div className="grid gap-4 md:grid-cols-2">
@@ -219,22 +227,21 @@ export function InvoicesWorkspaceV2() {
           {payment.method === "stripe" && selectedDestination && !selectedDestination.gateway_connection_id ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">This Stripe financial account is not linked to a connected Stripe Gateway. You can create the draft, but automatic Stripe Checkout will be unavailable until you open <Link href={`/dashboard/accounting/accounts/${selectedDestination.id}`} className="font-semibold underline">this Financial Account</Link> and choose <strong>Edit account & gateway</strong>.</p> : null}
           {selectedDestination && invoiceCurrency && selectedDestination.currency !== invoiceCurrency ? <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Invoice currency is <strong>{invoiceCurrency}</strong>, while the payment destination is <strong>{selectedDestination.currency}</strong>. Enter the actual exchange rate when recording a payment; no conversion is assumed here.</p> : null}
         </section>
-        <div className="flex justify-end"><button disabled={saving || ((source === "project" || source === "order") && !form.source_id)} className="rounded-xl bg-neutral-950 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50">{saving ? "Creating…" : "Create draft invoice"}</button></div>
+        <div className="invoice-create-footer"><p>Created as a draft. Review before sending.</p><button disabled={saving || ((source === "project" || source === "order") && !form.source_id)} className="invoice-primary">{saving ? "Creating…" : "Create draft invoice"}</button></div>
       </form>
     </section> : null}
 
-    <section className="overflow-hidden rounded-2xl border bg-white">
-      <div className="border-b p-5"><div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><h2 className="font-semibold">Invoice list</h2><p className="mt-1 text-sm text-neutral-500">Search and filter invoices. Open an invoice from its number to view actions and payment details.</p></div><div className="flex flex-wrap gap-2 text-xs text-neutral-500"><span className="rounded-full bg-neutral-100 px-3 py-1.5">{invoices.length} total</span><span className="rounded-full bg-amber-50 px-3 py-1.5 text-amber-700">{outstandingCount} outstanding</span><span className="rounded-full bg-red-50 px-3 py-1.5 text-red-700">{overdueCount} overdue</span></div></div></div>
-      <div className="border-b bg-neutral-50/60 p-4"><div className="grid gap-3 lg:grid-cols-[minmax(260px,1.6fr)_repeat(3,minmax(150px,0.7fr))_auto]">
-        <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search invoice, client, subject..." className="h-11 w-full rounded-xl border bg-white pl-10 pr-3 text-sm outline-none focus:border-neutral-500"/></label>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All statuses</option>{statusOptions.filter((status) => status !== "all").map((status) => <option key={status} value={status}>{pretty(status)}</option>)}</select>
-        <select value={currencyFilter} onChange={(event) => setCurrencyFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All currencies</option>{currencyOptions.filter((currency) => currency !== "all").map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
-        <select value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All balances</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select>
+    <section className="invoice-list-surface" aria-labelledby="invoice-register-title">
+      <div className="invoice-register-heading"><div><h2 id="invoice-register-title">Invoice register</h2><p>Open an invoice to review its details, actions and payment history.</p></div><span>Balances stay in their original currency</span></div>
+      <div className="invoice-filters"><div className="invoice-filter-grid">
+        <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"/><input aria-label="Search invoices" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search invoice, client, subject..." className="h-11 w-full rounded-xl border bg-white pl-10 pr-3 text-sm outline-none focus:border-neutral-500"/></label>
+        <select aria-label="Invoice status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All statuses</option>{statusOptions.filter((status) => status !== "all").map((status) => <option key={status} value={status}>{pretty(status)}</option>)}</select>
+        <select aria-label="Invoice currency" value={currencyFilter} onChange={(event) => setCurrencyFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All currencies</option>{currencyOptions.filter((currency) => currency !== "all").map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
+        <select aria-label="Invoice balance" value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All balances</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select>
         <button type="button" onClick={clearFilters} disabled={!query && statusFilter === "all" && currencyFilter === "all" && dueFilter === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button>
       </div><p className="mt-3 text-xs text-neutral-400">Showing {filteredInvoices.length} of {invoices.length} invoices</p></div>
-      <div className="overflow-x-auto"><table className="min-w-[760px] w-full text-sm"><thead><tr className="border-b text-left text-xs uppercase tracking-wide text-neutral-400"><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Issue / Due</th><th className="px-4 py-3">Total</th><th className="px-4 py-3">Paid</th><th className="px-4 py-3">Due</th></tr></thead><tbody>{filteredInvoices.map((invoice) => <tr key={invoice.id} className="border-b last:border-0 hover:bg-neutral-50/60"><td className="px-4 py-3"><Link href={`/dashboard/accounting/invoices/${invoice.id}`} className="font-semibold text-neutral-950 hover:underline">{invoice.invoice_number}</Link><p className="text-xs text-neutral-400">{invoice.subject || "No subject"}</p></td><td className="px-4 py-3">{invoice.client_name}</td><td className="px-4 py-3 capitalize">{invoice.display_status.replaceAll("_", " ")}</td><td className="px-4 py-3"><p>{invoice.issue_date}</p><p className={`text-xs ${invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 ? "font-medium text-red-600" : "text-neutral-400"}`}>Due {invoice.due_date || "—"}</p></td><td className="px-4 py-3">{money(invoice.total, invoice.currency)}</td><td className="px-4 py-3">{money(invoice.amount_paid, invoice.currency)}</td><td className="px-4 py-3 font-semibold">{money(invoice.balance_due, invoice.currency)}</td></tr>)}</tbody></table>{!loading && !filteredInvoices.length ? <div className="py-12 text-center"><FileText className="mx-auto size-8 text-neutral-300" /><p className="mt-3 font-medium">No matching invoices</p><p className="mt-1 text-sm text-neutral-400">Try clearing or changing the current filters.</p></div> : null}</div>
+      <InvoiceRegister invoices={filteredInvoices} loading={loading} currentDate={today()} formatMoney={money} />
     </section>
-  </div></main>;
+  </div></AppPage>;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="text-sm"><span className="mb-1.5 block font-medium text-neutral-600">{label}</span>{children}</label>; }

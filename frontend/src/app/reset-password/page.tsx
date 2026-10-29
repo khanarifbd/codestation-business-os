@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { Loader2, KeyRound } from "lucide-react";
+import { ArrowRight, Loader2, KeyRound } from "lucide-react";
 
 import { AuthFrame } from "@/components/auth/auth-frame";
+import { AuthNotice, AuthBackLink } from "@/components/auth/auth-notice";
 import { PasswordField } from "@/components/auth/password-field";
 
 export default function ResetPasswordPage() {
@@ -46,14 +47,16 @@ export default function ResetPasswordPage() {
     }
   }
 
-  return <AuthFrame eyebrow="Account recovery" title="Choose a new password" description="A successful reset revokes every older Business OS session for this user." asideTitle="One reset, old sessions revoked." asideDescription="The reset link is time-limited and becomes unusable after the password changes.">
-    <form onSubmit={submit} className="space-y-5">
-      <PasswordField name="password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" />
-      <PasswordField name="confirm_password" label="Confirm new password" autoComplete="new-password" placeholder="Repeat the new password" />
-      {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-      <button type="submit" disabled={loading || !token} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-60">{loading ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" />}{loading ? "Resetting…" : "Reset password"}</button>
+  return <AuthFrame variant="reset" eyebrow="ACCOUNT RECOVERY" title="A new password. A fresh start." description="Choose a password with at least 8 characters. After a successful reset, sign in again on your devices." asideTitle="A fresh start." asideDescription="Choose a new password for your account.">
+    {!token ? <div className="auth-top-notice"><AuthNotice kind="info"><strong>A reset link is needed</strong><p>Open the link from your recovery email, or request a new one below.</p></AuthNotice></div> : null}
+    <form onSubmit={submit} className="login-form">
+      <div className="auth-password-field"><PasswordField name="password" label="New password" autoComplete="new-password" placeholder="At least 8 characters" /></div>
+      <div className="auth-password-field"><PasswordField name="confirm_password" label="Confirm new password" autoComplete="new-password" placeholder="Repeat the new password" /></div>
+      {error ? <AuthNotice kind="error">{error}</AuthNotice> : null}
+      <button type="submit" disabled={loading || !token} className="login-submit">{loading ? <Loader2 className="size-4 animate-spin" /> : <KeyRound className="size-4" aria-hidden="true" />}{loading ? "Resetting…" : "Reset password"}</button>
     </form>
-    {!token ? <p className="mt-5 text-center text-sm text-neutral-500"><Link href="/forgot-password" className="font-semibold text-neutral-950 underline-offset-4 hover:underline">Request a new reset link</Link></p> : null}
-    <p className="mt-7 text-center text-sm text-neutral-500"><Link href="/login" className="font-semibold text-neutral-950 underline-offset-4 hover:underline">Back to sign in</Link></p>
+    <p className="auth-field-hint auth-session-note">A successful reset signs out your older Business OS sessions.</p>
+    {!token ? <p className="auth-recovery-link"><Link href="/forgot-password">Request a new reset link <ArrowRight size={13} aria-hidden="true" /></Link></p> : null}
+    <AuthBackLink />
   </AuthFrame>;
 }

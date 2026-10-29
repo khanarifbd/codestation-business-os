@@ -1,0 +1,14 @@
+const account={id:'account-a',name:'Synthetic asset bank',currency:'USD',account_type:'bank',balance:'5000.00'};
+const meta={accounts:[account],base_currency:'USD'};
+const asset={id:'asset-a',asset_code:'SYN-ASSET',name:'Synthetic equipment',category:'equipment',currency:'USD',acquisition_cost:'1200.00',salvage_value:'120.00',accumulated_depreciation:'180.00',opening_accumulated_depreciation:'0.00',record_mode:'purchase',opening_balance_date:null,book_value:'1020.00',depreciable_amount:'1080.00',acquisition_date:'2026-01-01',in_service_date:'2026-01-15',useful_life_months:36,depreciation_method:'straight_line',purchase_account_id:account.id,reference:'SYN-REF',status:'active',notes:'Synthetic asset'};
+const createdAsset={...asset,accumulated_depreciation:'0.00',book_value:'1200.00'};
+const form={asset_code:asset.asset_code,name:asset.name,category:asset.category,currency:asset.currency,acquisition_cost:'1200',salvage_value:'120',acquisition_date:asset.acquisition_date,in_service_date:asset.in_service_date,useful_life_months:'36',record_mode:'purchase',purchase_account_id:account.id,opening_accumulated_depreciation:'0',opening_balance_date:'',reference:asset.reference,notes:asset.notes};
+const openingForm={...form,record_mode:'opening',opening_accumulated_depreciation:'300',opening_balance_date:'2026-10-01'};
+const openingAsset={...asset,record_mode:'opening',opening_accumulated_depreciation:'300.00',accumulated_depreciation:'300.00',book_value:'900.00',opening_balance_date:'2026-10-01',purchase_account_id:null};
+const entry={id:'depreciation-a',period_date:'2026-09-01',amount:'30.00',status:'posted',journal_entry_id:'journal-a'};
+const history={asset,entries:[entry]};
+const summary={rows:[{currency:'USD',cost:'1200.00',accumulated_depreciation:'180.00',book_value:'1020.00'}],active_assets:1};
+const run={period_date:'2026-10-01',posting_date:'2026-10-26',posted:[{asset_id:asset.id,asset_code:asset.asset_code,amount:'30.00',currency:'USD',book_value:'990.00'}],skipped:[{asset_id:'asset-b',reason:'before_or_at_opening_balance'}]};
+module.exports={account,meta,asset,createdAsset,form,openingForm,openingAsset,entry,history,summary,run};
+Object.assign(module.exports,require('./reconciliation-fixtures.cjs'),{account});
+module.exports.confirmation={title:'Synthetic asset posting',description:'Controlled fixture only',warning:'No real accounting action',details:[{label:'Acquisition cost',value:'USD 1200.00',emphasis:true}],confirmLabel:'Confirm fixture'};

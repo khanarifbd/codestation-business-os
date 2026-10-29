@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ class PayableBillCreate(BaseModel):
 
 class PayableBillRead(BaseModel):
     id: str
+    purchase_receipt_id: str | None = None
     bill_number: str
     supplier_name: str
     bill_date: date
@@ -64,4 +66,5 @@ class PayablePaymentRead(BaseModel):
     amount: Decimal
     reference: str | None
     notes: str | None
+    status: Literal["posted", "reversed"] = "posted"
     created_at: datetime

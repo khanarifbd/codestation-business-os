@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -55,11 +55,20 @@ class PayrollPeriod(TenantOwnedMixin, Base):
 class PayrollRun(TenantOwnedMixin, Base):
     __tablename__ = "payroll_runs"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "policy_version_id"], ["payroll_policy_versions.organization_id", "payroll_policy_versions.id"],
+            name="fk_payroll_run_tenant_policy", ondelete="RESTRICT",
+        ),
         Index("ix_payroll_runs_org_period_currency", "organization_id", "period_id", "currency"),
         Index("ix_payroll_runs_org_status_created", "organization_id", "status", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    policy_version_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    calculation_engine_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    calculation_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    calculation_input_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calculation_output_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     run_number: Mapped[str] = mapped_column(String(40), nullable=False)
     period_id: Mapped[str] = mapped_column(String(36), ForeignKey("payroll_periods.id", ondelete="RESTRICT"), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -81,6 +90,7 @@ class PayrollRun(TenantOwnedMixin, Base):
 class PayrollEntry(TenantOwnedMixin, Base):
     __tablename__ = "payroll_entries"
     __table_args__ = (
+        UniqueConstraint("organization_id", "id", name="uq_payroll_entries_org_id"),
         UniqueConstraint("organization_id", "run_id", "employee_id", name="uq_payroll_entries_org_run_employee"),
         Index("ix_payroll_entries_org_employee_created", "organization_id", "employee_id", "created_at"),
     )
@@ -88,6 +98,7 @@ class PayrollEntry(TenantOwnedMixin, Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
     run_id: Mapped[str] = mapped_column(String(36), ForeignKey("payroll_runs.id", ondelete="CASCADE"), nullable=False)
     employee_id: Mapped[str] = mapped_column(String(36), ForeignKey("employees.id", ondelete="RESTRICT"), nullable=False)
+    calculation_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
     salary_profile_id: Mapped[str] = mapped_column(String(36), ForeignKey("salary_profiles.id", ondelete="RESTRICT"), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     base_salary: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)

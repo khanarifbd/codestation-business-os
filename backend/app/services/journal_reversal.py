@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.models.accounting import JournalEntry, JournalLine
 from app.services.accounting_posting import ensure_open_period
+from app.services.accounting_period_gate import require_accounting_period_gate
 from app.services.functional_currency import (
     assert_current_functional_posting_period,
     current_functional_currency_period,
@@ -24,6 +25,7 @@ def reverse_source_journal(
     reversal_date: date,
     reason: str,
 ) -> JournalEntry | None:
+    require_accounting_period_gate(db, organization_id)
     original = db.scalar(
         select(JournalEntry).where(
             JournalEntry.organization_id == organization_id,

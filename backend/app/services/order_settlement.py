@@ -20,6 +20,10 @@ from app.schemas.order_settlements import (
     OrderSettlementRead,
     OrderSettlementState,
 )
+from app.services.accounting_period_gate import require_accounting_period_gate, ensure_accounting_period_open
+from app.services.financial_account_constraints import ensure_payment_receipt_account_supported
+from app.services.operational_posting import post_expense, post_invoice_payment
+from app.services.order_commercial import staged_billing_enabled
 from app.services.activity_log import record_activity
 from app.services.crm import next_sequence_code
 
@@ -176,6 +180,7 @@ def settlement_meta(
         .where(
             FinancialAccount.organization_id == organization_id,
             FinancialAccount.is_active.is_(True),
+            FinancialAccount.account_type != "credit_card",
             FinancialAccount.currency == order.currency,
         )
         .order_by(FinancialAccount.name.asc())
@@ -224,6 +229,7 @@ def settle_order(
     payload: OrderSettlementCreate,
     request: Request,
 ) -> OrderSettlementRead:
+    require_accounting_period_gate(db, organization_id)
     order = db.scalar(
         select(Order)
         .where(Order.id == order_id, Order.organization_id == organization_id)
@@ -231,6 +237,13 @@ def settle_order(
     )
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
+    # The route's early check may precede a wait for this source row. Decide
+    # again while holding the same Order lock as billing-schedule mutations.
+    if staged_billing_enabled(db, organization_id, order.id):
+        raise HTTPException(
+            status_code=409,
+            detail="This order uses staged billing. Use its Billing Schedule and milestone invoices instead of legacy one-step settlement.",
+        )
     if order.status != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -251,9 +264,11 @@ def settle_order(
             FinancialAccount.organization_id == organization_id,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if account is None or not account.is_active:
         raise HTTPException(status_code=404, detail="Active settlement account not found")
+    ensure_payment_receipt_account_supported(account.account_type)
     if account.currency != order.currency:
         raise HTTPException(
             status_code=400,
@@ -293,6 +308,7 @@ def settle_order(
             detail="Settlement date cannot be before the order date",
         )
 
+    ensure_accounting_period_open(db, organization_id, settlement_date)
     current_balance = _account_balance(db, account)
     if expense_amount > current_balance + gross_amount:
         raise HTTPException(
@@ -472,6 +488,12 @@ def settle_order(
         )
 
     db.flush()
+
+    # These helpers post only GL entries; the operational cash movements above
+    # remain the single receipt and optional fee. Payment also ensures issuance.
+    post_invoice_payment(db, organization_id=organization_id, user_id=user_id, payment=payment)
+    if expense is not None:
+        post_expense(db, organization_id=organization_id, user_id=user_id, expense=expense)
 
     record_activity(
         db,

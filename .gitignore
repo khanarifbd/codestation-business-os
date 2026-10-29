@@ -31,3 +31,6 @@ frontend/.next/
 # Local files
 storage/
 uploads/
+
+# Server-local backup archives (preserve files; never commit)
+/backups/

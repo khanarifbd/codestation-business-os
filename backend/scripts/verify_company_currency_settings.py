@@ -185,6 +185,9 @@ def main() -> None:
         else:
             raise AssertionError("accounting currency was directly relabeled after posted journal entries")
 
+        # This direct-call fixture bypasses the next HTTP request's tenant
+        # reads, which normally establish a fresh root after the rollback.
+        db.begin()
         switched = update_company_currency_settings(
             CompanyCurrencySettingsUpdate(
                 accounting_currency="USD",

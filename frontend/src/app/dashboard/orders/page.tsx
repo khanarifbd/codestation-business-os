@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, ClipboardCheck, Loader2, PlayCircle, Search, XCircle } from "lucide-react";
+import { ORDER_LIST_PATH, orderCreateHref, orderDocumentHref, safeOrderReturnHref } from "@/lib/order-navigation";
+import { CheckCircle2, ClipboardCheck, Loader2, PlayCircle, Plus, Search, ArrowUpRight, XCircle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RelationshipHeader, RelationshipNotice, RelationshipPage } from "@/components/relationships/relationship-ui";
+import "@/components/commercial/orders-register.css";
 
 type Summary = { total: number; confirmed: number; in_progress: number; completed: number; cancelled: number };
 type CurrencyValue = { currency: string; amount: string | number };
@@ -58,12 +61,33 @@ export default function OrdersPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [searchDraft, setSearchDraft] = useState("");
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
+  const cleanListHref = safeOrderReturnHref(`${ORDER_LIST_PATH}?${searchParams}`);
+  const listParams = new URLSearchParams(cleanListHref.split("?")[1] || "");
+  const search = listParams.get("search") || "";
+  const statusFilter = listParams.get("status") || "";
+  const pages = Number(listParams.get("pages") || "1");
+  const requestedFocus = listParams.get("focus");
+  const [reloadKey, setReloadKey] = useState(0);
   const [quotation, setQuotation] = useState<QuotationMini | null>(null);
   const [quotationOrderLink, setQuotationOrderLink] = useState<OrderLink | null>(null);
-  const skipFirstFilterRefresh = useRef(true);
+  const listRequest = useRef(0);
+  const conversionPending = useRef(false);
+  const pageCache = useRef<{ query: string; pages: OrderPage[] } | null>(null);
+
+  function updateBrowse(nextSearch: string, nextStatus: string, nextPages = 1) {
+    const params = new URLSearchParams();
+    if (nextSearch) params.set("search", nextSearch);
+    if (nextStatus) params.set("status", nextStatus);
+    if (nextPages > 1) params.set("pages", String(nextPages));
+    // Retain the existing quotation handoff while browsing its resulting order list.
+    if (quotationId) params.set("quotation_id", quotationId);
+    router.push(`${ORDER_LIST_PATH}${params.size ? `?${params}` : ""}`, { scroll: false });
+  }
+  function returnFor(id: string) {
+    const params = new URLSearchParams(cleanListHref.split("?")[1] || "");
+    params.set("focus", id);
+    return safeOrderReturnHref(`${ORDER_LIST_PATH}?${params}`);
+  }
 
   const api = useCallback(async (path: string, init?: RequestInit) => {
     const response = await fetch(`/api/sales${path}`, init);
@@ -93,47 +117,60 @@ export default function OrdersPage() {
     setValueSummary(valuePayload as ValueSummary);
   }, [api]);
 
-  const refreshList = useCallback(async (showLoader = false) => {
-    if (showLoader) setListLoading(true);
-    try {
-      const payload = await api(`/orders?${query}`) as OrderPage;
-      setRows(payload.items);
-      setNextCursor(payload.next_cursor);
-    } finally {
-      if (showLoader) setListLoading(false);
-    }
-  }, [api, query]);
+  // Summary belongs to all company orders, not the filtered register.
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    void Promise.all([api("/orders/summary", { signal: controller.signal }), api("/order-value-summary", { signal: controller.signal })])
+      .then(([counts, values]) => { if (active) { setSummary(counts as Summary); setValueSummary(values as ValueSummary); } })
+      .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "Unable to load order summary."); });
+    return () => { active = false; controller.abort(); };
+  }, [api]);
 
-  const bootstrap = useCallback(async () => {
-    setLoading(true);
+  // Cursor pages are cached only within this mounted register. The URL is the
+  // reproducible browse context; no customer data is persisted in the browser.
+  useEffect(() => {
+    const request = ++listRequest.current;
+    const controller = new AbortController();
+    let active = true;
+    const current = () => active && request === listRequest.current;
+    const previous = pageCache.current;
+    const cached = previous?.query === query ? [...previous.pages] : [];
+    const appending = cached.length > 0 && pages > cached.length;
+    if (!cached.length) { setRows([]); setNextCursor(null); }
+    setListLoading(!appending);
+    setLoadingMore(appending);
     setError(null);
-    try {
-      const [summaryPayload, valuePayload, listPayload] = await Promise.all([
-        api("/orders/summary"),
-        api("/order-value-summary"),
-        api(`/orders?${query}`),
-      ]);
-      setSummary(summaryPayload as Summary);
-      setValueSummary(valuePayload as ValueSummary);
-      const typed = listPayload as OrderPage;
-      setRows(typed.items);
-      setNextCursor(typed.next_cursor);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load orders.");
-    } finally {
-      setLoading(false);
-    }
-  }, [api, query]);
-
-  useEffect(() => { void bootstrap(); }, [bootstrap]);
+    void (async () => {
+      try {
+        while (cached.length < pages) {
+          const cursor = cached.length ? cached[cached.length - 1].next_cursor : null;
+          if (cached.length && !cursor) break;
+          const params = new URLSearchParams(query);
+          if (cursor) params.set("cursor", cursor);
+          const payload = await api(`/orders?${params}`, { signal: controller.signal }) as OrderPage;
+          if (!current()) return;
+          cached.push(payload);
+        }
+        if (!current()) return;
+        pageCache.current = { query, pages: cached };
+        const visible = cached.slice(0, pages);
+        setRows(visible.flatMap(page => page.items));
+        setNextCursor(visible.at(-1)?.next_cursor || null);
+      } catch (reason) {
+        if (current()) setError(reason instanceof Error ? reason.message : "Unable to load orders.");
+      } finally {
+        if (current()) { setLoading(false); setListLoading(false); setLoadingMore(false); }
+      }
+    })();
+    return () => { active = false; controller.abort(); };
+  }, [api, query, pages, reloadKey]);
 
   useEffect(() => {
-    if (skipFirstFilterRefresh.current) {
-      skipFirstFilterRefresh.current = false;
-      return;
+    if (!loading && !listLoading && requestedFocus) {
+      document.getElementById(`order-row-${requestedFocus}`)?.focus();
     }
-    void refreshList(true).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to filter orders."));
-  }, [query, refreshList]);
+  }, [loading, listLoading, requestedFocus, rows]);
 
   useEffect(() => {
     if (!quotationId) {
@@ -142,6 +179,8 @@ export default function OrdersPage() {
       return;
     }
     let active = true;
+    setQuotation(null);
+    setQuotationOrderLink(null);
     void Promise.all([
       api(`/quotations/${encodeURIComponent(quotationId)}`),
       api(`/quotations/${encodeURIComponent(quotationId)}/order-link`),
@@ -156,15 +195,16 @@ export default function OrdersPage() {
   }, [api, quotationId]);
 
   useEffect(() => {
-    if (requestedOrderId) router.replace(`/dashboard/orders/${encodeURIComponent(requestedOrderId)}`);
-  }, [requestedOrderId, router]);
+    if (requestedOrderId) router.replace(orderDocumentHref(requestedOrderId, "view", cleanListHref));
+  }, [requestedOrderId, router, cleanListHref]);
 
   async function convertQuotation() {
-    if (!quotationId || !quotation) return;
+    if (!quotationId || !quotation || quotation.id !== quotationId || conversionPending.current) return;
     if (quotation.status !== "accepted") {
       setError("Only accepted quotations can become orders.");
       return;
     }
+    conversionPending.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -172,67 +212,72 @@ export default function OrdersPage() {
       setMessage(`Order ${created.order_number} created from ${quotation.quotation_number}`);
       setQuotationOrderLink({ order_id: created.id, order_number: created.order_number, status: created.status });
       await refreshSummary();
-      router.push(`/dashboard/orders/${encodeURIComponent(created.id)}`);
+      router.push(orderDocumentHref(created.id, "view", cleanListHref));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create order.");
     } finally {
+      conversionPending.current = false;
       setSaving(false);
     }
   }
 
-  async function loadMore() {
-    if (!nextCursor) return;
-    setLoadingMore(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams(query);
-      params.set("cursor", nextCursor);
-      const payload = await api(`/orders?${params}`) as OrderPage;
-      setRows((current) => [...current, ...payload.items]);
-      setNextCursor(payload.next_cursor);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load more orders.");
-    } finally {
-      setLoadingMore(false);
-    }
+  function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    updateBrowse(search, statusFilter, pages + 1);
   }
 
   return (
-    <main className="min-h-screen bg-neutral-100 p-4 sm:p-8 lg:p-10">
-      <div className="mx-auto max-w-[1500px]">
-        <header className="pr-32 sm:pr-40"><p className="text-sm font-medium text-neutral-500">Sales execution</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Orders</h1><p className="mt-2 text-sm text-neutral-500">Accepted quotations become immutable commercial orders and move through delivery execution.</p></header>
+    <RelationshipPage className="orders-register-page">
+      <RelationshipHeader eyebrow="SALES / EXECUTION" title="Orders" description="From confirmed scope to completed work. Keep delivery and commercial context together." actions={<a href={orderCreateHref(cleanListHref)} className="relationship-primary"><Plus aria-hidden="true" />New order</a>} />
 
-        {quotation ? <section className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5 text-blue-950"><div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-semibold uppercase tracking-wide text-blue-500">Quotation handoff</p><h2 className="mt-1 font-semibold">{quotation.quotation_number} · {quotation.client_name_snapshot}</h2><p className="mt-1 text-sm text-blue-700">{money(quotation.total, quotation.currency)} · Status: {quotation.status}</p></div>{quotationOrderLink ? <Link href={`/dashboard/orders/${encodeURIComponent(quotationOrderLink.order_id)}`} className="inline-flex h-11 items-center justify-center rounded-xl bg-white px-4 text-sm font-semibold shadow-sm">Open {quotationOrderLink.order_number}</Link> : <button disabled={saving || quotation.status !== "accepted"} onClick={() => void convertQuotation()} className="h-11 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Creating..." : "Create Order"}</button>}</div></section> : null}
+      {quotation && quotation.id === quotationId ? <section className="order-quotation-handoff" aria-label="Quotation handoff"><div><p>Quotation handoff</p><h2>{quotation.quotation_number} · {quotation.client_name_snapshot}</h2><span>{money(quotation.total, quotation.currency)} · Status: {quotation.status}</span></div>{quotationOrderLink ? <Link href={orderDocumentHref(quotationOrderLink.order_id, "view", cleanListHref)} className="relationship-secondary">Open {quotationOrderLink.order_number}</Link> : <button disabled={saving || quotation.status !== "accepted"} onClick={() => void convertQuotation()} className="relationship-primary">{saving ? "Creating..." : "Create Order"}</button>}</section> : null}
 
-        <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-5">
-          <Stat label="Total" value={summary?.total ?? 0} values={valueSummary?.total ?? []} icon={ClipboardCheck} />
-          <Stat label="Confirmed" value={summary?.confirmed ?? 0} values={valueSummary?.confirmed ?? []} icon={ClipboardCheck} />
-          <Stat label="In progress" value={summary?.in_progress ?? 0} values={valueSummary?.in_progress ?? []} icon={PlayCircle} />
-          <Stat label="Completed" value={summary?.completed ?? 0} values={valueSummary?.completed ?? []} icon={CheckCircle2} />
-          <Stat label="Cancelled" value={summary?.cancelled ?? 0} values={valueSummary?.cancelled ?? []} icon={XCircle} />
+      <div className="orders-overview-desktop"><OrderSummary summary={summary} valueSummary={valueSummary} /></div>
+      <details className="orders-overview-mobile"><summary><span>All orders <strong>{summary?.total ?? "—"}</strong></span><span>Counts & values by currency</span></summary><OrderSummary summary={summary} valueSummary={valueSummary} /></details>
+      {message ? <RelationshipNotice tone="success">{message}</RelationshipNotice> : null}
+      {error ? <RelationshipNotice tone="error">{error}<button className="relationship-secondary" onClick={() => { pageCache.current = null; setReloadKey(key => key + 1); }}>Retry register</button></RelationshipNotice> : null}
+
+      <section className="orders-register" aria-label="Order register">
+        <div className="orders-register-heading"><div><h2>Order register</h2><p>Open an order to review its delivery, billing and source document.</p></div><span>{rows.length} records loaded</span></div>
+        <div className="orders-filters">
+          <form key={search} onSubmit={(event) => { event.preventDefault(); const value = new FormData(event.currentTarget).get("search"); updateBrowse(String(value || "").trim(), statusFilter); }} className="orders-search"><Search aria-hidden="true" /><input name="search" aria-label="Search orders" defaultValue={search} placeholder="Search order, quotation, client..." /><button type="submit" aria-label="Apply order search">Search</button></form>
+          <select aria-label="Filter orders by status" value={statusFilter} onChange={(event) => updateBrowse(search, event.target.value)}><option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="in_progress">In progress</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>
+          <button onClick={() => updateBrowse("", "")} className="relationship-secondary">Reset</button>
         </div>
-
-        {message ? <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
-        {error ? <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-
-        <section className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm">
-          <div className="grid gap-3 border-b p-4 sm:grid-cols-[minmax(260px,1fr)_220px_auto] sm:p-5">
-            <form onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()); }} className="relative"><Search className="absolute left-3 top-3.5 size-4 text-neutral-400" /><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Search order, quotation, client..." className="h-11 w-full rounded-xl border pl-9 pr-3 text-sm outline-none focus:border-neutral-500" /></form>
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="in_progress">In progress</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>
-            <button onClick={() => { setSearchDraft(""); setSearch(""); setStatusFilter(""); }} className="h-11 rounded-xl border px-4 text-sm font-semibold">Reset</button>
-          </div>
-
-          {loading || listLoading ? <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div> : rows.length === 0 ? <div className="px-6 py-20 text-center"><ClipboardCheck className="mx-auto size-8 text-neutral-300" /><h2 className="mt-4 font-semibold">No orders found</h2><p className="mt-1 text-sm text-neutral-500">Accept a quotation, then convert it into an order.</p></div> : <>
-            <div className="space-y-3 p-4 md:hidden">{rows.map((item) => <Link key={item.id} href={`/dashboard/orders/${encodeURIComponent(item.id)}`} className="block rounded-2xl border p-4 transition hover:bg-neutral-50"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-semibold">{item.order_number}</p><p className="mt-1 break-words text-xs text-neutral-500">{item.subject || item.client_name}</p></div><StatusBadge status={item.status} /></div><div className="mt-4 grid grid-cols-2 gap-3 text-xs"><Mini label="Client" value={item.client_name} /><Mini label="Date" value={item.order_date} /><Mini label="Quotation" value={item.quotation_number || "Manual"} /><Mini label="Total" value={money(item.total, item.currency)} /></div></Link>)}</div>
-            <div className="hidden overflow-x-auto md:block"><table className="w-full min-w-[1050px] text-left text-sm"><thead className="bg-neutral-50 text-xs uppercase tracking-wide text-neutral-400"><tr><th className="px-6 py-3 font-medium">Order</th><th className="px-4 py-3 font-medium">Client</th><th className="px-4 py-3 font-medium">Quotation</th><th className="px-4 py-3 font-medium">Status</th><th className="px-4 py-3 font-medium">Date</th><th className="px-4 py-3 font-medium">Total</th><th className="px-6 py-3 text-right font-medium">Action</th></tr></thead><tbody className="divide-y">{rows.map((item) => <tr key={item.id} className="hover:bg-neutral-50/70"><td className="px-6 py-4"><p className="font-medium">{item.order_number}</p><p className="mt-1 text-xs text-neutral-400">{item.subject || "Commercial order"}</p></td><td className="px-4 py-4">{item.client_name}</td><td className="px-4 py-4">{item.quotation_number || "Manual"}</td><td className="px-4 py-4"><StatusBadge status={item.status} /></td><td className="px-4 py-4 text-neutral-600">{item.order_date}</td><td className="px-4 py-4 font-medium">{money(item.total, item.currency)}</td><td className="px-6 py-4 text-right"><Link href={`/dashboard/orders/${encodeURIComponent(item.id)}`} className="inline-flex rounded-lg border px-3 py-2 text-xs font-semibold">Open</Link></td></tr>)}</tbody></table></div>
-            {nextCursor ? <div className="border-t p-4 text-center"><button disabled={loadingMore} onClick={() => void loadMore()} className="rounded-xl border px-5 py-2.5 text-sm font-semibold disabled:opacity-50">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}
-          </>}
-        </section>
-      </div>
-    </main>
+        {loading || listLoading ? <div className="orders-register-empty" role="status"><Loader2 className="animate-spin" /><p>Loading orders…</p></div> : rows.length === 0 ? <div className="orders-register-empty"><ClipboardCheck /><h2>{error ? "Order register unavailable" : "No orders found"}</h2><p>{error ? "The register could not be loaded. Check the message above and retry when ready." : "Create an order or convert an accepted quotation. Try adjusting your search or status filter."}</p></div> : <>
+          <OrdersRegister rows={rows} returnFor={returnFor} />
+          {nextCursor ? <div className="orders-register-footer"><button disabled={loadingMore} onClick={() => void loadMore()} className="relationship-secondary">{loadingMore ? "Loading..." : "Load more"}</button></div> : null}
+        </>}
+      </section>
+    </RelationshipPage>
   );
 }
 
+function OrderSummary({ summary, valueSummary }: { summary: Summary | null; valueSummary: ValueSummary | null }) {
+  return <><section className="orders-summary" aria-label="All company order counts and values by status">
+        <Stat label="Total" value={summary?.total ?? "—"} values={valueSummary?.total ?? []} icon={ClipboardCheck} />
+        <Stat label="Confirmed" value={summary?.confirmed ?? "—"} values={valueSummary?.confirmed ?? []} icon={ClipboardCheck} />
+        <Stat label="In progress" value={summary?.in_progress ?? "—"} values={valueSummary?.in_progress ?? []} icon={PlayCircle} />
+        <Stat label="Completed" value={summary?.completed ?? "—"} values={valueSummary?.completed ?? []} icon={CheckCircle2} />
+        <Stat label="Cancelled" value={summary?.cancelled ?? "—"} values={valueSummary?.cancelled ?? []} icon={XCircle} />
+      </section>
+      <p className="orders-currency-note">All company orders · order value shown in each original currency · no combined currency total</p></>;
+}
+
+/** A single row mapping supplies both desktop columns and mobile cards. */
+function OrdersRegister({ rows, returnFor }: { rows: OrderRow[]; returnFor: (id: string) => string }) {
+  return <table className="orders-table"><caption className="sr-only">Orders, client, quotation source, execution status, date and value</caption><thead><tr><th>Order / scope</th><th>Client</th><th>Source quotation</th><th>Status</th><th>Order date</th><th>Value</th><th><span className="sr-only">Open order</span></th></tr></thead><tbody>{rows.map((item) => <tr key={item.id}>
+    <td className="order-identity"><Link id={`order-row-${item.id}`} href={orderDocumentHref(item.id, "view", returnFor(item.id))} className="order-number">{item.order_number}</Link><p>{item.subject || "Commercial order"}</p></td>
+    <td data-label="Client">{item.client_name}</td>
+    <td data-label="Source quotation"><span className="order-source">{item.quotation_number || "Manual"}</span></td>
+    <td className="order-stage"><StatusBadge status={item.status} /></td>
+    <td data-label="Order date" className="order-date">{item.order_date}</td>
+    <td data-label="Value" className="order-value">{money(item.total, item.currency)}</td>
+    <td className="order-open"><Link href={orderDocumentHref(item.id, "view", returnFor(item.id))} aria-label={`Open order ${item.order_number}`}><span>Open</span><ArrowUpRight aria-hidden="true" /></Link></td>
+  </tr>)}</tbody></table>;
+}
+
 function StatusBadge({ status }: { status: string }) { const styles: Record<string, string> = { confirmed: "border-blue-200 bg-blue-50 text-blue-700", in_progress: "border-amber-200 bg-amber-50 text-amber-700", completed: "border-emerald-200 bg-emerald-50 text-emerald-700", cancelled: "border-neutral-200 bg-neutral-100 text-neutral-500" }; return <span className={`inline-flex shrink-0 rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${styles[status] ?? "bg-neutral-50"}`}>{status.replace("_", " ")}</span>; }
-function Stat({ label, value, values, icon: Icon }: { label: string; value: string | number; values: CurrencyValue[]; icon: typeof ClipboardCheck }) { return <article className="rounded-2xl border bg-white p-4 shadow-sm sm:p-5"><div className="flex items-center justify-between"><p className="text-xs text-neutral-500 sm:text-sm">{label}</p><Icon className="size-4 text-neutral-400" /></div><p className="mt-3 text-xl font-semibold sm:mt-4 sm:text-2xl">{value}</p><div className="mt-3 flex min-h-7 flex-wrap items-center gap-1.5" aria-label={`${label} order value by currency`}>{values.length ? values.map((item) => <span key={item.currency} className="inline-flex whitespace-nowrap rounded-full border bg-neutral-50 px-2 py-1 text-[11px] font-semibold text-neutral-700">{compactMoney(item.amount, item.currency)}</span>) : <span className="text-[11px] text-neutral-400">No order value</span>}</div></article>; }
-function Mini({ label, value }: { label: string; value: string }) { return <div className="min-w-0"><p className="text-neutral-400">{label}</p><p className="mt-1 break-words font-medium text-neutral-700">{value}</p></div>; }
+function Stat({ label, value, values, icon: Icon }: { label: string; value: string | number; values: CurrencyValue[]; icon: typeof ClipboardCheck }) {
+  return <article className="order-summary-cell"><div className="order-summary-title"><p>{label}</p><Icon aria-hidden="true" /></div><strong>{value}</strong><div className="order-summary-values" aria-label={`${label} order value by currency`}>{values.length ? values.map((item) => <span key={item.currency}>{compactMoney(item.amount, item.currency)}</span>) : <span className="order-no-value">{value === "—" ? "Not loaded" : "No order value"}</span>}</div></article>;
+}

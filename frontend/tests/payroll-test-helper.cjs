@@ -1,0 +1,60 @@
+/** Synthetic-only source loader and hook runner. Never starts a server or contacts an API. */
+const fs=require('node:fs');
+const path=require('node:path');
+const Module=require('node:module');
+const ts=require('typescript');
+const root=path.resolve(__dirname,'..');
+const modelFile='src/components/payroll/payroll-model.ts';
+const draftFile='src/components/payroll/payroll-drafts.ts';
+const navFile='src/lib/payroll-navigation.ts';
+const hookFile='src/hooks/use-payroll-workspace.ts';
+const stamp='2026-10-26T00:00:00Z';
+const component={name:'Synthetic allowance',amount:'12.34'};
+const profile={id:'syn-profile',employee_id:'syn-employee',employee_code:'SYN-E',employee_name:'Synthetic Employee',currency:'USD',pay_frequency:'monthly',base_salary:'1200.00',effective_from:'2026-01-01',effective_to:null,is_active:true,default_allowances:[component],default_deductions:[],notes:null,created_at:stamp};
+const period={id:'syn-period',name:'Synthetic October',period_start:'2026-10-01',period_end:'2026-10-31',pay_date:'2026-11-01',status:'open',notes:null,created_at:stamp};
+const entry={id:'syn-entry',employee_id:profile.employee_id,employee_code:profile.employee_code,employee_name:profile.employee_name,currency:'USD',base_salary:'1200.00',allowances:[component],deductions:[],allowance_total:'12.34',deduction_total:'0.00',tax_amount:'10.00',gross_pay:'1212.34',net_pay:'1202.34',notes:null,calculation_snapshot:null,adjustments:[]};
+const run={id:'syn-run',run_number:'SYN-PAY-001',period_id:period.id,period_name:period.name,currency:'USD',status:'draft',employee_count:1,gross_total:entry.gross_pay,allowance_total:entry.allowance_total,deduction_total:entry.deduction_total,tax_total:entry.tax_amount,net_total:entry.net_pay,paid_account_id:null,approved_at:null,paid_at:null,created_at:stamp,entries:[entry],policy_version_id:null,calculation_engine_version:null,calculation_hash:null,calculation_context:null};
+const meta={employees:[{id:profile.employee_id,employee_code:profile.employee_code,full_name:profile.employee_name}],accounts:[{id:'syn-account',name:'Synthetic USD account',currency:'USD',is_active:true,account_type:'bank'},{id:'syn-eur-account',name:'Synthetic EUR account',currency:'EUR',is_active:true},{id:'syn-disabled',name:'Synthetic disabled account',currency:'USD',is_active:false}],currencies:['USD','EUR']};
+const policyVersion={id:'syn-policy',version:1,effective_from:'2026-10-01',configuration:{mode:'calendar_day',allowance_treatment:'fixed_latest',deduction_treatment:'fixed_latest'},activation_reason:'Synthetic reviewed company policy',created_by_user_id:'syn-owner',created_at:stamp};
+const legacyPolicy={as_of:period.period_start,legacy_manual:true,effective_policy:null,latest_version:0,scheduled_versions:[]};
+const policy={...legacyPolicy,legacy_manual:false,effective_policy:policyVersion,latest_version:1};
+const hash='a'.repeat(64);
+const calculated={employee_id:profile.employee_id,salary_profile_id:profile.id,profile_ids:[profile.id],currency:'USD',base_salary:entry.base_salary,allowances:[component],deductions:[],allowance_total:entry.allowance_total,deduction_total:entry.deduction_total,tax_amount:entry.tax_amount,gross_pay:entry.gross_pay,net_pay:entry.net_pay,calculation_snapshot:{method:'calendar_day',slices:[]}};
+const preview={ready:true,policy_version:1,mode:'calendar_day',calculation_hash:hash,calculation:{engine_version:'payroll-policy-v1',policy_id:policyVersion.id,policy_version:1,mode:'calendar_day',currency:'USD',calculation_hash:hash,employee_count:1,gross_total:run.gross_total,allowance_total:run.allowance_total,deduction_total:run.deduction_total,tax_total:run.tax_total,net_total:run.net_total,entries:[calculated]},setup_issues:[]};
+const payment={id:'syn-payment',account_id:'syn-account',account_name:'Synthetic USD account',payment_date:'2026-10-26',currency:'USD',amount:'20.10',reference:null,notes:null,created_at:stamp};
+const withholding={currency:'USD',liability_balance:100.25,accounts:[{id:'syn-account',name:'Synthetic USD account',balance:2000.50}]};
+const fixtures={profile,period,entry,run,meta,policyVersion,legacyPolicy,policy,hash,preview,payment,withholding,component};
+const ok=value=>({ok:true,status:200,json:async()=>value,text:async()=>JSON.stringify(value),headers:{get:()=> 'application/json'}});
+const fail=(status=422,detail='Synthetic rejected input')=>({...ok({detail}),ok:false,status});
+const settle=async()=>{await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));};
+function nodes(tree,name){const result=[];function visit(n){if(!n||typeof n!=='object')return;if(Array.isArray(n))return n.forEach(visit);if((typeof n.type==='function'?n.type.name:n.type)===name)result.push(n);visit(n.props?.children);}visit(tree);return result;}
+function text(tree){if(tree==null||typeof tree==='boolean')return'';if(typeof tree!=='object')return String(tree);if(Array.isArray(tree))return tree.map(text).join('');return text(tree.props?.children);}
+function expand(tree){if(tree==null||typeof tree!=='object')return tree;if(Array.isArray(tree))return tree.map(expand);if(typeof tree.type==='function')return expand(tree.type(tree.props));return {...tree,props:{...tree.props,children:expand(tree.props?.children)}};}
+function harness(target='usePayrollWorkspace',file=hookFile){
+ const states=[],refs=[],memos=[],effectSlots=[],requests=[],navigation=[],guardCalls=[],prompts=[];let sc=0,rc=0,mc=0,ec=0,query=new URLSearchParams(),pathname='/dashboard/payroll',params={},permissions=['payroll.view','payroll.manage'],organizationId='syn-company',membershipId='syn-membership',roleId='syn-role',confirm=true,navFail=false,navThrow=false,respond;
+ const same=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>Object.is(x,b[i]));
+ const hooks={useState:initial=>{const i=sc++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:initial=>refs[rc++]??={current:initial},useMemo:(fn,deps)=>{const i=mc++;if(!memos[i]||!same(memos[i].deps,deps))memos[i]={deps,value:fn()};return memos[i].value;},useCallback:(fn,deps)=>hooks.useMemo(()=>fn,deps),useEffect:(fn,deps)=>{const i=ec++,old=effectSlots[i];effectSlots[i]={fn,deps,cleanup:old?.cleanup,changed:!old||!same(old.deps,deps)};},useId:()=> 'synthetic-field'};
+ const router={push:(href,options)=>navigation.push(['push',href,options]),replace:(href,options)=>navigation.push(['replace',href,options]),refresh:()=>navigation.push(['refresh'])};
+ const modules=new Map();
+ function load(filename){filename=path.isAbsolute(filename)?filename:path.join(root,filename);if(modules.has(filename))return modules.get(filename).exports;let code=fs.readFileSync(filename,'utf8');const ast=ts.createSourceFile(filename,code,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX),functions=ast.statements.filter(ts.isFunctionDeclaration).filter(fn=>fn.name&&fn.body),injections=[];
+  if(/payroll/.test(filename)){for(const fn of functions.filter(fn=>/^usePayroll/.test(fn.name.text))){const names=fn.body.statements.flatMap(s=>ts.isFunctionDeclaration(s)?[s.name.text]:ts.isVariableStatement(s)?s.declarationList.declarations.flatMap(d=>ts.isIdentifier(d.name)?[d.name.text]:ts.isArrayBindingPattern(d.name)?d.name.elements.filter(ts.isBindingElement).map(e=>e.name.getText(ast)):[]):[]);for(const returned of fn.body.statements.filter(ts.isReturnStatement))injections.push({at:returned.getStart(ast),value:`__current[${JSON.stringify(fn.name.text)}]={${names.join(',')}};\n`});}for(const item of injections.sort((a,b)=>b.at-a.at))code=code.slice(0,item.at)+item.value+code.slice(item.at);code+='\nconst __current={};export const getTestController=(name)=>__current[name];export const __test={'+functions.map(fn=>fn.name.text).join(',')+'};';}
+  const mod=new Module(filename,module);mod.filename=filename;mod.paths=module.paths;modules.set(filename,mod);mod.require=id=>{
+   if(id==='react')return hooks;
+   if(id==='next/navigation')return{useRouter:()=>router,useSearchParams:()=>query,usePathname:()=>pathname,useParams:()=>params};
+   if(id==='@/components/dashboard-session-context')return{useDashboardSession:()=>({tenant:{organization:{id:organizationId,timezone:'Asia/Dhaka'},membership_id:membershipId,role_id:roleId,permissions}})};
+   if(id.includes('document-navigation-guard'))return{useDocumentNavigationGuard:(dirty,options)=>{let busy=Boolean(options?.isBusy);guardCalls.push({kind:'state',dirty,options});return{confirmLeave:()=>!busy&&!options?.pendingRef?.current&&(!dirty||confirm),markClean:()=>{busy=false;guardCalls.push({kind:'clean'});},navigate:(href,opts={})=>{if(navThrow)throw Error('Synthetic navigation exception');if(busy||options?.pendingRef?.current||navFail||(!opts.discard&&dirty&&!confirm))return false;navigation.push(['navigate',href,opts]);return true;}};}};
+   if(id.endsWith('.css'))return{};
+   if(id==='next/link')return{default:'NextLink'};
+   if(id==='lucide-react'||id.startsWith('@/components/')&&!id.startsWith('@/components/payroll/'))return new Proxy({},{get:(_t,key)=>String(key)});
+   if(id.startsWith('@/')||id.startsWith('.')){const base=id.startsWith('@/')?path.join(root,'src',id.slice(2)):path.resolve(path.dirname(filename),id),found=['.ts','.tsx','/index.ts','/index.tsx'].map(ext=>base+ext).find(fs.existsSync);if(found)return load(found);}
+   return require(id);
+  };mod._compile(ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText,filename);return mod.exports;
+ }
+ const resourceForUrl=url=>url==='/api/payroll/meta'?meta:url==='/api/payroll/salary-profiles'?[profile]:url==='/api/payroll/periods'?[period]:url==='/api/payroll/runs'?[run]:url.startsWith('/api/payroll/runs/')?run:url.startsWith('/api/payroll/policy')?policy:url.startsWith('/api/payroll/withholdings/meta')?withholding:url==='/api/payroll/withholdings/payments'?[payment]:undefined;
+ const defaultResponse=(url,options)=>options?.method==='POST'&&url.endsWith('/preview')?ok(preview):options?.method?ok({id:'syn-created'}):ok(resourceForUrl(url));respond=defaultResponse;
+ const original={fetch:global.fetch,window:global.window,document:global.document};global.fetch=async(url,options)=>{requests.push({url,options});return respond(url,options);};global.window={location:{href:'https://example.invalid/dashboard/payroll',origin:'https://example.invalid',search:'',assign:href=>navigation.push(['assign',href]),replace:href=>navigation.push(['location.replace',href])},confirm:message=>{prompts.push(message);return confirm;},print:()=>navigation.push(['print']),close:()=>navigation.push(['close'])};global.document={getElementById:()=>null};
+ let result,exported;const render=(name=target,props)=>{sc=rc=mc=ec=0;exported=load(file);result=(exported[name]||exported.__test[name])(props);return result;};
+ const flush=async()=>{for(const slot of effectSlots){if(slot.changed){slot.changed=false;slot.cleanup?.();slot.cleanup=slot.fn();}}await settle();};
+ return{load,render,flush,seed:values=>states.push(...values),mount:async()=>{render();await flush();return render();},api:(name=target,filename=file)=>({...result,...load(filename).getTestController?.(name)}),requests,navigation,guardCalls,prompts,effects:effectSlots,defaultResponse,resourceForUrl,response:fn=>{respond=fn;},query:v=>{query=new URLSearchParams(v);window.location.search=query.size?'?'+query:'';},pathname:v=>{pathname=v;window.location.href='https://example.invalid'+v;},params:v=>{params=v;},permissions:v=>{permissions=v;},tenant:v=>{organizationId=v;},membership:v=>{membershipId=v;},role:v=>{roleId=v;},confirm:v=>{confirm=v;},navFail:v=>{navFail=v;},navThrow:v=>{navThrow=v;},component:(filename,name,props)=>{sc=rc=mc=ec=0;const exp=load(filename);return(exp[name]||exp.__test[name])(props);},unmount:()=>{effectSlots.forEach(s=>s.cleanup?.());},cleanup:()=>{effectSlots.forEach(s=>s.cleanup?.());Object.assign(global,original);}};
+}
+module.exports={root,modelFile,draftFile,navFile,hookFile,fixtures,ok,fail,settle,nodes,text,expand,harness};

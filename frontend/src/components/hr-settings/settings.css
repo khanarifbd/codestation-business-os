@@ -1,0 +1,5 @@
+.hr-settings { overflow-wrap:anywhere; }
+.hr-settings fieldset { min-inline-size:0; }
+.hr-settings .settings-form [data-settings-select] .min-w-\[260px\] { min-width:0; max-width:100%; }
+.hr-settings input,.hr-settings select,.hr-settings textarea { max-width:100%; min-width:0; }
+.hr-settings [hidden] { display:none; }

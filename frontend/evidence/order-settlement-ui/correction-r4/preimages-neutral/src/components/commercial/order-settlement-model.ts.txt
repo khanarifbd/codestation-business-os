@@ -1,0 +1,89 @@
+import { transferCents } from "@/components/accounting-transfers/transfer-model";
+/** Existing one-step settlement contracts. No client tax, FX or ledger calculation is introduced. */
+export type SettlementOrder = { id: string; order_number: string; status: string; currency: string; total: string | number; external_order_id: string | null };
+export type SettlementExpense = { id: string; expense_number: string; category_name: string; amount: string | number; currency: string };
+export type SettlementState = {
+  order_id: string; eligible: boolean; reason: string | null; invoice_id: string | null; invoice_number: string | null;
+  invoice_status: string | null; invoice_total: string | number | null; invoice_amount_paid: string | number | null;
+  invoice_balance_due: string | number | null; invoice_sent_to_client: boolean; payment_id: string | null;
+  payment_number: string | null; account_id: string | null; account_name: string | null; gross_amount: string | number | null;
+  currency: string | null; expenses: SettlementExpense[];
+};
+export type SettlementMeta = {
+  order_id: string; order_number: string; currency: string; total: string | number;
+  accounts: { id: string; name: string; account_type: string; currency: string; current_balance: string | number }[];
+  expense_categories: { id: string; name: string; cost_type: string }[];
+};
+export type SettlementResult = {
+  order_id: string; order_number: string; project_id: string | null; invoice_id: string; invoice_number: string;
+  payment_id: string; payment_number: string; expense_id: string | null; expense_number: string | null;
+  account_id: string; account_name: string; currency: string; gross_amount: string | number;
+  expense_amount: string | number; net_amount: string | number; settlement_date: string; invoice_sent_to_client: boolean;
+};
+export type SettlementDraft = { accountId: string; date: string; expenseAmount: string; categoryId: string; description: string; reference: string; markSent: boolean };
+export type SettlementSetup = { order: SettlementOrder; state: SettlementState; meta: SettlementMeta };
+export type SettlementPayload = { account_id: string; settlement_date: string | null; expense_amount: string; expense_category_id: string | null; expense_description: string | null; mark_invoice_sent_to_client: boolean; reference: string | null };
+export const settlementRecord = (x: unknown): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x));
+const text = (x: unknown): x is string => typeof x === "string";
+const id = (x: unknown): x is string => text(x) && x.trim().length > 0;
+const optional = (x: unknown) => x === null || text(x);
+const amount = (x: unknown): x is string | number => (typeof x === "number" || text(x) && x.trim() !== "") && Number.isFinite(Number(x));
+const optionalAmount = (x: unknown) => x === null || amount(x);
+export function isSettlementOrder(x: unknown, orderId: string): x is SettlementOrder {
+  return settlementRecord(x) && x.id === orderId && id(x.order_number) && text(x.status) && id(x.currency) && amount(x.total) && optional(x.external_order_id);
+}
+export function isSettlementState(x: unknown, orderId: string): x is SettlementState {
+  return settlementRecord(x) && x.order_id === orderId && typeof x.eligible === "boolean"
+    && ["reason", "invoice_id", "invoice_number", "invoice_status", "payment_id", "payment_number", "account_id", "account_name", "currency"].every(k => optional(x[k]))
+    && ["invoice_total", "invoice_amount_paid", "invoice_balance_due", "gross_amount"].every(k => optionalAmount(x[k]))
+    && typeof x.invoice_sent_to_client === "boolean" && Array.isArray(x.expenses)
+    && x.expenses.every(e => settlementRecord(e) && id(e.id) && id(e.expense_number) && text(e.category_name) && amount(e.amount) && id(e.currency))
+    && !(x.eligible && x.invoice_id !== null);
+}
+export function isSettlementMeta(x: unknown, orderId: string): x is SettlementMeta {
+  return settlementRecord(x) && x.order_id === orderId && id(x.order_number) && id(x.currency) && amount(x.total)
+    && Array.isArray(x.accounts) && x.accounts.every(a => settlementRecord(a) && id(a.id) && text(a.name) && text(a.account_type) && id(a.currency) && amount(a.current_balance))
+    && Array.isArray(x.expense_categories) && x.expense_categories.every(c => settlementRecord(c) && id(c.id) && text(c.name) && text(c.cost_type));
+}
+/** Correlate the acknowledged receipt with the frozen request; never recalculate a posted body. */
+export function isSettlementResult(x: unknown, orderId: string, payload: SettlementPayload, currency: string, reviewedTotal: string | number): x is SettlementResult {
+  if (!settlementRecord(x) || x.order_id !== orderId || x.account_id !== payload.account_id || x.currency !== currency
+    || !["order_number", "invoice_id", "invoice_number", "payment_id", "payment_number", "account_name", "settlement_date"].every(k => id(x[k]))
+    || !["project_id", "expense_id", "expense_number"].every(k => optional(x[k]))
+    || !["gross_amount", "expense_amount", "net_amount"].every(k => amount(x[k])) || x.invoice_sent_to_client !== payload.mark_invoice_sent_to_client) return false;
+  const cents = (value: unknown) => (typeof value === "string" || typeof value === "number") && /^[+-]?\d+(?:\.\d{1,2})?$/.test(String(value).trim()) ? transferCents(value) : null;
+  const gross = cents(x.gross_amount), fee = cents(x.expense_amount), net = cents(x.net_amount), expectedGross = transferCents(reviewedTotal), expectedFee = transferCents(payload.expense_amount);
+  if (gross === null || fee === null || net === null || expectedGross === null || expectedFee === null || gross !== expectedGross || fee !== expectedFee || net !== expectedGross - expectedFee) return false;
+  if (expectedFee > BigInt(0) ? !id(x.expense_id) || !id(x.expense_number) : x.expense_id !== null || x.expense_number !== null) return false;
+  return typeof x.settlement_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x.settlement_date) && (!payload.settlement_date || x.settlement_date === payload.settlement_date);
+}
+export function initialSettlementDraft(order: SettlementOrder): SettlementDraft {
+  return { accountId: "", date: "", expenseAmount: "0.00", categoryId: "", description: "", reference: order.external_order_id || order.order_number, markSent: false };
+}
+export function settlementPayload(values: SettlementDraft, setup: SettlementSetup): { body: SettlementPayload; error?: never } | { body?: never; error: string } {
+  const { order, state, meta } = setup;
+  if (order.status !== "completed" || !state.eligible || state.invoice_id) return { error: state.reason || "This order is not eligible for one-step settlement." };
+  if (meta.order_id !== order.id || state.order_id !== order.id || meta.currency !== order.currency || Number(meta.total) !== Number(order.total)) return { error: "Order and settlement options do not match. Refresh the existing information before reviewing." };
+  const expense = Number(values.expenseAmount || 0);
+  if (!values.accountId) return { error: "Select the account or wallet that received the order payment." };
+  if (!meta.accounts.some(a => a.id === values.accountId && a.currency === order.currency && a.account_type !== "credit_card")) return { error: "The selected receiving account is not available for this order currency." };
+  if (!Number.isFinite(expense) || expense < 0) return { error: "Enter a valid expense amount." };
+  if (expense > Number(order.total)) return { error: "Settlement expense cannot exceed the order total." };
+  if (expense > 0 && !values.categoryId) return { error: "Select an expense category when an expense amount is entered." };
+  if (expense > 0 && !meta.expense_categories.some(c => c.id === values.categoryId)) return { error: "The selected expense category is no longer available. Refresh the settlement options." };
+  // Preserve the exact existing seven-field body and fee serialization.
+  return { body: { account_id: values.accountId, settlement_date: values.date || null, expense_amount: expense.toFixed(2), expense_category_id: expense > 0 ? values.categoryId : null, expense_description: expense > 0 ? (values.description.trim() || null) : null, mark_invoice_sent_to_client: values.markSent, reference: values.reference.trim() || null } };
+}
+export function settlementMoney(value: string | number | null | undefined, currency: string) {
+  return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Display only: subtract the exact fee string that the unchanged POST serializer sends. */
+export function settlementNetPreview(total: string | number, expenseInput: string): string | null {
+  const expense = Number(expenseInput || 0);
+  if (!Number.isFinite(expense) || expense < 0 || expense > Number(total)) return null;
+  const gross = transferCents(total), fee = transferCents(expense.toFixed(2));
+  if (gross === null || fee === null || gross < BigInt(0) || fee > gross) return null;
+  const net = gross - fee;
+  return `${net / BigInt(100)}.${String(net % BigInt(100)).padStart(2, "0")}`;
+}

@@ -680,13 +680,30 @@ def change_project_status(
     db: DbSession,
     tenant: ProjectManager,
 ) -> ProjectDetail:
+    # Discover the immutable source link without locking Project first. Order
+    # must precede Project, matching source invoicing and commercial mutations.
+    source_order_id = db.scalar(
+        select(Project.order_id)
+        .where(Project.id == project_id, Project.organization_id == tenant.organization_id)
+    )
+    if source_order_id is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    order = db.scalar(
+        select(Order)
+        .where(Order.id == source_order_id, Order.organization_id == tenant.organization_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     project = db.scalar(
         select(Project)
         .where(Project.id == project_id, Project.organization_id == tenant.organization_id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
+    if project.order_id != source_order_id:
+        raise HTTPException(status_code=409, detail="Project source order has changed; reload before changing status")
     if project.status == payload.status:
         return _detail(db, tenant, project.id)
 
@@ -700,11 +717,6 @@ def change_project_status(
     if payload.status not in allowed.get(project.status, set()):
         raise HTTPException(status_code=409, detail=f"Project cannot move from {project.status} to {payload.status}")
 
-    order = db.scalar(
-        select(Order)
-        .where(Order.id == project.order_id, Order.organization_id == tenant.organization_id)
-        .with_for_update()
-    )
     if order is None:
         raise HTTPException(status_code=409, detail="Linked order is no longer available")
     if payload.status == "cancelled" and order.status != "cancelled":

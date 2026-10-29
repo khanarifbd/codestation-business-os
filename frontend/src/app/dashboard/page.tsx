@@ -22,11 +22,14 @@ import {
 
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { CurrencyTrendCard, FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
+import "@/components/dashboard/dashboard-composition.css";
+import { OperationalReportingNote } from "@/components/dashboard/operational-reporting-note";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 
 type FinancialRow = {
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   receivables: string;
   expenses: string;
@@ -39,6 +42,7 @@ type TrendRow = {
   period: string;
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   expenses: string;
   transfer_fees: string;
@@ -61,6 +65,7 @@ type ProjectProfitRow = {
   currency: string;
   contract_value: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   direct_expenses: string;
   estimated_profit: string;
@@ -72,6 +77,7 @@ type ClientProfitRow = {
   client_name: string;
   currency: string;
   invoiced_revenue: string;
+  direct_income: string;
   collected_revenue: string;
   direct_expenses: string;
   estimated_profit: string;
@@ -363,7 +369,7 @@ export default function DashboardPage() {
 
   if (loading || (reportResult !== null && reportResult.organizationId !== activeOrganizationId)) {
     return (
-      <AppPage width="wide">
+      <AppPage width="wide" className="dashboard-overview dashboard-composed">
         <div className="space-y-5" role="status" aria-label="Loading dashboard">
           <div className="h-28 animate-pulse rounded-2xl bg-white" />
           <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
@@ -376,12 +382,12 @@ export default function DashboardPage() {
   }
 
   if (!tenant || !company) {
-    return <AppPage width="wide"><p className="text-sm text-red-700">{error ?? "Workspace unavailable"}</p></AppPage>;
+    return <AppPage width="wide" className="dashboard-overview dashboard-composed"><p className="text-sm text-red-700">{error ?? "Workspace unavailable"}</p></AppPage>;
   }
 
   if (!data) {
     return (
-      <AppPage width="wide">
+      <AppPage width="wide" className="dashboard-overview dashboard-composed">
         <div className="space-y-6">
           <PageHeader eyebrow="Business OS" title={company.name} description="Your role has access to operational workspaces, but financial reporting is restricted." />
           <Surface className="p-5 sm:p-6">
@@ -396,12 +402,13 @@ export default function DashboardPage() {
   const hasPulse = Boolean(orderPulse || projectPulse || crmPulse || financePulse || peoplePulse);
 
   return (
-    <AppPage width="wide">
-      <div className="space-y-6">
+    <AppPage width="wide" className="dashboard-overview dashboard-composed">
+      <div className="dashboard-composition">
         <PageHeader
-          eyebrow="Business command center"
-          title={company.name}
-          description="A single view of operations, collections, delivery and profitability without mixing currencies."
+          className="dashboard-heading"
+          eyebrow={company.name}
+          title="Business overview"
+          description="A clear view of what needs attention and how the business is performing."
           meta={
             <>
               <span className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600">{rangeLabel} · {data.date_from} — {data.date_to}</span>
@@ -430,20 +437,41 @@ export default function DashboardPage() {
         />
 
         {reportLoading ? <div role="status" aria-label="Updating dashboard reports" className="h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
-        {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
+        {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-        <section aria-label="Key business metrics" className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <section aria-label="Key business metrics" className="dashboard-operations-rail">
           <MetricCard label="Active clients" value={data.operations.active_clients} note="Current client base" href="/dashboard/clients" icon={Users} />
           <MetricCard label="Open orders" value={data.operations.open_orders} note="Delivery not closed" href="/dashboard/orders" icon={ReceiptText} />
           <MetricCard label="Active projects" value={data.operations.active_projects} note="Planned, active or on hold" href="/dashboard/projects" icon={FolderKanban} />
           <MetricCard label="Open invoices" value={data.operations.open_invoices} note="Not paid or cancelled" href="/dashboard/accounting/invoices" icon={FileText} />
-          <MetricCard label="Overdue tasks" value={data.operations.overdue_tasks} note="Past due and still open" href="/dashboard/projects" icon={AlertTriangle} attention />
-          <MetricCard label="Due follow-ups" value={data.operations.due_followups} note="CRM follow-up required" href="/dashboard/crm" icon={TrendingUp} attention />
         </section>
 
-        <Surface className="p-4 sm:p-5">
-          <SectionHeader title="Quick actions" description="Start the most common operational and financial workflows." />
-          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <div className="dashboard-decision-grid">
+          <Surface className="dashboard-trend-focus">
+            <SectionHeader title="Collections over time" description={`${rangeLabel} · Up to six available periods, with a separate scale for each currency.`} action={<TrendingUp className="size-5 text-neutral-300" />} />
+            {trendGroups.length ? (
+              <div className="dashboard-trend-multiples">
+                {trendGroups.map((group) => (
+                  <CurrencyTrendCard key={group.currency} currency={group.currency} rows={group.rows} reportingCurrency={company.currency} formatMoney={money} formatPeriod={periodLabel} />
+                ))}
+              </div>
+            ) : <EmptyState title="No trend yet" note="Trend data appears after invoices, payments or expenses are posted." />}
+          </Surface>
+          <aside className="dashboard-attention-column" aria-label="Priority work and quick entry">
+            <Surface className="dashboard-priority-work">
+              <SectionHeader title="Needs attention" description="Follow up, resolve and collect." />
+              <div className="dashboard-priority-list">
+                <AlertRow label="Overdue tasks" value={data.operations.overdue_tasks} href="/dashboard/projects" />
+                <AlertRow label="Due CRM follow-ups" value={data.operations.due_followups} href="/dashboard/crm" />
+                {financePulse ? <div className="dashboard-overdue-collection">
+                  <AlertRow label="Overdue invoices" value={financePulse.overdue_invoices} href="/dashboard/accounting/receivables" />
+                  <div className="dashboard-current-overdue"><span>Current overdue balances</span><CurrencyChips values={financePulse.overdue} reportingCurrency={company.currency} compact /></div>
+                </div> : null}
+              </div>
+            </Surface>
+        <Surface className="dashboard-context-actions">
+          <SectionHeader title="Quick entry" description="Create and record transactions." />
+          <div className="dashboard-action-list">
             <WorkspaceLink href="/dashboard/orders/new" label="Create order" icon={ReceiptText} />
             <WorkspaceLink href="/dashboard/accounting/money-in" label="Receive money" icon={ArrowDownLeft} />
             <WorkspaceLink href="/dashboard/accounting/money-out" label="Pay money" icon={ArrowUpRight} />
@@ -451,8 +479,40 @@ export default function DashboardPage() {
           </div>
         </Surface>
 
+          </aside>
+        </div>
+
+        <Surface className="dashboard-financials p-5 sm:p-6">
+          <SectionHeader
+            title="Period financials"
+            description={`${rangeLabel} · Each currency has its own ledger. No cross-currency total is combined.`}
+            action={<Link prefetch={false} href="/dashboard/accounting/reports" className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-600 hover:text-neutral-950">Accounting reports <ArrowRight className="size-4" /></Link>}
+          />
+          {financialRows.length ? (
+            <div className="dashboard-ledger-rows">
+              {financialRows.map((row) => (
+                <FinancialPerformanceCard key={row.currency} row={row} reportingCurrency={company.currency} formatMoney={money} />
+              ))}
+            </div>
+          ) : <EmptyState title="No financial activity" note={`No posted financial activity for ${rangeLabel.toLowerCase()}.`} />}
+            {financialRows.some((row) => Number(row.receivables) > 0) ? (
+              <div className="dashboard-receivable-links">
+                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Period receivables</p>
+                <div className="dashboard-receivable-link-list">
+                  {financialRows.filter((row) => Number(row.receivables) > 0).map((row) => (
+                    <Link prefetch={false} key={row.currency} href="/dashboard/accounting/receivables" className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-3 py-2.5 text-sm hover:bg-neutral-100">
+                      <span>{row.currency}</span><span className="break-all text-right font-semibold">{money(row.receivables, row.currency)}</span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          <details className="dashboard-calculation-note"><summary><span>Operational margin is not accrual net profit.</span> How these figures are calculated</summary><OperationalReportingNote /></details>
+        </Surface>
+
+
         {hasPulse ? (
-          <Surface className="p-5 sm:p-6">
+          <Surface className="dashboard-secondary-pulse p-5 sm:p-6">
             <SectionHeader
               title="Current business pulse"
               description="Order, project, pipeline and collection values stay in their original currencies. No cross-currency totals are combined."
@@ -491,56 +551,9 @@ export default function DashboardPage() {
           </Surface>
         ) : null}
 
-        <Surface className="p-5 sm:p-6">
-          <SectionHeader
-            title="Financial performance by currency"
-            description={`${rangeLabel}. Currencies are intentionally kept separate; no cross-currency totals are combined.`}
-            action={<Link prefetch={false} href="/dashboard/accounting/reports" className="inline-flex items-center gap-1.5 text-sm font-semibold text-neutral-600 hover:text-neutral-950">Accounting reports <ArrowRight className="size-4" /></Link>}
-          />
-          {financialRows.length ? (
-            <div className="mt-5 grid gap-4 lg:grid-cols-2">
-              {financialRows.map((row) => (
-                <FinancialPerformanceCard key={row.currency} row={row} reportingCurrency={company.currency} formatMoney={money} />
-              ))}
-            </div>
-          ) : <EmptyState title="No financial activity" note={`No posted financial activity for ${rangeLabel.toLowerCase()}.`} />}
-        </Surface>
 
-        <div className="grid gap-5 xl:grid-cols-[0.72fr_1.28fr]">
-          <Surface className="p-5 sm:p-6">
-            <SectionHeader title="Action queue" description="Operational items that need attention." action={<AlertTriangle className="size-5 text-neutral-300" />} />
-            <div className="mt-5 space-y-3">
-              <AlertRow label="Overdue tasks" value={data.operations.overdue_tasks} href="/dashboard/projects" />
-              <AlertRow label="Due CRM follow-ups" value={data.operations.due_followups} href="/dashboard/crm" />
-              <AlertRow label="Open invoices" value={data.operations.open_invoices} href="/dashboard/accounting/invoices" />
-            </div>
-            {financialRows.some((row) => Number(row.receivables) > 0) ? (
-              <div className="mt-5 border-t pt-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Period receivables</p>
-                <div className="mt-3 space-y-2">
-                  {financialRows.filter((row) => Number(row.receivables) > 0).map((row) => (
-                    <Link prefetch={false} key={row.currency} href="/dashboard/accounting/receivables" className="flex items-center justify-between gap-3 rounded-xl bg-neutral-50 px-3 py-2.5 text-sm hover:bg-neutral-100">
-                      <span>{row.currency}</span><span className="break-all text-right font-semibold">{money(row.receivables, row.currency)}</span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </Surface>
 
-          <Surface className="min-w-0 p-5 sm:p-6">
-            <SectionHeader title="Performance trend" description="Up to the last 6 reporting periods, separated by currency." action={<TrendingUp className="size-5 text-neutral-300" />} />
-            {trendGroups.length ? (
-              <div className="mt-5 grid min-w-0 gap-4 2xl:grid-cols-2">
-                {trendGroups.map((group) => (
-                  <CurrencyTrendCard key={group.currency} currency={group.currency} rows={group.rows} reportingCurrency={company.currency} formatMoney={money} formatPeriod={periodLabel} />
-                ))}
-              </div>
-            ) : <EmptyState title="No trend yet" note="Trend data appears after invoices, payments or expenses are posted." />}
-          </Surface>
-        </div>
-
-        <div className="grid gap-5 xl:grid-cols-2">
+        <div className="dashboard-economics-grid grid gap-5 xl:grid-cols-2">
           <Surface className="p-5 sm:p-6">
             <SectionHeading title="Financial accounts" note={details ? `${details.accounts.length} active account${details.accounts.length === 1 ? "" : "s"}` : "Account balances"} href="/dashboard/accounting/accounts" icon={Landmark} />
             {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.accounts.length ? (
@@ -573,14 +586,14 @@ export default function DashboardPage() {
           </Surface>
         </div>
 
-        <Surface className="p-5 sm:p-6">
+        <Surface className="dashboard-client-economics p-5 sm:p-6">
           <SectionHeading title="Client economics" note={`${rangeLabel} client performance`} href="/dashboard/clients" icon={Users} />
           {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.clients.length ? (
-            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="dashboard-client-ledger">
               {details.clients.slice(0, 9).map((row) => (
-                <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="group rounded-xl border border-neutral-200 bg-white p-4 transition-[border-color,box-shadow] hover:border-neutral-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.045)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:p-5">
+                <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="dashboard-client-row group rounded-xl border border-neutral-200 bg-white p-4 transition-[border-color,box-shadow] hover:border-neutral-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.045)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:p-5">
                   <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="break-words text-sm font-semibold text-neutral-900 sm:truncate">{row.client_name}</p><p className="mt-1.5 text-xs text-neutral-500">{row.currency} · {percent(row.margin_percent)} margin</p></div><ArrowRight aria-hidden="true" className="size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" /></div>
-                  <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-neutral-100 pt-4 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Direct cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
+                  <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-4 border-t border-neutral-100 pt-4 text-xs"><ClientMetric label="Invoiced" value={money(row.invoiced_revenue, row.currency)} /><ClientMetric label="Collected" value={money(row.collected_revenue, row.currency)} /><ClientMetric label="Linked cost" value={money(row.direct_expenses, row.currency)} /><ClientMetric label="Est. profit" value={money(row.estimated_profit, row.currency)} strong /></div>
                 </Link>
               ))}
             </div>
@@ -597,7 +610,7 @@ function MetricCard({ label, value, note, href, icon: Icon, attention = false }:
     <Link
       prefetch={false}
       href={href}
-      className="group flex min-w-0 flex-col justify-between rounded-xl border border-neutral-200 bg-white p-4 shadow-[0_1px_3px_rgba(15,23,42,0.035)] transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-neutral-300 hover:shadow-[0_8px_24px_rgba(15,23,42,0.07)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 motion-reduce:transform-none sm:min-h-40 sm:p-5"
+      className="dashboard-operation-link group"
     >
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 pt-1 text-xs font-medium leading-5 text-neutral-500 sm:text-[13px]">{label}</p>
@@ -615,7 +628,7 @@ function MetricCard({ label, value, note, href, icon: Icon, attention = false }:
 }
 
 function PulseCard({ title, note, href, icon: Icon, children }: { title: string; note: string; href: string; icon: LucideIcon; children: React.ReactNode }) {
-  return <article className="min-w-0 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50/60"><div className="flex items-start justify-between gap-3 p-4 sm:p-5"><div className="min-w-0"><h3 className="font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div><div className="flex items-center gap-2"><Icon className="size-5 shrink-0 text-neutral-300" /><Link prefetch={false} href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View →</Link></div></div><div className="border-t bg-white">{children}</div></article>;
+  return <article className="dashboard-pulse-card min-w-0 overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50/60"><div className="flex items-start justify-between gap-3 p-4 sm:p-5"><div className="min-w-0"><h3 className="font-semibold">{title}</h3><p className="mt-1 text-xs leading-5 text-neutral-400">{note}</p></div><div className="flex items-center gap-2"><Icon className="size-5 shrink-0 text-neutral-300" /><Link prefetch={false} href={href} className="text-xs font-semibold text-neutral-500 hover:text-neutral-950">View →</Link></div></div><div className="border-t bg-white">{children}</div></article>;
 }
 
 function PulseValueRow({ label, count, values, reportingCurrency, countLabel = "active", secondaryLabel, secondaryValues, attention = false }: { label: string; count: number; values: CurrencyValue[]; reportingCurrency: string; countLabel?: string; secondaryLabel?: string; secondaryValues?: CurrencyValue[]; attention?: boolean }) {
@@ -641,13 +654,16 @@ function ClientMetric({ label, value, strong = false }: { label: string; value: 
 }
 
 function AlertRow({ label, value, href }: { label: string; value: number; href: string }) {
-  return <Link prefetch={false} href={href} className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-3 transition hover:bg-neutral-50 sm:px-4"><div className="flex min-w-0 items-center gap-2.5 sm:gap-3"><AlertTriangle className={`size-4 shrink-0 ${value ? "text-amber-500" : "text-neutral-300"}`} /><span className="min-w-0 text-sm font-medium">{label}</span></div><div className="flex shrink-0 items-center gap-2"><span className="text-sm font-semibold">{value}</span><ArrowRight className="size-3.5 text-neutral-300" /></div></Link>;
+  return <Link prefetch={false} href={href} className="dashboard-priority-row flex items-center justify-between gap-3 rounded-xl border border-neutral-200 px-3 py-3 transition hover:bg-neutral-50 sm:px-4"><div className="flex min-w-0 items-center gap-2.5 sm:gap-3"><AlertTriangle className={`size-4 shrink-0 ${value ? "text-amber-500" : "text-neutral-300"}`} /><span className="min-w-0 text-sm font-medium">{label}</span></div><div className="flex shrink-0 items-center gap-2"><span className="text-sm font-semibold">{value}</span><ArrowRight className="size-3.5 text-neutral-300" /></div></Link>;
 }
 
 function WorkspaceLink({ href, label, icon: Icon }: { href: string; label: string; icon: LucideIcon }) {
+  // Editable documents need a native history boundary for beforeunload.
+  const nativeDocument = href === "/dashboard/orders/new";
+  const ActionLink = nativeDocument ? "a" : Link;
   return (
-    <Link
-      prefetch={false}
+    <ActionLink
+      {...(nativeDocument ? {} : { prefetch: false })}
       href={href}
       className="group flex min-h-14 min-w-0 items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50/60 px-3 py-2.5 text-sm font-medium text-neutral-700 transition-[border-color,background-color,box-shadow] hover:border-neutral-300 hover:bg-white hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 sm:px-4"
     >
@@ -656,7 +672,7 @@ function WorkspaceLink({ href, label, icon: Icon }: { href: string; label: strin
       </span>
       <span className="min-w-0 flex-1 leading-5">{label}</span>
       <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-neutral-400 transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" />
-    </Link>
+    </ActionLink>
   );
 }
 

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo } from "react";
+import { requestWorkspaceExit } from "@/lib/workspace-navigation";
 import { useHRAccess } from "@/components/hr-access-context";
 import {
   CalendarClock,
@@ -63,7 +64,7 @@ export function HRModuleNav() {
     <div className="mx-auto flex max-w-[1500px] items-center gap-1 overflow-x-auto">
       <div className="mr-3 hidden shrink-0 border-r pr-4 lg:block"><p className="text-xs font-semibold uppercase tracking-[0.14em] text-neutral-400">People & HR</p></div>
       {primary.map(({ label, href, icon: Icon }) => <Link key={href} href={href} className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-sm font-medium transition ${active(href) ? "bg-neutral-950 text-white" : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950"}`}><Icon className="size-4" />{label}</Link>)}
-      {more.length ? <select aria-label="More People and HR pages" value={activeMore?.href ?? ""} onChange={event => { if (event.target.value) router.push(event.target.value); }} className={`h-9 shrink-0 cursor-pointer rounded-lg border-0 px-3 text-sm font-medium outline-none ${activeMore ? "bg-neutral-950 text-white" : "bg-neutral-100 text-neutral-600"}`}><option value="">More…</option>{more.map(item => <option key={item.href} value={item.href}>{item.label}</option>)}</select> : null}
+      {more.length ? <select aria-label="More People and HR pages" value={activeMore?.href ?? ""} onChange={event => { if (event.target.value && requestWorkspaceExit()) router.push(event.target.value); }} className={`h-9 shrink-0 cursor-pointer rounded-lg border-0 px-3 text-sm font-medium outline-none ${activeMore ? "bg-neutral-950 text-white" : "bg-neutral-100 text-neutral-600"}`}><option value="">More…</option>{more.map(item => <option key={item.href} value={item.href}>{item.label}</option>)}</select> : null}
     </div>
   </div>;
 }

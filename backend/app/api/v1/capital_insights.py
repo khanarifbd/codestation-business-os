@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.api.v1.reports import _invoice_project_id
 from app.models.capital import (
     CompanyInvestment,
     CompanyInvestor,
@@ -116,7 +117,7 @@ def insights(
         investors = db.scalars(select(ProjectInvestor).where(ProjectInvestor.organization_id == org, ProjectInvestor.project_id == project.id).order_by(ProjectInvestor.created_at.asc())).all()
         if not investors:
             continue
-        revenue = money(db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org, Invoice.project_id == project.id, Invoice.status != "cancelled")) or 0)
+        revenue = money(db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org, _invoice_project_id() == project.id, Invoice.status.not_in(["draft", "cancelled"]))) or 0)
         direct_cost = money(db.scalar(
             select(func.coalesce(func.sum(Expense.profitability_amount), 0))
             .join(ExpenseCategory, ExpenseCategory.id == Expense.category_id)

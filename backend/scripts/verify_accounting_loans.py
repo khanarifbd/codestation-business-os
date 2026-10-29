@@ -27,6 +27,8 @@ from app.api.v1.accounting_reports import financial_statements
 from app.api.v1.finance import create_account
 from app.api.v1.financial_corrections import CorrectionRequest, reverse_business_transaction
 from app.db.session import SessionLocal, engine
+from app.services.accounting_period_gate import acquire_accounting_period_gate
+from app.models.organization import Organization
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import FinancialAccount, FinancialTransaction
 from app.models.loan_accounting import LoanFee
@@ -50,7 +52,7 @@ class Tenant:
     user_id: str
     membership_id: str
     role: str
-    organization: Org
+    organization: Organization
 
 
 def request(method: str, path: str) -> Request:
@@ -77,6 +79,13 @@ def expect_conflict(fn, label: str) -> None:
     raise AssertionError(f"{label}: expected HTTP 409")
 
 
+def ensure_request_transaction(db) -> None:
+    # Direct calls do not run HTTP tenant dependencies to start a request root.
+    # Preserve active fixture work and let failed sessions remain visibly failed.
+    if not db.in_transaction():
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as conn:
         row = conn.execute(text("""
@@ -87,22 +96,13 @@ def main() -> None:
             WHERE o.name='Existing Tenant Fixture'
             ORDER BY o.created_at DESC LIMIT 1
         """)).mappings().one()
-    tenant = Tenant(
-        str(row["organization_id"]),
-        str(row["user_id"]),
-        str(row["membership_id"]),
-        "admin",
-        Org(
-            str(row["organization_id"]),
-            str(row["timezone"] or "UTC"),
-            str(row["currency"] or "BDT"),
-            str(row["name"]),
-            int(row["financial_year_start_month"] or 1),
-        ),
-    )
     db = SessionLocal()
     marker = uuid4().hex[:8]
     try:
+        organization = db.get(Organization, str(row['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(row['organization_id']), str(row['user_id']), str(row['membership_id']), 'admin', organization)
         account = db.scalar(
             select(FinancialAccount).where(
                 FinancialAccount.organization_id == tenant.organization_id,
@@ -196,6 +196,8 @@ def main() -> None:
         )
         db.rollback()
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         disbursement = disburse_loan(
             loan["id"], blocked_payload,
             request("POST", f"/accounting/loans/{loan['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
@@ -224,6 +226,8 @@ def main() -> None:
         )
         db.rollback()
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         repayment = repay_loan(
             loan["id"],
             LoanAccountingRepaymentCreate(
@@ -335,6 +339,8 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         fx_disbursement = disburse_loan(
             fx_loan["id"],
             LoanDisbursementCreate(
@@ -371,6 +377,8 @@ def main() -> None:
             tenant,  # type: ignore[arg-type]
         )
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         fx_repayment = repay_loan(
             fx_loan["id"],
             LoanAccountingRepaymentCreate(
@@ -448,6 +456,7 @@ def main() -> None:
         if fx_loss != Decimal("2000.00"):
             raise AssertionError(f"foreign loan realized FX loss should be 2000.00, got {fx_loss}")
 
+        ensure_request_transaction(db)
         reverse_business_transaction(
             CorrectionRequest(
                 source_type="loan_repayment",
@@ -498,6 +507,8 @@ def main() -> None:
                 + "; ".join(f"{issue.code}: {issue.message}" for issue in loan_integrity_issues)
             )
 
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         final_repayment = repay_loan(
             fx_loan["id"],
             LoanAccountingRepaymentCreate(
@@ -613,6 +624,8 @@ def main() -> None:
             db,
             tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         disburse_loan(
             close_loan_row["id"],
             LoanDisbursementCreate(
@@ -623,6 +636,8 @@ def main() -> None:
             ),
             request("POST", f"/accounting/loans/{close_loan_row['id']}/disburse"), db, tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
+        acquire_accounting_period_gate(db, tenant.organization_id)
         paid = repay_loan(
             close_loan_row["id"],
             LoanAccountingRepaymentCreate(

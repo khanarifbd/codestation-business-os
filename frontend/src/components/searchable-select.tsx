@@ -40,6 +40,7 @@ export function SearchableSelect({
   disabled?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [internalValue, setInternalValue] = useState(defaultValue ?? "");
@@ -102,11 +103,24 @@ export function SearchableSelect({
   const accessibleLabel = label || placeholder;
 
   return (
-    <div ref={rootRef} className="relative block text-sm font-medium">
+    <div
+      ref={rootRef}
+      className="relative block text-sm font-medium"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !open) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        setQuery("");
+        const trigger = triggerRef.current;
+        if (!disabled && trigger?.isConnected && !trigger.disabled) trigger.focus({ preventScroll: true });
+      }}
+    >
       {label ? <span>{label}</span> : null}
       {name ? <input type="hidden" name={name} value={value} required={required} /> : null}
       <div className={label ? "relative mt-2" : "relative"}>
         <button
+          ref={triggerRef}
           type="button"
           disabled={disabled}
           onClick={() => setOpen((current) => !current)}

@@ -1,3 +1,4 @@
+import { guardMutationOrigin } from "@/lib/mutation-origin";
 import { NextRequest, NextResponse } from "next/server";
 
 import { resolveDeviceId, setAuthCookies, setDeviceIdCookie, type TokenPair } from "@/lib/auth-session";
@@ -5,6 +6,9 @@ import { requestContextHeaders } from "@/lib/request-context";
 import { backendFetch } from "@/lib/server-api";
 
 export async function POST(request: NextRequest) {
+  const rejected = guardMutationOrigin(request, { requireJson: true });
+  if (rejected) return rejected;
+
   const body = await request.text();
   const deviceId = resolveDeviceId(request);
   const upstream = await backendFetch("/auth/login", {

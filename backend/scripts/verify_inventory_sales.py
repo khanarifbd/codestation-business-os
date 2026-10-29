@@ -15,6 +15,7 @@ from app.api.v1.orders import change_order_status, get_order
 from app.db.session import SessionLocal, engine
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.company_defaults import OrganizationExchangeRate
+from app.models.organization import Organization
 from app.models.inventory import InventoryBalance, StockMovement
 from app.models.inventory_sales import OrderFulfillment, OrderFulfillmentItem
 from app.schemas.inventory import ProductCreate, PurchaseLineInput, PurchaseReceiptCreate, WarehouseCreate
@@ -36,7 +37,7 @@ class Tenant:
     organization_id: str
     user_id: str
     membership_id: str
-    organization: Org
+    organization: Organization
     role: str = "admin"
 
 
@@ -65,7 +66,7 @@ def alternate_currency(base_currency: str) -> str:
     return "USD" if base_currency.upper() != "USD" else "EUR"
 
 
-def upsert_direct_rate(db, organization_id: str, user_id: str, source_currency: str, base_currency: str, rate: Decimal) -> None:
+def upsert_direct_rate(db, organization_id: str, user_id: str, source_currency: str, base_currency: str, rate: Decimal, effective_date: date) -> None:
     row = db.scalar(select(OrganizationExchangeRate).where(
         OrganizationExchangeRate.organization_id == organization_id,
         OrganizationExchangeRate.base_currency == source_currency,
@@ -97,6 +98,10 @@ def upsert_direct_rate(db, organization_id: str, user_id: str, source_currency: 
         row.reference_rate = rate; row.manual_rate = rate; row.effective_rate = rate
         row.source = "manual"; row.synced_at = datetime.now(timezone.utc)
         action = "company.exchange_rate.updated"; method = "PATCH"
+    from app.services.exchange_rates import record_rate_snapshot
+    record_rate_snapshot(db, organization_id=organization_id, base_currency=source_currency,
+                         quote_currency=base_currency, effective_date=effective_date,
+                         effective_rate=rate, reference_rate=rate, source="synthetic_qa", user_id=user_id)
     record_activity(
         db,
         action=action,
@@ -152,6 +157,12 @@ def journal_by_key(db, journal_id: str) -> dict[str, tuple[Decimal, Decimal]]:
     return {key: (Decimal(debit), Decimal(credit)) for key, debit, credit in rows}
 
 
+def ensure_request_transaction(db):
+    # Direct fixture requests skip HTTP dependencies that normally begin the root.
+    if db.get_transaction() is None:
+        db.begin()
+
+
 def main() -> None:
     with engine.begin() as connection:
         fixture = connection.execute(text("""
@@ -169,15 +180,13 @@ def main() -> None:
 
     base_currency = str(fixture["currency"] or "BDT").upper()
     foreign_currency = alternate_currency(base_currency)
-    tenant = Tenant(
-        str(fixture["organization_id"]),
-        str(fixture["user_id"]),
-        str(fixture["membership_id"]),
-        Org(str(fixture["organization_id"]), base_currency, str(fixture["timezone"] or "UTC")),
-    )
     marker = uuid4().hex[:8].upper()
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture["organization_id"]))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(str(fixture["organization_id"]), str(fixture["user_id"]), str(fixture["membership_id"]), organization)
         warehouse = create_warehouse(
             WarehouseCreate(code=f"SF{marker[:5]}", name=f"Sales Fulfillment {marker}"),
             req("POST", "/inventory/warehouses"), db, tenant,  # type: ignore[arg-type]
@@ -189,6 +198,7 @@ def main() -> None:
             ),
             req("POST", "/inventory/products"), db, tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         receive_purchase(
             PurchaseReceiptCreate(
                 supplier_name="Sales Supplier", warehouse_id=warehouse.id, receipt_date=date(2099, 2, 1),
@@ -233,6 +243,7 @@ def main() -> None:
             warehouse_id=warehouse.id, fulfillment_date=date(2099, 2, 3),
             items=[FulfillmentLineInput(order_item_id=line.id, quantity=Decimal("2"))],
         )
+        ensure_request_transaction(db)
         first = fulfill_order(
             order.id, first_payload,
             req("POST", f"/sales/orders/{order.id}/fulfillments", idempotency_key=first_key), db, tenant,  # type: ignore[arg-type]
@@ -247,12 +258,14 @@ def main() -> None:
         if original_lines.get("cost_of_sales") != (Decimal("200.00"), Decimal("0.00")) or original_lines.get("inventory_asset") != (Decimal("0.00"), Decimal("200.00")):
             raise AssertionError(f"COGS journal classification failed: {original_lines}")
 
+        ensure_request_transaction(db)
         replay = fulfill_order(
             order.id, first_payload,
             req("POST", f"/sales/orders/{order.id}/fulfillments", idempotency_key=first_key), db, tenant,  # type: ignore[arg-type]
         )
         if replay.id != first.id or Decimal(balance_for(db, tenant.organization_id, product["id"], warehouse.id).on_hand_quantity) != Decimal("8"):
             raise AssertionError("idempotent fulfillment deducted stock twice")
+        ensure_request_transaction(db)
         expect(409, lambda: fulfill_order(
             order.id,
             FulfillmentCreate(warehouse_id=warehouse.id, fulfillment_date=date(2099, 2, 3), items=[FulfillmentLineInput(order_item_id=line.id, quantity=Decimal("3"))]),
@@ -266,6 +279,7 @@ def main() -> None:
         db.rollback()
 
         reverse_key = f"reverse-{marker}-first"
+        ensure_request_transaction(db)
         reversed_first = reverse_fulfillment(
             order.id, first.id,
             FulfillmentReverse(reversal_date=date(2099, 2, 4), reason="Customer changed dispatch plan"),
@@ -286,6 +300,7 @@ def main() -> None:
         reversal_lines = journal_by_key(db, reversal.id)
         if reversal_lines.get("inventory_asset") != (Decimal("200.00"), Decimal("0.00")) or reversal_lines.get("cost_of_sales") != (Decimal("0.00"), Decimal("200.00")):
             raise AssertionError(f"COGS reversal journal is incorrect: {reversal_lines}")
+        ensure_request_transaction(db)
         reversal_replay = reverse_fulfillment(
             order.id, first.id,
             FulfillmentReverse(reversal_date=date(2099, 2, 4), reason="Customer changed dispatch plan"),
@@ -304,6 +319,7 @@ def main() -> None:
         if reversal_movements != 1:
             raise AssertionError("fulfillment reversal stock movement missing or duplicated")
 
+        ensure_request_transaction(db)
         second = fulfill_order(
             order.id,
             FulfillmentCreate(warehouse_id=warehouse.id, fulfillment_date=date(2099, 2, 5), items=[FulfillmentLineInput(order_item_id=line.id, quantity=Decimal("4"))]),
@@ -330,7 +346,7 @@ def main() -> None:
         if Decimal(posted_quantity) != Decimal("4") or second.id == first.id:
             raise AssertionError("posted fulfillment quantity/history is incorrect")
 
-        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("120"))
+        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("120"), date(2099, 3, 1))
         fx_product = create_product(
             ProductCreate(
                 sku=f"FX-{marker}", name=f"FX Sale Product {marker}", item_type="stock_item",
@@ -338,6 +354,7 @@ def main() -> None:
             ),
             req("POST", "/inventory/products"), db, tenant,  # type: ignore[arg-type]
         )
+        ensure_request_transaction(db)
         receive_purchase(
             PurchaseReceiptCreate(
                 supplier_name="FX Supplier", warehouse_id=warehouse.id, receipt_date=date(2099, 3, 1), currency=foreign_currency,
@@ -355,7 +372,8 @@ def main() -> None:
             ),
             req("POST", "/sales/orders"), db, tenant,  # type: ignore[arg-type]
         )
-        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("130"))
+        upsert_direct_rate(db, tenant.organization_id, tenant.user_id, foreign_currency, base_currency, Decimal("130"), date(2099, 3, 3))
+        ensure_request_transaction(db)
         fx_fulfillment = fulfill_order(
             fx_order.id,
             FulfillmentCreate(warehouse_id=warehouse.id, fulfillment_date=date(2099, 3, 3), items=[FulfillmentLineInput(order_item_id=fx_order.items[0].id, quantity=Decimal("2"))]),

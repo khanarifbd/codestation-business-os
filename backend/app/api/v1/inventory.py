@@ -13,8 +13,10 @@ from app.models.expenses import Vendor
 from app.models.inventory import InventoryBalance, Product, ProductCategory, PurchaseReceipt, PurchaseReceiptItem, StockMovement, Warehouse
 from app.models.tax import TaxCode
 from app.schemas.inventory import AdjustmentCreate, CategoryCreate, ProductCreate, PurchaseReceiptCreate, WarehouseCreate
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.services.accounting_posting import PostingLine, post_journal, system_account, to_base_amount
 from app.services.activity_log import record_activity
+from app.services.inventory_payables import create_purchase_payable
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
@@ -34,8 +36,17 @@ def clean(v: str | None) -> str | None:
 
 
 def _ledger(db: DbSession, organization_id: str, user_id: str, *, system_key: str, code: str, name: str, category: str, normal_balance: str) -> LedgerAccount:
-    row=db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id==organization_id, LedgerAccount.system_key==system_key, LedgerAccount.is_active.is_(True)))
-    if row is not None: return row
+    row=db.scalar(select(LedgerAccount).where(LedgerAccount.organization_id==organization_id, LedgerAccount.system_key==system_key))
+    if row is not None:
+        if not row.is_active:
+            raise HTTPException(409, f"Required inventory account is inactive: {row.name}")
+        return row
+    # Preserve custom and older system accounts occupying the preferred code.
+    preferred_code = code
+    suffix = 0
+    while db.scalar(select(LedgerAccount.id).where(LedgerAccount.organization_id == organization_id, LedgerAccount.code == code)):
+        suffix += 1
+        code = f"{preferred_code}-{suffix}"
     row=LedgerAccount(organization_id=organization_id, code=code, name=name, category=category, subtype=system_key, normal_balance=normal_balance, system_key=system_key, is_system=True, is_active=True, allow_manual_posting=False, notes="Inventory system account", created_by_user_id=user_id)
     db.add(row); db.flush(); return row
 
@@ -156,6 +167,13 @@ def _stock_out(db: DbSession, *, organization_id: str, user_id: str, product: Pr
     new_value=cost(Decimal(bal.inventory_value) - total)
     new_base_value=money(old_base_value - total_base)
     if new_qty == 0:
+        # The final issue must relieve the remaining carrying value, including
+        # rounding accumulated across partial issues. Otherwise zeroing the
+        # balance silently discards value absent from the movement and journal.
+        # Keep unit-cost snapshots as the existing weighted average; the final
+        # movement total includes the residual and may differ from qty * average.
+        total=cost(bal.inventory_value)
+        total_base=money(old_base_value)
         new_value=Decimal("0")
         new_base_value=Decimal("0")
     bal.on_hand_quantity=new_qty
@@ -269,6 +287,8 @@ def movements(db: DbSession, tenant: Viewer, limit: int=200):
 
 @router.post("/adjustments", status_code=201)
 def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenant: Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["currency"])
     product=db.scalar(select(Product).where(Product.id==payload.product_id,Product.organization_id==tenant.organization_id,Product.item_type=="stock_item",Product.is_active.is_(True)))
     warehouse=db.scalar(select(Warehouse).where(Warehouse.id==payload.warehouse_id,Warehouse.organization_id==tenant.organization_id,Warehouse.is_active.is_(True)))
     if product is None: raise HTTPException(404,"Active stock product not found")
@@ -280,7 +300,7 @@ def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenan
         bal=_balance(db,tenant.organization_id,product.id,warehouse.id)
         unit=cost(payload.unit_cost if payload.unit_cost is not None else bal.average_unit_cost or product.standard_cost)
         source_total=cost(unit*delta)
-        base_total,applied_rate=to_base_amount(db,tenant.organization_id,base_currency,source_total,product.currency)
+        base_total,applied_rate=to_base_amount(db,tenant.organization_id,base_currency,source_total,product.currency,rate_date=payload.adjustment_date)
         movement=_stock_in(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=delta,incoming_total_cost=source_total,incoming_total_cost_base=base_total,base_currency=base_currency,source_type="stock_adjustment",source_id=source_id,reference=reference,reason=payload.reason.strip())
     else:
         movement=_stock_out(db,organization_id=tenant.organization_id,user_id=tenant.user_id,product=product,warehouse=warehouse,movement_date=payload.adjustment_date,quantity=abs(delta),source_type="stock_adjustment",source_id=source_id,reference=reference,reason=payload.reason.strip())
@@ -288,7 +308,7 @@ def adjustment(payload: AdjustmentCreate, request: Request, db: DbSession, tenan
     if money(base_total)>0:
         inventory_ledger=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_asset",code="1450",name="Inventory Asset",category="asset",normal_balance="debit")
         if delta>0:
-            counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_gain",code="4910",name="Inventory Adjustment Gain",category="income",normal_balance="credit")
+            counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_gain",code="4920",name="Inventory Adjustment Gain",category="income",normal_balance="credit")
             journal_lines=[PostingLine(ledger_account_id=inventory_ledger.id,debit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment {product.sku}"),PostingLine(ledger_account_id=counterpart.id,credit=money(base_total),currency=product.currency,exchange_rate_to_base=applied_rate,original_amount=source_total,description=f"Stock adjustment gain {product.sku}")]
         else:
             counterpart=_ledger(db,tenant.organization_id,tenant.user_id,system_key="inventory_adjustment_expense",code="5050",name="Inventory Adjustment Expense",category="expense",normal_balance="debit")
@@ -305,6 +325,8 @@ def purchases(db: DbSession, tenant: Viewer, limit:int=200):
 
 @router.post("/purchases", status_code=status.HTTP_201_CREATED)
 def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSession, tenant: Manager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization, attribute_names=["currency"])
     warehouse=db.scalar(select(Warehouse).where(Warehouse.id==payload.warehouse_id,Warehouse.organization_id==tenant.organization_id,Warehouse.is_active.is_(True)))
     if warehouse is None: raise HTTPException(404,"Active warehouse not found")
     if payload.vendor_id and not db.scalar(select(Vendor.id).where(Vendor.id==payload.vendor_id,Vendor.organization_id==tenant.organization_id)): raise HTTPException(404,"Vendor not found")
@@ -323,7 +345,7 @@ def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSes
         subtotal+=line_base;tax_total+=tax_amount;recoverable_total+=recoverable;inventory_debit+=inv_cost
         prepared.append({"product":product,"line":line,"tax_code":tax_code,"base":line_base,"tax_amount":tax_amount,"recoverable":recoverable,"inv_cost":inv_cost,"line_total":line_total})
     subtotal=money(subtotal);tax_total=money(tax_total);recoverable_total=money(recoverable_total);total=money(subtotal+tax_total);inventory_debit=cost(inventory_debit)
-    total_base,rate=to_base_amount(db,tenant.organization_id,base_currency,total,currency)
+    total_base,rate=to_base_amount(db,tenant.organization_id,base_currency,total,currency,rate_date=payload.receipt_date)
     recoverable_base=money(recoverable_total*rate)
     inventory_debit_base=money(total_base-recoverable_base)
     remaining_base=cost(inventory_debit_base)
@@ -347,5 +369,6 @@ def receive_purchase(payload: PurchaseReceiptCreate, request: Request, db: DbSes
         lines.append(PostingLine(ledger_account_id=input_tax.id,debit=recoverable_base,currency=currency,exchange_rate_to_base=rate,original_amount=recoverable_total,description=f"Recoverable input tax {receipt.receipt_number}"))
     lines.append(PostingLine(ledger_account_id=payable.id,credit=total_base,currency=currency,exchange_rate_to_base=rate,original_amount=total,description=f"Inventory payable to {receipt.supplier_name}"))
     post_journal(db,organization_id=tenant.organization_id,user_id=tenant.user_id,entry_date=receipt.receipt_date,source_type="inventory_purchase_receipt",source_id=receipt.id,lines=lines,reference=receipt.reference,memo=f"Inventory received from {receipt.supplier_name}")
+    create_purchase_payable(db, receipt, inventory_ledger.id)
     record_activity(db,action="inventory.purchase.received",scope="tenant",actor_user_id=tenant.user_id,organization_id=tenant.organization_id,entity_type="purchase_receipt",entity_id=receipt.id,after={"receipt_number":receipt.receipt_number,"supplier":receipt.supplier_name,"warehouse_id":warehouse.id,"subtotal":str(subtotal),"tax":str(tax_total),"total":str(total),"currency":currency,"base_total":str(total_base),"base_currency":base_currency,"exchange_rate_to_base":str(rate)},request=request)
     db.commit();return {"id":receipt.id,"receipt_number":receipt.receipt_number,"total":receipt.total,"currency":receipt.currency,"base_currency":receipt.base_currency,"exchange_rate_to_base":receipt.exchange_rate_to_base,"status":receipt.status}

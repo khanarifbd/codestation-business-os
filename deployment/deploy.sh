@@ -544,6 +544,7 @@ start_candidate() {
     --network "${NETWORK_NAME}" \
     --restart unless-stopped \
     -e INTERNAL_API_URL="http://${backend_name}:8000/api/v1" \
+    -e PUBLIC_APP_URL="$(env_value PUBLIC_APP_URL)" \
     -p "127.0.0.1:${frontend_port}:3000" \
     "${frontend_image}" >/dev/null
 
@@ -570,7 +571,7 @@ for command_name in docker git curl nginx systemctl flock openssl; do
 done
 
 if [[ "${BUSINESS_OS_DEPLOY_REEXEC:-0}" == "1" ]]; then
-  [[ -e "/proc/$/fd/9" ]] || fail "Deployment re-exec lost its deployment lock"
+  [[ -e "/proc/$$/fd/9" ]] || fail "Deployment re-exec lost its deployment lock"
 else
   exec 9>"${LOCK_FILE}"
   flock -n 9 || fail "Another Business OS deployment is already running"

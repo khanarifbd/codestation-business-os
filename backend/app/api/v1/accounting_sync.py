@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.services.accounting_integrity import audit_financial_integrity
 from app.services.accounting_sync import sync_operational_accounting
@@ -34,6 +35,8 @@ def accounting_integrity(db: DbSession, tenant: AccountingViewer):
 
 @router.post("/sync", response_model=AccountingSyncRead)
 def sync_accounting(request: Request, db: DbSession, tenant: AccountingManager):
+    acquire_accounting_period_gate(db, tenant.organization_id)
+    db.refresh(tenant.organization)
     # Repair/backfill only. Normal financial mutations post their journal entries
     # atomically and do not depend on this endpoint.
     result = sync_operational_accounting(

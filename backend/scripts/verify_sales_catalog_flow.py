@@ -13,6 +13,8 @@ from app.api.v1.finance import change_invoice_status, create_invoice_from_order
 from app.api.v1.orders import change_order_status, create_order_from_quotation
 from app.api.v1.sales import change_quotation_status, create_quotation, update_quotation
 from app.db.session import SessionLocal, engine
+from app.models.organization import Organization
+from app.services.accounting_period_gate import acquire_accounting_period_gate
 from app.models.accounting import JournalEntry, JournalLine, LedgerAccount
 from app.models.finance import InvoiceItem
 from app.models.inventory import StockMovement
@@ -42,7 +44,7 @@ class Tenant:
     organization_id: str
     user_id: str
     membership_id: str
-    organization: Org
+    organization: Organization
     role: str = "admin"
 
 
@@ -58,6 +60,13 @@ def expect(status_code: int, fn) -> None:
             raise AssertionError(f"Expected HTTP {status_code}, got {exc.status_code}: {exc.detail}") from exc
         return
     raise AssertionError(f"Expected HTTP {status_code}, but request succeeded")
+
+
+def ensure_request_transaction(db) -> None:
+    # Direct calls lack HTTP tenant dependency reads that start a request root.
+    # Preserve existing fixture work; never hide failures with commit/rollback.
+    if not db.in_transaction():
+        db.begin()
 
 
 def main() -> None:
@@ -123,14 +132,12 @@ def main() -> None:
                  0,0,0,false,false,true,:user_id,:now,:now)
         """), {"id":alt_product_id,"organization_id":fixture["organization_id"],"sku":f"FX-{marker}","name":f"Foreign Service {marker}","currency":alternate_currency,"user_id":fixture["user_id"],"now":now})
 
-    tenant = Tenant(
-        organization_id=str(fixture["organization_id"]),
-        user_id=str(fixture["user_id"]),
-        membership_id=str(fixture["membership_id"]),
-        organization=Org(str(fixture["organization_id"]), currency, str(fixture["timezone"] or "UTC")),
-    )
     db = SessionLocal()
     try:
+        organization = db.get(Organization, str(fixture['organization_id']))
+        if organization is None:
+            raise AssertionError("Fixture organization is missing")
+        tenant = Tenant(organization_id=str(fixture['organization_id']), user_id=str(fixture['user_id']), membership_id=str(fixture['membership_id']), organization=organization)
         fx_interests = replace_lead_interests(
             alt_lead_id,
             LeadInterestReplace(currency=alternate_currency, interests=[
@@ -317,6 +324,7 @@ def main() -> None:
             request=req("POST", "/accounting/chart-of-accounts/defaults"),
         )
         db.commit()
+        ensure_request_transaction(db)
         result = sync_accounting(req("POST", "/accounting/sync"), db, tenant)  # type: ignore[arg-type]
         if result.errors:
             raise AssertionError(f"accounting sync errors: {result.errors}")
@@ -348,6 +356,8 @@ def main() -> None:
         )
         db.rollback()
 
+        db.begin()
+        acquire_accounting_period_gate(db, tenant.organization_id)
         cancelled_invoice = change_invoice_status(
             invoice.id,
             InvoiceStatusAction(action="cancel", reason="Verify invoice cancellation reversal"),

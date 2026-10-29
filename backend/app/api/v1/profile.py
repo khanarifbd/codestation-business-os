@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import hmac
 import re
 import time
@@ -226,28 +227,43 @@ async def upload_avatar(
         declared_content_type=file.content_type,
     )
     old_key = current_user.avatar_storage_key
-    current_user.avatar_storage_key = new_key
-    current_user.avatar_content_type = content_type
-    current_user.avatar_version = (current_user.avatar_version or 0) + 1
-    record_activity(
-        db,
-        action="user.avatar.updated",
-        scope="account",
-        actor_user_id=current_user.id,
-        entity_type="user",
-        entity_id=current_user.id,
-        message="User updated their profile photo",
-        metadata={"content_type": content_type},
-        request=request,
-    )
+    try:
+        current_user.avatar_storage_key = new_key
+        current_user.avatar_content_type = content_type
+        current_user.avatar_version = (current_user.avatar_version or 0) + 1
+        record_activity(
+            db,
+            action="user.avatar.updated",
+            scope="account",
+            actor_user_id=current_user.id,
+            entity_type="user",
+            entity_id=current_user.id,
+            message="User updated their profile photo",
+            metadata={"content_type": content_type},
+            request=request,
+        )
+    except Exception:
+        # No commit was attempted: the staged object cannot be the committed avatar.
+        # Cleanup is best effort and must not replace the original request error.
+        with suppress(Exception):
+            db.rollback()
+        with suppress(OSError):
+            avatar_storage.delete(new_key)
+        raise
+
     try:
         db.commit()
-        db.refresh(current_user)
     except Exception:
-        db.rollback()
-        avatar_storage.delete(new_key)
+        # A commit exception can mean acknowledgment was lost after persistence.
+        # Rollback cannot prove otherwise; retain both objects and never retry here.
+        with suppress(Exception):
+            db.rollback()
         raise
-    avatar_storage.delete(old_key)
+
+    # The new key is committed. A later readback/response error must not delete it.
+    with suppress(OSError):
+        avatar_storage.delete(old_key)
+    db.refresh(current_user)
     return _profile_read(current_user)
 
 
