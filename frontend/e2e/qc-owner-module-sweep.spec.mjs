@@ -40,6 +40,8 @@ test('Owner module sweep: real API availability and rendering, no portal coverag
   await page.waitForLoadState('networkidle');
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page.locator('body')).not.toContainText(/Application error: a client-side exception|This page could not be found/);
+  // networkidle is not a React-ready signal; preserve the heading assertion with a bounded wait.
+  await expect(page.locator('h1:visible,h2:visible').first(),`${route} ready heading`).toBeVisible();
   const headings=await page.locator('h1:visible,h2:visible').allTextContents();
   expect(headings.length,`${route} visible headings`).toBeGreaterThan(0);
   rows.push({route,actualUrl:new URL(page.url()).pathname,headings,errors:errors.slice(start)});

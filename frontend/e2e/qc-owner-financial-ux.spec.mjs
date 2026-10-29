@@ -41,6 +41,16 @@ async function rejectedUI(page, button, path, method = "POST") {
   return body;
 }
 
+// Current editors reject malformed values before a request. Check that UI
+// protection separately from the server's independent 422 validation contract.
+async function rejectedAPI(page, method, path, data, field) {
+  const response = await page.request.fetch(`/api${path}`, { method, data });
+  const body = await response.json();
+  expect(response.status(), JSON.stringify(body)).toBe(422);
+  expect(Array.isArray(body.detail)).toBeTruthy();
+  expect(JSON.stringify(body.detail)).toMatch(field);
+}
+
  test("real invoice edits, issuance, reversal and cancellation keep preview and collection metrics coherent", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   const { client } = await setup(page, "invoice-lifecycle");
@@ -120,25 +130,28 @@ async function rejectedUI(page, button, path, method = "POST") {
   await testInfo.attach("real-invoice-state-evidence", { body: JSON.stringify({ fixture: "isolated synthetic", issued: 224.68, collected: 80, receivable: 144.68, excludedDraft: 47.25, excludedCancelled: 24.68, openDocuments: 3, collectableInvoices: 2 }), contentType: "application/json" });
 });
 
- test("real invalid asset, payroll and numbering forms show field errors; draft payslip is not approved", async ({ page }, testInfo) => {
+ test("real invalid asset, payroll and numbering forms reject invalid values; draft payslip is not approved", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   await setup(page, "validation-draft-payslip");
   await page.goto("/dashboard/accounting/assets");
-  await page.getByRole("button", { name: /Record asset|Add asset|New asset/ }).click();
-  await page.locator("select").filter({ has: page.locator('option[value="opening"]') }).selectOption("opening");
-  for (const [label, value] of [["Asset code", "QC-INVALID"], ["Name", "Synthetic invalid asset"], ["Currency", "USD"], ["Acquisition cost", "100"], ["Salvage value", "101"], ["Opening balance date", today], ["Acquisition date", today], ["In service date", today]]) await page.getByLabel(label, { exact: true }).fill(value);
-  await rejectedUI(page, page.getByRole("button", { name: "Save asset", exact: true }), "/accounting/assets");
+  await page.getByRole("link", { name: "Record asset", exact: true }).click();
+  await page.getByRole("radio", { name: /Existing \/ opening asset/ }).check();
+  for (const [label, value] of [["Asset code", "QC-INVALID"], ["Asset name", "Synthetic invalid asset"], ["Category", "equipment"], ["Acquisition cost", "100"], ["Salvage value", "101"], ["Opening balance date", today], ["Acquisition date", today], ["In-service date", today]]) await page.getByLabel(new RegExp(`^${label}(?:\\s|$)`)).fill(value);
+  await page.getByRole("button", { name: "Review asset recording", exact: true }).click();
   await expect(page.locator("body")).toContainText(/salvage.*(?:exceed|greater|lower)|(?:exceed|greater).*salvage/i);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await rejectedAPI(page, "POST", "/accounting/assets", { asset_code: "QC-INVALID", name: "Synthetic invalid asset", category: "equipment", currency: "USD", acquisition_cost: "100", salvage_value: "101", acquisition_date: today, in_service_date: today, useful_life_months: 36, record_mode: "opening", opening_balance_date: today }, /salvage/i);
   expect(await api(page, "GET", "/accounting/assets")).toEqual([]);
 
-  await page.goto("/dashboard/payroll");
-  await page.getByRole("button", { name: "Payroll Periods", exact: true }).click();
+  await page.goto("/dashboard/payroll/periods/new");
   await page.getByLabel("Period name", { exact: true }).fill("Synthetic invalid reverse period");
   await page.getByLabel("Start date", { exact: true }).fill(last);
-  await page.getByLabel("End date", { exact: true }).fill(first);
-  await page.getByLabel("Pay date", { exact: true }).fill(last);
-  await rejectedUI(page, page.getByRole("button", { name: "Create period", exact: true }), "/payroll/periods");
-  await expect(page.locator("body")).toContainText(/period_end|end date|period end/i);
+  const periodEnd = page.getByLabel("End date", { exact: true });
+  await periodEnd.fill(first);
+  await page.getByLabel(/^Pay date\b/).fill(last);
+  expect(await periodEnd.evaluate(el => el.validity.rangeUnderflow)).toBe(true);
+  await expect(page.getByRole("button", { name: "Create period", exact: true })).toBeDisabled();
+  await rejectedAPI(page, "POST", "/payroll/periods", { name: "Synthetic invalid reverse period", period_start: last, period_end: first, pay_date: last }, /period_end|end date|period end/i);
   expect(await api(page, "GET", "/payroll/periods")).toEqual([]);
 
   const employee = (await api(page, "GET", "/hr/people")).people[0];
@@ -146,12 +159,13 @@ async function rejectedUI(page, button, path, method = "POST") {
   const period = await api(page, "POST", "/payroll/periods", { name: "Synthetic valid month", period_start: first, period_end: last, pay_date: last });
   const run = await api(page, "POST", "/payroll/runs", { period_id: period.id, currency: "USD" });
   expect(run.status).toBe("draft");
-  await page.goto("/dashboard/payroll");
-  await page.getByRole("button").filter({ hasText: run.run_number }).click();
-  await page.getByRole("button", { name: "Adjust", exact: true }).click();
-  await page.getByLabel("Tax / withholding", { exact: true }).fill("-1");
-  await rejectedUI(page, page.getByRole("button", { name: "Save adjustment", exact: true }), `/payroll/runs/${run.id}/entries/${run.entries[0].id}`, "PATCH");
-  await expect(page.locator("body")).toContainText("tax_amount");
+  await page.goto(`/dashboard/payroll/runs/${run.id}/entries/${run.entries[0].id}/edit`);
+  const tax = page.getByLabel(/^Tax \/ withholding · USD/);
+  await tax.fill("-1");
+  await page.getByLabel(/^Adjustment reason\b/).fill("Synthetic invalid withholding validation");
+  expect(await tax.evaluate(el => el.validity.patternMismatch)).toBe(true);
+  await expect(page.getByRole("button", { name: "Save draft adjustment", exact: true })).toBeDisabled();
+  await rejectedAPI(page, "PATCH", `/payroll/runs/${run.id}/entries/${run.entries[0].id}`, { tax_amount: "-1", adjustment_reason: "Synthetic invalid withholding validation" }, /tax_amount/);
   expect(Number((await api(page, "GET", `/payroll/runs/${run.id}`)).entries[0].tax_amount)).toBe(0);
   await page.goto(`/dashboard/payroll/runs/${run.id}/payslip/${run.entries[0].id}`);
   await expect(page.locator("footer")).toContainText("This is a draft payroll statement, not an approved payroll record. Amounts may change before approval.");
@@ -220,16 +234,18 @@ async function rejectedUI(page, button, path, method = "POST") {
   const chart = await api(page, "GET", "/accounting/chart-of-accounts");
   await api(page, "POST", "/accounting/payables", { supplier_name: "Synthetic accrual supplier", bill_date: today, currency: "USD", amount: "10", expense_ledger_account_id: chart.find(r => r.system_key === "operating_expenses").id, description: "Unpaid accrual-only cost" });
   await page.goto("/dashboard/reports");
-  await expect(page.getByText("Operational margin", { exact: true }).locator("..")).toContainText("USD 169.00");
+  await expect(page.locator(".or-result").filter({ has: page.getByText("Operational margin", { exact: true }) })).toContainText("USD 169.00");
   await expect(page.locator("body")).toContainText("Operational margin, not accrual net profit");
+  await page.getByRole("navigation", { name: "Report sections" }).getByRole("link", { name: "Projects", exact: true }).click();
   await expect(page.getByRole("row").filter({ hasText: project.project_number })).toContainText("USD 175.00");
   await expect(page.getByRole("row").filter({ hasText: project.project_number })).toContainText("USD 200.00");
+  await page.getByRole("navigation", { name: "Report sections" }).getByRole("link", { name: "Clients", exact: true }).click();
   const costs = page.getByRole("row").filter({ hasText: costClient.display_name });
   await expect(costs).toContainText("USD 0.00");
   await expect(costs).toContainText("USD 6.00");
   await expect(costs).toContainText("USD -6.00");
   await page.goto("/dashboard/accounting/reports");
-  await expect(page.getByText("Net profit", { exact: true }).first().locator("..").locator("..")).toContainText("USD 159.00");
+  await expect(page.getByText("Net profit / loss · selected period", { exact: true }).locator("..")).toContainText("USD 159.00");
   await page.goto("/dashboard");
   await expect(page.getByText("Operational margin", { exact: true }).locator("..")).toContainText("USD 169.00");
   await expect(page.locator(`a[href="/dashboard/projects/${project.id}"]`)).toContainText("USD 175.00");
@@ -264,15 +280,15 @@ test("owner source selectors omit billed work and overpayment is blocked before 
   const account = await cash(page);
   await payment(page, billed, account, 80);
   await page.goto(`/dashboard/accounting/money-in?invoice_id=${billed.id}`);
-  await expect(page.locator("body")).toContainText("Maximum currently due: USD 120.00");
+  await expect(page.locator("body")).toContainText("Last verified amount due: USD 120.00");
   await page.getByRole("button", { name: "Money received into", exact: true }).click();
   await page.getByRole("listbox").getByRole("button").filter({ hasText: "Synthetic USD cash" }).click();
   const amount = page.getByLabel(/Amount received/);
   await amount.fill("121");
-  expect(await amount.evaluate(el => el.validity.rangeOverflow)).toBe(true);
+  await expect(page.getByRole("status").filter({ hasText: "The amount exceeds the last verified invoice balance due." })).toBeVisible();
   await page.getByRole("button", { name: "Review money received", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(amount).toBeFocused();
+  await expect(amount).toHaveValue("121");
   const unchanged = await api(page, "GET", `/finance/invoices/${billed.id}`);
   expect([Number(unchanged.amount_paid), Number(unchanged.balance_due)]).toEqual([80, 120]);
   await payment(page, billed, account, 120);

@@ -1,3 +1,4 @@
+import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { expect, test } from '@playwright/test';
 const email = process.env.E2E_QC_MASTERDATA_EMAIL ?? 'qc-masterdata@example.com';
 const password = process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!';
@@ -16,12 +17,9 @@ async function api(request, path, data, method = 'post') {
   return r.status() === 204 ? null : r.json();
 }
 async function ui(page, path, method, action) {
-  const p = page.waitForResponse(r => new URL(r.url()).pathname === path && r.request().method() === method);
-  await action();
-  const r = await p;
-  expect(r.ok(), `HTTP ${r.status()}`).toBeTruthy();
-  return r.status() === 204 ? null : r.json();
+  return captureJsonResponse(page, { path, method, action });
 }
+
 async function setup(page, context, prefix) {
   page.setDefaultTimeout(12000);
   await page.goto('/login');
@@ -202,8 +200,7 @@ test('owner CRM missing activities, follow-up, lost, custom stages and sources',
     await page.getByRole('row').filter({
       hasText: e.marker
     }).getByRole('button', {
-      name: 'Open',
-      exact: true
+      name: /^Open lead /
     }).click();
     await page.getByLabel('Subject', {
       exact: true
@@ -375,13 +372,11 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
   try {
     await page.goto('/dashboard/inventory');
     await page.getByRole('button', {
-      name: 'Products & Services',
+      name: 'Products & services',
       exact: true
     }).click();
-    await page.getByRole('button', {
-      name: 'Manage categories',
-      exact: true
-    }).click();
+    await page.getByRole('navigation', { name: 'Inventory sections' }).getByRole('button', { name: 'Categories', exact: true }).click();
+    await page.getByRole('button', { name: 'Add category', exact: true }).click();
     await page.getByLabel('Category name', {
       exact: true
     }).fill('Synthetic category');
@@ -392,6 +387,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Add',
       exact: true
     }).click());
+    await expect(page.getByRole('row').filter({ hasText: 'Synthetic category' })).toContainText('Exact category description');
     expect(cat.description).toBe('Exact category description');
     e.cases.push({
       id: 'CAT05',
@@ -399,7 +395,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
     });
     await page.goto('/dashboard/inventory');
     await page.getByRole('button', {
-      name: 'Products & Services',
+      name: 'Products & services',
       exact: true
     }).click();
     await page.getByRole('button', { name: 'Add item', exact: true }).first().click();
@@ -439,9 +435,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Add item',
       exact: true
     }).last().click());
-    await expect(page.getByText('Item added to catalog.', {
-      exact: true
-    })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'GAP-SVC' })).toBeVisible();
     let products = await api(context.request, '/api/inventory/products?include_inactive=true', undefined, 'get');
     expect((await api(context.request, '/api/services/catalog', undefined, 'get')).find(p => p.product_id === svc.id).duration_months).toBe(3);
     e.cases.push({
@@ -452,8 +446,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       hasText: 'GAP-SVC'
     });
     await row.getByRole('button', {
-      name: 'Edit',
-      exact: true
+      name: /^Edit /
     }).click();
     await page.getByLabel('Name', {
       exact: true
@@ -462,7 +455,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       exact: false
     }).fill('6');
     await page.getByRole('button', {
-      name: 'Uncategorized',
+      name: 'Category',
       exact: true
     }).click();
     await page.getByRole('button', {
@@ -472,9 +465,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Update item',
       exact: true
     }).click());
-    await expect(page.getByText('Item updated.', {
-      exact: true
-    })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Synthetic service revised' })).toBeVisible();
     products = await api(context.request, '/api/inventory/products?include_inactive=true', undefined, 'get');
     expect(products.find(p => p.id === svc.id)).toMatchObject({
       name: 'Synthetic service revised',
@@ -532,9 +523,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Add item',
       exact: true
     }).last().click());
-    await expect(page.getByText('Item added to catalog.', {
-      exact: true
-    })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'GAP-STOCK' })).toBeVisible();
     products = await api(context.request, '/api/inventory/products?include_inactive=true', undefined, 'get');
     expect(Number(products.find(p => p.id === stock.id).on_hand)).toBe(0);
     e.cases.push({
@@ -555,7 +544,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
         exact: true
       })
     }).selectOption('stock_item');
-    await expect(page.getByText('No matching items. Add your first product or service.', {
+    await expect(page.getByText('No matching items', {
       exact: true
     })).toBeVisible();
     e.cases.push({
@@ -573,8 +562,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       hasText: 'GAP-STOCK'
     });
     await row.getByRole('button', {
-      name: 'Edit',
-      exact: true
+      name: /^Edit /
     }).click();
     await page.getByLabel('Name', {
       exact: true
@@ -586,25 +574,20 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Update item',
       exact: true
     }).click());
-    await expect(page.getByText('Item updated.', {
-      exact: true
-    })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Synthetic zero stock revised' })).toBeVisible();
     await ui(page, `/api/inventory/products/${stock.id}`, 'PATCH', () => row.getByRole('button', {
-      name: 'Disable',
-      exact: true
+      name: /^Disable /
     }).click());
     await expect(row.getByRole('button', {
-      name: 'Enable',
-      exact: true
+      name: /^Enable /
     })).toBeVisible();
     await page.reload();
     await page.getByRole('button', {
-      name: 'Products & Services',
+      name: 'Products & services',
       exact: true
     }).click();
     await row.getByRole('button', {
-      name: 'Edit',
-      exact: true
+      name: /^Edit /
     }).click();
     await expect(page.getByLabel('Unit', {
       exact: true
@@ -675,7 +658,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       actual: 'Blank contact creation, persisted purchases0 outstanding0'
     });
     await page.getByPlaceholder('Search supplier, contact or email…').fill('not-existing');
-    await expect(page.getByText('No matching suppliers.', {
+    await expect(page.getByText('No matching suppliers', {
       exact: true
     })).toBeVisible();
     await page.getByPlaceholder('Search supplier, contact or email…').fill('Synthetic gap');
@@ -688,8 +671,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       hasText: 'Synthetic gap supplier'
     });
     await row.getByRole('button', {
-      name: 'Edit',
-      exact: true
+      name: /^Edit /
     }).click();
     await page.getByLabel('Supplier name', {
       exact: true
@@ -698,12 +680,9 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Update supplier',
       exact: true
     }).click());
-    await expect(page.getByText('Supplier updated.', {
-      exact: true
-    })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'Synthetic gap supplier revised' })).toBeVisible();
     await ui(page, `/api/inventory/suppliers/${supplier.id}`, 'PATCH', () => row.getByRole('button', {
-      name: 'Disable',
-      exact: true
+      name: /^Disable /
     }).click());
     let suppliers = await api(context.request, '/api/inventory/suppliers?include_inactive=true', undefined, 'get');
     expect(suppliers.find(s => s.id === supplier.id)).toMatchObject({
@@ -747,6 +726,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Add warehouse',
       exact: true
     }).last().click());
+    await expect(page.getByRole('row').filter({ hasText: 'Synthetic empty warehouse' })).toBeVisible();
     expect(wh.is_default).toBe(false);
     e.cases.push({
       id: 'WH03',
@@ -780,10 +760,9 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Warehouses',
       exact: true
     }).click();
-    row = page.locator('div.rounded-2xl').filter({ has: page.getByRole('heading', { name: /Synthetic empty warehouse/ }) });
+    row = page.getByRole('row').filter({ hasText: 'Synthetic empty warehouse' });
     await row.getByRole('button', {
-      name: 'Edit',
-      exact: true
+      name: /^Edit /
     }).click();
     await page.getByLabel('Warehouse name', {
       exact: true
@@ -795,6 +774,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Update warehouse',
       exact: true
     }).click());
+    await expect(page).toHaveURL(/\/dashboard\/inventory\?(?=.*tab=warehouses)/);
     await page.reload();
     await page.getByRole('button', {
       name: 'Warehouses',
@@ -1112,7 +1092,7 @@ test('owner client profile notes secure text read and CRM catalog interests', as
     await page.getByRole('row').filter({
       hasText: client.display_name
     }).getByRole('button', {
-      name: 'Edit',
+      name: `Edit ${client.display_name}`,
       exact: true
     }).click();
     await page.getByLabel('City', {
@@ -1257,8 +1237,7 @@ test('owner client profile notes secure text read and CRM catalog interests', as
     await page.getByRole('row').filter({
       hasText: 'Synthetic interest lead'
     }).getByRole('button', {
-      name: 'Open',
-      exact: true
+      name: /^Open lead /
     }).click();
     await page.getByRole('button', {
       name: 'Add requirements',
@@ -1359,13 +1338,13 @@ test('owner stock threshold boundary and fixed service entitlement dates', async
     const before = await api(context.request, '/api/inventory/stock', undefined, 'get');
     const journals = await api(context.request, '/api/accounting/journals', undefined, 'get');
     await page.goto('/dashboard/inventory');
-    await page.getByRole('button', { name: 'Products & Services', exact: true }).click();
-    await page.getByRole('row').filter({ hasText: 'GAP-BOUNDARY' }).getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: 'Products & services', exact: true }).click();
+    await page.getByRole('row').filter({ hasText: 'GAP-BOUNDARY' }).getByRole('button', { name: /^Edit / }).click();
     await page.getByLabel('Selling price', { exact: true }).fill('13');
     await ui(page, `/api/inventory/products/${p.id}`, 'PATCH', () => page.getByRole('button', { name: 'Update item', exact: true }).click());
-    await expect(page.getByText('Item updated.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('row').filter({ hasText: 'GAP-BOUNDARY' })).toBeVisible();
     await page.getByRole('button', {
-      name: 'Stock',
+      name: 'Stock on hand',
       exact: true
     }).click();
     await expect(page.locator('tbody tr')).toHaveCount(2);

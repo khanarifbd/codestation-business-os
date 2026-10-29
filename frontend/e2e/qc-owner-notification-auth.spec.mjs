@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
+import { captureJsonResponse } from './support/capture-json-response.mjs';
 
 // Fresh owner-only local fixtures. No My Work, employee/client portals, invites,
 // external SMTP, payment rails, auth bypasses or route interception are used.
@@ -89,13 +90,13 @@ test('NT01 NT02 NT04 owner task deadlines generate, filter and clear after owner
   // another href; complete through the actual owner project-administration UI.
   await page.goto(`/dashboard${root}`);
   await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-  await page.getByRole('row').filter({ hasText: overdue.title }).getByRole('button', { name: 'Update Work', exact: true }).click();
+  await page.getByRole('row').filter({ hasText: overdue.title }).getByRole('button', { name: 'Update work', exact: true }).click();
   await page.getByRole('slider').focus();
   await page.getByRole('slider').press('End');
   await page.getByLabel('What did you work on?', { exact: true }).fill('Synthetic owner completion for notification QC.');
-  const saved = page.waitForResponse((response) => new URL(response.url()).pathname === `/api${root}/tasks/${overdue.id}/progress` && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await body(await saved);
+  await captureJsonResponse(page, { path: `/api${root}/tasks/${overdue.id}/progress`, action: () => page.getByRole('button', { name: 'Save', exact: true }).click() });
+  await expect(page).toHaveURL(new RegExp(`/dashboard/projects/${project.id}(?:\\?|$)`));
+  await expect(page.getByRole('row').filter({ hasText: overdue.title })).toContainText('100%');
   const tasks = (await get(page, `${root}/workspace`)).tasks;
   expect(tasks.find((task) => task.id === overdue.id)).toMatchObject({ status: 'completed', progress_percent: 100 });
   expect(tasks.find((task) => task.id === future.id).status).not.toBe('completed');
@@ -129,7 +130,7 @@ test('AUTH01 local UI signup, captured verification, sign-in and isolated owner 
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
   expect((await signup).status()).toBe(201);
   await expect(page).toHaveURL(/\/verify-email\?email=/);
-  await expect(page.getByRole('heading', { name: 'Verify your email', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Your next step is in your inbox.', exact: true })).toBeVisible();
   expect((await page.request.get('/api/organizations')).status()).toBe(401);
   const denied = await page.request.post('/api/auth/login', { data: { email: signupEmail, password } });
   expect(denied.status()).toBe(403);
@@ -141,8 +142,8 @@ test('AUTH01 local UI signup, captured verification, sign-in and isolated owner 
   expect(captured.email).toBe(signupEmail);
   expect(captured.provider_delivered).toBe(false);
   await page.goto(`/verify-email?token=${encodeURIComponent(captured.token)}`);
-  await expect(page.getByRole('heading', { name: 'Email verified', exact: true })).toBeVisible();
-  await expect(page.getByText('Verification complete', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: "You're verified. You're ready.", exact: true })).toBeVisible();
+  await expect(page.getByText('Email verified. You can now sign in.', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Continue to sign in', exact: true }).click();
   await page.getByLabel(/email or username/i).fill(signupEmail);
   await page.getByLabel('Password', { exact: true }).fill(password);
@@ -150,11 +151,9 @@ test('AUTH01 local UI signup, captured verification, sign-in and isolated owner 
   await expect(page).toHaveURL(/\/onboarding$/);
   expect(await get(page, '/organizations')).toEqual([]);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Company information', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Company identity', exact: true })).toBeVisible();
   await page.getByLabel('Company name', { exact: true }).fill(companyName);
-  const created = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/organizations' && response.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Create company workspace', exact: true }).click();
-  const workspace = await body(await created);
+  const workspace = await captureJsonResponse(page, { path: '/api/organizations', action: () => page.getByRole('button', { name: 'Create company workspace', exact: true }).click() });
   expect(workspace).toMatchObject({ is_owner: true, role: 'admin' });
   expect(workspace.organization).toMatchObject({ name: companyName, currency: 'BDT', country_code: 'BD', timezone: 'Asia/Dhaka', financial_year_start_month: 7 });
   await expect(page).toHaveURL(/\/dashboard$/);

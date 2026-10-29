@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 function invoiceFixture(status = "draft", total = 12.34) {
-  return { id: "qa-preview", invoice_number: "QA-PREVIEW-001", client_id: "qa-client", client_name: "Synthetic QA Client", client_name_snapshot: "Synthetic QA Client", seller_name_snapshot: "Synthetic QA Company", seller_tax_identifier_snapshot: null, status, display_status: status, subject: "Synthetic regression invoice", issue_date: "2026-10-20", due_date: "2026-10-31", currency: "USD", total, subtotal: total, discount_total: 0, tax_total: 0, amount_paid: status === "paid" ? total : 0, balance_due: status === "paid" ? 0 : total, items: [{ id: "qa-line", description: "Synthetic service", quantity: 1, unit_price: total, discount_percent: 0, tax_rate: 0, line_total: total }] };
+  return { id: "qa-preview", invoice_number: "QA-PREVIEW-001", client_id: "qa-client", client_name: "Synthetic QA Client", client_name_snapshot: "Synthetic QA Client", seller_name_snapshot: "Synthetic QA Company", seller_tax_identifier_snapshot: null, status, display_status: status, tax_calculation_mode: "exclusive", subject: "Synthetic regression invoice", issue_date: "2026-10-20", due_date: "2026-10-31", currency: "USD", total, subtotal: total, discount_total: 0, tax_total: 0, amount_paid: status === "paid" ? total : 0, balance_due: status === "paid" ? 0 : total, items: [{ id: "qa-line", description: "Synthetic service", quantity: 1, unit_price: total, discount_percent: 0, tax_rate: 0, line_total: total }] };
 }
 async function mockInvoice(page, invoice, payments = []) {
   let reads = 0;
@@ -51,7 +51,7 @@ test("QA-012 draft edit and issuance refresh the visible client preview without 
   await expect(preview).toContainText("USD 12.34");
   await expect(preview.getByText("draft", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Edit draft", exact: true }).click();
-  await page.locator('input[type="number"]').nth(1).fill("24.68");
+  await page.getByRole("spinbutton", { name: "Item 1 unit price", exact: true }).fill("24.68");
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(preview).toContainText("USD 24.68");
   await expect(preview).not.toContainText("USD 12.34");

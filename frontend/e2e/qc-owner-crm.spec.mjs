@@ -136,7 +136,7 @@ test("fresh owner: create leads → qualify → win → convert one client → r
     });
 
     await test.step("Qualify and win through the lead drawer; status filters use real data", async () => {
-      await page.getByRole("row").filter({ hasText: companyName }).getByRole("button", { name: "Open", exact: true }).click();
+      await page.getByRole("row").filter({ hasText: companyName }).getByRole("button", { name: /^Open lead / }).click();
       await expect(page.getByRole("button", { name: "Convert to Client", exact: true })).toHaveCount(0);
       await mutateViaUI(page, `/api/crm/leads/${lead.id}/status`, "PATCH", () =>
         page.getByLabel("Lead status", { exact: true }).selectOption(qualified.id));
@@ -152,7 +152,7 @@ test("fresh owner: create leads → qualify → win → convert one client → r
       result = await filterViaUI(page, "leads", { status_id: "", search: "" }, () => page.getByRole("button", { name: "Reset", exact: true }).click());
       expect(result.items).toHaveLength(2);
       await expect(statusFilter(page)).toHaveValue("");
-      await page.getByRole("row").filter({ hasText: companyName }).getByRole("button", { name: "Open", exact: true }).click();
+      await page.getByRole("row").filter({ hasText: companyName }).getByRole("button", { name: /^Open lead / }).click();
       await mutateViaUI(page, `/api/crm/leads/${lead.id}/status`, "PATCH", () =>
         page.getByLabel("Lead status", { exact: true }).selectOption(won.id));
       await expect(page.getByRole("heading", { name: "Opportunity marked as Won", exact: true })).toBeVisible();
@@ -232,7 +232,7 @@ test("fresh owner: create leads → qualify → win → convert one client → r
       await expect(page.getByRole("heading", { name: "No clients found", exact: true })).toBeVisible();
       result = await filterViaUI(page, "clients", { status: "active" }, () => statusFilter(page).selectOption("active"));
       expect(result.items.map((item) => item.id)).toEqual([client.id]);
-      await row.getByRole("button", { name: "Edit", exact: true }).click();
+      await row.getByRole("button", { name: /^Edit / }).click();
       await expect(page.getByText(`Originated from CRM · ${lead.lead_code} · ${won.name}`, { exact: true })).toBeVisible();
       await mutateViaUI(page, `/api/crm/clients/${client.id}`, "PATCH", () =>
         page.getByRole("button", { name: "Deactivate", exact: true }).click());
@@ -249,7 +249,7 @@ test("fresh owner: create leads → qualify → win → convert one client → r
       expect(result.items.map((item) => item.id)).toEqual([client.id]);
       await expect(statusFilter(page)).toHaveValue("");
       await expect(search).toHaveValue("");
-      await row.getByRole("button", { name: "Edit", exact: true }).click();
+      await row.getByRole("button", { name: /^Edit / }).click();
       await mutateViaUI(page, `/api/crm/clients/${client.id}`, "PATCH", () =>
         page.getByRole("button", { name: "Activate", exact: true }).click());
       await expect(page.getByText("Client reactivated", { exact: true })).toBeVisible();

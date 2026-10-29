@@ -1,3 +1,4 @@
+import { captureJsonResponse } from './support/capture-json-response.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
@@ -18,8 +19,7 @@ async function setup(p,label){
  return (await get(p,'/hr/people')).people[0];
 }
 async function submit(p,name,path,method='POST'){
- const pending=p.waitForResponse(r=>new URL(r.url()).pathname==='/api'+path&&r.request().method()===method);
- await p.getByRole('button',{name,exact:true}).last().click();return json(await pending);
+ return captureJsonResponse(p,{path:'/api'+path,method,action:()=>p.getByRole('button',{name,exact:true}).last().click()});
 }
 async function choose(p,label,option){await p.getByRole('button',{name:label,exact:true}).click();await p.getByRole('listbox').getByRole('button',{name:option}).click();}
 
@@ -33,7 +33,7 @@ test('PRJ01-11 PRJ13-14 owner execution, rollups, notes, locks and document meta
  const completedOrder=await get(p,`/sales/orders/${order.id}`);
  await submit(p,'Reopen order',`/sales/orders/${order.id}/status`,'PATCH');expect((await get(p,`/sales/orders/${order.id}`)).status).toBe('in_progress');
  await p.getByRole('link',{name:'Project workspace',exact:true}).click();
- await p.getByRole('button',{name:'Create Project',exact:true}).click();
+ await p.getByRole('button',{name:'Create project',exact:true}).click();
  await p.getByLabel('Project name',{exact:true}).fill('Synthetic owner execution');await p.getByRole('combobox',{name:'Priority',exact:true}).selectOption('high');
  await choose(p,'Project manager',employee.full_name);
  await p.getByLabel('Due date',{exact:true}).fill('2026-12-31');
@@ -49,7 +49,7 @@ test('PRJ01-11 PRJ13-14 owner execution, rollups, notes, locks and document meta
  await p.getByLabel('Due date',{exact:true}).fill('2026-12-20');
  const milestone=await submit(p,'Save',root+'/milestones');
  expect(milestone.due_date).toBe('2026-12-20');
- await p.getByRole('button',{name:'Edit',exact:true}).click();
+ await p.getByRole('button',{name:'Edit schedule',exact:true}).click();
  await p.getByLabel('Milestone title',{exact:true}).fill('QC milestone revised');
  await submit(p,'Save',root+`/milestones/${milestone.id}`,'PATCH');
  await p.getByRole('button',{name:'Tasks',exact:true}).click();
@@ -63,7 +63,7 @@ test('PRJ01-11 PRJ13-14 owner execution, rollups, notes, locks and document meta
  const task=await submit(p,'Save',root+'/tasks');
  expect(task.estimated_minutes).toBe(150);expect(task.due_date).toBe(yesterday);expect(task.priority).toBe('urgent');expect(task.status).toBe('todo');expect((await get(p,root+'/workspace')).summary.overdue_task_count).toBe(1);expect(task.assignee_employee_id).toBe(employee.id);
  for(const [progress,status,note,hours] of [[25,'blocked','QC blocked checkpoint','0.25'],[50,'review','QC review checkpoint',''],[100,'','QC completed checkpoint','']]){
-  await p.getByRole('button',{name:'Update Work',exact:true}).click();
+  await p.getByRole('button',{name:'Update work',exact:true}).click();
   await p.getByRole('slider').focus();await p.getByRole('slider').press('Home');for(let step=0;step<progress/5;step++)await p.getByRole('slider').press('ArrowRight');
   await p.getByRole('combobox',{name:'Work status',exact:true}).selectOption(status);
   await p.getByLabel('Time spent (hours)',{exact:true}).fill(hours);
@@ -93,9 +93,9 @@ expect(workspace.recent_work.find(x=>x.progress_percent===25).time_spent_minutes
  await submit(p,'Save',root+`/documents/${doc.id}`,'PATCH');
  const read=await get(p,root+'/workspace');expect(read.documents[0]).toMatchObject({title:'QC revised document',notes:'QC metadata edit'});
  const file=await p.request.get('/api'+root+`/documents/${doc.id}/file`);expect(file.ok()).toBe(true);expect(await file.body()).toEqual(bytes);console.log('PASS PRJ14 owner document upload, UI metadata edit and unchanged exact file bytes');
- await submit(p,'Put on Hold',root+'/status','PATCH');expect((await get(p,root)).status).toBe('on_hold');
+ await submit(p,'Put on hold',root+'/status','PATCH');expect((await get(p,root)).status).toBe('on_hold');
  await submit(p,'Resume',root+'/status','PATCH');expect((await get(p,root)).status).toBe('active');
- await submit(p,'Complete',root+'/status','PATCH');expect((await get(p,root)).status).toBe('completed');
+ await submit(p,'Complete project',root+'/status','PATCH');expect((await get(p,root)).status).toBe('completed');
  await p.reload();await p.getByRole('button',{name:'Review & Tips',exact:true}).click();await expect(p.getByRole('button',{name:'Add review',exact:true})).toBeVisible();await expect(p.getByText('Record tip or additional income',{exact:true})).toBeVisible();
  const before=(await get(p,root+'/workspace')).documents;
  const denied=await p.request.patch('/api'+root+`/documents/${doc.id}`,{data:{title:'Should not persist'}});expect(denied.status()).toBe(409);
@@ -137,17 +137,20 @@ test('HR11 HR12 HR13 HR19 owner talent lifecycle and completed review admin edit
 });
 
 test('HR07 owner attendance office and explicit weekly modes persist without geolocation access',async({page:p},info)=>{
- test.setTimeout(90000);const employee=await setup(p,'attendance setup');await p.goto('/dashboard/hr/settings/attendance');
+ test.setTimeout(90000);const employee=await setup(p,'attendance setup');await p.goto('/dashboard/hr/settings/attendance/offices/new');
  await p.getByLabel('Office name',{exact:true}).fill('Synthetic office');await p.getByLabel('Latitude',{exact:true}).fill('91');await p.getByLabel('Longitude',{exact:true}).fill('90.39');
- await p.getByRole('button',{name:'Add office',exact:true}).click();expect(await p.getByLabel('Latitude',{exact:true}).evaluate(el=>el.validity.rangeOverflow)).toBe(true);expect(await get(p,'/hr/attendance/offices')).toEqual([]);
- await p.getByLabel('Latitude',{exact:true}).fill('23.75');const office=await submit(p,'Add office','/hr/attendance/offices');
+ await p.getByRole('button',{name:'Review changes',exact:true}).click();expect(await p.getByLabel('Latitude',{exact:true}).evaluate(el=>el.validity.rangeOverflow)).toBe(true);expect(await get(p,'/hr/attendance/offices')).toEqual([]);
+ await p.getByLabel('Latitude',{exact:true}).fill('23.75');await p.getByRole('button',{name:'Review changes',exact:true}).click();const office=await submit(p,'Confirm and save once','/hr/attendance/offices');
+ await p.goto('/dashboard/hr/settings/attendance/policies/new');
  await p.getByRole('combobox',{name:'Employee',exact:true}).selectOption(employee.id);
  const days=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];const modes=['office','office','remote','field','office','off','off'];
  for(let i=0;i<days.length;i++)await p.getByRole('combobox',{name:days[i],exact:true}).selectOption(modes[i]);
- await expect(p.getByRole('button',{name:'Save schedule',exact:true})).toBeDisabled();
- await p.getByRole('combobox',{name:'Assigned office',exact:true}).selectOption(office.id);await submit(p,'Save schedule',`/hr/attendance/policies/${employee.id}`,'PUT');
- await p.reload();await p.getByRole('combobox',{name:'Employee',exact:true}).selectOption(employee.id);
- await expect(p.getByRole('combobox',{name:'Assigned office',exact:true})).toHaveValue(office.id);for(let i=0;i<days.length;i++)await expect(p.getByRole('combobox',{name:days[i],exact:true})).toHaveValue(modes[i]);
+ // Invalid office-day policy must not advance to the write confirmation.
+ await p.getByRole('button',{name:'Review changes',exact:true}).click();
+ await expect(p.getByRole('button',{name:'Confirm and save once',exact:true})).toHaveCount(0);expect(await get(p,'/hr/attendance/policies')).toEqual([]);
+ await p.getByRole('combobox',{name:'Assigned active office',exact:true}).selectOption(office.id);await p.getByRole('button',{name:'Review changes',exact:true}).click();await submit(p,'Confirm and save once',`/hr/attendance/policies/${employee.id}`,'PUT');
+ await p.goto(`/dashboard/hr/settings/attendance/policies/${employee.id}/edit`);
+ await expect(p.getByRole('combobox',{name:'Assigned active office',exact:true})).toHaveValue(office.id);for(let i=0;i<days.length;i++)await expect(p.getByRole('combobox',{name:days[i],exact:true})).toHaveValue(modes[i]);
  const policies=await get(p,'/hr/attendance/policies');expect(policies[0].weekly_modes).toEqual(modes);
  await info.attach('owner-attendance-policy.json',{body:JSON.stringify(policies,null,2),contentType:'application/json'});
 });
@@ -155,7 +158,7 @@ test('HR07 owner attendance office and explicit weekly modes persist without geo
 test('HR02 owner duplicate-date guard and HR25 pending leave rejection persistence',async({page:p},info)=>{
  test.setTimeout(120000);const employee=await setup(p,'attendance duplicates');await p.goto('/dashboard/hr/time');
  async function attendance(day,hours,overtime,expected=201){
-  await p.getByRole('button',{name:'Record attendance',exact:true}).click();await choose(p,'Employee',employee.employee_code);await p.getByLabel('Date',{exact:true}).fill(day);await p.getByLabel('Worked hours',{exact:true}).fill(hours);await p.getByLabel('Overtime hours',{exact:true}).fill(overtime);
+  await p.goto('/dashboard/hr/time/attendance/new');await choose(p,'Employee',employee.employee_code);await p.getByLabel('Company work date',{exact:true}).fill(day);await p.getByLabel('Worked hours',{exact:true}).fill(hours);await p.getByLabel('Overtime hours',{exact:true}).fill(overtime);
   const pending=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/hr/attendance'&&r.request().method()==='POST');await p.getByRole('button',{name:'Save attendance',exact:true}).click();expect((await pending).status()).toBe(expected);
  }
  await attendance(yesterday,'8','2');await attendance(today,'7.5','0.5');
@@ -164,7 +167,7 @@ test('HR02 owner duplicate-date guard and HR25 pending leave rejection persisten
  const type=await post(p,'/hr/leave-types',{name:'Synthetic annual leave',code:'QC-REJECT',annual_allowance_days:'12',is_paid:true,requires_approval:true});
  const leave=await post(p,'/hr/leave-requests',{employee_id:employee.id,leave_type_id:type.id,start_date:'2026-12-01',end_date:'2026-12-15',reason:'Synthetic owner rejection'});expect(leave.status).toBe('pending');
  const pendingSummary=await get(p,'/hr/workspace-summary');expect(pendingSummary.attention.pending_leave).toBe(1);
- await p.reload();await p.getByRole('button',{name:'Leave',exact:true}).click();await submit(p,'Reject',`/hr/leave-requests/${leave.id}`,'PATCH');
+ await p.goto(`/dashboard/hr/time/leave/${leave.id}/review`);await p.getByRole('radio',{name:'Reject request',exact:true}).check();await p.getByRole('button',{name:'Review decision',exact:true}).click();await submit(p,'Confirm decision',`/hr/leave-requests/${leave.id}`,'PATCH');
  expect((await get(p,'/hr/leave-requests')).find(x=>x.id===leave.id).status).toBe('rejected');expect((await get(p,'/hr/workspace-summary')).attention.pending_leave).toBe(0);expect(await get(p,'/hr/attendance')).toEqual(before);
  await info.attach('owner-rejection-readback.json',{body:JSON.stringify({leaves:await get(p,'/hr/leave-requests'),summary:await get(p,'/hr/workspace-summary')},null,2),contentType:'application/json'});
  // Personal entitlement/balance UI deliberately excluded. No verdict on overdraft/day-count policy.
@@ -174,9 +177,10 @@ test('HR01 HR09 owner structure search and document expiry aggregation',async({p
  test.setTimeout(120000);const employee=await setup(p,'structure expiry');await p.goto('/dashboard/hr/people');await p.getByRole('button',{name:'Structure',exact:true}).click();
  for(const [heading,label,name,path] of [['Departments','Department name','QC Engineering','departments'],['Designations','Designation name','QC Engineer','designations']]){
   await p.getByRole('heading',{name:heading,exact:true}).locator('..').locator('..').getByRole('button',{name:'Add',exact:true}).click();await p.getByLabel(label,{exact:true}).fill(name);await submit(p,path==='departments'?'Add department':'Add designation',`/hr/people/${path}`);
+  await p.goto('/dashboard/hr/people?view=structure');
  }
- await p.getByRole('button',{name:'Directory',exact:true}).click();await p.getByRole('row').filter({hasText:employee.employee_code}).getByRole('button',{name:'Edit',exact:true}).click();await choose(p,'Department','QC Engineering');await choose(p,'Designation','QC Engineer');await submit(p,'Save profile',`/hr/people/${employee.id}`,'PATCH');
- await p.reload();await p.getByPlaceholder('Search name, code, team or role...').fill('QC Engineering');await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toBeVisible();await p.getByPlaceholder('Search name, code, team or role...').fill('nonexistent-qc-structure');await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toHaveCount(0);
+ await p.goto('/dashboard/hr/people');await p.getByRole('row').filter({hasText:employee.employee_code}).getByRole('link',{name:`Edit ${employee.full_name}`,exact:true}).click();await choose(p,'Department','QC Engineering');await choose(p,'Designation','QC Engineer');await submit(p,'Save profile',`/hr/people/${employee.id}`,'PATCH');
+ await p.goto('/dashboard/hr/people');await p.getByLabel('Search name, code, team or role',{exact:true}).fill('QC Engineering');await p.getByRole('button',{name:'Apply people search',exact:true}).click();await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toBeVisible();await p.getByLabel('Search name, code, team or role',{exact:true}).fill('nonexistent-qc-structure');await p.getByRole('button',{name:'Apply people search',exact:true}).click();await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toHaveCount(0);
  const person=(await get(p,'/hr/people')).people.find(x=>x.id===employee.id);expect(person.department_name).toBe('QC Engineering');expect(person.designation_name).toBe('QC Engineer');
  await p.goto('/dashboard/hr/records');await p.getByRole('button',{name:'Upload document',exact:true}).click();await choose(p,'Employee',employee.employee_code);await p.getByLabel('Document title',{exact:true}).fill('Synthetic expiring document');await p.getByRole('combobox',{name:/^Document type/}).selectOption('other');await p.getByLabel('Reference number',{exact:true}).fill('SYNTHETIC-EXPIRY');
  const expiry=new Date(Date.now()+10*86400000).toISOString().slice(0,10);await p.getByLabel('Expires on',{exact:true}).fill(expiry);await p.getByLabel('File',{exact:true}).setInputFiles({name:'synthetic-expiry.txt',mimeType:'text/plain',buffer:Buffer.from('Synthetic expiry document; no personal data.')});
@@ -190,18 +194,26 @@ test('HR14 HR15 HR20 HR21 HR24 owner payroll guard UI, draft reload and withhold
  await post(p,'/payroll/salary-profiles',{employee_id:employee.id,currency:'USD',base_salary:'1000',effective_from:'2026-10-01'});
  const sept=await post(p,'/payroll/periods',{name:'QC September',period_start:'2026-09-01',period_end:'2026-09-30',pay_date:'2026-09-30'});
  const oct=await post(p,'/payroll/periods',{name:'QC October',period_start:'2026-10-01',period_end:'2026-10-31',pay_date:'2026-10-31'});
- await p.goto('/dashboard/payroll');await choose(p,'Payroll period','QC September');await choose(p,'Currency','USD');
- const invalid=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/payroll/runs'&&r.request().method()==='POST');await p.getByRole('button',{name:'Generate draft',exact:true}).click();expect((await invalid).status()).toBe(409);await expect(p.getByText('No salary profiles found for USD in this period',{exact:true})).toBeVisible();expect(await get(p,'/payroll/runs')).toEqual([]);
- await choose(p,'Payroll period','QC October');const run=await submit(p,'Generate draft','/payroll/runs');
- await p.reload();await p.getByRole('button',{name: new RegExp(run.run_number)}).click();await expect(p.getByRole('button',{name:'Adjust',exact:true})).toBeVisible();expect((await get(p,`/payroll/runs/${run.id}`)).status).toBe('draft');await expect(p.locator('body')).toContainText('USD 1,000.00');
- await choose(p,'Payroll period','QC October');await choose(p,'Currency','USD');const duplicate=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/payroll/runs'&&r.request().method()==='POST');await p.getByRole('button',{name:'Generate draft',exact:true}).click();expect((await duplicate).status()).toBe(409);await expect(p.getByText('A USD payroll run already exists for this period',{exact:true})).toBeVisible();expect(await get(p,'/payroll/runs')).toHaveLength(1);
- await p.getByRole('button',{name:'Adjust',exact:true}).click();await p.getByLabel('Tax / withholding',{exact:true}).fill('1000.01');await expect(p.getByRole('button',{name:'Save adjustment',exact:true})).toBeDisabled();expect(await get(p,`/payroll/runs/${run.id}`)).toEqual(run);
- await p.getByLabel('Tax / withholding',{exact:true}).fill('125.35');await submit(p,'Save adjustment',`/payroll/runs/${run.id}/entries/${run.entries[0].id}`,'PATCH');
- await p.getByRole('button',{name:'Payroll Periods',exact:true}).click();await p.getByLabel('Period name',{exact:true}).fill('QC overlap');await p.getByLabel('Start date',{exact:true}).fill('2026-10-01');await p.getByLabel('End date',{exact:true}).fill('2026-10-15');await p.getByLabel('Pay date',{exact:true}).fill('2026-10-15');
+ p.on('dialog',dialog=>dialog.accept());
+ await p.goto('/dashboard/payroll/runs/new');await choose(p,'Open payroll period','QC September');await choose(p,'Currency','USD');
+ const unavailable=await submit(p,'Request server preview','/payroll/runs/preview');expect(unavailable.ready).toBe(false);
+ await expect(p.getByText('Setup needs attention. No partial payroll amounts are available.',{exact:true})).toBeVisible();await expect(p.getByRole('button',{name:'Confirm reviewed draft',exact:true})).toBeDisabled();
+ // Separate server negative control: UI preview blocks confirmation before a create request.
+ const invalid=await p.request.post('/api/payroll/runs',{data:{period_id:sept.id,currency:'USD'}});expect(invalid.status()).toBe(409);expect(await get(p,'/payroll/runs')).toEqual([]);
+ await choose(p,'Open payroll period','QC October');const preview=await submit(p,'Request server preview','/payroll/runs/preview');expect(preview.ready).toBe(true);const run=await submit(p,'Confirm reviewed draft','/payroll/runs');
+ await p.goto(`/dashboard/payroll/runs/${run.id}`);await p.reload();await expect(p.getByRole('link',{name:'Adjust',exact:true})).toBeVisible();expect((await get(p,`/payroll/runs/${run.id}`)).status).toBe('draft');await expect(p.locator('body')).toContainText('USD 1,000.00');
+ await p.goto('/dashboard/payroll/runs/new');await choose(p,'Open payroll period','QC October');await choose(p,'Currency','USD');const duplicate=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/payroll/runs/preview'&&r.request().method()==='POST');await p.getByRole('button',{name:'Request server preview',exact:true}).click();expect((await duplicate).status()).toBe(409);await expect(p.getByText('A USD payroll run already exists for this period',{exact:true})).toBeVisible();await expect(p.getByRole('button',{name:'Confirm reviewed draft',exact:true})).toBeDisabled();
+ // Recheck the creation endpoint independently of the UI preview rejection.
+ const duplicateCreate=await p.request.post('/api/payroll/runs',{data:{period_id:oct.id,currency:'USD'}});expect(duplicateCreate.status()).toBe(409);expect(await get(p,'/payroll/runs')).toHaveLength(1);
+ await p.goto(`/dashboard/payroll/runs/${run.id}`);await p.getByRole('link',{name:'Adjust',exact:true}).click();await p.getByLabel(/^Adjustment reason/).fill('Synthetic owner withholding guard');await p.getByLabel(/^Tax \/ withholding/).fill('1000.01');
+ // Current editor delegates net arithmetic to the server; rejection must preserve the draft.
+ const negative=p.waitForResponse(r=>new URL(r.url()).pathname===`/api/payroll/runs/${run.id}/entries/${run.entries[0].id}`&&r.request().method()==='PATCH');await p.getByRole('button',{name:'Save draft adjustment',exact:true}).click();expect((await negative).status()).toBe(400);await expect(p.getByText('Net pay cannot be negative',{exact:true})).toBeVisible();expect(await get(p,`/payroll/runs/${run.id}`)).toEqual(run);
+ await p.getByLabel(/^Tax \/ withholding/).fill('125.35');await submit(p,'Save draft adjustment',`/payroll/runs/${run.id}/entries/${run.entries[0].id}`,'PATCH');
+ await p.goto('/dashboard/payroll/periods/new');await p.getByLabel('Period name',{exact:true}).fill('QC overlap');await p.getByLabel('Start date',{exact:true}).fill('2026-10-01');await p.getByLabel('End date',{exact:true}).fill('2026-10-15');await p.getByLabel(/^Pay date/).fill('2026-10-15');
  const overlap=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/payroll/periods'&&r.request().method()==='POST');await p.getByRole('button',{name:'Create period',exact:true}).click();expect((await overlap).status()).toBe(409);expect(await get(p,'/payroll/periods')).toHaveLength(2);await expect(p.locator('body')).not.toContainText('[object Object]');
- await post(p,`/payroll/runs/${run.id}/approve`,{});await p.getByRole('button',{name:'Withholdings',exact:true}).click();
+ await post(p,`/payroll/runs/${run.id}/approve`,{});await p.goto('/dashboard/payroll/withholdings/new');
  for(const [date,amount] of [['2026-10-20','USD 0.00'],['2026-10-31','USD 125.35']]){
-  const loaded=p.waitForResponse(r=>r.url().includes(`/api/payroll/withholdings/meta?payment_date=${date}`));await p.getByLabel('Payment date',{exact:true}).fill(date);await json(await loaded);await expect(p.getByText(`Liability available as of ${date}`,{exact:true}).locator('..')).toContainText(amount);
+  const loaded=p.waitForResponse(r=>r.url().includes(`/api/payroll/withholdings/meta?payment_date=${date}`));await p.getByLabel(/^Payment date/).fill(date);await json(await loaded);await expect(p.getByText(`Liability available as of ${date}`,{exact:true}).locator('..')).toContainText(amount);
  }
  expect(await get(p,'/payroll/withholdings/payments')).toEqual([]);await info.attach('owner-payroll-cutoff.json',{body:JSON.stringify({early:await get(p,'/payroll/withholdings/meta?payment_date=2026-10-20'),end:await get(p,'/payroll/withholdings/meta?payment_date=2026-10-31')},null,2),contentType:'application/json'});
 });
@@ -211,9 +223,11 @@ test('HR29 independent owner approval UI from direct synthetic pending fixture, 
  // This process inherits the guarded local PostgreSQL connection and executes
  // inside run-browser.sh's shared with-postgres lock. No PG server is started.
  const stdout=execFileSync('../backend/.venv/bin/python',['scripts/verify_qc_hr_project_extended.py','--seed-pending-review',tenant.organization.id],{cwd:'../backend',env:process.env,encoding:'utf8'});
- const fixture=JSON.parse(stdout.trim());const payrollBefore=await get(p,'/payroll/runs');await p.goto('/dashboard/hr/settings/attendance');await expect(p.getByText('Synthetic direct fixture for independent owner review',{exact:true})).toBeVisible();
- p.once('dialog',dialog=>dialog.accept('Synthetic owner approved correction'));
- const approved=await submit(p,'Approve',`/hr/attendance/requests/${fixture.id}/review`);expect(approved.status).toBe('approved');await p.reload();await expect(p.getByRole('button',{name:'Approve',exact:true})).toHaveCount(0);
+ const fixture=JSON.parse(stdout.trim());const payrollBefore=await get(p,'/payroll/runs');await p.goto(`/dashboard/hr/settings/attendance/requests/${fixture.id}/review`);await expect(p.getByText('Synthetic direct fixture for independent owner review',{exact:true})).toBeVisible();
+ await p.getByRole('combobox',{name:'Decision',exact:true}).selectOption('approved');
+ await p.getByLabel('Review notes (optional)',{exact:true}).fill('Synthetic owner approved correction');
+ await p.getByRole('button',{name:'Review changes',exact:true}).click();
+ const approved=await submit(p,'Confirm and save once',`/hr/attendance/requests/${fixture.id}/review`);expect(approved.status).toBe('approved');await p.reload();await expect(p.getByText('This request has already been reviewed. No action is available.',{exact:true})).toBeVisible();await expect(p.getByRole('button',{name:'Confirm and save once',exact:true})).toHaveCount(0);
  const request=(await get(p,'/hr/attendance/requests')).find(x=>x.id===fixture.id);expect(request.status).toBe('approved');expect(request.review_notes).toBe('Synthetic owner approved correction');
  const attendance=(await get(p,'/hr/attendance')).find(x=>x.employee_id===fixture.employee_id&&x.attendance_date===fixture.work_date);expect(attendance.work_minutes).toBe(480);const database=JSON.parse(execFileSync('../backend/.venv/bin/python',['scripts/verify_qc_hr_project_extended.py','--verify-persisted-review',fixture.id],{cwd:'../backend',env:process.env,encoding:'utf8'}).trim());expect(database.owner_reviewed).toBe(true);expect(database.verification_method).toBe('hr_correction');expect(await get(p,'/payroll/runs')).toEqual(payrollBefore);
  await info.attach('owner-independent-review.json',{body:JSON.stringify({request,attendance,database},null,2),contentType:'application/json'});
@@ -226,10 +240,10 @@ test('HR05 owner synthetic invitation validation pending expiry and revocation w
  await p.goto('/dashboard/hr/people');await p.getByRole('button',{name:'Invite person',exact:true}).click();await p.getByLabel('Full name',{exact:true}).fill('Synthetic no-mail invitation');await p.getByLabel('Email',{exact:true}).fill('not-an-email');await choose(p,'Employee role',role.name);
  await p.getByRole('button',{name:'Send invitation',exact:true}).click();expect(await p.getByLabel('Email',{exact:true}).evaluate(el=>el.validity.typeMismatch)).toBe(true);expect((await get(p,'/hr/people')).invitations).toEqual([]);
  await p.getByLabel('Email',{exact:true}).fill('qc-local-no-mail@example.com');const invite=await submit(p,'Send invitation','/hr/people/invitations/send');expect(invite.email_sent).toBe(false);
- await expect(p.locator('body')).toContainText('Invitation created, but email could not be sent.');await p.getByRole('button',{name:'Invitations',exact:true}).click();await expect(p.getByText('qc-local-no-mail@example.com',{exact:true})).toBeVisible();await expect(p.getByText('Pending',{exact:true})).toBeVisible();await expect(p.getByText(/^Expires /)).toBeVisible();
+ await expect(p.locator('body')).toContainText('Invitation created, but email could not be sent.');await p.getByRole('button',{name:'Open Invitations',exact:true}).click();await expect(p.getByText('qc-local-no-mail@example.com',{exact:true})).toBeVisible();await expect(p.getByText('Pending',{exact:true})).toBeVisible();await expect(p.getByText(/^Expires /)).toBeVisible();
  const stored=(await get(p,'/hr/people')).invitations.find(x=>x.id===invite.id);expect(stored.email).toBe('qc-local-no-mail@example.com');expect(Date.parse(stored.expires_at)).toBeGreaterThan(Date.now());
- const resent=await submit(p,'Resend email',`/hr/people/invitations/${invite.id}/resend`);expect(resent.email_sent).toBe(false);
- p.once('dialog',dialog=>dialog.accept());await submit(p,'Revoke',`/hr/people/invitations/${invite.id}/revoke`);expect((await get(p,'/hr/people')).invitations).toEqual([]);await expect(p.getByText('No active pending invitations.',{exact:true})).toBeVisible();
+ const resent=await submit(p,'Resend email for qc-local-no-mail@example.com',`/hr/people/invitations/${invite.id}/resend`);expect(resent.email_sent).toBe(false);
+ p.once('dialog',dialog=>dialog.accept());await submit(p,'Revoke for qc-local-no-mail@example.com',`/hr/people/invitations/${invite.id}/revoke`);expect((await get(p,'/hr/people')).invitations).toEqual([]);await expect(p.getByText('No active pending invitations',{exact:true})).toBeVisible();
  // Never retain invitation tokens in the attached evidence or navigate acceptance.
  await info.attach('owner-invitation-mail-disabled.json',{body:JSON.stringify({safety,email_sent:invite.email_sent,resend_email_sent:resent.email_sent,pending_email:stored.email,expires_at:stored.expires_at,revoked:true},null,2),contentType:'application/json'});
 });

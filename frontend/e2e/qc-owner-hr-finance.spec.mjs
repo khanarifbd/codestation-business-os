@@ -1,3 +1,4 @@
+import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
@@ -44,9 +45,7 @@ async function choose(page, label, option) {
 }
 
 async function submit(page, button, path, method = "POST") {
-  const response = page.waitForResponse((item) => new URL(item.url()).pathname === path && item.request().method() === method);
-  await button.click();
-  return json(await response, `${method} ${path} through owner UI`);
+  return captureJsonResponse(page, { path, method, action: () => button.click() });
 }
 
 function cents(value) { return Math.round(Number(value) * 100); }
@@ -58,13 +57,13 @@ test("owner edits employee, records precise attendance and approves leave withou
   await test.step("Edit the owner's real employee record through People", async () => {
     await page.goto("/dashboard/hr/people");
     await expect(page.getByRole("heading", { name: "People", exact: true })).toBeVisible();
-    await page.getByRole("row").filter({ hasText: employee.employee_code }).getByRole("button", { name: "Edit", exact: true }).click();
+    await page.getByRole("row").filter({ hasText: employee.employee_code }).getByRole("link", { name: `Edit ${employee.full_name}`, exact: true }).click();
     await page.getByLabel("Work location", { exact: true }).fill("Synthetic QC office");
     await page.getByLabel("Join date", { exact: true }).fill(monthStart);
     await page.getByLabel("Internal HR note", { exact: true }).fill("Isolated owner-side QC employee record; no invitation sent.");
     const updated = await submit(page, page.getByRole("button", { name: "Save profile", exact: true }), `/api/hr/people/${employee.id}`, "PATCH");
     expect(updated).toEqual({ id: employee.id, updated: true });
-    await expect(page.getByText("Employee profile updated", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: employee.full_name, exact: true })).toBeVisible();
     const persisted = (await get(page, "/api/hr/people")).people.find((item) => item.id === employee.id);
     expect(persisted.join_date).toBe(monthStart);
     expect(persisted.work_location).toBe("Synthetic QC office");
@@ -72,14 +71,14 @@ test("owner edits employee, records precise attendance and approves leave withou
 
   await test.step("Record fractional hours and verify stored minutes", async () => {
     await page.goto("/dashboard/hr/time");
-    await page.getByRole("button", { name: "Record attendance", exact: true }).click();
+    await page.getByRole("link", { name: "Record attendance", exact: true }).click();
     await choose(page, "Employee", employee.employee_code);
-    await page.getByLabel("Date", { exact: true }).fill(today);
+    await page.getByLabel("Company work date", { exact: true }).fill(today);
     await page.getByLabel("Worked hours", { exact: true }).fill("7.75");
     await page.getByLabel("Overtime hours", { exact: true }).fill("1.25");
     await page.getByLabel("Note", { exact: true }).fill("QC fractional hours");
     await submit(page, page.getByRole("button", { name: "Save attendance", exact: true }), "/api/hr/attendance");
-    await expect(page.getByText("Attendance recorded", { exact: true })).toBeVisible();
+    await expect(page.getByText("Attendance record acknowledged by the server. This was a new record, not a correction.", { exact: true })).toBeVisible();
     const records = await get(page, "/api/hr/attendance");
     const record = records.find((item) => item.employee_id === employee.id && item.attendance_date === today);
     expect(record.work_minutes).toBe(465);
@@ -98,13 +97,14 @@ test("owner edits employee, records precise attendance and approves leave withou
       start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), reason: "Synthetic owner approval QC",
     });
     expect(leave.status).toBe("pending");
-    await page.reload();
-    await page.getByRole("button", { name: "Leave", exact: true }).click();
+    await page.goto(`/dashboard/hr/time/leave/${leave.id}/review`);
     await expect(page.getByText("Synthetic owner approval QC", { exact: true })).toBeVisible();
-    await expect(page.getByText(/3 day\(s\)/)).toBeVisible();
-    const approved = await submit(page, page.getByRole("button", { name: "Approve", exact: true }), `/api/hr/leave-requests/${leave.id}`, "PATCH");
+    await expect(page.getByText(`${leave.days} days`, { exact: true })).toBeVisible();
+    await page.getByRole("radio", { name: "Approve request", exact: true }).check();
+    await page.getByRole("button", { name: "Review decision", exact: true }).click();
+    const approved = await submit(page, page.getByRole("button", { name: "Confirm decision", exact: true }), `/api/hr/leave-requests/${leave.id}`, "PATCH");
     expect(approved.status).toBe("approved");
-    await expect(page.getByText("Leave request approved", { exact: true })).toBeVisible();
+    await expect(page.getByText("Leave request approved. The server acknowledged this decision.", { exact: true })).toBeVisible();
     const persisted = (await get(page, "/api/hr/leave-requests")).find((item) => item.id === leave.id);
     expect(persisted.status).toBe("approved");
     expect(Number(persisted.days)).toBe(3);
@@ -126,46 +126,51 @@ test("owner approves exact payroll, views payslip and reconciles expense with po
     notes: "Local disposable database fixture. No real bank or payment connection.",
   });
   let run;
+  page.on("dialog", dialog => dialog.accept());
 
   await test.step("Create salary profile and payroll period in owner UI", async () => {
     await page.goto("/dashboard/payroll");
-    await page.getByRole("button", { name: "Salary Profiles", exact: true }).click();
+    await page.getByRole("button", { name: "Salary profiles", exact: true }).click();
+    await page.getByRole("link", { name: "Add profile", exact: true }).click();
     await choose(page, "Employee", employee.employee_code);
     await choose(page, "Currency", "USD");
-    await page.getByLabel("Base salary", { exact: true }).fill("1000.00");
+    await page.getByLabel(/^Base salary/).fill("1000.00");
     await page.getByLabel("Effective from", { exact: true }).fill(monthStart);
-    const profile = await submit(page, page.getByRole("button", { name: "Save profile", exact: true }), "/api/payroll/salary-profiles");
+    const profile = await submit(page, page.getByRole("button", { name: "Create salary profile", exact: true }), "/api/payroll/salary-profiles");
     expect(profile.employee_id).toBe(employee.id);
     expect(cents(profile.base_salary)).toBe(100000);
-    await page.getByRole("button", { name: "Payroll Periods", exact: true }).click();
+    await page.goto("/dashboard/payroll/periods/new");
     await page.getByLabel("Period name", { exact: true }).fill("QC monthly payroll");
     await page.getByLabel("Start date", { exact: true }).fill(monthStart);
     await page.getByLabel("End date", { exact: true }).fill(monthEnd);
-    await page.getByLabel("Pay date", { exact: true }).fill(monthEnd);
+    await page.getByLabel(/^Pay date/).fill(monthEnd);
     await submit(page, page.getByRole("button", { name: "Create period", exact: true }), "/api/payroll/periods");
-    await page.getByRole("button", { name: "Payroll Runs", exact: true }).click();
-    await choose(page, "Payroll period", "QC monthly payroll");
+    await page.goto("/dashboard/payroll/runs/new");
+    await choose(page, "Open payroll period", "QC monthly payroll");
     await choose(page, "Currency", "USD");
-    run = await submit(page, page.getByRole("button", { name: "Generate draft", exact: true }), "/api/payroll/runs");
+    await page.getByRole("button", { name: "Request server preview", exact: true }).click();
+    run = await submit(page, page.getByRole("button", { name: "Confirm reviewed draft", exact: true }), "/api/payroll/runs");
     expect(run.status).toBe("draft");
     expect(run.employee_count).toBe(1);
     expect(cents(run.net_total)).toBe(100000);
   });
 
   await test.step("Adjust allowance, deduction and withholding with cent-accurate totals", async () => {
-    await page.getByRole("button", { name: "Adjust", exact: true }).click();
+    await page.goto(`/dashboard/payroll/runs/${run.id}`);
+    await page.getByRole("link", { name: "Adjust", exact: true }).click();
     // The component sections do not have landmark roles; select their own heading's parent section.
     await page.getByRole("heading", { name: "Allowances", exact: true }).locator("..").getByRole("button", { name: "Add", exact: true }).click();
-    const bonus = page.getByPlaceholder("Bonus / transport / housing");
+    const bonus = page.getByLabel("Allowances name 1", { exact: true });
     await bonus.fill("QC transport allowance");
-    await bonus.locator("..").locator('input[type="number"]').fill("250.25");
+    await page.getByLabel("Allowances amount 1", { exact: true }).fill("250.25");
     await page.getByRole("heading", { name: "Deductions", exact: true }).locator("..").getByRole("button", { name: "Add", exact: true }).click();
-    const deduction = page.getByPlaceholder("Advance / unpaid leave / other");
+    const deduction = page.getByLabel("Deductions name 1", { exact: true });
     await deduction.fill("QC advance recovery");
-    await deduction.locator("..").locator('input[type="number"]').fill("50.10");
-    await page.getByLabel("Tax / withholding", { exact: true }).fill("100.15");
-    await page.getByLabel("Notes", { exact: true }).fill("QC exact payroll arithmetic");
-    run = await submit(page, page.getByRole("button", { name: "Save adjustment", exact: true }), `/api/payroll/runs/${run.id}/entries/${run.entries[0].id}`, "PATCH");
+    await page.getByLabel("Deductions amount 1", { exact: true }).fill("50.10");
+    await page.getByLabel(/^Tax \/ withholding/).fill("100.15");
+    await page.getByLabel("Employee payroll note", { exact: true }).fill("QC exact payroll arithmetic");
+    await page.getByLabel(/^Adjustment reason/).fill("QC exact payroll arithmetic");
+    run = await submit(page, page.getByRole("button", { name: "Save draft adjustment", exact: true }), `/api/payroll/runs/${run.id}/entries/${run.entries[0].id}`, "PATCH");
     expect(cents(run.gross_total)).toBe(125025);
     expect(cents(run.allowance_total)).toBe(25025);
     expect(cents(run.deduction_total)).toBe(5010);
@@ -177,10 +182,13 @@ test("owner approves exact payroll, views payslip and reconciles expense with po
   });
 
   await test.step("Approve payroll once, verify locked amounts, and inspect the owner payslip", async () => {
-    run = await submit(page, page.getByRole("button", { name: "Approve payroll", exact: true }), `/api/payroll/runs/${run.id}/approve`);
+    await page.goto(`/dashboard/payroll/runs/${run.id}`);
+    await page.getByRole("link", { name: "Review approval", exact: true }).click();
+    run = await submit(page, page.getByRole("button", { name: "Confirm & approve payroll", exact: true }), `/api/payroll/runs/${run.id}/approve`);
     expect(run.status).toBe("approved");
-    await expect(page.getByText("Payroll approved and locked.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Adjust", exact: true })).toHaveCount(0);
+    await page.goto(`/dashboard/payroll/runs/${run.id}`);
+    await expect(page.getByText("Employee amounts are locked. Payroll has been approved but has not been marked paid.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Adjust", exact: true })).toHaveCount(0);
     const locked = await page.request.patch(`/api/payroll/runs/${run.id}/entries/${run.entries[0].id}`, { data: { tax_amount: "0" } });
     expect(locked.status()).toBe(409);
     const duplicateApproval = await page.request.post(`/api/payroll/runs/${run.id}/approve`);
@@ -203,17 +211,24 @@ test("owner approves exact payroll, views payslip and reconciles expense with po
 
   await test.step("Post a synthetic cash expense through the owner UI", async () => {
     await page.goto("/dashboard/expenses");
-    await page.getByRole("button", { name: "+ New expense", exact: true }).click();
+    await page.getByRole("link", { name: "Record expense", exact: true }).click();
     await page.getByLabel("Description", { exact: true }).fill("QC office supplies");
-    await page.getByLabel("Expense date", { exact: true }).fill(today);
-    await page.getByLabel("Expense amount (USD)", { exact: true }).fill("123.45");
-    await page.getByLabel("Reference", { exact: true }).fill("QC-SYNTHETIC-RECEIPT");
+    await page.getByLabel(/^Expense date/).fill(today);
+    await page.getByLabel(/^Gross expense amount/).fill("123.45");
+    await page.getByLabel("Reference (optional)", { exact: true }).fill("QC-SYNTHETIC-RECEIPT");
+    const expenseMeta = await get(page, "/api/finance/expense-meta");
+    const category = expenseMeta.categories.find(item => item.is_active);
+    expect(category).toBeTruthy();
+    await choose(page, "Category", category.name);
+    await choose(page, "Deduct from account", "QC synthetic USD cash");
+    await page.getByRole("button", { name: "Review expense", exact: true }).click();
     const expense = await submit(page, page.getByRole("button", { name: "Post expense", exact: true }), "/api/finance/expenses");
     expect(expense.status).toBe("posted");
     expect(cents(expense.expense_amount)).toBe(12345);
     expect(cents(expense.account_amount)).toBe(12345);
     expect(expense.account_id).toBe(account.id);
-    await expect(page.getByRole("row").filter({ hasText: "QC office supplies" })).toContainText("USD 123.45");
+    await page.goto("/dashboard/expenses");
+    await expect(page.locator("article").filter({ hasText: "QC office supplies" })).toContainText("USD 123.45");
     const actualAccount = (await get(page, "/api/finance/accounts")).find((item) => item.id === account.id);
     expect(cents(actualAccount.current_balance)).toBe(987655);
     const ledger = await get(page, `/api/finance/accounts/${account.id}/ledger`);
@@ -232,14 +247,15 @@ test("owner approves exact payroll, views payslip and reconciles expense with po
     expect(report.liabilities.some((row) => cents(row.amount) === 110000), "Net salary payable must equal 1,100.00").toBe(true);
     expect(report.liabilities.some((row) => cents(row.amount) === 15025), "Deductions plus tax must remain payable").toBe(true);
     await page.goto("/dashboard/accounting/reports");
-    await expect(page.getByRole("heading", { name: "Financial reports", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Financial statements", exact: true })).toBeVisible();
     await page.getByLabel("From", { exact: true }).fill(monthStart);
     await page.getByLabel("To", { exact: true }).fill(monthEnd);
     const displayed = page.waitForResponse((response) => response.url().includes("/api/accounting/reports/financial-statements?") && response.url().includes(`date_to=${monthEnd}`));
     await page.getByRole("button", { name: "Apply period", exact: true }).click();
     expect(cents((await json(await displayed)).total_expenses)).toBe(137370);
-    await expect(page.getByText("Equation balanced", { exact: true })).toBeVisible();
     await expect(page.locator("body")).toContainText("USD 1,373.70");
+    await page.getByRole("button", { name: "Balance Sheet At the period end", exact: true }).click();
+    await expect(page.getByText("Displayed equation difference", { exact: true }).locator("..")).toContainText("USD 0.00");
     await expect(page.locator("body")).not.toContainText(/Internal Server Error|Permission required:|Unable to load/);
   });
 });

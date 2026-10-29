@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { captureJsonResponse } from "./support/capture-json-response.mjs";
 
 // API-only setup creates an isolated synthetic company and, where needed, its
 // client/order/project. Uploads and download clicks are actual owner-browser UI
@@ -53,9 +54,7 @@ async function setup(page, kind) {
 }
 
 async function uploadThroughUI(page, path, button) {
-  const response = page.waitForResponse((item) => new URL(item.url()).pathname === path && item.request().method() === "POST");
-  await button.click();
-  return json(await response, `Owner UI upload ${path}`);
+  return captureJsonResponse(page, { path, action: () => button.click() });
 }
 
 async function downloadThroughUI(page, button, expectedBytes, filename, testInfo, kind) {
@@ -127,9 +126,16 @@ test("owner uploads and downloads employee HR PDF with exact saved bytes", async
   await page.getByLabel("File", { exact: true }).setInputFiles({ name: "qc-hr-fixture.pdf", mimeType: "application/pdf", buffer: pdf });
   const document = await uploadThroughUI(page, "/api/hr-documents/upload", page.getByRole("button", { name: "Upload securely", exact: true }));
   expect(document.file_url).toBe(`/api/hr-documents/${document.id}/file`);
-  await expect(page.getByText("Employee document uploaded securely", { exact: true })).toBeVisible();
-  await expect(page.getByText("QC HR PDF", { exact: true })).toBeVisible();
-  await downloadThroughUI(page, page.getByRole("button", { name: "Open file", exact: true }), pdf, "qc-hr-fixture.pdf", testInfo, "employee-hr");
+  const receipt = page.getByRole("dialog", { name: "Upload employee document", exact: true });
+  await expect(receipt).toContainText("Employee document uploaded securely. The server returned a verified document reference.");
+  await expect(receipt).toContainText(`Document reference: ${document.id}`);
+  await receipt.getByRole("button", { name: "Close document upload", exact: true }).click();
+  const row = page.locator("article").filter({ has: page.getByRole("heading", { name: "QC HR PDF", exact: true }) });
+  await row.getByRole("link", { name: "View record", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/dashboard/hr/records/documents/${document.id}(?:\\?|$)`));
+  const file = page.getByRole("link", { name: "Open protected file", exact: true });
+  await expect(file).toHaveAttribute("href", document.file_url);
+  await downloadThroughUI(page, file, pdf, "qc-hr-fixture.pdf", testInfo, "employee-hr");
 });
 
 test("owner uploads and downloads project PDF with exact saved bytes", async ({ page }, testInfo) => {
@@ -156,7 +162,11 @@ test("owner uploads and downloads project PDF with exact saved bytes", async ({ 
   const document = await uploadThroughUI(page, `/api/projects/${project.id}/documents/upload`, page.getByRole("button", { name: "Save", exact: true }));
   expect(document.original_filename).toBe("qc-project-fixture.pdf");
   expect(document.size_bytes).toBe(pdf.length);
-  await expect(page.getByText("Project document uploaded.", { exact: true })).toBeVisible();
-  const card = page.locator("article").filter({ hasText: "QC Project PDF" });
+  // Successful editor writes navigate back; the toast is not a durable receipt.
+  await expect(page).toHaveURL((url) => url.pathname === `/dashboard/projects/${project.id}` && url.searchParams.get("tab") === "documents");
+  const card = page.locator("article").filter({ has: page.getByRole("heading", { name: "QC Project PDF", exact: true }) });
+  await expect(card).toContainText("qc-project-fixture.pdf");
+  await page.reload();
+  await expect(card).toContainText("qc-project-fixture.pdf");
   await downloadThroughUI(page, card.getByRole("button", { name: "Download", exact: true }), pdf, "QC-Project-PDF.pdf", testInfo, "project");
 });

@@ -210,6 +210,21 @@ test("Client invoice PDF includes the saved Payoneer link and scannable QR", asy
   await page.getByRole("button", { name: /sign in securely/i }).click();
   await expect(page).toHaveURL(new RegExp("dashboard"), { timeout: 15_000 });
 
+  // Bind the synthetic portal relationship to the authenticated tenant. The
+  // portal verifies this scope before it requests a linked client's document.
+  const tenantResponse = await page.request.get("/api/tenant");
+  expect(tenantResponse.ok()).toBeTruthy();
+  const tenant = await tenantResponse.json();
+  await page.route("**/api/client-portal", route => route.fulfill({ json: {
+    organization_id: tenant.organization.id,
+    organization_name: tenant.organization.name,
+    membership_id: tenant.membership_id,
+    clients: [{ id: invoice.client_id, client_code: "CLIENT-E2E", display_name: invoice.client_name,
+      client_type: "company", email: invoice.client_email_snapshot, phone: null, currency: "USD", is_primary_contact: true }],
+    project_count: 1, order_count: 1, quotation_count: 1,
+    financials: [{ currency: "USD", invoice_count: 1, invoiced_total: invoice.total, balance_due: invoice.balance_due }],
+  } }));
+
   const portalInvoice = {
     ...invoice,
     seller_name: invoice.seller_name_snapshot,
@@ -227,6 +242,7 @@ test("Client invoice PDF includes the saved Payoneer link and scannable QR", asy
     payment_currency: payment.payment_currency,
     payment_url: payment.payment_url,
     payment_instructions: payment.payment_instructions,
+    payments: [{ id: "receipt-1", payment_date: "2026-09-11", invoice_currency: "USD", invoice_amount: "1500.00", method: "bank_transfer", reference: "E2E partial receipt" }],
     items: invoice.items.map((item) => ({
       ...item,
       item_name: item.item_name_snapshot,
@@ -240,9 +256,9 @@ test("Client invoice PDF includes the saved Payoneer link and scannable QR", asy
   await page.goto("/dashboard/client/invoices/e2e-invoice/print", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Payment information" })).toBeVisible();
   await expect(page.getByRole("link", { name: payment.payment_url })).toHaveAttribute("href", payment.payment_url);
-  await expect(page.locator('svg[aria-label="QR code for invoice payment link"]')).toBeVisible();
+  await expect(page.locator('svg[aria-label="QR code for this invoice payment link"]')).toBeVisible();
 
   await page.emulateMedia({ media: "print" });
   await expect(page.getByRole("link", { name: payment.payment_url })).toBeVisible();
-  await expect(page.locator('svg[aria-label="QR code for invoice payment link"]')).toBeVisible();
+  await expect(page.locator('svg[aria-label="QR code for this invoice payment link"]')).toBeVisible();
 });

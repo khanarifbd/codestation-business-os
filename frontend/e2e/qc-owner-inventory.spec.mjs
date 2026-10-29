@@ -1,3 +1,4 @@
+import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { expect, test, request as playwrightRequest } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
@@ -25,14 +26,7 @@ async function choose(page, accessibleName, text) {
 }
 
 async function postUi(page, path, button, method = "POST") {
-  const responsePromise = page.waitForResponse((response) => (
-    new URL(response.url()).pathname === path && response.request().method() === method
-  ));
-  await button.click();
-  const response = await responsePromise;
-  const payload = await response.json();
-  expect(response.ok(), `${path}: ${response.status()} ${JSON.stringify(payload)}`).toBeTruthy();
-  return payload;
+  return captureJsonResponse(page, { path, method, action: () => button.click() });
 }
 
 test("fresh owner: inventory receipt → partial/final payable settlement → stock controls, with persisted ledger reconciliation", async ({ page }, testInfo) => {
@@ -82,7 +76,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await page.getByLabel("Supplier name", { exact: true }).fill(names.supplier);
     const supplierForm = page.locator("form").filter({ has: page.getByLabel("Supplier name", { exact: true }) });
     await postUi(page, "/api/inventory/suppliers", supplierForm.getByRole("button", { name: "Add supplier", exact: true }));
-    await expect(page.getByText("Supplier added.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: names.supplier })).toBeVisible();
 
     await page.getByRole("button", { name: "Warehouses", exact: true }).click();
     await page.getByRole("button", { name: "Add warehouse", exact: true }).click();
@@ -91,8 +85,9 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await page.getByLabel("Use as default warehouse", { exact: true }).check();
     const warehouseForm = page.locator("form").filter({ has: page.getByLabel("Warehouse code", { exact: true }) });
     await postUi(page, "/api/inventory/warehouses", warehouseForm.getByRole("button", { name: "Add warehouse", exact: true }));
-    await expect(page.getByText("Warehouse added.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: names.warehouse })).toBeVisible();
 
+    await page.getByRole("button", { name: "Products & services", exact: true }).click();
     await page.getByRole("button", { name: "Add item", exact: true }).click();
     await page.getByLabel("SKU / Code", { exact: true }).fill(names.sku);
     await page.getByLabel("Name", { exact: true }).fill(names.product);
@@ -101,7 +96,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await page.getByLabel("Low-stock alert level", { exact: true }).fill("2");
     const itemForm = page.locator("form").filter({ has: page.getByLabel("SKU / Code", { exact: true }) });
     await postUi(page, "/api/inventory/products", itemForm.getByRole("button", { name: "Add item", exact: true }));
-    await expect(page.getByText("Item added to catalog.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: names.sku })).toBeVisible();
     expect(await api(page, "/api/inventory/stock")).toHaveLength(0);
   });
 
@@ -155,15 +150,16 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
   }
 
   await test.step("Receive ten units at USD 6 and reconcile one inventory/AP recognition", async () => {
-    await page.getByRole("button", { name: "Receive purchase", exact: true }).first().click();
-    await choose(page, "Select supplier", names.supplier);
-    await choose(page, "Select warehouse", names.warehouse);
-    await choose(page, "Select product", names.product);
+    await page.getByRole("button", { name: "Purchases", exact: true }).click();
+    await page.getByRole("button", { name: "Receive purchase", exact: true }).click();
+    await choose(page, "Supplier", names.supplier);
+    await choose(page, "Receive into warehouse", names.warehouse);
+    await choose(page, "Product", names.product);
     await page.getByLabel("Qty", { exact: true }).fill("10");
     await page.getByLabel("Unit cost", { exact: true }).fill("6");
     await page.getByLabel("Supplier invoice / reference", { exact: true }).fill(names.receiptReference);
     receipt = await postUi(page, "/api/inventory/purchases", page.getByRole("button", { name: "Receive purchase & update stock", exact: true }));
-    await expect(page.getByText("Purchase received and stock updated.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: names.receiptReference })).toBeVisible();
     bill = await reconcile("received", { due: 60, cash: 1000, quantity: 10, journals: 2, movements: 1 });
     await page.getByRole("button", { name: "Purchases", exact: true }).click();
     const row = page.getByRole("row").filter({ hasText: names.receiptReference });
@@ -173,38 +169,41 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
   });
 
   async function payment(amount, reference, checkControls = false) {
-    const row = page.getByRole("row").filter({ hasText: names.receiptReference });
-    await row.getByRole("button", { name: "Pay", exact: true }).click();
+    await page.goto("/dashboard/accounting/payables");
+    const row = page.locator(`#payable-row-${bill.id}`);
+    await row.getByRole("link", { name: "Settle bill", exact: true }).click();
     await choose(page, "Pay from / charge to", names.cash);
     const amountInput = page.getByLabel(/^Payment amount/);
     if (checkControls) {
       await amountInput.fill("61");
-      await page.getByRole("button", { name: "Review payment", exact: true }).click();
-      expect(await amountInput.evaluate((input) => input.validity.rangeOverflow)).toBeTruthy();
+      await expect(page.getByRole("button", { name: "Review settlement", exact: true })).toBeDisabled();
+      await expect(page.getByText("Payment must be positive and cannot exceed the last loaded payable balance.", { exact: true })).toBeVisible();
       await expect(page.getByRole("dialog")).toHaveCount(0);
       expect(await api(page, `/api/accounting/payables/${bill.id}/payments`)).toHaveLength(0);
     }
     await amountInput.fill(String(amount));
     await page.getByLabel("Payment reference", { exact: true }).fill(reference);
-    await page.getByRole("button", { name: "Review payment", exact: true }).click();
-    const confirmation = page.getByRole("dialog", { name: "Post this supplier payment?" });
+    await page.getByRole("button", { name: "Review settlement", exact: true }).click();
+    const confirmation = page.getByRole("dialog", { name: "Settle this supplier bill?" });
     await expect(confirmation).toContainText(`USD ${amount.toFixed(2)}`);
-    await expect(confirmation).toContainText("It does not post a new inventory purchase or expense.");
+    await expect(confirmation).toContainText("No second expense is recognized.");
     if (checkControls) {
       await confirmation.getByRole("button", { name: "Go back", exact: true }).click();
       await reconcile("review cancelled without posting", { due: 60, cash: 1000, quantity: 10, journals: 2, movements: 1 });
-      await page.getByRole("button", { name: "Review payment", exact: true }).click();
+      await page.getByRole("button", { name: "Review settlement", exact: true }).click();
     }
-    await postUi(page, `/api/accounting/payables/${bill.id}/payments`, confirmation.getByRole("button", { name: "Post supplier payment", exact: true }));
-    await expect(page.getByText(new RegExp(`USD ${amount.toFixed(2).replace(".", "\\.")} supplier payment posted`))).toBeVisible();
+    await postUi(page, `/api/accounting/payables/${bill.id}/payments`, confirmation.getByRole("button", { name: "Confirm & settle bill", exact: true }));
+    await expect(page.getByRole("heading", { name: "Settlement request acknowledged", exact: true })).toBeVisible();
+    await expect(page.getByRole("article").filter({ hasText: `Reference: ${reference}` })).toContainText(`USD ${amount.toFixed(2)}`);
+    await page.getByRole("button", { name: "Back to payables", exact: true }).click();
   }
 
   await test.step("Reject overpayment, cancel review safely, then partially settle USD 20", async () => {
     await payment(20, `QC-PARTIAL-${suffix}`, true);
     await reconcile("partial payment", { due: 40, cash: 980, quantity: 10, journals: 3, movements: 1 });
-    const row = page.getByRole("row").filter({ hasText: names.receiptReference });
+    const row = page.locator(`#payable-row-${bill.id}`);
     await expect(row).toContainText("USD 40.00");
-    await expect(page.getByText("Still due", { exact: true }).first().locator("..")).toContainText("USD 40.00");
+    await expect(row.getByText("Still due", { exact: true }).locator("..")).toContainText("USD 40.00");
     await page.screenshot({ path: testInfo.outputPath("owner-inventory-partial-payment.png"), fullPage: true });
   });
 
@@ -213,9 +212,9 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await reconcile("final payment", { due: 0, cash: 940, quantity: 10, journals: 4, movements: 1 });
     expect(await api(page, `/api/accounting/payables/${bill.id}/payments`)).toHaveLength(2);
     await page.locator("select").filter({ has: page.locator('option[value="paid"]') }).selectOption("paid");
-    const row = page.getByRole("row").filter({ hasText: names.receiptReference });
+    const row = page.locator(`#payable-row-${bill.id}`);
     await expect(row).toContainText("USD 0.00");
-    await expect(row.getByRole("button", { name: "Pay", exact: true })).toHaveCount(0);
+    await expect(row.getByRole("link", { name: "Settle bill", exact: true })).toHaveCount(0);
     await page.reload();
     await reconcile("paid state survives reload", { due: 0, cash: 940, quantity: 10, journals: 4, movements: 1 });
   });
@@ -224,29 +223,30 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     const finalPayment = (await api(page, `/api/accounting/payables/${bill.id}/payments`)).find((item) => item.reference === `QC-FINAL-${suffix}`);
     expect(Number(finalPayment.amount)).toBe(40);
     await page.goto("/dashboard/accounting/advanced/corrections");
-    await page.getByRole("button", { name: /^Supplier payment Payment made/ }).click();
-    await choose(page, "Supplier payment record", "USD 40.00");
+    await page.locator(`#correction-row-${finalPayment.id}`).getByRole("link", { name: "Open correction", exact: true }).click();
     const reason = `QC owner correction of final supplier payment ${suffix}`;
     await page.getByLabel("Reason for correction", { exact: true }).fill(reason);
-    await page.getByRole("button", { name: "Review reversal", exact: true }).click();
+    await page.getByRole("button", { name: "Review business reversal", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toContainText("USD 40.00");
     await expect(dialog).toContainText(names.supplier);
     const requestPromise = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/accounting/corrections/reverse" && request.method() === "POST");
-    await postUi(page, "/api/accounting/corrections/reverse", dialog.getByRole("button", { name: "Confirm reversal", exact: true }));
+    await postUi(page, "/api/accounting/corrections/reverse", dialog.getByRole("button", { name: "Confirm business reversal", exact: true }));
     expect((await requestPromise).postDataJSON()).toMatchObject({ source_type: "payable_payment", source_id: finalPayment.id, reason });
-    await expect(page.getByText(/reversed successfully\./)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Repeat posting is locked in this workspace.", exact: true })).toBeVisible();
     await reconcile("final payment reversed", { due: 40, cash: 980, quantity: 10, journals: 5, movements: 1 });
     const reversedHistory = await api(page, `/api/accounting/payables/${bill.id}/payments`);
     expect(reversedHistory.find((item) => item.id === finalPayment.id).status).toBe("reversed");
     expect(reversedHistory.filter((item) => item.status === "posted").reduce((sum, item) => sum + Number(item.amount), 0)).toBe(20);
     const candidates = await api(page, "/api/accounting/corrections/candidates?limit=200");
     expect(candidates.some((item) => item.source_type === "payable_payment" && item.source_id === finalPayment.id)).toBe(false);
-    const correctionRow = page.getByRole("row").filter({ hasText: reason });
+    await page.getByRole("button", { name: "Back to business corrections", exact: true }).click();
+    await page.getByRole("button", { name: "Correction history", exact: true }).click();
+    const correctionRow = page.getByRole("article").filter({ hasText: reason });
     await expect(correctionRow).toContainText("Reversed");
     await page.screenshot({ path: testInfo.outputPath("owner-inventory-payment-reversed.png"), fullPage: true });
-    await correctionRow.getByRole("link", { name: "Open source", exact: true }).click();
-    const billRow = page.getByRole("row").filter({ hasText: names.receiptReference });
+    await correctionRow.getByRole("link", { name: "Open source module", exact: true }).click();
+    const billRow = page.locator(`#payable-row-${bill.id}`);
     await expect(billRow).toContainText("USD 40.00");
     await payment(40, `QC-REPAY-${suffix}`);
     await reconcile("re-payment restores settled state", { due: 0, cash: 940, quantity: 10, journals: 6, movements: 1 });
@@ -258,7 +258,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
 
   await page.goto("/dashboard/inventory");
   await expect(page.getByText("Loading inventory…", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Stock", exact: true }).click();
+  await page.getByRole("button", { name: "Stock on hand", exact: true }).click();
   async function adjustment(delta, reason, succeeds = true) {
     await page.getByRole("button", { name: "Adjust stock", exact: true }).click();
     await page.getByLabel("Product", { exact: true }).selectOption(product.id);
@@ -269,7 +269,8 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await page.getByLabel("Reference", { exact: true }).fill(`QC-ADJUST-${suffix}-${delta}`);
     if (succeeds) {
       await postUi(page, "/api/inventory/adjustments", page.getByRole("button", { name: "Post adjustment", exact: true }));
-      await expect(page.getByText("Stock adjustment posted.", { exact: true })).toBeVisible();
+      await expect(page).toHaveURL(/\/dashboard\/inventory\?(?=.*tab=stock)/);
+      await expect(page.getByRole("row").filter({ hasText: names.product })).toBeVisible();
     } else {
       const pending = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/inventory/adjustments" && response.request().method() === "POST");
       await page.getByRole("button", { name: "Post adjustment", exact: true }).click();
@@ -278,7 +279,8 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
       const result = await response.json();
       expect(result.detail).toMatch(/insufficient|not enough|negative/i);
       await expect(page.locator("body")).toContainText(result.detail);
-      await page.getByRole("button", { name: "Close", exact: true }).click();
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
     }
   }
   await test.step("Post +1/-1 inventory adjustments and reject an overdraw without side effects", async () => {
@@ -288,14 +290,14 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await reconcile("negative adjustment", { due: 0, cash: 940, quantity: 10, gain: 6, loss: 6, journals: 8, movements: 3 });
     await adjustment(-11, "Synthetic overdraw must be rejected", false);
     await reconcile("rejected overdraw unchanged", { due: 0, cash: 940, quantity: 10, gain: 6, loss: 6, journals: 8, movements: 3 });
-    await page.getByRole("button", { name: "Movement History", exact: true }).click();
+    await page.getByRole("button", { name: "Movements", exact: true }).click();
     await expect(page.getByRole("row").filter({ hasText: names.product })).toHaveCount(3);
     await page.screenshot({ path: testInfo.outputPath("owner-inventory-stock-movements.png"), fullPage: true });
   });
   await test.step("Create, edit and disable a fixed-term service without affecting stock or ledgers", async () => {
     const serviceSku = `QC-SERVICE-${suffix.toUpperCase()}`;
     const serviceName = `QC Fictional Maintenance ${suffix}`;
-    await page.getByRole("button", { name: "Products & Services", exact: true }).click();
+    await page.getByRole("button", { name: "Products & services", exact: true }).click();
     await page.getByRole("button", { name: "Add item", exact: true }).first().click();
     await page.getByLabel("Item type", { exact: true }).selectOption("service");
     await page.getByLabel("SKU / Code", { exact: true }).fill(serviceSku);
@@ -306,7 +308,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     await expect(page.getByLabel("Standard unit cost", { exact: true })).toHaveCount(0);
     const form = page.locator("form").filter({ has: page.getByLabel("SKU / Code", { exact: true }) });
     const service = await postUi(page, "/api/inventory/products", form.getByRole("button", { name: "Add item", exact: true }));
-    await expect(page.getByText("Item added to catalog.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: serviceSku })).toBeVisible();
     const serviceRow = page.getByRole("row").filter({ hasText: serviceSku });
     await expect(serviceRow).toContainText("3 months");
     await expect(serviceRow.getByRole("cell").nth(6)).toHaveText("—");
@@ -316,22 +318,22 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     expect(Number(serviceProduct.inventory_value)).toBe(0);
     expect((await api(page, "/api/services/catalog")).find((item) => item.product_id === service.id).duration_months).toBe(3);
 
-    await serviceRow.getByRole("button", { name: "Edit", exact: true }).click();
+    await serviceRow.getByRole("button", { name: /^Edit / }).click();
     await expect(page.getByLabel(/^Duration \(months\)/)).toHaveValue("3");
     await page.getByLabel("Name", { exact: true }).fill(`${serviceName} Updated`);
     await page.getByLabel("Selling price", { exact: true }).fill("90");
     await page.getByLabel(/^Duration \(months\)/).fill("6");
     await postUi(page, `/api/inventory/products/${service.id}`, form.getByRole("button", { name: "Update item", exact: true }), "PATCH");
-    await expect(page.getByText("Item updated.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: `${serviceName} Updated` })).toBeVisible();
     await expect(serviceRow).toContainText("6 months");
     await expect(serviceRow).toContainText("USD 90.00");
     await page.reload();
-    await page.getByRole("button", { name: "Products & Services", exact: true }).click();
+    await page.getByRole("button", { name: "Products & services", exact: true }).click();
     await expect(serviceRow).toContainText(`${serviceName} Updated`);
     await expect(serviceRow).toContainText("6 months");
-    await postUi(page, `/api/inventory/products/${service.id}`, serviceRow.getByRole("button", { name: "Disable", exact: true }), "PATCH");
+    await postUi(page, `/api/inventory/products/${service.id}`, serviceRow.getByRole("button", { name: /^Disable / }), "PATCH");
     await expect(serviceRow.getByText("Inactive", { exact: true })).toBeVisible();
-    await expect(serviceRow.getByRole("button", { name: "Enable", exact: true })).toBeVisible();
+    await expect(serviceRow.getByRole("button", { name: /^Enable / })).toBeVisible();
     const serviceCatalog = await api(page, "/api/services/catalog?include_inactive=true");
     const savedService = serviceCatalog.find((item) => item.product_id === service.id);
     expect(savedService.duration_months).toBe(6);
@@ -364,9 +366,9 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
   await test.step("Reversed supplier payment remains distinguishable in the owner payment history", async () => {
     await page.goto("/dashboard/accounting/payables");
     await page.locator("select").filter({ has: page.locator('option[value="paid"]') }).selectOption("paid");
-    const billRow = page.getByRole("row").filter({ hasText: names.receiptReference });
-    await billRow.getByRole("button", { name: "Open", exact: true }).click();
-    const reversedPaymentCard = page.getByText(`Reference: QC-FINAL-${suffix}`, { exact: true }).locator("..");
+    const billRow = page.locator(`#payable-row-${bill.id}`);
+    await billRow.getByRole("link", { name: "View bill", exact: true }).click();
+    const reversedPaymentCard = page.getByRole("article").filter({ hasText: `Reference: QC-FINAL-${suffix}` });
     await expect(reversedPaymentCard).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("owner-payable-history-after-reversal.png"), fullPage: true });
     await expect(reversedPaymentCard, "Reversed USD40 must not look like a current payment beside the replacement USD40").toContainText(/reversed/i);

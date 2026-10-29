@@ -1,3 +1,4 @@
+import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
@@ -15,13 +16,7 @@ async function readJson(request, path) {
 }
 
 async function mutateViaUI(page, path, method, action) {
-  const responsePromise = page.waitForResponse((response) =>
-    new URL(response.url()).pathname === path && response.request().method() === method,
-  );
-  await action();
-  const response = await responsePromise;
-  expect(response.ok(), `${method} ${path}: ${response.status()} ${await response.text()}`).toBeTruthy();
-  return response.json();
+  return captureJsonResponse(page, { path, method, action });
 }
 
 async function choose(page, label, option) {
@@ -107,7 +102,7 @@ test("fresh owner: client → quote → order → project → invoice → paymen
 
     await test.step("Create two-line discounted/taxed quotation and verify arithmetic", async () => {
       await page.goto("/dashboard/quotations");
-      await page.getByRole("button", { name: "New quotation", exact: true }).click();
+      await page.getByRole("link", { name: "New quotation", exact: true }).click();
       await choose(page, "Client", `${marker} Client`);
       await page.getByLabel("Subject / project", { exact: true }).fill(`${marker} Implementation`);
       await page.getByLabel(/^Tax calculation/).selectOption("exclusive");
@@ -127,7 +122,8 @@ test("fresh owner: client → quote → order → project → invoice → paymen
       await expect(page.getByText("BDT 367.50", { exact: true }).first()).toBeVisible();
       quotation = await mutateViaUI(page, "/api/sales/quotations", "POST", () =>
         page.getByRole("button", { name: "Create draft", exact: true }).click());
-      await expect(page.getByText(/saved as draft\./)).toBeVisible();
+      await expect(page).toHaveURL(new RegExp(`/dashboard/quotations/${quotation.id}(?:\\?.*)?$`));
+      await expect(page.getByRole("button", { name: "Mark sent", exact: true })).toBeVisible();
       const persisted = await readJson(context.request, `/api/sales/quotations/${quotation.id}`);
       expectCommercialTotals(persisted);
       expect(persisted.items).toHaveLength(2);
@@ -144,11 +140,12 @@ test("fresh owner: client → quote → order → project → invoice → paymen
         page.getByRole("button", { name: "Mark sent", exact: true }).click());
       await mutateViaUI(page, `/api/sales/quotations/${quotation.id}/status`, "PATCH", () =>
         page.getByRole("button", { name: "Accept", exact: true }).click());
-      await expect(page.getByLabel("Unit price", { exact: true }).first()).toBeDisabled();
+      await expect(page.getByText("This revision is immutable.", { exact: false })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Edit draft", exact: true })).toHaveCount(0);
       await page.getByRole("button", { name: "Create / view order", exact: true }).click();
       order = await mutateViaUI(page, `/api/sales/orders/from-quotation/${quotation.id}`, "POST", () =>
         page.getByRole("button", { name: "Create Order", exact: true }).click());
-      await expect(page).toHaveURL(new RegExp(`/dashboard/orders/${order.id}$`));
+      await expect(page).toHaveURL(new RegExp(`/dashboard/orders/${order.id}(?:\\?.*)?$`));
       const persisted = await readJson(context.request, `/api/sales/orders/${order.id}`);
       expectCommercialTotals(persisted);
       expect(persisted.quotation_id).toBe(quotation.id);
@@ -160,11 +157,11 @@ test("fresh owner: client → quote → order → project → invoice → paymen
 
     await test.step("Create a linked delivery project and complete order execution", async () => {
       await page.getByRole("link", { name: "Project workspace", exact: true }).click();
-      await page.getByRole("button", { name: "Create Project", exact: true }).click();
+      await page.getByRole("button", { name: "Create project", exact: true }).click();
       await page.getByLabel("Project name", { exact: true }).fill(`${marker} Project`);
       project = await mutateViaUI(page, `/api/projects/from-order/${order.id}`, "POST", () =>
         page.getByRole("button", { name: "Create project", exact: true }).click());
-      await expect(page).toHaveURL(new RegExp(`/dashboard/projects/${project.id}$`));
+      await expect(page).toHaveURL(new RegExp(`/dashboard/projects/${project.id}(?:\\?.*)?$`));
       const persisted = await readJson(context.request, `/api/projects/${project.id}`);
       expect(persisted.order_id).toBe(order.id);
       expect(persisted.client_id).toBe(client.id);
@@ -186,11 +183,13 @@ test("fresh owner: client → quote → order → project → invoice → paymen
 
     await test.step("Create a synthetic cash account through owner UI", async () => {
       await page.goto("/dashboard/accounting/accounts");
-      await page.getByRole("button", { name: "Add account", exact: true }).click();
+      await page.getByRole("link", { name: "Add account", exact: true }).click();
       await page.getByLabel("Account type", { exact: false }).selectOption("cash");
       await page.getByLabel("Account name", { exact: true }).fill(`${marker} Cash`);
       account = await mutateViaUI(page, "/api/accounting/financial-accounts", "POST", () =>
         page.getByRole("button", { name: "Create account", exact: true }).click());
+      await expect(page).toHaveURL(new RegExp(`/dashboard/accounting/accounts/${account.id}(?:\\?.*)?$`));
+      await expect(page.getByRole("heading", { name: `${marker} Cash`, exact: true })).toBeVisible();
       const persisted = (await readJson(context.request, "/api/finance/accounts")).find((item) => item.id === account.id);
       expect(persisted).toBeTruthy();
       expectMoney(persisted.current_balance, 0, "Synthetic cash starts at zero");
@@ -204,7 +203,7 @@ test("fresh owner: client → quote → order → project → invoice → paymen
       await choose(page, "Project", `${marker} Project`);
       invoice = await mutateViaUI(page, `/api/finance/invoices/from-project/${project.id}`, "POST", () =>
         page.getByRole("button", { name: "Create draft invoice", exact: true }).click());
-      await expect(page.getByText(/created as draft with your selected payment instructions/)).toBeVisible();
+      await expect(page.getByText(`Invoice ${invoice.invoice_number} created as draft. Review it, then send it to make it collectible.`, { exact: true })).toBeVisible();
       const persisted = await readJson(context.request, `/api/finance/invoices/${invoice.id}`);
       expectCommercialTotals(persisted);
       expect(persisted.order_id).toBe(order.id);
@@ -229,9 +228,10 @@ test("fresh owner: client → quote → order → project → invoice → paymen
         await page.getByLabel("Reference (optional)", { exact: true }).fill(`${marker}-${amount}`);
         await page.getByRole("button", { name: "Review money received", exact: true }).click();
         const payment = await mutateViaUI(page, "/api/finance/payments", "POST", () =>
-          page.getByRole("button", { name: "Post money received", exact: true }).click());
+          page.getByRole("button", { name: "Confirm & record", exact: true }).click());
         payments.push(payment);
-        await expect(page.getByText(new RegExp(`Payment ${payment.payment_number} recorded`))).toBeVisible();
+        await expect(page.getByRole("heading", { name: payment.payment_number, exact: true })).toBeVisible();
+        await expect(page.getByText("The server confirmed the operation.", { exact: false })).toBeVisible();
         const persisted = await readJson(context.request, `/api/finance/invoices/${invoice.id}`);
         expectMoney(persisted.amount_paid, expectedPaid, "Persisted invoice amount paid");
         expectMoney(persisted.balance_due, expectedDue, "Persisted invoice balance due");
@@ -269,7 +269,7 @@ test("fresh owner: client → quote → order → project → invoice → paymen
 
     await test.step("Verify persisted financial reporting and reload durability", async () => {
       await page.goto("/dashboard/accounting/reports");
-      await expect(page.getByRole("heading", { name: "Financial reports", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Financial statements", exact: true })).toBeVisible();
       const statements = await readJson(context.request, "/api/accounting/reports/financial-statements");
       expectMoney(statements.total_income, 345, "Accrual income excludes tax and is not doubled by receipts");
       expectMoney(statements.total_expenses, 0, "No synthetic expenses");

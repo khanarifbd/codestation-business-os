@@ -26,8 +26,11 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
     await expect(page).toHaveURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
 
     await page.goto("/dashboard/profile", { waitUntil: "domcontentloaded" });
-    await page.getByRole("tab", { name: /security/i }).click();
-    await expect(page.getByRole("heading", { name: "Passkeys", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: /^Sign-in & security/ }).click();
+    await page.getByRole("link", { name: /^Passkeys/ }).click();
+    await expect(page.getByRole("heading", { name: "Your passkeys", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Add a passkey", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Add a passkey", exact: true })).toBeVisible();
 
     await page.getByLabel("Passkey name").fill(passkeyName);
     await page.locator('input[name="passkey_current_password"]').fill(password);
@@ -36,15 +39,15 @@ test("user can enroll a passkey and sign in passwordlessly", async ({ page, cont
     // Surface WebAuthn browser failures in the CI log instead of reporting only
     // a generic timeout when navigator.credentials.create() rejects.
     await expect.poll(async () => {
-      if (await page.getByText("Passkey added. You can now use it from the sign-in page.").isVisible()) {
+      if (await page.getByText("Passkey registered for your global account.").isVisible()) {
         return "success";
       }
-      const alert = page.locator("section").filter({
-        has: page.getByRole("heading", { name: "Passkeys", exact: true }),
-      }).locator('[role="alert"]').first();
+      const alert = page.getByRole("alert").first();
       if (await alert.isVisible()) return `browser error: ${await alert.innerText()}`;
       return "pending";
     }, { timeout: 15_000 }).toBe("success");
+    await page.getByRole("button", { name: "Back to account settings", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Your passkeys", exact: true })).toBeVisible();
     await expect(page.getByText(passkeyName, { exact: true })).toBeVisible();
 
     // Clear only browser cookies to prove the next authentication starts without
