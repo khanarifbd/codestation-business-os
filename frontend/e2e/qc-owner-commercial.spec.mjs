@@ -203,7 +203,7 @@ test("fresh owner: client → quote → order → project → invoice → paymen
       await choose(page, "Project", `${marker} Project`);
       invoice = await mutateViaUI(page, `/api/finance/invoices/from-project/${project.id}`, "POST", () =>
         page.getByRole("button", { name: "Create draft invoice", exact: true }).click());
-      await expect(page.getByText(`Invoice ${invoice.invoice_number} created as draft. Review it, then send it to make it collectible.`, { exact: true })).toBeVisible();
+      await expect(page.getByText(`Invoice ${invoice.invoice_number} created as draft with your selected payment instructions. Review it before sending.`, { exact: true })).toBeVisible();
       const persisted = await readJson(context.request, `/api/finance/invoices/${invoice.id}`);
       expectCommercialTotals(persisted);
       expect(persisted.order_id).toBe(order.id);

@@ -195,6 +195,8 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     }
     await postUi(page, `/api/accounting/payables/${bill.id}/payments`, confirmation.getByRole("button", { name: "Confirm & settle bill", exact: true }));
     await expect(page.getByRole("heading", { name: "Settlement request acknowledged", exact: true })).toBeVisible();
+    // Acknowledgment retains identity; current status requires an explicit read.
+    await page.getByRole("button", { name: "Read current bill & history", exact: true }).click();
     await expect(page.getByRole("article").filter({ hasText: `Reference: ${reference}` })).toContainText(`USD ${amount.toFixed(2)}`);
     await page.getByRole("button", { name: "Back to payables", exact: true }).click();
   }

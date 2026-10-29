@@ -205,7 +205,7 @@ class JournalFixtureGateTests(unittest.TestCase):
         from app.models.organization import Organization
         files = ['transfers', 'fixed_assets', 'capital', 'accounting_loans',
                  'accounting_money_integrity', 'financial_corrections',
-                 'financial_corrections_part2', 'payroll', 'reports', 'tax_center']
+                 'financial_corrections_part2', 'payroll', 'reports', 'tax_center', 'financial_idempotency']
         fixture = dict(id='synthetic-org', organization_id='synthetic-org',
                        user_id='synthetic-user', created_by_user_id='synthetic-user',
                        membership_id='synthetic-member', timezone='UTC', currency='USD',
@@ -259,7 +259,13 @@ class JournalFixtureGateTests(unittest.TestCase):
                      dict(db=db, tenant=NS(organization=NS(currency='USD', timezone='UTC'))))
 
     def test_money_fixture_each_direct_request_owns_root_without_committing(self):
-        tree = ast.parse((ROOT / 'scripts/verify_accounting_money_integrity.py').read_text())
+        self.assert_direct_request_roots('verify_accounting_money_integrity.py', 22)
+
+    def test_idempotency_fixture_each_direct_request_owns_root_without_committing(self):
+        self.assert_direct_request_roots('verify_financial_idempotency.py', 8)
+
+    def assert_direct_request_roots(self, filename, expected_count):
+        tree = ast.parse((ROOT / 'scripts' / filename).read_text())
         helper = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
                        and node.name == 'ensure_request_transaction'), None)
         guard_tree = ast.parse((ROOT / 'app/services/accounting_period_gate.py').read_text())
@@ -301,7 +307,7 @@ class JournalFixtureGateTests(unittest.TestCase):
                                         self.assertIsNot(current, original)
                     with self.subTest(line=node.lineno, prefix=True):
                         self.assertTrue(owned, 'Direct financial request lacks explicit root ownership')
-        self.assertEqual(found, 22)
+        self.assertEqual(found, expected_count)
 
     def test_missing_acquisition_still_rejected(self):
         with self.assertRaises(GATE.AccountingPeriodGateError):

@@ -20,6 +20,10 @@ async function ui(page, path, method, action) {
   return captureJsonResponse(page, { path, method, action });
 }
 
+// Audit reads carry explicit pagination/filter queries; do not broaden the
+// receipt helper's exact-URL contract or accidentally observe another read.
+const auditPath = (query = {}) => `/api/tenant/activity-logs?${new URLSearchParams({ limit: '50', ...query })}`;
+
 async function setup(page, context, prefix) {
   page.setDefaultTimeout(12000);
   await page.goto('/login');
@@ -375,6 +379,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Products & services',
       exact: true
     }).click();
+    await expect(page).toHaveURL(/\/dashboard\/inventory\?(?=.*tab=items)/);
     await page.getByRole('navigation', { name: 'Inventory sections' }).getByRole('button', { name: 'Categories', exact: true }).click();
     await page.getByRole('button', { name: 'Add category', exact: true }).click();
     await page.getByLabel('Category name', {
@@ -398,6 +403,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Products & services',
       exact: true
     }).click();
+    await expect(page).toHaveURL(/\/dashboard\/inventory\?(?=.*tab=items)/);
     await page.getByRole('button', { name: 'Add item', exact: true }).first().click();
     await page.getByLabel('Item type', {
       exact: true
@@ -586,6 +592,7 @@ test('owner catalog, suppliers and warehouses missing guards and persistence', a
       name: 'Products & services',
       exact: true
     }).click();
+    await expect(page).toHaveURL(/\/dashboard\/inventory\?(?=.*tab=items)/);
     await row.getByRole('button', {
       name: /^Edit /
     }).click();
@@ -996,8 +1003,9 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     await expect(page.locator('tbody tr')).toHaveCount(50);
     const first = await api(context.request, '/api/tenant/activity-logs?limit=50', undefined, 'get');
     expect(first.next_cursor).toBeTruthy();
+    await expect(page.locator('tbody tr')).toHaveCount(first.items.length);
     const initialRows = await page.locator('tbody tr').allTextContents();
-    const second = await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', {
+    const second = await ui(page, auditPath({ cursor: first.next_cursor }), 'GET', () => page.getByRole('button', {
       name: 'Load older activity',
       exact: true
     }).click());
@@ -1016,14 +1024,14 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
       exact: true
     }).fill(entity);
     await page.locator('select').selectOption('success');
-    let filtered = await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', {
+    let filtered = await ui(page, auditPath({ action, entity_type: entity, outcome: 'success' }), 'GET', () => page.getByRole('button', {
       name: 'Apply',
       exact: true
     }).click());
     expect(filtered.items.length).toBeGreaterThan(0);
     expect(filtered.items.every(i => i.action.includes(action) && i.entity_type === entity && i.outcome === 'success')).toBe(true);
     await page.getByPlaceholder('Action contains…').fill('no-such-synthetic-action');
-    filtered = await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', {
+    filtered = await ui(page, auditPath({ action: 'no-such-synthetic-action', entity_type: entity, outcome: 'success' }), 'GET', () => page.getByRole('button', {
       name: 'Apply',
       exact: true
     }).click());
@@ -1031,7 +1039,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     await expect(page.getByText('No activity logs match the current filters.', {
       exact: true
     })).toBeVisible();
-    await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', {
+    await ui(page, auditPath(), 'GET', () => page.getByRole('button', {
       name: 'Reset',
       exact: true
     }).click());
@@ -1045,12 +1053,12 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     const dates = page.locator('input[type="date"]');
     await dates.nth(0).fill(auditTomorrow);
     await dates.nth(1).fill(auditTomorrow);
-    let dateFiltered = await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', { name: 'Apply', exact: true }).click());
+    let dateFiltered = await ui(page, auditPath({ date_from: auditTomorrow, date_to: auditTomorrow }), 'GET', () => page.getByRole('button', { name: 'Apply', exact: true }).click());
     expect(dateFiltered.items).toEqual([]);
     await expect(page.getByText('No activity logs match the current filters.', { exact: true })).toBeVisible();
     await dates.nth(0).fill(auditToday);
     await dates.nth(1).fill(auditToday);
-    dateFiltered = await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', { name: 'Apply', exact: true }).click());
+    dateFiltered = await ui(page, auditPath({ date_from: auditToday, date_to: auditToday }), 'GET', () => page.getByRole('button', { name: 'Apply', exact: true }).click());
     expect(dateFiltered.items).toHaveLength(50);
     await expect(dates.nth(0)).toHaveValue(auditToday);
     await expect(dates.nth(1)).toHaveValue(auditToday);
@@ -1465,7 +1473,7 @@ test('owner stock threshold boundary and fixed service entitlement dates', async
     await page.getByPlaceholder('Action contains…').fill('services.order_period.updated');
     await page.getByPlaceholder('Entity type', { exact: true }).fill('order_item');
     await page.locator('select').selectOption('success');
-    const termAudit = await ui(page, '/api/tenant/activity-logs', 'GET', () => page.getByRole('button', { name: 'Apply', exact: true }).click());
+    const termAudit = await ui(page, auditPath({ action: 'services.order_period.updated', entity_type: 'order_item', outcome: 'success' }), 'GET', () => page.getByRole('button', { name: 'Apply', exact: true }).click());
     expect(termAudit.items).toHaveLength(3);
     expect(termAudit.items.every(i => i.action === 'services.order_period.updated' && i.entity_type === 'order_item' && i.outcome === 'success')).toBe(true);
     await expect(page.locator('tbody tr')).toHaveCount(3);

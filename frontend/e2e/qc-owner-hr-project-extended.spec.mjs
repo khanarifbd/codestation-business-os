@@ -96,7 +96,10 @@ expect(workspace.recent_work.find(x=>x.progress_percent===25).time_spent_minutes
  await submit(p,'Put on hold',root+'/status','PATCH');expect((await get(p,root)).status).toBe('on_hold');
  await submit(p,'Resume',root+'/status','PATCH');expect((await get(p,root)).status).toBe('active');
  await submit(p,'Complete project',root+'/status','PATCH');expect((await get(p,root)).status).toBe('completed');
- await p.reload();await p.getByRole('button',{name:'Review & Tips',exact:true}).click();await expect(p.getByRole('button',{name:'Add review',exact:true})).toBeVisible();await expect(p.getByText('Record tip or additional income',{exact:true})).toBeVisible();
+ // Completion navigates here after the workspace refresh; do not race it with reload.
+ await p.waitForURL(url=>url.pathname===`/dashboard${root}`&&url.searchParams.get('tab')==='review_tips');
+ await expect(p.getByRole('button',{name:'Add review',exact:true})).toBeVisible();
+ await p.reload();await expect(p.getByRole('button',{name:'Add review',exact:true})).toBeVisible();await expect(p.getByText('Record tip or additional income',{exact:true})).toBeVisible();
  const before=(await get(p,root+'/workspace')).documents;
  const denied=await p.request.patch('/api'+root+`/documents/${doc.id}`,{data:{title:'Should not persist'}});expect(denied.status()).toBe(409);
  expect((await get(p,root+'/workspace')).documents).toEqual(before);
@@ -177,10 +180,20 @@ test('HR01 HR09 owner structure search and document expiry aggregation',async({p
  test.setTimeout(120000);const employee=await setup(p,'structure expiry');await p.goto('/dashboard/hr/people');await p.getByRole('button',{name:'Structure',exact:true}).click();
  for(const [heading,label,name,path] of [['Departments','Department name','QC Engineering','departments'],['Designations','Designation name','QC Engineer','designations']]){
   await p.getByRole('heading',{name:heading,exact:true}).locator('..').locator('..').getByRole('button',{name:'Add',exact:true}).click();await p.getByLabel(label,{exact:true}).fill(name);await submit(p,path==='departments'?'Add department':'Add designation',`/hr/people/${path}`);
-  await p.goto('/dashboard/hr/people?view=structure');
+  await p.waitForURL(url=>url.pathname==='/dashboard/hr/people'&&url.searchParams.get('view')==='structure');
  }
  await p.goto('/dashboard/hr/people');await p.getByRole('row').filter({hasText:employee.employee_code}).getByRole('link',{name:`Edit ${employee.full_name}`,exact:true}).click();await choose(p,'Department','QC Engineering');await choose(p,'Designation','QC Engineer');await submit(p,'Save profile',`/hr/people/${employee.id}`,'PATCH');
- await p.goto('/dashboard/hr/people');await p.getByLabel('Search name, code, team or role',{exact:true}).fill('QC Engineering');await p.getByRole('button',{name:'Apply people search',exact:true}).click();await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toBeVisible();await p.getByLabel('Search name, code, team or role',{exact:true}).fill('nonexistent-qc-structure');await p.getByRole('button',{name:'Apply people search',exact:true}).click();await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toHaveCount(0);
+ await p.waitForURL(url=>url.pathname===`/dashboard/hr/people/${employee.id}`);
+ await p.goto('/dashboard/hr/people');
+ const search=p.getByLabel('Search name, code, team or role',{exact:true});
+ for(const [query,matches] of [['QC Engineering',1],['nonexistent-qc-structure',0]]){
+  await search.fill(query);await p.getByRole('button',{name:'Apply people search',exact:true}).click();
+  // A matching row can already be visible before router.push applies the first
+  // search. Await the committed query before typing the next independent search.
+  await p.waitForURL(url=>url.pathname==='/dashboard/hr/people'&&url.searchParams.get('search')===query);
+  await expect(search).toHaveValue(query);
+  await expect(p.getByRole('row').filter({hasText:employee.employee_code})).toHaveCount(matches);
+ }
  const person=(await get(p,'/hr/people')).people.find(x=>x.id===employee.id);expect(person.department_name).toBe('QC Engineering');expect(person.designation_name).toBe('QC Engineer');
  await p.goto('/dashboard/hr/records');await p.getByRole('button',{name:'Upload document',exact:true}).click();await choose(p,'Employee',employee.employee_code);await p.getByLabel('Document title',{exact:true}).fill('Synthetic expiring document');await p.getByRole('combobox',{name:/^Document type/}).selectOption('other');await p.getByLabel('Reference number',{exact:true}).fill('SYNTHETIC-EXPIRY');
  const expiry=new Date(Date.now()+10*86400000).toISOString().slice(0,10);await p.getByLabel('Expires on',{exact:true}).fill(expiry);await p.getByLabel('File',{exact:true}).setInputFiles({name:'synthetic-expiry.txt',mimeType:'text/plain',buffer:Buffer.from('Synthetic expiry document; no personal data.')});

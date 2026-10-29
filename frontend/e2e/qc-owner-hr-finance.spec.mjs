@@ -97,9 +97,13 @@ test("owner edits employee, records precise attendance and approves leave withou
       start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), reason: "Synthetic owner approval QC",
     });
     expect(leave.status).toBe("pending");
+    // Create returns only id/status; duration belongs to the persisted read DTO.
+    const pendingLeave = (await get(page, "/api/hr/leave-requests")).find(item => item.id === leave.id);
+    expect(pendingLeave.status).toBe("pending");
+    expect(Number(pendingLeave.days)).toBe(3);
     await page.goto(`/dashboard/hr/time/leave/${leave.id}/review`);
     await expect(page.getByText("Synthetic owner approval QC", { exact: true })).toBeVisible();
-    await expect(page.getByText(`${leave.days} days`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`${pendingLeave.days} days`, { exact: true })).toBeVisible();
     await page.getByRole("radio", { name: "Approve request", exact: true }).check();
     await page.getByRole("button", { name: "Review decision", exact: true }).click();
     const approved = await submit(page, page.getByRole("button", { name: "Confirm decision", exact: true }), `/api/hr/leave-requests/${leave.id}`, "PATCH");
