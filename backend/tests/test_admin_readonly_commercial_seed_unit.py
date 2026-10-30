@@ -123,6 +123,12 @@ class CommercialSeedTests(unittest.TestCase):
         self.services['create_expense'].assert_not_called()
         self.audit.assert_not_called()
 
+    def test_malformed_service_identity_never_becomes_a_fake_route(self):
+        self.services['create_expense'].side_effect = None
+        self.services['create_expense'].return_value = NS(id=None, expense_number='Synthetic')
+        with self.assertRaisesRegex(RuntimeError, 'invalid fixture record ID'):
+            self.run_seed()
+
     def test_integrity_failure_does_not_return_success(self):
         self.audit.return_value = NS(ok=False)
         with self.assertRaises(RuntimeError): self.run_seed()

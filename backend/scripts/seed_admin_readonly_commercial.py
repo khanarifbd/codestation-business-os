@@ -126,7 +126,11 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
                 settlement_order=settlement_order, project=project, milestone=milestone, task=task, document=document, credential=credential,
                 category=category, warehouse=warehouse, product=product, supplier=supplier, purchase=purchase,
                 expense_category=expense_category, expense=expense)
-    ids = {key+'_id': str(value(row, 'id')) for key, row in rows.items()}
+    ids = {}
+    for key, row in rows.items():
+        identifier = value(row, 'id')
+        required(isinstance(identifier, str) and bool(identifier.strip()), 'Service returned an invalid fixture record ID')
+        ids[key+'_id'] = identifier
     ids['vendor_id'] = ids['supplier_id']
     required(all(ids.values()), 'Every fixture must return an actual record ID')
     overrides, contracts = commercial_routes(ids, rows, labels)
