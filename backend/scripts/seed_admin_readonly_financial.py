@@ -35,6 +35,7 @@ class FinancialRegistry(TypedDict):
     currency: str
     accounting_integrity: bool
     route_overrides: dict[str, str]
+    route_contracts: dict[str, dict]
 
 
 def _require(condition: bool, message: str) -> None:
@@ -125,12 +126,14 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
     report = audit_organization_accounting(db, tenant.organization_id)
     _require(report.ok, 'Seed accounting integrity check failed; retain CI database for diagnosis')
     root = '/dashboard/accounting/loans'
-    return {
+    registry: FinancialRegistry = {
         'account_id': account.id, 'loan_draft_id': draft['id'], 'loan_active_id': active['id'],
         'loan_paid_id': paid['id'], 'tax_code_id': code['id'], 'tax_settlement_id': settlement['id'],
         'reconciliation_id': reconciliation['id'], 'fixture_date': fixture_date.isoformat(),
         'currency': currency, 'accounting_integrity': True,
+        'route_contracts': {},
         'route_overrides': {
+            '/dashboard/accounting/tax': f'/dashboard/accounting/tax?date_from={fixture_date.isoformat()}&date_to={fixture_date.isoformat()}',
             f'{root}/[loanId]': f"{root}/{active['id']}",
             f'{root}/[loanId]/approve': f"{root}/{draft['id']}/approve",
             f'{root}/[loanId]/receive': f"{root}/{active['id']}/receive",
@@ -138,3 +141,81 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
             f'{root}/[loanId]/close': f"{root}/{paid['id']}/close",
         },
     }
+
+    registry['route_contracts'] = financial_route_contracts(registry, {
+        'active': f'Read-only sweep active {marker}', 'draft': f'Read-only sweep draft {marker}',
+        'paid': f'Read-only sweep paid {marker}', 'account': f'Read-only sweep bank {marker}',
+        'tax_code': 'Read-only sweep withholding', 'tax_reference': f'RO-tax-{marker}',
+    })
+    return registry
+
+def financial_route_contracts(registry: FinancialRegistry, names: dict[str, str]) -> dict[str, dict]:
+    """Source-specific read readiness, not certification of posting interactions.
+
+    The sweep must also reject failed required GETs; a static heading is not enough.
+    ready_button means visible AND enabled, without clicking it. GET paths
+    are URL pathnames (query filters remain part of normal route behavior).
+    """
+    loans, tax, rec = ('/dashboard/accounting/' + part for part in ('loans', 'tax', 'reconciliation'))
+    base = 'frontend/src/components/'
+    contracts = {}
+
+    def add(pattern, heading, source, *, texts=(), button=None):
+        value = {'heading': heading, 'expected_mode': 'ready', 'ready_text': list(texts),
+                 'source': base + source, 'expected_get_paths': []}
+        if button: value['ready_button'] = button
+        contracts[pattern] = value
+
+    add(loans, 'Know what is owed. Keep the detail.', 'accounting-loans/loan-register.tsx',
+        texts=(names['active'],))
+    add(loans+'/new', 'Record the agreement first.', 'accounting-loans/loan-editors.tsx',
+        texts=('Agreement details',), button='Review draft agreement')
+    add(loans+'/[loanId]', names['active'], 'accounting-loans/loan-document.tsx',
+        texts=(registry['loan_active_id'], 'No repayment schedule recorded'))
+    for action, title, button in [('approve', names['draft'], 'Review approval'),
+                                  ('receive', names['active'], 'Review funds received'),
+                                  ('repay', names['active'], 'Review repayment'),
+                                  ('close', names['paid'], 'Review closure')]:
+        add(loans+'/[loanId]/'+action, title, 'accounting-loans/loan-editors.tsx', button=button)
+    add(tax, 'See the tax behind the documents.', 'accounting-tax/tax-report.tsx',
+        texts=('Returned report period', 'Vendor-bill withholding'))
+    add(tax+'/codes', 'A clear register of tax rules.', 'accounting-tax/tax-registers.tsx',
+        texts=(names['tax_code'],))
+    add(tax+'/codes/new', 'Define a code with clear applicability.', 'accounting-tax/tax-editors.tsx',
+        texts=('Tax code',), button='Review new code')
+    add(tax+'/codes/[taxCodeId]', names['tax_code'], 'accounting-tax/tax-documents.tsx',
+        texts=(registry['tax_code_id'], 'Code identity and applicability'))
+    add(tax+'/codes/[taxCodeId]/edit', 'Refine the rule. Preserve the record.', 'accounting-tax/tax-editors.tsx',
+        texts=('Tax code',), button='Review code changes')
+    add(tax+'/settlements', 'Trace the settlement, not just the amount.', 'accounting-tax/tax-registers.tsx',
+        texts=(names['tax_reference'],))
+    add(tax+'/settlements/new', 'Settle deliberately, with the right context.', 'accounting-tax/tax-editors.tsx',
+        texts=('Functional currency',), button='Review settlement')
+    add(tax+'/settlements/[settlementId]', 'Withholding tax payment', 'accounting-tax/tax-documents.tsx',
+        texts=(registry['tax_settlement_id'], 'Original posting context'))
+    add(rec, 'Bring each statement into focus.', 'accounting-reconciliation/reconciliation-register.tsx',
+        texts=(names['account'],))
+    add(rec+'/new', 'Start with the statement.', 'accounting-reconciliation/reconciliation-create.tsx',
+        texts=('Statement details',), button='Financial account')
+    add(rec+'/[reconciliationId]', names['account'], 'accounting-reconciliation/reconciliation-document.tsx',
+        texts=(registry['reconciliation_id'], 'Read-only statement review', 'Eligible recorded transactions'))
+    add(rec+'/[reconciliationId]/match', names['account'], 'accounting-reconciliation/reconciliation-document.tsx',
+        texts=(registry['reconciliation_id'], 'Each selection saves immediately.', 'Eligible recorded transactions'))
+    for pattern, contract in contracts.items():
+        if pattern.startswith(loans) and pattern != loans+'/new':
+            contract['expected_get_paths'] = ['/api/accounting/loans']
+            if pattern.endswith('/receive') or pattern.endswith('/repay'):
+                contract['expected_get_paths'].append('/api/finance/accounts')
+            if pattern.endswith('/repay'):
+                contract['expected_get_paths'].append(f"/api/accounting/loans/{registry['loan_active_id']}/history")
+            if pattern == loans+'/[loanId]':
+                contract['expected_get_paths'].extend([f"/api/accounting/loans/{registry['loan_active_id']}/schedule", f"/api/accounting/loans/{registry['loan_active_id']}/history"])
+        elif pattern == tax:
+            contract['expected_get_paths'] = ['/api/accounting/tax/report']
+        elif pattern.startswith(tax+'/codes') and pattern != tax+'/codes/new':
+            contract['expected_get_paths'] = ['/api/accounting/tax/codes']
+        elif pattern.startswith(tax+'/settlements'):
+            contract['expected_get_paths'] = ['/api/accounting/tax/settlement-meta' if pattern.endswith('/new') else '/api/accounting/tax/settlements']
+        elif pattern.startswith(rec):
+            contract['expected_get_paths'] = ['/api/accounting/reconciliations/meta' if pattern.endswith('/new') else f"/api/accounting/reconciliations/{registry['reconciliation_id']}" if '[reconciliationId]' in pattern else '/api/accounting/reconciliations']
+    return contracts

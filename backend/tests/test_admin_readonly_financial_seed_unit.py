@@ -133,6 +133,18 @@ class SeedBoundaryTests(unittest.TestCase):
         self.assertEqual(result['route_overrides']['/dashboard/accounting/loans/[loanId]/approve'], '/dashboard/accounting/loans/loan0/approve')
         self.assertEqual(result['loan_active_id'], 'loan1')
         self.assertTrue(result['accounting_integrity'])
+        contracts = result['route_contracts']
+        routes = Path(__file__).parents[2] / 'frontend/src/app/dashboard/accounting'
+        patterns = {'/dashboard/accounting/' + str(p.relative_to(routes).parent) for family in ('loans', 'tax', 'reconciliation') for p in (routes / family).rglob('page.tsx')}
+        self.assertEqual(set(contracts), patterns)
+        self.assertEqual(len(contracts), 19)
+        for contract in contracts.values():
+            self.assertEqual(contract['expected_mode'], 'ready')
+            self.assertTrue(contract['ready_text'] or contract.get('ready_button'))
+            self.assertTrue((Path(__file__).parents[2] / contract['source']).is_file())
+        self.assertEqual(contracts['/dashboard/accounting/loans/[loanId]/repay']['ready_button'], 'Review repayment')
+        self.assertIn('/api/accounting/loans/loan1/history', contracts['/dashboard/accounting/loans/[loanId]/repay']['expected_get_paths'])
+        self.assertEqual(result['route_overrides']['/dashboard/accounting/tax'], '/dashboard/accounting/tax?date_from=2026-10-30&date_to=2026-10-30')
         self.db.add.assert_not_called()
         self.db.add_all.assert_not_called()
         self.db.commit.assert_not_called()
