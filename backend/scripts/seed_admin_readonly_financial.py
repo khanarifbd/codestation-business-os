@@ -220,3 +220,104 @@ def financial_route_contracts(registry: FinancialRegistry, names: dict[str, str]
         elif pattern.startswith(rec):
             contract['expected_get_paths'] = ['/api/accounting/reconciliations/meta' if pattern.endswith('/new') else f"/api/accounting/reconciliations/{registry['reconciliation_id']}" if '[reconciliationId]' in pattern else '/api/accounting/reconciliations']
     return contracts
+
+
+def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request], fixture_date: date,
+                             shared_ids: dict[str, str]) -> dict:
+    """Second stage, AFTER commercial fixture; no duplicate client/account/expense.
+
+    Cash: transfer -1.01 from original / +1.01 destination, then receipt +1 and
+    advance +1 original. Manual journal and opening asset are noncash. Recurring
+    remains auto_post=False; periods outside fixture day do not block other seeds.
+    """
+    from datetime import timedelta
+    from app.models.finance import FinancialAccount
+    from app.models.crm import Client
+    from app.api.v1.finance_transfers import record_transfer
+    from app.schemas.finance import AccountTransferCreate, InvoiceCreate, InvoiceItemInput, InvoiceStatusAction, PaymentCreate
+    from app.api.v1.finance import create_invoice, change_invoice_status, record_payment, get_invoice
+    from app.api.v1.customer_advances import create_advance
+    from app.schemas.customer_advances import CustomerAdvanceCreate
+    from app.api.v1.accounting import create_ledger_account, create_manual_journal
+    from app.schemas.accounting import LedgerAccountCreate, JournalEntryCreate, JournalLineCreate
+    from app.api.v1.accounting_assets import AssetCreate, create_asset
+    from app.api.v1.finance_controls import create_recurring_expense, create_accounting_period, close_accounting_period
+    from app.schemas.finance_controls import RecurringExpenseCreate, AccountingPeriodCreate, AccountingPeriodClose
+
+    assert_financial_fixture_target(db, tenant)
+    _require(type(fixture_date) is date, 'Explicit calendar fixture date required')
+    _require(all(shared_ids.get(key) for key in ('account_id', 'client_id', 'expense_category_id')),
+             'Existing shared account/client/category identities required')
+    account = db.get(FinancialAccount, shared_ids['account_id'])
+    client = db.get(Client, shared_ids['client_id'])
+    _require(account is not None and account.organization_id == tenant.organization_id
+             and account.currency == 'USD' and account.is_active and account.opening_balance == 0,
+             'Verified shared zero-opening USD account required')
+    _require(client is not None and client.organization_id == tenant.organization_id,
+             'Verified shared client required')
+    marker = uuid4().hex[:8]
+
+    def call(fn, *args, path: str):
+        if not db.in_transaction(): db.begin()
+        return fn(*args, request('POST', path), db, tenant)
+
+    destination = call(create_account, FinancialAccountCreate(name=f'Read-only transfer destination {marker}',
+        account_type='bank', currency='USD', opening_balance=Decimal('0')), path='/finance/accounts')
+    transfer = call(record_transfer, AccountTransferCreate(from_account_id=account.id,
+        to_account_id=destination.id, transfer_date=fixture_date, source_amount=Decimal('1.01'),
+        fee_amount=Decimal('0'), destination_amount=Decimal('1.01'), reference=f'RO-transfer-{marker}'),
+        path='/finance/transfers')
+    debit = call(create_ledger_account, LedgerAccountCreate(code=f'ROD{marker}', name=f'Read-only expense ledger {marker}',
+        category='expense', normal_balance='debit'), path='/accounting/chart-of-accounts')
+    credit = call(create_ledger_account, LedgerAccountCreate(code=f'ROC{marker}', name=f'Read-only equity ledger {marker}',
+        category='equity', normal_balance='credit'), path='/accounting/chart-of-accounts')
+    journal = call(create_manual_journal, JournalEntryCreate(entry_date=fixture_date,
+        reference=f'RO-journal-{marker}', memo='Synthetic balanced noncash journal for read-only review',
+        lines=[JournalLineCreate(ledger_account_id=debit.id, currency='USD', debit=Decimal('1.01'), original_amount=Decimal('1.01')),
+               JournalLineCreate(ledger_account_id=credit.id, currency='USD', credit=Decimal('1.01'), original_amount=Decimal('1.01'))]),
+        path='/accounting/journals')
+    asset = call(create_asset, AssetCreate(asset_code=f'ROA{marker}', name=f'Read-only opening asset {marker}',
+        currency='USD', acquisition_cost=Decimal('12'), salvage_value=Decimal('0'), acquisition_date=fixture_date,
+        in_service_date=fixture_date, useful_life_months=12, record_mode='opening',
+        opening_balance_date=fixture_date, opening_accumulated_depreciation=Decimal('0'),
+        reference=f'RO-asset-{marker}'), path='/accounting/assets')
+    recurring = call(create_recurring_expense, RecurringExpenseCreate(name=f'Read-only recurring {marker}',
+        description='Synthetic inactive automation; manual template only', category_id=shared_ids['expense_category_id'],
+        account_id=account.id, expense_currency='USD', expense_amount=Decimal('1.01'), frequency='monthly',
+        next_due_date=fixture_date, auto_post=False, reference=f'RO-recurring-{marker}'), path='/finance-controls/recurring-expenses')
+    # Completed past days, disjoint from each other and every fixture posting day.
+    opened = call(create_accounting_period, AccountingPeriodCreate(name=f'Read-only open period {marker}',
+        start_date=fixture_date-timedelta(days=2), end_date=fixture_date-timedelta(days=2)), path='/finance-controls/accounting-periods')
+    closed = call(create_accounting_period, AccountingPeriodCreate(name=f'Read-only closed period {marker}',
+        start_date=fixture_date-timedelta(days=3), end_date=fixture_date-timedelta(days=3)), path='/finance-controls/accounting-periods')
+    closed = call(close_accounting_period, closed.id, AccountingPeriodClose(notes='Synthetic read-only closed-period fixture'),
+        path=f'/finance-controls/accounting-periods/{closed.id}/close')
+    invoice = call(create_invoice, InvoiceCreate(client_id=client.id, subject=f'Read-only invoice {marker}',
+        issue_date=fixture_date, currency='USD', items=[InvoiceItemInput(item_name='Synthetic read-only service',
+        description='Synthetic read-only service', quantity=Decimal('1'), unit_price=Decimal('10'))]), path='/finance/invoices')
+    call(change_invoice_status, invoice.id, InvoiceStatusAction(action='send'), path=f'/finance/invoices/{invoice.id}/status')
+    payment = call(record_payment, PaymentCreate(invoice_id=invoice.id, account_id=account.id,
+        payment_date=fixture_date, invoice_amount=Decimal('1'), method='bank_transfer', reference=f'RO-receipt-{marker}'), path='/finance/payments')
+    advance = call(create_advance, CustomerAdvanceCreate(client_id=client.id, financial_account_id=account.id,
+        advance_date=fixture_date, amount=Decimal('1'), reference=f'RO-advance-{marker}'), path='/accounting/customer-advances')
+    verified_invoice = get_invoice(invoice.id, db, tenant)
+    _require(Decimal(str(verified_invoice.balance_due)) == Decimal('9')
+             and Decimal(str(verified_invoice.amount_paid)) == Decimal('1'), 'Partial invoice fixture mismatch')
+    _require(opened.status == 'open' and closed.status == 'closed' and not recurring.auto_post,
+             'Control fixture status mismatch')
+    _require(audit_organization_accounting(db, tenant.organization_id).ok,
+             'Remaining financial seed integrity check failed')
+    return {'transfer_id': transfer.id, 'destination_account_id': destination.id, 'journal_id': journal.id,
+            'asset_id': asset['id'], 'recurring_id': recurring.id, 'open_period_id': opened.id,
+            'closed_period_id': closed.id, 'invoice_id': invoice.id, 'payment_id': payment.id,
+            'advance_id': advance.id, 'accounting_integrity': True,
+            'fixture_labels': {'transfer': transfer.transfer_number, 'journal': journal.entry_number,
+                               'asset': f'Read-only opening asset {marker}', 'recurring': recurring.name,
+                               'open_period': opened.name, 'closed_period': closed.name,
+                               'invoice': verified_invoice.invoice_number},
+            'route_overrides': {
+                '/dashboard/accounting/controls/periods/[periodId]': f'/dashboard/accounting/controls/periods/{opened.id}',
+                '/dashboard/accounting/controls/periods/[periodId]/close': f'/dashboard/accounting/controls/periods/{opened.id}/close',
+                '/dashboard/accounting/controls/periods/[periodId]/reopen': f'/dashboard/accounting/controls/periods/{closed.id}/reopen',
+                '/dashboard/accounting/money-in/receipts/[kind]/[receiptId]': f'/dashboard/accounting/money-in/receipts/payment/{payment.id}',
+            }}

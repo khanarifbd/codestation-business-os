@@ -171,5 +171,80 @@ class SeedBoundaryTests(unittest.TestCase):
             create.assert_not_called()
 
 
+class RemainingSeedTests(unittest.TestCase):
+    setUp = SeedBoundaryTests.setUp
+    def test_remaining_service_sequence_is_balanced_bounded_and_nonautomatic(self):
+        from app.models.finance import FinancialAccount
+        from app.models.crm import Client
+        import app.api.v1.finance_transfers as transfers
+        import app.api.v1.accounting as accounting
+        import app.api.v1.accounting_assets as assets
+        import app.api.v1.finance_controls as controls
+        import app.api.v1.finance as finance
+        import app.api.v1.customer_advances as advances
+        self.rows[FinancialAccount] = NS(id='account', organization_id='org', currency='USD', is_active=True, opening_balance=Decimal('0'))
+        self.rows[Client] = NS(id='client', organization_id='org')
+        calls = []
+        def handler(name, result):
+            def run(*args):
+                calls.append((name, args))
+                return result
+            return run
+        targets = [
+            (seed, 'create_account', NS(id='destination')),
+            (transfers, 'record_transfer', NS(id='transfer', transfer_number='TR-SYNTHETIC')),
+            (accounting, 'create_ledger_account', NS(id='ledger')),
+            (accounting, 'create_manual_journal', NS(id='journal', entry_number='JE-SYNTHETIC')),
+            (assets, 'create_asset', {'id': 'asset'}),
+            (controls, 'create_recurring_expense', NS(id='recurring', name='Synthetic recurring', auto_post=False)),
+            (controls, 'create_accounting_period', NS(id='period', name='Synthetic period', status='open')),
+            (controls, 'close_accounting_period', NS(id='closed-period', name='Synthetic closed period', status='closed')),
+            (finance, 'create_invoice', NS(id='invoice')),
+            (finance, 'change_invoice_status', NS(id='invoice')),
+            (finance, 'record_payment', NS(id='payment')),
+            (advances, 'create_advance', NS(id='advance')),
+            (finance, 'get_invoice', NS(id='invoice', invoice_number='INV-SYNTHETIC', balance_due=Decimal('9'), amount_paid=Decimal('1'))),
+        ]
+        for module, name, result in targets:
+            self.stack.enter_context(patch.object(module, name, side_effect=handler(name, result)))
+        self.stack.enter_context(patch.object(seed, 'audit_organization_accounting', return_value=NS(ok=True)))
+        result = seed.seed_remaining_financial(self.db, self.tenant, lambda method, path: (method, path), DAY,
+            {'account_id':'account', 'client_id':'client', 'expense_category_id':'category'})
+        names = [name for name, _ in calls]
+        self.assertEqual(names, ['create_account','record_transfer','create_ledger_account','create_ledger_account',
+            'create_manual_journal','create_asset','create_recurring_expense','create_accounting_period',
+            'create_accounting_period','close_accounting_period','create_invoice','change_invoice_status',
+            'record_payment','create_advance','get_invoice'])
+        by_name = lambda name: [args for n, args in calls if n == name]
+        transfer = by_name('record_transfer')[0][0]
+        self.assertEqual((transfer.source_amount, transfer.destination_amount, transfer.fee_amount), (Decimal('1.01'),Decimal('1.01'),Decimal('0')))
+        journal = by_name('create_manual_journal')[0][0]
+        self.assertEqual(sum(line.debit for line in journal.lines), Decimal('1.01'))
+        self.assertEqual(sum(line.credit for line in journal.lines), Decimal('1.01'))
+        self.assertTrue(all(line.currency == 'USD' and line.original_amount == Decimal('1.01') for line in journal.lines))
+        asset = by_name('create_asset')[0][0]
+        self.assertEqual(asset.record_mode, 'opening')
+        self.assertIsNone(asset.purchase_account_id)
+        self.assertEqual(asset.opening_balance_date, DAY)
+        self.assertFalse(by_name('create_recurring_expense')[0][0].auto_post)
+        periods = [args[0] for args in by_name('create_accounting_period')]
+        self.assertNotEqual(periods[0].start_date, periods[1].start_date)
+        self.assertTrue(all(p.start_date == p.end_date < DAY for p in periods))
+        invoice = by_name('create_invoice')[0][0]
+        self.assertEqual(invoice.client_id, 'client')
+        self.assertEqual(invoice.items[0].quantity * invoice.items[0].unit_price, Decimal('10'))
+        self.assertEqual(by_name('record_payment')[0][0].invoice_amount, Decimal('1'))
+        self.assertEqual(by_name('create_advance')[0][0].amount, Decimal('1'))
+        self.assertEqual(result['route_overrides']['/dashboard/accounting/money-in/receipts/[kind]/[receiptId]'], '/dashboard/accounting/money-in/receipts/payment/payment')
+        self.db.add.assert_not_called()
+        self.db.add_all.assert_not_called()
+
+    def test_missing_shared_identity_fails_before_mutation(self):
+        with patch.object(seed, 'create_account') as account:
+            with self.assertRaisesRegex(RuntimeError, 'shared'):
+                seed.seed_remaining_financial(self.db, self.tenant, Mock(), DAY, {})
+            account.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
