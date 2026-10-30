@@ -13,3 +13,25 @@ test('locators match real field/search composition rather than brittle exact enc
 for(const name of ['verifyPayableRetainedRetry','verifyManualBillUnknown'])test(`${name}: actual negative interceptor never forwards initial financial POST`,async()=>{const fn=tree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name.text===name);let handler;for(const stmt of fn.body.statements)if(ts.isVariableStatement(stmt))for(const decl of stmt.declarationList.declarations)if(decl.name.getText(tree)==='handler')handler=decl.initializer.getText(tree);assert.ok(handler);const requests=[],context={requests,posts:0};vm.runInNewContext('globalThis.handler='+handler,context);let continued=0,fulfilled;const route={request:()=>({method:()=> 'POST',postData:()=> '{"amount":"20"}',headers:()=>({'idempotency-key':'original-key'})}),continue:async()=>{continued++;},fulfill:async value=>{fulfilled=value;},abort:async()=>{}};await context.handler(route);assert.equal(continued,0);assert.equal(fulfilled.status,422);assert.equal(JSON.parse(fulfilled.body).detail,'Unexpected upstream response');if(name==='verifyPayableRetainedRetry'){assert.equal(requests.length,1);assert.equal(requests[0].key,'original-key');}else assert.equal(context.posts,1);});
 
 for(const mode of ['success','navigation-failure','accept-failure'])test(`actual explicit leave owns dialog task and removes listener: ${mode}`,async()=>{let listener,removed=false;const page={on:(event,fn)=>{assert.equal(event,'dialog');listener=fn;},off:(event,fn)=>{assert.equal(event,'dialog');assert.equal(fn,listener);removed=true;}};const context={};vm.runInNewContext(functionSource('withAccountingLeaveConfirmation')+';globalThis.run=withAccountingLeaveConfirmation',context);const action=async()=>{listener({accept:async()=>{if(mode==='accept-failure')throw Error('accept');}});if(mode==='navigation-failure')throw Error('navigation');return 3;};if(mode==='success')assert.equal(await context.run(page,action),3);else await assert.rejects(context.run(page,action));assert.equal(removed,true);});
+
+function backButtons(relative) {
+  const s=fs.readFileSync(path.join(root,relative),'utf8'), ast=ts.createSourceFile(relative,s,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX), found=[];
+  function visit(n) {
+    if(ts.isJsxElement(n) && n.openingElement.tagName.getText(ast)==='button' && n.children.some(c=>ts.isJsxText(c)&&c.text.trim()==='Back to payables')) {
+      const parent=n.parent;
+      assert.ok(ts.isJsxElement(parent));
+      const attr=parent.openingElement.attributes.properties.find(a=>a.name?.getText(ast)==='className');
+      found.push({text:'Back to payables',container:attr?.initializer?.text});
+    }
+    ts.forEachChild(n,visit);
+  }
+  visit(ast);return found;
+}
+test('actual JSX has two Back controls; unknown-receipt action region uniquely owns intended control',()=>{
+  const buttons=[...backButtons('src/components/accounting-payables/payables-workspace.tsx'),...backButtons('src/components/accounting-payables/payables-editor.tsx')];
+  assert.equal(buttons.length,2);
+  assert.deepEqual(buttons.filter(b=>b.container==='pb-actions'),[{text:'Back to payables',container:'pb-actions'}]);
+  function scoped(s){assert.ok(s.includes("page.locator('.pb-actions').getByRole('button', { name: 'Back to payables', exact: true }).click()"));assert.doesNotMatch(s,/\.first\(\)|\.nth\(|force:\s*true/);}
+  scoped(source);
+  assert.throws(()=>scoped(source.replace("page.locator('.pb-actions').getByRole('button', { name: 'Back to payables'", "page.getByRole('button', { name: 'Back to payables'")));
+});

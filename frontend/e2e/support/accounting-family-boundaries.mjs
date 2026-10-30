@@ -139,7 +139,7 @@ export async function verifyManualBillUnknown(page, info, marker) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: info.outputPath('neutral-theme-manual-bill-unknown-mobile.png') });
     // Only this fixture proves non-delivery. A production empty GET cannot prove it.
-    await withAccountingLeaveConfirmation(page, () => page.getByRole('button', { name: 'Back to payables', exact: true }).click());
+    await withAccountingLeaveConfirmation(page, () => page.locator('.pb-actions').getByRole('button', { name: 'Back to payables', exact: true }).click());
     expect(posts).toBe(1);
   });
 }
