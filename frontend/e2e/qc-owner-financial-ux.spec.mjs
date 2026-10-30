@@ -1,3 +1,4 @@
+import { verifyMoneyOutUnknownAction } from "./support/money-out-safe-action.mjs";
 import { verifyReportsReadOnly } from './support/reports-readonly-browser.mjs';
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { randomUUID } from "node:crypto";
@@ -513,6 +514,7 @@ async function verifyAccountingReadOnlyRegisters(page, testInfo) {
   await testInfo.attach("rendered-report-reconciliation", { body: JSON.stringify({ issued: 200, collected: 200, projectCost: 25, costOnlyClient: 6, operationalMargin: 169, unpaidAP: 10, accrualProfit: 159, projectProfit: 175, cash: 169 }), contentType: "application/json" });
   await verifyTransferRetryBoundary(page, testInfo);
   await verifyAccountingReadOnlyRegisters(page, testInfo);
+  await verifyMoneyOutUnknownAction(page, testInfo, api, account, category, today);
 });
 
 test("owner source selectors omit billed work and overpayment is blocked before confirmation", async ({ page }, testInfo) => {
