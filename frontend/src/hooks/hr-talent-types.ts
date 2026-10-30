@@ -7,4 +7,3 @@ export type Announcement = { id: string; title: string; body: string; audience: 
 export type RecruitmentMeta = { roles: { id: string; name: string }[]; departments: { id: string; name: string }[]; designations: { id: string; name: string }[] };
 export type View = "hiring" | "performance" | "updates";
 export type Modal = "job" | "candidate" | "review" | "announcement" | null;
-

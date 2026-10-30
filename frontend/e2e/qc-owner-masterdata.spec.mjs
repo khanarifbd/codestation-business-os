@@ -1,3 +1,4 @@
+import { verifyCompanyOuterPanels } from "./support/company-panels-browser.mjs";
 import { companyWrite, verifyCompanyUnknownBoundaries } from "./support/company-settings-boundaries.mjs";
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { expect, test } from '@playwright/test';
@@ -1089,6 +1090,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     e.cases.push({ id: 'AUD03', actual: `Synthetic run date ${auditToday} returns50; next day ${auditTomorrow} empty; date selections retained on Apply` });
 
     await verifyCompanyUnknownBoundaries({ page, context, expect, api, info: testInfo });
+    await verifyCompanyOuterPanels({ page, context, expect, api, info: testInfo });
   } finally {
     await record(testInfo, e);
   }

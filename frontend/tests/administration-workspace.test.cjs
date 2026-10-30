@@ -2,10 +2,11 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+function restorePanelComposition(source){for(const {before,after} of require("./helpers/reviewed-company-panel-composition.json")){assert.equal(source.split(after).length,2,"exact reviewed panel composition seam");source=source.replace(after,before);}return source;}
 const baseline={"company": "d7c31419027299f002e60eafa134662e2017116932829df63bb99eba97247531", "activity-logs": "9987b9f3a4f2976a9bec7038bc0cbe10d8ccc27ac917589e7e7c540143d2cc05"};
 for(const route of ['company','activity-logs'])test(`${route}: reviewed owned controller remains exact`,()=>{
  const s=read(`src/app/dashboard/${route}/page.tsx`),start=s.indexOf('export default function'),end=route==='company'?s.indexOf('  if(loading)return'):s.indexOf('  return (\n    <main');
- if(route==='company')assert.equal(crypto.createHash('sha256').update(s.slice(start,end)).digest('hex'),baseline[route]);else assertReviewedActivity(s.slice(start,end));
+ if(route==='company')assert.equal(crypto.createHash('sha256').update(restorePanelComposition(s.slice(start,end))).digest('hex'),baseline[route]);else assertReviewedActivity(s.slice(start,end));
 });
 test('company preserves approved text field focus and all thirteen sections',()=>{
  const s=read('src/app/dashboard/company/page.tsx');
@@ -38,4 +39,6 @@ const reviewedActivityHashes={"src/hooks/use-activity-log-read.ts": "05a95f3bc73
 function assertReviewedActivity(controller, override={}) { assert.equal(crypto.createHash("sha256").update(controller).digest("hex"),"218ee9b0f6f19b934f6e48aaf75c629c8997ac9bedd3ac7da44a02df6ab57796"); for(const [file,expected] of Object.entries(reviewedActivityHashes))assert.equal(crypto.createHash("sha256").update(override[file]??read(file)).digest("hex"),expected); }
 test('reviewed Activity extraction rejects mutation of ownership gate',()=>{const s=read('src/app/dashboard/activity-logs/page.tsx'),controller=s.slice(s.indexOf('export default function'),s.indexOf('  return (\n    <main'));const file='src/hooks/use-activity-log-read.ts',before=read(file),after=before.replace('if(!owns()||append','if(append');assert.notEqual(after,before);assert.throws(()=>assertReviewedActivity(controller,{[file]:after}));});
 
-test('reviewed Company controller rejects removing admission ownership',()=>{const s=read('src/app/dashboard/company/page.tsx'),controller=s.slice(s.indexOf('export default function'),s.indexOf('  if(loading)return')),changed=controller.replace('if(!owns()||readPending.current||inFlight.current','if(readPending.current||inFlight.current');assert.notEqual(changed,controller);assert.notEqual(crypto.createHash('sha256').update(changed).digest('hex'),baseline.company);});
+test('reviewed Company controller rejects removing admission ownership',()=>{const s=read('src/app/dashboard/company/page.tsx'),controller=s.slice(s.indexOf('export default function'),s.indexOf('  if(loading)return')),changed=controller.replace('if(!owns()||readPending.current||inFlight.current','if(readPending.current||inFlight.current');assert.notEqual(changed,controller);assert.notEqual(crypto.createHash('sha256').update(restorePanelComposition(changed)).digest('hex'),baseline.company);});
+
+test("Company panel composition inverse rejects altered child leave registration",()=>{const s=read("src/app/dashboard/company/page.tsx"),controller=s.slice(s.indexOf("export default function"),s.indexOf("  if(loading)return"));assert.throws(()=>restorePanelComposition(controller.replace("currenciesLeaveGuard.current?.()??false","currenciesLeaveGuard.current?.()??true")),/exact reviewed/);});

@@ -10,12 +10,13 @@ export async function withSyntheticCompanyWrite(page, path, method, work, held =
   let release;
   const gate = held ? new Promise(resolve => { release = resolve; }) : Promise.resolve();
   const tasks = [], failures = [];
-  let count = 0;
+  let count = 0, body = null;
   const matcher = url => url.pathname === path;
   const handler = route => {
     const task = (async () => {
       if (route.request().method() !== method) return route.continue();
       count++;
+      body = route.request().postDataJSON?.() ?? null;
       await gate;
       await route.fulfill({ status: 422, contentType: 'application/json', body: JSON.stringify({ detail: 'Unexpected upstream response' }) });
     })();
@@ -25,7 +26,7 @@ export async function withSyntheticCompanyWrite(page, path, method, work, held =
   };
   await page.route(matcher, handler);
   try {
-    await work({ count: () => count, release: () => release?.() });
+    await work({ count: () => count, body: () => body, release: () => release?.() });
     if (failures.length) throw failures[0];
   } finally {
     release?.();
