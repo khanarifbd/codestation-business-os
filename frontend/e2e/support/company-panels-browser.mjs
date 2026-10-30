@@ -28,9 +28,15 @@ export async function captureCompanyPanel(page, expect, info, name, ready) {
       if (name === 'gateways' && size === 'mobile') {
         for (const mode of ['Test', 'Live']) {
           const heading = page.getByRole('heading', { name: `Stripe ${mode} Mode`, exact: true });
-          await heading.scrollIntoViewIfNeeded();
-          await expect(heading).toBeInViewport({ratio:1});
+          // Center explicitly: nearest/if-needed alignment left the heading clipped in CI2358.
+          await heading.evaluate(node => node.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }));
+          // Retain the actual frame even when a clipping assertion fails.
           await page.screenshot({ path: info.outputPath(`neutral-theme-company-gateways-${mode.toLowerCase()}-mobile-card.png`) });
+          expect(await heading.evaluate(node => {
+            const rect = node.getBoundingClientRect();
+            return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 160 && rect.bottom <= window.innerHeight - 80;
+          })).toBe(true);
+          await expect(heading).toBeInViewport({ratio:1});
         }
       }
     }
