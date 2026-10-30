@@ -1,3 +1,4 @@
+import { verifyReportsReadOnly } from './support/reports-readonly-browser.mjs';
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
@@ -502,6 +503,7 @@ async function verifyAccountingReadOnlyRegisters(page, testInfo) {
   await expect(costs).toContainText("USD 0.00");
   await expect(costs).toContainText("USD 6.00");
   await expect(costs).toContainText("USD -6.00");
+  await verifyReportsReadOnly(page, testInfo, today, project, costClient);
   await page.goto("/dashboard/accounting/reports");
   await expect(page.getByText("Net profit / loss · selected period", { exact: true }).locator("..")).toContainText("USD 159.00");
   await page.goto("/dashboard");
