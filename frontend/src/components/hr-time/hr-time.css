@@ -1,7 +1,7 @@
 .hr-time {
-  --ht-ink:#172b29;
-  --ht-muted:#66746e;
-  --ht-line:#dfe7e2;
+  --ht-ink:var(--workspace-neutral-ink, #172b29);
+  --ht-muted:var(--workspace-neutral-muted, #66746e);
+  --ht-line:var(--workspace-neutral-border, #dfe7e2);
   color:var(--ht-ink)
 }
 .hr-time * {
@@ -14,7 +14,7 @@
   font-size:clamp(1.55rem,2.5vw,2.05rem)
 }
 .hr-time :is(button,a,input,select,textarea,summary):focus-visible {
-  outline:3px solid #18896c;
+  outline:3px solid var(--workspace-neutral-focus, #18896c);
   outline-offset:3px
 }
 .hr-time :is(button,a) {
@@ -40,7 +40,7 @@
   min-width:0;
   border:1px solid var(--ht-line);
   border-radius:16px;
-  background:#fff;
+  background:var(--workspace-surface, #fff);
   overflow-wrap:anywhere
 }
 .ht-content {
@@ -85,7 +85,7 @@
   letter-spacing:.12em;
   text-transform:uppercase;
   font-weight:700;
-  color:#4c7b69;
+  color:var(--workspace-neutral-muted, #4c7b69);
   margin:0 0 6px
 }
 .ht-subtle,.ht-footnote {
@@ -100,7 +100,7 @@
   align-items:center;
   gap:16px;
   padding:16px 22px;
-  border-bottom:1px solid #ecf0ed;
+  border-bottom:1px solid var(--workspace-neutral-border, #ecf0ed);
   min-height:70px;
   text-decoration:none
 }
@@ -108,7 +108,7 @@
   border:0
 }
 .ht-attention-row:hover {
-  background:#f4f9f6
+  background:var(--workspace-surface-hover, #f4f9f6)
 }
 .ht-attention-row strong {
   font-size:.9rem;
@@ -135,7 +135,7 @@
   align-items:center;
   justify-content:space-between;
   padding:11px 0;
-  border-bottom:1px solid #ecf0ed
+  border-bottom:1px solid var(--workspace-neutral-border, #ecf0ed)
 }
 .ht-day-metrics>div:last-child {
   border:0
@@ -160,7 +160,7 @@
   min-height:44px;
   font-size:.8rem;
   font-weight:650;
-  color:#27664d;
+  color:var(--workspace-neutral-ink, #27664d);
   text-decoration:underline;
   text-underline-offset:4px;
   gap:6px
@@ -209,7 +209,7 @@
 .ht-summary {
   border:1px solid var(--ht-line);
   border-radius:12px;
-  background:#f4f8f5;
+  background:var(--workspace-surface, #f4f8f5);
   margin-bottom:16px
 }
 .ht-summary>summary {
@@ -262,7 +262,7 @@
 .ht-tabs {
   display:flex;
   gap:4px;
-  background:#f1f5f2;
+  background:var(--workspace-surface, #f1f5f2);
   border-radius:10px;
   padding:3px
 }
@@ -275,8 +275,8 @@
   font-weight:600
 }
 .ht-tabs button[aria-pressed=true] {
-  background:#204738;
-  color:white
+  background:var(--workspace-neutral-action, #204738);
+  color:var(--workspace-neutral-on-action, white)
 }
 .ht-filters>summary {
   display:flex;
@@ -317,8 +317,8 @@
 .hr-time :is(.ht-filter-fields,.ht-editor-fields) :is(input,select,textarea) {
   min-width:0;
   width:100%;
-  background:#fff;
-  border:1px solid #ccd9d1;
+  background:var(--workspace-surface, #fff);
+  border:1px solid var(--workspace-neutral-border, #ccd9d1);
   border-radius:9px;
   padding:10px 12px;
   font-size:.86rem;
@@ -334,8 +334,8 @@
   line-height:1.5;
   margin:0;
   padding:10px 18px;
-  background:#f8faf8;
-  border-block:1px solid #edf1ee;
+  background:var(--workspace-surface, #f8faf8);
+  border-block:1px solid var(--workspace-neutral-border, #edf1ee);
   color:var(--ht-muted)
 }
 .ht-record {
@@ -584,8 +584,8 @@
   padding:0 22px 18px
 }
 .ht-outcome {
-  border:1px solid #d1dfd5;
-  background:#f3f8f4;
+  border:1px solid var(--workspace-neutral-border, #d1dfd5);
+  background:var(--workspace-surface, #f3f8f4);
   padding:18px;
   border-radius:13px;
   margin:16px 0;
@@ -606,7 +606,7 @@
   display:flex;
   align-items:center;
   justify-content:center;
-  background:#132a20aa;
+  background:var(--workspace-neutral-scrim-aa, #132a20aa);
   padding:16px
 }
 .ht-confirmation {
@@ -614,7 +614,7 @@
   max-width:560px;
   max-height:calc(100dvh - 32px);
   overflow:auto;
-  background:#fff;
+  background:var(--workspace-surface, #fff);
   border-radius:16px;
   min-width:0
 }

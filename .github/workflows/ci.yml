@@ -276,6 +276,7 @@ jobs:
           E2E_EMAIL=qc-hr-project@example.com uv run python scripts/seed_browser_e2e.py
           E2E_EMAIL=qc-financial-ux@example.com uv run python scripts/seed_browser_e2e.py
           E2E_EMAIL=qc-notification@example.com uv run python scripts/seed_browser_e2e.py
+          E2E_EMAIL=neutral-theme@example.com uv run python scripts/seed_browser_e2e.py
           uv run python scripts/seed_qc_personal_client_browser.py
           nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/business-os-backend.log 2>&1 &
       - name: Wait for backend
@@ -317,6 +318,14 @@ jobs:
       - name: Run critical browser journey
         working-directory: frontend
         run: pnpm exec playwright test
+      - name: Preserve neutral workspace visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neutral-workspace-screenshots
+          path: frontend/test-results/**/neutral-theme-*.png
+          if-no-files-found: warn
+          retention-days: 7
       - name: Print service logs on failure
         if: failure()
         run: |

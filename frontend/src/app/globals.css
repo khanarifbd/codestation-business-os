@@ -157,3 +157,23 @@
     background: color-mix(in srgb, currentColor 14%, transparent);
   }
 }
+
+/* Shared light workspace palette. Component fallbacks preserve existing dark styling.
+   Keep this scoped to authenticated workspaces, not public marketing/auth pages. */
+:root:not(.dark) .workspace-shell:not(.dark):not(.dark *) {
+  --workspace-surface: #ffffff;
+  --workspace-surface-subtle: #fafafa;
+  --workspace-surface-hover: #f5f5f5;
+  --workspace-surface-selected: #ebebeb;
+  --workspace-neutral-ink: #171717;
+  --workspace-neutral-muted: #626262;
+  --workspace-neutral-border: #e5e5e5;
+  --workspace-neutral-action: #171717;
+  --workspace-neutral-action-hover: #333333;
+  --workspace-neutral-on-action: #ffffff;
+  --workspace-neutral-focus: #525252;
+  --workspace-neutral-shadow: #00000014;
+  --workspace-neutral-scrim-80: #00000080;
+  --workspace-neutral-scrim-a3: #000000a3;
+  --workspace-neutral-scrim-aa: #000000aa;
+}

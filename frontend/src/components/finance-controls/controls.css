@@ -2,13 +2,13 @@
   min-width:0;
   max-width:1440px;
   margin:0 auto;
-  color:#263b45
+  color:var(--workspace-neutral-ink, #263b45)
 }
 .ct-workspace a,.ct-workspace button {
   touch-action:manipulation
 }
 .ct-workspace :is(a,button,input,select,textarea):focus-visible {
-  outline:3px solid #17897a;
+  outline:3px solid var(--workspace-neutral-focus, #17897a);
   outline-offset:3px
 }
 .ct-workspace :is(h1,h2,p,dd,strong) {
@@ -25,12 +25,12 @@
   align-items:center;
   margin-bottom:1.4rem;
   font-size:.75rem;
-  color:#597078
+  color:var(--workspace-neutral-muted, #597078)
 }
 .ct-tabs {
   display:flex;
   gap:1.5rem;
-  border-bottom:1px solid #d8e3e2;
+  border-bottom:1px solid var(--workspace-neutral-border, #d8e3e2);
   margin:1.6rem 0
 }
 .ct-tabs button {
@@ -38,7 +38,7 @@
   display:flex;
   gap:.6rem;
   align-items:center;
-  color:#576d74;
+  color:var(--workspace-neutral-muted, #576d74);
   font-size:.85rem;
   font-weight:650;
   border-bottom:3px solid transparent;
@@ -49,8 +49,8 @@
   height:17px
 }
 .ct-tabs button[aria-current=page] {
-  color:#087466;
-  border-color:#087466
+  color:var(--workspace-neutral-muted, #087466);
+  border-color:var(--workspace-neutral-border, #087466)
 }
 .ct-register-context {
   display:flex;
@@ -64,7 +64,7 @@
   line-height:1.65;
   max-width:820px;
   margin-top:.4rem;
-  color:#5c7076
+  color:var(--workspace-neutral-muted, #5c7076)
 }
 .ct-count {
   font-size:2rem;
@@ -77,14 +77,14 @@
   display:block;
   font-size:.68rem;
   font-weight:500;
-  color:#5d7278;
+  color:var(--workspace-neutral-muted, #5d7278);
   margin-top:.4rem
 }
 .ct-filter {
   display:flex;
   gap:1rem;
   align-items:center;
-  border-block:1px solid #dce5e5;
+  border-block:1px solid var(--workspace-neutral-border, #dce5e5);
   padding:1rem 0
 }
 .ct-filter label {
@@ -108,14 +108,14 @@
   width:100%
 }
 .ct-filter select {
-  border:1px solid #d8e3e2;
+  border:1px solid var(--workspace-neutral-border, #d8e3e2);
   border-radius:7px;
   min-height:44px;
   padding:.5rem .7rem;
-  background:white
+  background:var(--workspace-surface, white)
 }
 .ct-register {
-  border-bottom:1px solid #d8e3e2
+  border-bottom:1px solid var(--workspace-neutral-border, #d8e3e2)
 }
 .ct-row {
   display:grid;
@@ -123,7 +123,7 @@
   gap:1.5rem;
   align-items:center;
   padding:1.3rem .65rem;
-  border-bottom:1px solid #e1e9e8;
+  border-bottom:1px solid var(--workspace-neutral-border, #e1e9e8);
   min-width:0;
   transition:background .15s
 }
@@ -131,7 +131,7 @@
   border:0
 }
 .ct-row:hover {
-  background:#f0f8f5
+  background:var(--workspace-surface-hover, #f0f8f5)
 }
 .ct-row h2 {
   font-size:.95rem;
@@ -140,7 +140,7 @@
 }
 .ct-row p,.ct-row small {
   font-size:.74rem;
-  color:#64797f;
+  color:var(--workspace-neutral-muted, #64797f);
   line-height:1.5
 }
 .ct-row small {
@@ -151,7 +151,7 @@
   font-size:.61rem;
   text-transform:uppercase;
   letter-spacing:.12em;
-  color:#6b7e82
+  color:var(--workspace-neutral-muted, #6b7e82)
 }
 .ct-row-value strong {
   font-size:.96rem;
@@ -174,14 +174,14 @@
   margin-left:auto;
   width:17px;
   height:17px;
-  color:#4f7771
+  color:var(--workspace-neutral-muted, #4f7771)
 }
 .ct-tag {
   display:inline-flex;
   padding:.3rem .55rem;
   border-radius:5px;
-  background:#eaf0f0;
-  color:#52686e;
+  background:var(--workspace-surface-subtle, #eaf0f0);
+  color:var(--workspace-neutral-muted, #52686e);
   font-size:.68rem;
   font-weight:700;
   line-height:1.3
@@ -197,7 +197,7 @@
 .ct-footnote {
   font-size:.73rem;
   line-height:1.65;
-  color:#60777d;
+  color:var(--workspace-neutral-muted, #60777d);
   margin-top:1.2rem
 }
 .ct-document-grid {
@@ -212,7 +212,7 @@
 }
 .ct-hero {
   padding:1.7rem 0 2rem;
-  border-bottom:1px solid #d8e3e2
+  border-bottom:1px solid var(--workspace-neutral-border, #d8e3e2)
 }
 .ct-hero h2 {
   font-size:clamp(1.7rem,3vw,2.75rem);
@@ -223,10 +223,10 @@
 }
 .ct-hero>p:last-child {
   font-size:.85rem;
-  color:#5f767d
+  color:var(--workspace-neutral-muted, #5f767d)
 }
 .ct-section {
-  border-top:1px solid #dbe5e3;
+  border-top:1px solid var(--workspace-neutral-border, #dbe5e3);
   padding:1.6rem 0
 }
 .ct-section:first-child {
@@ -240,7 +240,7 @@
 }
 .ct-facts dt {
   font-size:.68rem;
-  color:#62797e;
+  color:var(--workspace-neutral-muted, #62797e);
   margin-bottom:.35rem
 }
 .ct-facts dd {
@@ -249,8 +249,8 @@
   white-space:pre-wrap
 }
 .ct-aside {
-  background:#edf5f1;
-  border-left:3px solid #438d7e;
+  background:var(--workspace-surface, #edf5f1);
+  border-left:3px solid var(--workspace-neutral-border, #438d7e);
   padding:1.5rem;
   min-width:0
 }
@@ -265,7 +265,7 @@
 }
 .ct-action-list a {
   display:block;
-  border-top:1px solid #cfdfd9;
+  border-top:1px solid var(--workspace-neutral-border, #cfdfd9);
   padding:1rem 0;
   min-height:44px
 }
@@ -276,7 +276,7 @@
 .ct-action-list span {
   font-size:.74rem;
   line-height:1.6;
-  color:#57726b;
+  color:var(--workspace-neutral-muted, #57726b);
   display:block;
   margin-top:.3rem
 }
@@ -295,12 +295,12 @@
 .ct-form-grid input,.ct-form-grid select,.ct-form-grid textarea,.ct-section>.ad-field textarea {
   width:100%;
   min-height:44px;
-  border:1px solid #cddbd8;
-  background:white;
+  border:1px solid var(--workspace-neutral-border, #cddbd8);
+  background:var(--workspace-surface, white);
   border-radius:7px;
   padding:.65rem .8rem;
   font-size:.87rem;
-  color:#233e43
+  color:var(--workspace-neutral-ink, #233e43)
 }
 .ct-form-grid textarea,.ct-section>.ad-field textarea {
   min-height:105px
@@ -322,14 +322,14 @@
 }
 .ct-outcome {
   padding:1.5rem;
-  border:1px solid #e0cfa5;
-  border-left:4px solid #b68130;
-  background:#fff9ec;
+  border:1px solid var(--workspace-neutral-border, #e0cfa5);
+  border-left:4px solid var(--workspace-neutral-border, #b68130);
+  background:var(--workspace-surface, #fff9ec);
   margin:1.5rem 0
 }
 .ct-outcome[data-confirmed=true] {
-  background:#eaf6ef;
-  border-color:#92b8a4
+  background:var(--workspace-surface, #eaf6ef);
+  border-color:var(--workspace-neutral-border, #92b8a4)
 }
 .ct-outcome strong {
   font-size:1.05rem
@@ -345,7 +345,7 @@
 }
 .ct-post-context p {
   font-size:.8rem;
-  color:#557068;
+  color:var(--workspace-neutral-muted, #557068);
   margin:.5rem 0 1.2rem
 }
 .ct-text-button {
