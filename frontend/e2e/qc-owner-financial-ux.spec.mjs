@@ -279,6 +279,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.goto("/dashboard/accounting/invoices");
   await expect(page.getByRole("link", { name: cancelled.invoice_number, exact: true })).toBeVisible();
   await page.locator("select").filter({ has: page.locator('option[value="outstanding"]') }).selectOption("outstanding");
+  await page.getByRole("button", { name: "Apply filters", exact: true }).click();
   for (const item of [edited, receiptInvoice]) await expect(page.getByRole("link", { name: item.invoice_number, exact: true })).toBeVisible();
   for (const item of [draft, cancelled]) await expect(page.getByRole("link", { name: item.invoice_number, exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Clear", exact: true }).click();

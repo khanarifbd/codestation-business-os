@@ -119,14 +119,15 @@ test('portal split adds three independent cases, retaining each original privacy
   const files = fs.readdirSync(path.join(root, 'e2e')).filter(file => file.endsWith('.spec.mjs'));
   // 49 declarations plus the existing two-entry leads/clients parameterization = 50 executions.
   // Before this split there were 46 declarations / 47 executions; none are excluded.
-  const existingFiles = files.filter(file => !['neutral-workspace-theme.spec.mjs', 'administration-workspace.spec.mjs', 'dashboard-final-revision.spec.mjs', 'clients-final-revision.spec.mjs', 'orders-final-revision.spec.mjs'].includes(file));
+  const existingFiles = files.filter(file => !['neutral-workspace-theme.spec.mjs', 'administration-workspace.spec.mjs', 'dashboard-final-revision.spec.mjs', 'clients-final-revision.spec.mjs', 'orders-final-revision.spec.mjs', 'finance-compatibility.spec.mjs'].includes(file));
   assert.equal(existingFiles.reduce((count, file) => count + declarations(fs.readFileSync(path.join(root, 'e2e', file), 'utf8')).length, 0), 49);
   assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/neutral-workspace-theme.spec.mjs'), 'utf8')).length, 5);
   assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/administration-workspace.spec.mjs'), 'utf8')).length, 1);
   assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/dashboard-final-revision.spec.mjs'), 'utf8')).length, 1);
   assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/clients-final-revision.spec.mjs'), 'utf8')).length, 1);
   assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/orders-final-revision.spec.mjs'), 'utf8')).length, 1);
-  // Three palette, two focus, administration, Dashboard, Clients and Orders retain all 50 originals (59 executions).
+  assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/finance-compatibility.spec.mjs'), 'utf8')).length, 1);
+  // Prior 59 executions plus one Finance compatibility journey; all 50 originals retained (60 executions).
 });
 
 function assertDecisionBudget(source) {

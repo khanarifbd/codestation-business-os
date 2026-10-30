@@ -1,4 +1,6 @@
 "use client";
+import { requestWorkspaceExit } from "@/lib/workspace-navigation";
+import { FINANCE_PATH, financeBrowse, financeHref } from "@/lib/finance-compatibility-navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -26,6 +28,7 @@ export function useAccountingAccounts() {
         accountId?: string;
     }>();
     const accountId = route.accountId ?? "";
+    const financeContext = pathname === FINANCE_PATH ? financeBrowse(params.toString()) : null;
     const mode = pathname.endsWith("/new") ? "create" : pathname.endsWith("/edit") ? "edit" : accountId ? "view" : "register";
     const editing = mode === "create" || mode === "edit";
     const writeScope = JSON.stringify([tenant?.organization.id, tenant?.membership_id, tenant?.role_id, tenant?.permissions, pathname]);
@@ -179,7 +182,7 @@ export function useAccountingAccounts() {
     useEffect(() => {
         if (mode === "view" && params.has("cursors")) router.replace(viewHref, { scroll: false });
     }, [mode, params, router, viewHref]);
-    const focus = params.get("focus") ?? "";
+    const focus = financeContext?.account_focus ?? params.get("focus") ?? "";
     useEffect(() => {
         if (!loading && mode === "register" && focus)
             document.getElementById(`account-row-${focus}`)?.focus();
@@ -272,7 +275,7 @@ export function useAccountingAccounts() {
         mode, editing, accountId, hasPreviousPage, previousHistoryLoading, previousLedgerPage, nextLedgerPage, accounts, account, loading, error, gateways, gatewayError, values, saving, dirty, committed, uncertain, canView, canManage, canSubmit, returnHref, viewHref, browse, ledger, ledgerLoading, ledgerError, queryDraft: queryInput?.key === ledgerUrl ? queryInput.value : browse.search, setQueryDraft: (value: string) => setQueryInput({ key: ledgerUrl, value }), positions: accountPositions(accounts ?? []), pageTotals: accountLedgerTotals(ledger?.items ?? []), sourceTypes: [...new Set([...(ledger?.items ?? []).map(row => row.source_type), ...(browse.source_type ? [browse.source_type] : [])])].sort(), change, load, save, changeLedger, exportPage, retryLedger: () => setLedgerRevision(value => value + 1), refresh: async () => {
             await load();
             setLedgerRevision(value => value + 1);
-        }, back: () => editing ? navigation.navigate(returnHref) : router.push(returnHref), openAccount: (id: string) => router.push(accountViewHref(id, accountListHref(id))), createHref: accountCreateHref(ACCOUNTS_PATH), editHref: accountEditHref(accountId, viewHref), openSaved: () => navigation.navigate(savedHref(), { discard: true, replace: true })
+        }, back: () => editing ? navigation.navigate(returnHref) : router.push(returnHref), openAccount: (id: string) => { if (financeContext && !requestWorkspaceExit()) return; router.push(accountViewHref(id, financeContext ? financeHref({ ...financeContext, tab: "accounts", account_focus: id }) : accountListHref(id))); }, createHref: accountCreateHref(financeContext ? financeHref({ ...financeContext, tab: "accounts" }) : ACCOUNTS_PATH), editHref: accountEditHref(accountId, viewHref), openSaved: () => navigation.navigate(savedHref(), { discard: true, replace: true })
     };
 }
 export type AccountingAccountsState = ReturnType<typeof useAccountingAccounts>;

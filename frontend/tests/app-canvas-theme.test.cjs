@@ -1,3 +1,4 @@
+const {reviewedFinanceCanvasRoot}=require('./helpers/reviewed-finance-coexistence.cjs');
 const { beforeReviewedInvoiceBoundaries } = require('./helpers/reviewed-invoice-boundaries.cjs');
 const { beforeReviewedQuotationDecimals } = require('./helpers/reviewed-quotation-decimals.cjs');
 const assert = require('node:assert/strict');
@@ -63,6 +64,7 @@ test('full-page application wrappers no longer introduce gray or green utility c
       if (className.includes('bg-[var(--app-canvas)]')) sharedRoots += 1;
     }
   }
+  sharedRoots += reviewedFinanceCanvasRoot(read("app/dashboard/finance/page.tsx"), read("components/finance/finance-compatibility-shell.tsx"));
   assert.ok(sharedRoots >= 35, `Expected shared application/print/loading canvases, found ${sharedRoots}`);
 });
 

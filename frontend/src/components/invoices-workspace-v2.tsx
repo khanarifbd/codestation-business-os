@@ -2,7 +2,7 @@
 
 import { formatMoneyExact, salesLinePreview, sumMoneyExact } from "@/lib/sales-money-preview";
 
-import { matchesInvoiceBalance } from "@/lib/invoice-balance";
+import { appendUniqueInvoices, blankInvoiceFilters, INVOICE_STATUSES, invoiceRegisterUrl, verifiedInvoicePage, type InvoiceRegisterFilters, invoiceLocationKey, type InvoiceRegisterLocation } from "@/lib/invoice-register-navigation";
 
 import Link from "next/link";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -52,14 +52,29 @@ function money(value: string | number, currency: string) { return formatMoneyExa
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
 function lineTotal(line: Line, taxMode: string) { return salesLinePreview(line, taxMode)?.total ?? ""; }
 
-export function InvoicesWorkspaceV2() {
+export type InvoiceProtection = { pending: boolean; unknown: boolean; open: boolean };
+type WorkspaceProps = {
+  requestedClientId?: string | null; returnHref?: string | null;
+  registerLocation?: InvoiceRegisterLocation;
+  onRegisterLocationChange?: (location: InvoiceRegisterLocation) => void;
+  createRequest?: number; initialSource?: Source;
+  onProtectionChange?: (protection: InvoiceProtection) => void;
+  registerProtectionGuard?: (guard: (() => InvoiceProtection) | null) => void;
+};
+export function InvoicesWorkspaceV2(props: WorkspaceProps = {}) {
   const { tenant } = useDashboardSession();
-  return <InvoicesWorkspaceContent key={JSON.stringify([tenant?.organization?.id, tenant?.membership_id, tenant?.role_id, tenant?.permissions])} />;
+  return <InvoicesWorkspaceContent key={JSON.stringify([tenant?.organization?.id, tenant?.membership_id, tenant?.role_id, tenant?.permissions])} {...props} />;
 }
-export function InvoicesWorkspaceContent() {
+export function InvoicesWorkspaceContent({ requestedClientId = null, returnHref, registerLocation, onRegisterLocationChange, createRequest = 0, initialSource = "project", onProtectionChange, registerProtectionGuard }: WorkspaceProps = {}) {
   const { tenant } = useDashboardSession();
   const scope = JSON.stringify([tenant?.organization?.id, tenant?.membership_id, tenant?.role_id, tenant?.permissions]);
   const activeScope = useRef<string | null>(scope), mounted = useRef(true), readEpoch = useRef(0), writePending = useRef(false), writeUnknown = useRef(false), writeAcknowledged = useRef(false);
+  const activeClientIntent = useRef<string | null>(requestedClientId);
+  useLayoutEffect(() => {
+    registerProtectionGuard?.(() => ({ pending: writePending.current, unknown: writeUnknown.current, open: createOpen.current }));
+    return () => registerProtectionGuard?.(null);
+  }, [registerProtectionGuard]);
+  useLayoutEffect(() => { activeClientIntent.current = requestedClientId; return () => { activeClientIntent.current = null; }; }, [requestedClientId]);
   useLayoutEffect(() => { const epoch = readEpoch; activeScope.current = scope; mounted.current = true; return () => { activeScope.current = null; mounted.current = false; ++epoch.current; }; }, [scope]);
   const ownsScope = useCallback(() => mounted.current && activeScope.current === scope, [scope]);
   const canView = Boolean(tenant?.permissions.some(value => value === "*" || value === "finance.view"));
@@ -68,9 +83,19 @@ export function InvoicesWorkspaceContent() {
   const createOpen = useRef(false), setupAvailable = useRef(false);
   const [setupReady, setSetupReady] = useState(false);
   const draftGeneration = useRef(0);
+  const consumedClientIntent = useRef<string | null>(null);
   const generation = draftGeneration.current;
   const canChangeDraft = () => createOpen.current && generation === draftGeneration.current && ownsScope() && canManage && !writePending.current && !writeUnknown.current && !writeAcknowledged.current;
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const cursorOwner = useRef<string | null>(null), registerPending = useRef(false);
+  const appliedFilterOwner = useRef<InvoiceRegisterFilters>(registerLocation?.filters ?? blankInvoiceFilters());
+  const startingCursor = useRef<string | null>(registerLocation?.cursor ?? null);
+  const syncedLocation = useRef(invoiceLocationKey(registerLocation ?? { filters: blankInvoiceFilters(), cursor: null }));
+  const [historyStartsAtCursor, setHistoryStartsAtCursor] = useState(Boolean(registerLocation?.cursor));
+  const [appliedFilters, setAppliedFilters] = useState<InvoiceRegisterFilters>(() => registerLocation?.filters ?? blankInvoiceFilters());
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [registerReady, setRegisterReady] = useState(false);
   const [meta, setMeta] = useState<Meta>({ clients: [], orders: [], projects: [] });
   const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [taxCodes, setTaxCodes] = useState<TaxCode[]>([]);
@@ -79,26 +104,37 @@ export function InvoicesWorkspaceContent() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [source, setSource] = useState<Source>("project");
-  const [form, setForm] = useState({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] });
+  const [source, setSource] = useState<Source>(initialSource);
+  const [form, setForm] = useState({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", terms_conditions: "", lines: [blank()] });
   const [payment, setPayment] = useState<PaymentForm>(blankPayment);
   const [destinations, setDestinations] = useState<PaymentDestination[]>([]);
   const [destinationsLoading, setDestinationsLoading] = useState(false);
   const [destinationsError, setDestinationsError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [currencyFilter, setCurrencyFilter] = useState("all");
-  const [dueFilter, setDueFilter] = useState<"all" | "overdue" | "outstanding" | "paid">("all");
+  const [query, setQuery] = useState(registerLocation?.filters.search ?? "");
+  const [statusFilter, setStatusFilter] = useState(registerLocation?.filters.status ?? "all");
+  const [currencyFilter, setCurrencyFilter] = useState(registerLocation?.filters.currency ?? "all");
+  const [dueFilter, setDueFilter] = useState<"all" | "overdue" | "outstanding" | "paid">(registerLocation?.filters.balance ?? "all");
+
+  const notifyLocation = useCallback((filters: InvoiceRegisterFilters, cursor: string | null) => {
+    if (!onRegisterLocationChange) return;
+    startingCursor.current = cursor;
+    const location = { filters, cursor };
+    syncedLocation.current = invoiceLocationKey(location);
+    onRegisterLocationChange?.(location);
+  }, [onRegisterLocationChange]);
+  useEffect(() => { onProtectionChange?.({ pending: saving, unknown: unknownCreate, open: showForm }); }, [onProtectionChange, saving, unknownCreate, showForm]);
 
   const load = useCallback(async () => {
     if (!ownsScope() || !canView) return;
     const epoch = ++readEpoch.current;
     const current = () => ownsScope() && epoch === readEpoch.current;
+    setHistoryStartsAtCursor(Boolean(startingCursor.current));
+    registerPending.current = true; cursorOwner.current = null; setNextCursor(null); setInvoices([]); setRegisterReady(false); setLoadingMore(false);
     setLoading(true); setError(null); setSetupReady(false); setupAvailable.current = false;
     try {
       const requests = [
         canManage ? fetch("/api/finance/meta", { cache: "no-store" }) : null,
-        fetch("/api/finance/invoice-page?limit=100", { cache: "no-store" }),
+        fetch(invoiceRegisterUrl(appliedFilterOwner.current, startingCursor.current), { cache: "no-store" }),
         canManage ? fetch("/api/inventory/products", { cache: "no-store" }) : null,
         canManage ? fetch("/api/accounting/tax/codes", { cache: "no-store" }) : null,
       ];
@@ -109,8 +145,9 @@ export function InvoicesWorkspaceContent() {
       if (!current()) return;
       const [metadata, register, products, taxes] = results;
       if (!register?.response.ok) throw new Error(getApiErrorMessage(register?.payload, "Could not load invoices"));
-      if (!Array.isArray(register.payload?.items) || register.payload.items.some((row: Invoice) => !row || typeof row.id !== "string" || typeof row.invoice_number !== "string")) throw new Error("Invoice register could not be verified. Retry loading.");
-      setInvoices(register.payload.items);
+      const page = verifiedInvoicePage<Invoice>(register.payload);
+      setInvoices(appendUniqueInvoices([], page.items)); setRegisterReady(true);
+      cursorOwner.current = page.next_cursor; setNextCursor(page.next_cursor);
       if (canManage) {
         if (!metadata?.response.ok || !Array.isArray(metadata.payload?.clients) || !Array.isArray(metadata.payload?.orders) || !Array.isArray(metadata.payload?.projects) || !products?.response.ok || !Array.isArray(products.payload) || !taxes?.response.ok || !Array.isArray(taxes.payload)) {
           setMeta({ clients: [], orders: [], projects: [] }); setCatalog([]); setTaxCodes([]);
@@ -119,9 +156,46 @@ export function InvoicesWorkspaceContent() {
         setMeta(metadata.payload); setCatalog(products.payload); setTaxCodes(taxes.payload); setSetupReady(true); setupAvailable.current = true;
       }
     } catch (reason) { if (current()) { setInvoices([]); setError(reason instanceof Error ? reason.message : "Could not load invoices"); } }
-    finally { if (current()) setLoading(false); }
+    finally { if (current()) { registerPending.current = false; setLoading(false); } }
   }, [ownsScope, canView, canManage]);
+  const loadMore = useCallback(async () => {
+    if (!ownsScope() || !canView || registerPending.current || !nextCursor || cursorOwner.current !== nextCursor || JSON.stringify(appliedFilterOwner.current) !== JSON.stringify(appliedFilters)) return;
+    registerPending.current = true;
+    const epoch = ++readEpoch.current;
+    const current = () => ownsScope() && epoch === readEpoch.current;
+    setLoadingMore(true); setError(null);
+    try {
+      const response = await fetch(invoiceRegisterUrl(appliedFilters, nextCursor), { cache: "no-store" });
+      if (!current()) return;
+      const payload = await response.json().catch(() => null);
+      if (!current()) return;
+      if (!response.ok) throw new Error(getApiErrorMessage(payload, "Could not load older invoices"));
+      const page = verifiedInvoicePage<Invoice>(payload);
+      if (page.next_cursor === nextCursor) throw new Error("Invoice pagination did not advance. Retry loading older invoices.");
+      setInvoices(rows => appendUniqueInvoices(rows, page.items));
+      notifyLocation(appliedFilters, nextCursor);
+      cursorOwner.current = page.next_cursor; setNextCursor(page.next_cursor);
+    } catch (reason) { if (current()) setError(reason instanceof Error ? reason.message : "Could not load older invoices"); }
+    finally { if (current()) { registerPending.current = false; setLoadingMore(false); } }
+  }, [ownsScope, canView, nextCursor, appliedFilters, notifyLocation]);
+  function applyFilters(event?: FormEvent) {
+    event?.preventDefault();
+    if (!ownsScope() || !canView) return;
+    const filters: InvoiceRegisterFilters = { search: query.trim(), status: statusFilter, currency: currencyFilter, balance: dueFilter };
+    appliedFilterOwner.current = filters; setAppliedFilters(filters); notifyLocation(filters, null);
+    void load();
+  }
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (!registerLocation || !ownsScope() || syncedLocation.current === invoiceLocationKey(registerLocation)) return;
+    const { filters, cursor } = registerLocation;
+    syncedLocation.current = invoiceLocationKey(registerLocation); startingCursor.current = cursor;
+    appliedFilterOwner.current = filters; setAppliedFilters(filters);
+    setQuery(filters.search); setStatusFilter(filters.status); setCurrencyFilter(filters.currency); setDueFilter(filters.balance);
+    void load();
+  }, [registerLocation, ownsScope, load]);
+  function restartFirstPage() { if (!ownsScope() || !canView) return; notifyLocation(appliedFilterOwner.current, null); void load(); }
+
   useEffect(() => {
     if (!showForm || !canManage || !ownsScope()) return;
     const controller = new AbortController();
@@ -143,28 +217,33 @@ export function InvoicesWorkspaceContent() {
     return () => controller.abort();
   }, [showForm, ownsScope, canManage]);
 
+  const applyClientIntent = useCallback(() => {
+    if (!requestedClientId || activeClientIntent.current !== requestedClientId || consumedClientIntent.current === requestedClientId || !ownsScope() || !canView || !canManage || !setupReady || !setupAvailable.current) return;
+    consumedClientIntent.current = requestedClientId;
+    // A URL is only a prefill request, never permission to replace a live draft.
+    if (createOpen.current || writePending.current || writeUnknown.current || writeAcknowledged.current) return;
+    const client = meta.clients.find(item => item.id === requestedClientId);
+    if (!client) { setMessage("The requested client is unavailable in this company. Choose a verified client when creating an invoice."); return; }
+    ++draftGeneration.current; createOpen.current = true;
+    setSource("client");
+    setForm({ source_id: "", client_id: client.id, subject: "", issue_date: today(), due_date: "", currency: client.currency || "", tax_calculation_mode: "exclusive", notes: "", terms_conditions: "", lines: [blank()] });
+    setPayment(blankPayment()); setError(null); setMessage(null); setShowForm(true);
+  }, [requestedClientId, ownsScope, canView, canManage, setupReady, meta.clients]);
+  useEffect(() => { applyClientIntent(); }, [applyClientIntent]);
+
   const projectOptions = useMemo(() => meta.projects.filter((p) => p.status !== "cancelled").map((p) => ({ value: p.id, label: `${p.number} · ${p.name} · ${money(p.contract_value, p.currency)}`, keywords: `${p.number} ${p.name} ${p.currency} ${p.contract_value}` })), [meta.projects]);
   const orderOptions = useMemo(() => meta.orders.filter((o) => o.status !== "cancelled").map((o) => ({ value: o.id, label: `${o.number} · ${o.client_name} · ${money(o.total, o.currency)}`, keywords: `${o.number} ${o.client_name} ${o.currency} ${o.total}` })), [meta.orders]);
   const clientOptions = useMemo(() => meta.clients.map((c) => ({ value: c.id, label: `${c.code} · ${c.name}`, keywords: `${c.code} ${c.name}` })), [meta.clients]);
   const availableCatalog = useMemo(() => catalog.filter((item) => item.is_active && (!form.currency || item.currency === form.currency)), [catalog, form.currency]);
   const lineSourceOptions = useMemo(() => [{ value: "custom:service", label: "+ Custom service" }, { value: "custom:non_stock_item", label: "+ Custom non-stock item" }, ...availableCatalog.map((item) => ({ value: `catalog:${item.id}`, label: `${item.sku} · ${item.name}`, keywords: `${item.item_type} ${item.unit}` }))], [availableCatalog]);
-  const statusOptions = useMemo(() => ["all", ...Array.from(new Set(invoices.map((invoice) => invoice.status)))], [invoices]);
-  const currencyOptions = useMemo(() => ["all", ...Array.from(new Set(invoices.map((invoice) => invoice.currency)))], [invoices]);
+  const statusOptions = INVOICE_STATUSES;
+  const currencyOptions = CURRENCY_OPTIONS;
   const filteredInvoices = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const currentDate = today();
-    return invoices.filter((invoice) => {
-      if (needle && !`${invoice.invoice_number} ${invoice.client_name} ${invoice.subject ?? ""} ${invoice.currency}`.toLowerCase().includes(needle)) return false;
-      if (statusFilter !== "all" && invoice.status !== statusFilter) return false;
-      if (currencyFilter !== "all" && invoice.currency !== currencyFilter) return false;
-      const balanceDue = Number(invoice.balance_due || 0);
-      const overdue = Boolean(invoice.due_date && invoice.due_date < currentDate && balanceDue > 0 && !["draft", "cancelled"].includes(invoice.status));
-      if (dueFilter === "overdue" && !overdue) return false;
-      if ((dueFilter === "outstanding" || dueFilter === "paid") && !matchesInvoiceBalance(invoice, dueFilter)) return false;
-      return true;
-    });
-  }, [currencyFilter, dueFilter, invoices, query, statusFilter]);
-  const overdueCount = useMemo(() => invoices.filter((invoice) => invoice.due_date && invoice.due_date < today() && Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
+    // Server filters cover full history. This intersection is needed only when
+    // a raw status and the separate overdue balance control are both selected.
+    return invoices.filter(invoice => appliedFilters.balance !== "overdue" || appliedFilters.status === "all" || appliedFilters.status === "overdue" || invoice.status === appliedFilters.status);
+  }, [appliedFilters, invoices]);
+  const overdueCount = useMemo(() => invoices.filter((invoice) => invoice.display_status === "overdue").length, [invoices]);
   const outstandingCount = useMemo(() => invoices.filter((invoice) => Number(invoice.balance_due) > 0 && !["draft", "cancelled"].includes(invoice.status)).length, [invoices]);
   const draftTotal = useMemo(() => sumMoneyExact(form.lines.map(line => lineTotal(line, form.tax_calculation_mode))), [form.lines, form.tax_calculation_mode]);
   const selectedDestination = destinations.find((item) => item.id === payment.accountId) ?? null;
@@ -194,8 +273,8 @@ export function InvoicesWorkspaceContent() {
     setPayment({ method: inferPaymentMethod(account), accountId: account.id, url: account.payment_url ?? "", instructions: account.payment_instructions ?? "" });
   }
 
-  function resetSource(next: Source) { if (!canChangeDraft()) return; ++draftGeneration.current; setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] }); setError(null); }
-  function clearFilters() { setQuery(""); setStatusFilter("all"); setCurrencyFilter("all"); setDueFilter("all"); }
+  function resetSource(next: Source) { if (!canChangeDraft()) return; ++draftGeneration.current; setSource(next); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", terms_conditions: "", lines: [blank()] }); setError(null); }
+  function clearFilters() { if (!ownsScope() || !canView) return; setQuery(""); setStatusFilter("all"); setCurrencyFilter("all"); setDueFilter("all"); const filters = blankInvoiceFilters(); appliedFilterOwner.current = filters; setAppliedFilters(filters); notifyLocation(filters, null); void load(); }
   function updateLine(index: number, patch: Partial<Line>) { if (!canChangeDraft()) return; ++draftGeneration.current; setForm((current) => ({ ...current, lines: current.lines.map((line, lineIndex) => lineIndex === index ? { ...line, ...patch } : line) })); }
   function changeManualCurrency(value: string) { if (!canChangeDraft()) return; ++draftGeneration.current; setForm((current) => ({ ...current, currency: value, lines: current.lines.some((line) => line.product_id) ? [blank()] : current.lines })); if (form.lines.some((line) => line.product_id)) setError("Currency changed. Catalog lines were cleared so different currencies cannot be mixed."); }
   function selectLineSource(index: number, value: string) { if (!canChangeDraft()) return;
@@ -224,7 +303,7 @@ export function InvoicesWorkspaceContent() {
       else if (source === "order") response = await post(`/api/finance/invoices/from-order/${form.source_id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_details: paymentDetails }) });
       else {
         if (form.lines.some((line) => !(line.item_name || line.description).trim() || !line.description.trim() || Number(line.quantity) <= 0 || Number(line.unit_price) < 0)) throw new Error("Complete all invoice lines.");
-        response = await post("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: form.tax_calculation_mode, notes: form.notes || null, payment_details: paymentDetails, items: form.lines.map((line) => ({ product_id: line.product_id, item_name: line.item_name || line.description, item_type: line.item_type, unit: line.unit || "unit", description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
+        response = await post("/api/finance/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: form.client_id, subject: form.subject || null, issue_date: form.issue_date, due_date: form.due_date || null, currency: form.currency || null, tax_calculation_mode: form.tax_calculation_mode, notes: form.notes || null, terms_conditions: form.terms_conditions || null, payment_details: paymentDetails, items: form.lines.map((line) => ({ product_id: line.product_id, item_name: line.item_name || line.description, item_type: line.item_type, unit: line.unit || "unit", description: line.description, quantity: Number(line.quantity), unit_price: Number(line.unit_price), discount_percent: Number(line.discount_percent || 0), tax_rate: Number(line.tax_rate || 0) })) }) });
       }
       if (response.ok && ownsScope()) writeAcknowledged.current = true;
       const payload = await response.json().catch(() => null);
@@ -247,11 +326,18 @@ export function InvoicesWorkspaceContent() {
     ++draftGeneration.current; createOpen.current = true;
     if (writeAcknowledged.current) {
       writeAcknowledged.current = false;
-      setSource("project"); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", lines: [blank()] }); setPayment(blankPayment());
+      setSource(initialSource); setForm({ source_id: "", client_id: "", subject: "", issue_date: today(), due_date: "", currency: "", tax_calculation_mode: "exclusive", notes: "", terms_conditions: "", lines: [blank()] }); setPayment(blankPayment());
     }
     setShowForm(true);
   }
   function closeCreate() { if (canChangeDraft()) { createOpen.current = false; ++draftGeneration.current; setShowForm(false); } }
+  const consumedCreateRequest = useRef(0);
+  useEffect(() => {
+    if (!createRequest || createRequest === consumedCreateRequest.current || !setupReady || !ownsScope()) return;
+    consumedCreateRequest.current = createRequest;
+    openCreate();
+  });
+
 
   return <AppPage className="invoice-page" width="normal"><div className="space-y-6">
     <PageHeader className="invoice-heading" eyebrow="Finance & Accounts" title="Invoices" description="From first draft to final payment. Keep every invoice, balance and next step in view." actions={canManage ? <button disabled={saving || unknownCreate || !setupReady} onClick={openCreate} className="invoice-primary"><Plus className="size-4" />New invoice</button> : undefined} />
@@ -259,7 +345,7 @@ export function InvoicesWorkspaceContent() {
     {message ? <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
     {unknownCreate ? <div role="alert" className="rounded-xl border border-neutral-300 bg-white p-4"><strong>Creation outcome unknown</strong><p>This draft is frozen. Review invoices in a separate tab before considering any replacement; an absent row is not proof of failure. Reloading loses this local protection.</p><a href="/dashboard/accounting/invoices" target="_blank" rel="noopener noreferrer">Review saved invoices</a><button type="button" disabled={loading} onClick={() => void load()}>Refresh read-only register</button></div> : null}
-    <InvoiceCounts total={invoices.length} outstanding={outstandingCount} overdue={overdueCount} />
+    {registerReady ? <InvoiceCounts total={invoices.length} outstanding={outstandingCount} overdue={overdueCount} /> : <p role="status" className="text-sm text-neutral-500">{loading ? "Loading invoice counts…" : "Invoice counts unavailable until the register is verified."}</p>}
 
     {showForm && canManage ? <section className="invoice-create" aria-labelledby="invoice-create-title">
       <div className="invoice-create-heading"><div><p className="invoice-eyebrow">NEW DRAFT</p><h2 id="invoice-create-title">Create invoice</h2><p className="mt-1 text-sm text-neutral-500">Project and order invoices copy their locked sales snapshot. Manual client invoices can use catalog or custom lines.</p></div><button type="button" aria-label="Close create invoice" disabled={saving || unknownCreate} onClick={closeCreate} className="invoice-close"><X className="size-5" /></button></div>
@@ -278,7 +364,7 @@ export function InvoicesWorkspaceContent() {
         <div><div className="mb-3 flex items-center justify-between"><div><h3 className="font-medium">Invoice lines</h3><p className="mt-1 text-xs text-neutral-400">Catalog is optional. One-time project/service billing does not create inventory items.</p></div><button type="button" onClick={() => changeDraft((v) => ({ ...v, lines: [...v.lines, blank()] }))} className="rounded-lg border px-3 py-2 text-sm font-medium">+ Add line</button></div>
           <div className="invoice-lines">{form.lines.map((line, index) => { const sourceValue = line.product_id ? `catalog:${line.product_id}` : line.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <InvoiceLineEditor key={index} line={line} index={index} sourceValue={sourceValue} sourceOptions={lineSourceOptions} total={money(lineTotal(line, form.tax_calculation_mode), form.currency || "")} canRemove={form.lines.length !== 1} onSourceChange={(value) => selectLineSource(index, value)} onChange={(patch) => updateLine(index, patch)} onRemove={() => changeDraft((v) => ({ ...v, lines: v.lines.filter((_, i) => i !== index) }))} />; })}</div>
           <div className="mt-4 flex justify-end rounded-xl bg-neutral-50 p-4"><div className="text-right"><p className="text-xs uppercase tracking-wide text-neutral-400">Estimated total</p><p className="mt-1 text-lg font-semibold">{money(draftTotal, form.currency || "")}</p>{draftTotal === "" ? <p role="status" className="mt-2 text-xs text-amber-800">Estimate unavailable. Check quantity, price, discount and tax.</p> : null}</div></div>
-        </div><Field label="Client notes"><textarea value={form.notes} onChange={(e) => changeDraft((v) => ({ ...v, notes: e.target.value }))} className="min-h-24 w-full rounded-xl border p-3 text-sm" /></Field></> : null}
+        </div><Field label="Client notes"><textarea value={form.notes} onChange={(e) => changeDraft((v) => ({ ...v, notes: e.target.value }))} className="min-h-24 w-full rounded-xl border p-3 text-sm" /></Field><Field label="Terms and conditions (optional)"><textarea value={form.terms_conditions} onChange={(e) => changeDraft((v) => ({ ...v, terms_conditions: e.target.value }))} className="min-h-24 w-full rounded-xl border p-3 text-sm" /></Field></> : null}
         <section className="invoice-payment-instructions space-y-4">
           <div><h3 className="font-semibold">Payment instructions</h3><p className="mt-1 text-xs text-neutral-500">Set the payment method, destination and link now. These details are saved with the draft and locked when it is sent.</p></div>
           {destinationsError ? <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{destinationsError} You can still enter a custom payment link.</p> : null}
@@ -297,14 +383,17 @@ export function InvoicesWorkspaceContent() {
 
     <section className="invoice-list-surface" aria-labelledby="invoice-register-title">
       <div className="invoice-register-heading"><div><h2 id="invoice-register-title">Invoice register</h2><p>Open an invoice to review its details, actions and payment history.</p></div><span>Balances stay in their original currency</span></div>
-      <div className="invoice-filters"><div className="invoice-filter-grid">
+      <form className="invoice-filters" onSubmit={applyFilters}><div className="invoice-filter-grid">
         <label className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400"/><input aria-label="Search invoices" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search invoice, client, subject..." className="h-11 w-full rounded-xl border bg-white pl-10 pr-3 text-sm outline-none focus:border-neutral-500"/></label>
         <select aria-label="Invoice status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All statuses</option>{statusOptions.filter((status) => status !== "all").map((status) => <option key={status} value={status}>{pretty(status)}</option>)}</select>
-        <select aria-label="Invoice currency" value={currencyFilter} onChange={(event) => setCurrencyFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All currencies</option>{currencyOptions.filter((currency) => currency !== "all").map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
+        <select aria-label="Invoice currency" value={currencyFilter} onChange={(event) => setCurrencyFilter(event.target.value)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All currencies</option>{currencyOptions.map((currency) => <option key={currency.value} value={currency.value}>{currency.label}</option>)}</select>
         <select aria-label="Invoice balance" value={dueFilter} onChange={(event) => setDueFilter(event.target.value as typeof dueFilter)} className="h-11 rounded-xl border bg-white px-3 text-sm"><option value="all">All balances</option><option value="outstanding">Outstanding</option><option value="overdue">Overdue</option><option value="paid">Paid</option></select>
-        <button type="button" onClick={clearFilters} disabled={!query && statusFilter === "all" && currencyFilter === "all" && dueFilter === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button>
-      </div><p className="mt-3 text-xs text-neutral-400">Showing {filteredInvoices.length} of {invoices.length} invoices</p></div>
-      <InvoiceRegister invoices={filteredInvoices} loading={loading} currentDate={today()} formatMoney={money} />
+        <div className="invoice-filter-actions"><button type="submit" disabled={!canView} className="h-11 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-40">Apply filters</button>
+        <button type="button" onClick={clearFilters} disabled={!query && statusFilter === "all" && currencyFilter === "all" && dueFilter === "all" && !appliedFilters.search && appliedFilters.status === "all" && appliedFilters.currency === "all" && appliedFilters.balance === "all"} className="h-11 rounded-xl border bg-white px-4 text-sm font-medium disabled:opacity-40">Clear</button></div>
+      </div><p className="mt-3 text-xs text-neutral-500">Showing {filteredInvoices.length} of {invoices.length} loaded records. Apply filters to search the full history. Counts describe loaded records, not company-wide totals.{nextCursor ? " Older matching records are available below." : registerReady ? historyStartsAtCursor ? " End of history from this cursor page." : " All matching records have been loaded." : ""}</p></form>
+      {historyStartsAtCursor ? <div role="status" className="flex flex-wrap items-center justify-between gap-3 border-b p-4 text-sm text-neutral-600"><p>Returned to this cursor page. Earlier pages are not loaded.</p><button type="button" className="invoice-primary" disabled={loading} onClick={restartFirstPage}>Restart from first page</button></div> : null}
+      {registerReady || loading ? <InvoiceRegister returnHref={returnHref} invoices={filteredInvoices} moreAvailable={Boolean(nextCursor)} loading={loading} currentDate={today()} formatMoney={money} /> : null}
+      {nextCursor ? <div className="flex flex-wrap items-center justify-between gap-3 border-t p-4"><p className="text-sm text-neutral-500" role="status">{loadingMore ? "Loading older invoices…" : "Continue through the matching invoice history."}</p><button type="button" className="invoice-primary" disabled={loading || loadingMore} onClick={() => void loadMore()}>{loadingMore ? "Loading…" : "Load more invoices"}</button></div> : null}
     </section>
   </div></AppPage>;
 }

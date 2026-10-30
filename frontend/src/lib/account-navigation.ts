@@ -1,3 +1,4 @@
+import { safeFinanceReturn } from "@/lib/finance-compatibility-navigation";
 import type { AccountLedgerBrowse } from "@/components/accounting-accounts/account-model";
 export const ACCOUNTS_PATH = "/dashboard/accounting/accounts";
 export function accountListHref(focus = "") {
@@ -7,6 +8,8 @@ export function accountListHref(focus = "") {
     return `${ACCOUNTS_PATH}${p.size ? `?${p}` : ""}`;
 }
 export function safeAccountListReturn(raw?: string | null) {
+    const finance = safeFinanceReturn(raw, ["accounts"]);
+    if (finance) return finance;
     if (!raw || raw !== ACCOUNTS_PATH && !raw.startsWith(`${ACCOUNTS_PATH}?`))
         return ACCOUNTS_PATH;
     return accountListHref(new URLSearchParams(raw.split("?")[1]).get("focus") ?? "");

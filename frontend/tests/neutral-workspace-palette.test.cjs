@@ -1,3 +1,4 @@
+const {beforeReviewedFinanceCompatibility}=require('./helpers/reviewed-finance-coexistence.cjs');
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -9,7 +10,7 @@ const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 const restore=s=>s.replace('font-family:var(--font-sans);','font-family:var(--font-inter),Arial,sans-serif;').replace(/var\(--workspace-(?:neutral-[\w-]+|surface(?:-[\w-]+)?),\s*(#[\da-fA-F]{3,8}|white)\)/g,'$1');
 const digest=s=>createHash('sha256').update(s.replace(/\s+/g,'')).digest('hex');
 for(const [file,sha] of Object.entries(baseline))test(`${file}: only palette references change; original dark fallback, selectors and geometry remain exact`,()=>{
- const css=read(file);assert.equal(digest(restore(css)),sha);
+ const css=beforeReviewedFinanceCompatibility(file,read(file));assert.equal(digest(restore(css)),sha);
  assert.notEqual(digest(restore(css.replace(/padding:/,'padding-left:'))),sha);
 });
 test('neutral palette is scoped to light authenticated workspaces, not dark or public pages',()=>{

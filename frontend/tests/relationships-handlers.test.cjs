@@ -242,7 +242,7 @@ withCase('detail','Default tab is Overview and access masks Sales/Projects/Finan
 });
 withCase('detail','Client actions retain management masks, active-state guard and encoded existing destinations',h=>{
  ready(h,'detail');h.setParams({clientId:'synthetic/id'});h.setState('workspace',{...workspace,client:{...client,id:'synthetic/id'}});let links=all(h.render(),'a').map(n=>n.props.href);
- for(const route of ['/dashboard/clients?edit=synthetic%2Fid','/dashboard/quotations?client_id=synthetic%2Fid','/dashboard/finance?client_id=synthetic%2Fid'])assert.ok(links.includes(route));
+ for(const route of ['/dashboard/clients?edit=synthetic%2Fid','/dashboard/quotations?client_id=synthetic%2Fid','/dashboard/accounting/invoices?client_id=synthetic%2Fid'])assert.ok(links.includes(route));
  h.setParams({clientId:client.id});h.setState('workspace',{...workspace,client:{...client,status:'inactive'}});links=all(h.render(),'a').map(n=>n.props.href);assert.ok(links.some(n=>n.includes('?edit=')));assert.equal(links.some(n=>n.includes('?client_id=')),false);
  h.setState('workspace',{...workspace,access:Object.fromEntries(Object.keys(access).map(key=>[key,false]))});links=all(h.render(),'a').map(n=>n.props.href);assert.equal(links.some(n=>n.includes('?edit=')||n.includes('?client_id=')),false);
 });

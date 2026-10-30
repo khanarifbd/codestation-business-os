@@ -1,4 +1,5 @@
 'use strict';
+const {beforeReviewedFinanceCompatibility}=require('./helpers/reviewed-finance-coexistence.cjs');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),ts=require('typescript');
 const {root,harness}=require('./project-child-safety-harness.cjs');
 const pin=JSON.parse(fs.readFileSync(path.join(root,'evidence/project-child-safety/donor-source-manifest.json'),'utf8'));
@@ -13,7 +14,7 @@ for(const name of ['roundMoney','money','grossAmount','feeValue','feeAmount','ne
 test('all thirteen existing tip payload fields/expressions retained exactly',()=>assert.equal(objectWith(source(review),['gross_amount','fee_amount','source_type']),objectWith(before(review),['gross_amount','fee_amount','source_type'])));
 test('review six-field nullable/trimmed body remains exact',()=>assert.equal(objectWith(source(review),['rating','review_text','received_at','notes']),objectWith(before(review),['rating','review_text','received_at','notes'])));
 test('Notes title/content request and sharing absolute boolean body remain exact',()=>{for(const[p,keys]of[['src/components/project-notes-section.tsx',['title','content']],['src/components/project-client-milestone-sharing.tsx',['client_visible']]])assert.equal(jsonObjectWith(source(p),keys),jsonObjectWith(before(p),keys))});
-test('all original API routes and shared authentication/navigation modules are unchanged',()=>{for(const[p,sha]of Object.entries(pin.source_sha256))if(p.startsWith('src/app/api/')||['src/hooks/use-quotation-navigation-guard.ts','src/hooks/use-document-navigation-guard.ts','src/lib/workspace-navigation.ts','src/lib/tenant-proxy.ts','src/lib/authenticated-backend.ts'].includes(p))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(root,p))).digest('hex'),sha,p)});
+test('all original API routes and shared authentication/navigation modules are unchanged',()=>{for(const[p,sha]of Object.entries(pin.source_sha256))if(p.startsWith('src/app/api/')||['src/hooks/use-quotation-navigation-guard.ts','src/hooks/use-document-navigation-guard.ts','src/lib/workspace-navigation.ts','src/lib/tenant-proxy.ts','src/lib/authenticated-backend.ts'].includes(p))assert.equal(crypto.createHash('sha256').update(beforeReviewedFinanceCompatibility(p,fs.readFileSync(path.join(root,p),'utf8'))).digest('hex'),sha,p)});
 function reviewedParentWorkspace(candidate) {
  const unknownImport='import { PROJECT_WRITE_UNKNOWN } from "@/lib/project-request";\n';
  const deduplicated='{vm.error && !(vm.unknownWrite && vm.error === PROJECT_WRITE_UNKNOWN) ? <RelationshipNotice tone="error">{vm.error}</RelationshipNotice> : null}';

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { invoiceCollectionHref, safeFinanceReturn } from "@/lib/finance-compatibility-navigation";
 import { useCallback, useEffect, useRef, useState, useLayoutEffect } from "react";
 import { ArrowLeft, FileText, Plus, RotateCcw, Save, Send, Share2, Trash2, X, Edit3 } from "lucide-react";
 
@@ -101,8 +102,9 @@ function toForm(invoice: Invoice): EditForm {
 
 const blankLine = (): EditLine => ({ description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: "0" });
 
-export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: string; onUpdated?: () => void }) {
+export function InvoiceDetailWorkspace({ invoiceId, onUpdated, returnHref }: { invoiceId: string; onUpdated?: () => void; returnHref?: string | null }) {
   const { tenant } = useDashboardSession();
+  const financeReturn = safeFinanceReturn(returnHref, ["invoices", "payments"]);
   const scope = JSON.stringify([tenant?.organization?.id, tenant?.membership_id, tenant?.role_id, tenant?.permissions, invoiceId]);
   const activeScope = useRef<string | null>(scope), mounted = useRef(true), mutationPending = useRef(false), outcome = useRef<"acknowledged" | "unknown" | null>(null), editingRef = useRef(false);
   useLayoutEffect(() => { activeScope.current = scope; mounted.current = true; return () => { activeScope.current = null; mounted.current = false; }; }, [scope]);
@@ -407,7 +409,7 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
   const sourceLabel = invoice.project_id ? "Project invoice" : invoice.order_id ? "Order invoice" : "Manual client invoice";
 
   return <main className="invoice-detail-page"><div className="invoice-detail-content">
-    <Link href="/dashboard/accounting/invoices" className="invoice-detail-back"><ArrowLeft className="size-4" aria-hidden="true" />All invoices</Link>
+    <Link href={financeReturn || "/dashboard/accounting/invoices"} className="invoice-detail-back"><ArrowLeft className="size-4" aria-hidden="true" />{financeReturn ? "Back to Finance" : "All invoices"}</Link>
     <PageHeader
       className="invoice-detail-heading"
       eyebrow="FINANCE & ACCOUNTS / INVOICE"
@@ -418,7 +420,7 @@ export function InvoiceDetailWorkspace({ invoiceId, onUpdated }: { invoiceId: st
         {currentRead && !editing ? <button type="button" onClick={() => void shareInvoice()} className="invoice-detail-action"><Share2 className="size-4" />Share</button> : null}
         {draft && !editing ? <button disabled={busy} onClick={beginEdit} className="invoice-detail-action"><Edit3 className="size-4" />Edit draft</button> : null}
         {draft && !editing ? <button disabled={busy} onClick={() => void sendInvoice()} className="invoice-detail-action invoice-detail-action-primary"><Send className="size-4" />Send invoice</button> : null}
-        {canCollectPayment && !editing ? <Link href={`/dashboard/accounting/money-in?invoice_id=${invoice.id}`} className="invoice-detail-action invoice-detail-action-primary">Collect payment</Link> : null}
+        {canCollectPayment && !editing ? <Link href={financeReturn ? invoiceCollectionHref(invoice.id, financeReturn) : `/dashboard/accounting/money-in?invoice_id=${invoice.id}`} className="invoice-detail-action invoice-detail-action-primary">Collect payment</Link> : null}
         {canCancelInvoice && !editing ? <button type="button" disabled={busy} onClick={openCancellation} className="invoice-detail-action invoice-detail-action-danger"><Trash2 className="size-4" />Cancel invoice</button> : null}
         {editing ? <button disabled={busy} onClick={cancelEdit} className="invoice-detail-action"><X className="size-4" />Cancel edit</button> : null}
         {editing ? <button disabled={busy || !currentRead} onClick={() => void saveDraft()} className="invoice-detail-action invoice-detail-action-primary"><Save className="size-4" />{saving ? "Saving…" : "Save changes"}</button> : null}

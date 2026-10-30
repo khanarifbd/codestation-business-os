@@ -81,17 +81,28 @@ test("QA-012 reversal updates paid and due in client preview immediately", async
   await preview.screenshot({ path: testInfo.outputPath("qa012-reversed-preview.png") });
 });
 
+// This isolated mock now follows the existing server balance-filter contract.
+// The real-stack financial journey independently exercises the backend query.
+function qaInvoicePage(items, requestUrl) {
+  const balance = new URL(requestUrl).searchParams.get("balance") || "all";
+  if (!["all", "outstanding", "paid"].includes(balance)) throw new Error("Unsupported synthetic invoice balance query");
+  const filtered = balance === "outstanding" ? items.filter(item => item.balance_due > 0 && !["draft", "cancelled", "paid"].includes(item.status))
+    : balance === "paid" ? items.filter(item => item.balance_due <= 0 && item.status === "paid") : items;
+  return { items: filtered, next_cursor: null };
+}
+
 test("QA-015 outstanding excludes cancelled and draft rows even with legacy residual balances", async ({ page }, testInfo) => {
   const items = ["cancelled", "draft", "sent", "paid"].map((status) => ({ ...invoiceFixture(status, 24.68), id: `qa-${status}`, invoice_number: `QA-${status.toUpperCase()}`, balance_due: status === "paid" ? 0 : 24.68 }));
   await page.route("**/api/finance/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    return route.fulfill({ json: path.endsWith("/invoice-page") ? { items, next_cursor: null } : path.endsWith("/meta") ? { clients: [], orders: [], projects: [] } : [] });
+    return route.fulfill({ json: path.endsWith("/invoice-page") ? qaInvoicePage(items, route.request().url()) : path.endsWith("/meta") ? { clients: [], orders: [], projects: [] } : [] });
   });
   await page.route("**/api/inventory/products", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/accounting/tax/codes", (route) => route.fulfill({ json: [] }));
   await page.goto("/dashboard/accounting/invoices");
   await expect(page.getByRole("link", { name: "QA-CANCELLED", exact: true })).toBeVisible();
   await page.locator("select").filter({ has: page.locator('option[value="outstanding"]') }).selectOption("outstanding");
+  await page.getByRole("button", { name: "Apply filters", exact: true }).click();
   await expect(page.getByRole("link", { name: "QA-SENT", exact: true })).toBeVisible();
   for (const status of ["CANCELLED", "DRAFT", "PAID"]) await expect(page.getByRole("link", { name: `QA-${status}`, exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("qa015-outstanding-filter.png"), fullPage: true });
