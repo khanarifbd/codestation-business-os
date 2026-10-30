@@ -2,25 +2,38 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 ItemType = Literal["stock_item", "non_stock_item", "service"]
 
 
-class CategoryCreate(BaseModel):
+class InventoryRequiredText(BaseModel):
+    """Normalize required catalog labels before their existing length constraints."""
+
+    @field_validator("name", "code", "sku", "unit", "currency", mode="before", check_fields=False)
+    @classmethod
+    def trim_required_text(cls, value, info: ValidationInfo):
+        if isinstance(value, str):
+            value = value.strip()
+            if info.field_name == "currency":
+                value = value.upper()
+        return value
+
+
+class CategoryCreate(InventoryRequiredText):
     name: str = Field(min_length=1, max_length=160)
     description: str | None = None
 
 
-class WarehouseCreate(BaseModel):
+class WarehouseCreate(InventoryRequiredText):
     code: str = Field(min_length=1, max_length=40)
     name: str = Field(min_length=1, max_length=180)
     address: str | None = None
     is_default: bool = False
 
 
-class ProductCreate(BaseModel):
+class ProductCreate(InventoryRequiredText):
     sku: str = Field(min_length=1, max_length=80)
     barcode: str | None = Field(default=None, max_length=120)
     name: str = Field(min_length=1, max_length=220)

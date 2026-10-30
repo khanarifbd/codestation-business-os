@@ -1,0 +1,14 @@
+[
+  "expect((await upstream.json()).status).toBe(\"posted\")",
+  "expect(page).toHaveURL(/\\/dashboard\\/inventory\\?(?=.*tab=stock)/)",
+  "expect(page.getByRole(\"button\", { name: \"Post adjustment\", exact: true })).toHaveCount(0)",
+  "expect(page.getByRole(\"button\", { name: \"Refresh read-only data\", exact: true })).toBeEnabled()",
+  "expect(page.getByRole(\"heading\", { name: \"Posting outcome unknown\", exact: true })).toBeVisible()",
+  "expect(page.getByRole(\"heading\", { name: \"Posting outcome unknown\", exact: true })).toBeVisible()",
+  "expect(password, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy()",
+  "expect(postingRequests).toBe(1)",
+  "expect(postingRequests, \"Never forward a repeated financial write\").toBe(1)",
+  "expect(route.request().postDataJSON().quantity_delta).toBe(\"1\")",
+  "expect(route.request().postDataJSON().unit_cost).toBe(\"6\")",
+  "expect(upstream.ok()).toBeTruthy()"
+]

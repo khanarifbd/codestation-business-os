@@ -9,7 +9,11 @@ import { writeFile } from "node:fs/promises";
 // Never reuse the manual-review company or mock financial responses. Receipt
 // instrumentation forwards once and releases the unchanged upstream response.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
-const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
+const password = process.env.E2E_PASSWORD;
+
+test.beforeEach(() => {
+  expect(password, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy();
+});
 const appUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
 async function api(page, path, data) {
@@ -28,6 +32,21 @@ async function choose(page, accessibleName, text) {
 
 async function postUi(page, path, button, method = "POST") {
   return captureJsonResponse(page, { path, method, action: () => button.click() });
+}
+
+function observeInventoryRequestFailure(page, predicate) {
+  // Attach rejection ownership immediately, even if the UI action throws before waiting.
+  const result = page.waitForEvent("requestfailed", predicate).then(() => ({ error: null }), error => ({ error }));
+  return async () => { const outcome = await result; if (outcome.error) throw outcome.error; };
+}
+async function withInventoryTemporaryRoute(page, endpoint, handler, action) {
+  const viewport = page.viewportSize();
+  await page.route(endpoint, handler);
+  try { return await action(); }
+  finally {
+    try { await page.unroute(endpoint, handler); }
+    finally { if (viewport) await page.setViewportSize(viewport); }
+  }
 }
 
 test("fresh owner: inventory receipt → partial/final payable settlement → stock controls, with persisted ledger reconciliation", async ({ page }, testInfo) => {
@@ -374,6 +393,50 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     } finally {
       await otherTenant.dispose();
     }
+  });
+  await test.step("A committed adjustment with a lost browser response locks posting and only permits read-only review", async () => {
+    await page.goto("/dashboard/inventory?tab=stock");
+    await page.getByRole("button", { name: "Adjust stock", exact: true }).click();
+    await page.getByLabel("Product", { exact: true }).selectOption(product.id);
+    await page.getByLabel("Warehouse", { exact: true }).selectOption(warehouse.id);
+    await page.getByLabel("Quantity change (+ add / - remove)", { exact: true }).fill("1");
+    await page.getByLabel("Unit cost for stock added", { exact: true }).fill("6");
+    await page.getByLabel("Reason", { exact: true }).fill("Synthetic committed response lost once");
+    await page.getByLabel("Reference", { exact: true }).fill(`QC-LOST-${suffix}`);
+    let postingRequests = 0;
+    const loseCommittedResponse = async route => {
+      if (route.request().method() !== "POST") return route.continue();
+      postingRequests += 1;
+      try {
+        expect(postingRequests, "Never forward a repeated financial write").toBe(1);
+        expect(route.request().postDataJSON().quantity_delta).toBe("1");
+        expect(route.request().postDataJSON().unit_cost).toBe("6");
+        const upstream = await route.fetch({ maxRetries: 0 });
+        expect(upstream.ok()).toBeTruthy();
+        expect((await upstream.json()).status).toBe("posted");
+      } finally { await route.abort("connectionreset"); }
+    };
+    await withInventoryTemporaryRoute(page, "**/api/inventory/adjustments", loseCommittedResponse, async () => {
+      const failedBrowserRequest = observeInventoryRequestFailure(page, request => new URL(request.url()).pathname === "/api/inventory/adjustments" && request.method() === "POST");
+      await page.getByRole("button", { name: "Post adjustment", exact: true }).click();
+      await failedBrowserRequest();
+      await expect(page.getByRole("heading", { name: "Posting outcome unknown", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Post adjustment", exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "Refresh read-only data", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Refresh read-only data", exact: true })).toBeEnabled();
+      await expect(page.getByRole("heading", { name: "Posting outcome unknown", exact: true })).toBeVisible();
+      expect(postingRequests).toBe(1);
+      await reconcile("lost response commits exactly once without browser retry", { due: 0, cash: 940, quantity: 11, gain: 12, loss: 6, journals: 9, movements: 4 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-inventory-unknown-post-desktop.png") });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-inventory-unknown-post-mobile.png") });
+      // Explicit discard of the retained editor draft is navigation, never permission to repost.
+      page.once("dialog", dialog => dialog.accept());
+      await page.getByRole("button", { name: "Review inventory records", exact: true }).click();
+      await expect(page).toHaveURL(/\/dashboard\/inventory\?(?=.*tab=stock)/);
+    });
   });
   const evidencePath = testInfo.outputPath("persisted-inventory-and-ledger-evidence.json");
   await writeFile(evidencePath, JSON.stringify({ names, snapshots }, null, 2));

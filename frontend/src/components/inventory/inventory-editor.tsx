@@ -5,7 +5,7 @@ import { SearchableSelect } from "@/components/searchable-select";
 import { ServiceDurationFields } from "@/components/service-duration-fields";
 import type { InventoryWorkspaceState } from "@/hooks/use-inventory-workspace";
 import { COUNTRY_OPTIONS, CURRENCY_OPTIONS } from "@/lib/company-options";
-import { labelType, money } from "./inventory-model";
+import { labelType, money, unitMoney } from "./inventory-model";
 import "./inventory-editor.css";
 
 type EditorProps = { vm: InventoryWorkspaceState };
@@ -30,7 +30,7 @@ function ItemEditor({ vm }: EditorProps) {
     <EditorContext eyebrow="Catalog entry" title={itemForm.name || "Product / service"} note="Adding or updating a catalog item does not receive stock. Record a purchase or stock adjustment to change quantity.">
       <ContextRow label="Item type" value={labelType(itemForm.item_type)} />
       <ContextRow label="SKU / code" value={itemForm.sku || "Not entered"} />
-      <ContextRow label="Selling price" value={money(itemForm.selling_price, itemForm.currency)} />
+      <ContextRow label="Selling price" value={unitMoney(itemForm.selling_price, itemForm.currency)} />
       <ContextRow label="Unit" value={itemForm.unit || "Not entered"} />
       {editingId ? <ContextRow label="Availability" value={itemForm.is_active ? "Active" : "Inactive"} /> : null}
     </EditorContext>
@@ -125,6 +125,7 @@ function PurchaseEditor({ vm }: EditorProps) {
       <ContextRow label="Subtotal" value={money(purchaseTotals.subtotal, purchaseForm.currency)} />
       <ContextRow label="Estimated tax" value={money(purchaseTotals.tax, purchaseForm.currency)} />
       <ContextRow label="Estimated total" value={money(purchaseTotals.total, purchaseForm.currency)} strong />
+      {purchaseTotals.total === "" ? <ContextRow label="Estimate status" value="Unavailable for these values or precision. The server validates and calculates the recorded amounts; review before posting." /> : null}
       <ContextRow label="Receive into" value={activeWarehouses.find((warehouse) => warehouse.id === purchaseForm.warehouse_id)?.name || "Choose a warehouse"} />
     </EditorContext>
   }>
