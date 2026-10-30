@@ -65,6 +65,7 @@ check('read-only role receives no mobile recording disclosure',()=>{const tree=r
 check('desktop View action reserves its natural text and icon width without shrinking mobile touch target',()=>{
  const css=fs.readFileSync(path.join(root,'src/components/accounting-money-out/money-out.css'),'utf8');
  assert.match(css,/\.mo-columns,\.mo-row\{display:grid;grid-template-columns:minmax\(0,1.5fr\) minmax\(105px,1fr\) minmax\(105px,.8fr\) max-content;/);
+ assert.ok(css.includes('.mo-columns,.mo-row{gap:12px;grid-template-columns:minmax(0,1.1fr) minmax(95px,.85fr) minmax(95px,.8fr) max-content}'));
  assert.match(css,/\.mo-row \.aa-row-link\{justify-self:end;white-space:nowrap\}/);
  assert.match(css,/@media\(max-width:850px\)[\s\S]*\.mo-row\{grid-template-columns:1fr 1fr;/);
  const shared=fs.readFileSync(path.join(root,'src/components/accounting-accounts/account-workspace.css'),'utf8');

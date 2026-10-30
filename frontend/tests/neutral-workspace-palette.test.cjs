@@ -12,6 +12,7 @@ function beforeMoneyOutViewFit(file,css){
  if(file!=='src/components/accounting-money-out/money-out.css')return css;
  for(const [after,before] of [
  ['.mo-columns,.mo-row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(105px,1fr) minmax(105px,.8fr) max-content','.mo-columns,.mo-row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(105px,1fr) minmax(105px,.8fr) 50px'],
+ ['.mo-columns,.mo-row{gap:12px;grid-template-columns:minmax(0,1.1fr) minmax(95px,.85fr) minmax(95px,.8fr) max-content}', '.mo-columns,.mo-row{gap:12px;grid-template-columns:minmax(0,1.1fr) minmax(95px,.85fr) minmax(95px,.8fr) 40px}'],
  ['.mo-row .aa-row-link{justify-self:end;white-space:nowrap}', '.mo-row .aa-row-link{justify-self:end}'],
  ]){assert.equal(css.split(after).length-1,1,'exact reviewed MoneyOut row-fit delta');css=css.replace(after,before);}
  return css;
@@ -47,7 +48,7 @@ test('centralized shell font normalization rejects altered or duplicated overrid
 
 test('MoneyOut row-fit inverse rejects changed or duplicate geometry allowances',()=>{
  const file='src/components/accounting-money-out/money-out.css',css=read(file);
- for(const changed of [css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 50px'),css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 60px'),css.replace('white-space:nowrap','white-space:normal'),css+'.mo-row .aa-row-link{justify-self:end;white-space:nowrap}'])assert.throws(()=>beforeMoneyOutViewFit(file,changed));
+ for(const changed of [css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 50px'),css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 60px'),css.replace('minmax(95px,.8fr) max-content','minmax(95px,.8fr) 40px'),css.replace('minmax(95px,.8fr) max-content','minmax(95px,.8fr) 50px'),css.replace('white-space:nowrap','white-space:normal'),css+'.mo-row .aa-row-link{justify-self:end;white-space:nowrap}'])assert.throws(()=>beforeMoneyOutViewFit(file,changed));
  const unrelated=css.replace('.mo-local-grid{display:grid;grid-template-columns:minmax(0,1.5fr)', '.mo-local-grid{display:grid;grid-template-columns:minmax(0,2fr)');
  assert.notEqual(digest(restore(beforeReviewedFinanceCompatibility(file,beforeMoneyOutViewFit(file,unrelated)))),baseline[file]);
 });
