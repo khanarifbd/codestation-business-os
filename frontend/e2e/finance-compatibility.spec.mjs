@@ -12,6 +12,15 @@ async function api(page, method, path, data) {
   return body ? JSON.parse(body) : null;
 }
 
+// GET /finance/invoices returns InvoicePage, not a bare array. This isolated
+// company has two records, so a cursor would invalidate the full-set proof.
+function invoiceRecords(page) {
+  if (!page || typeof page !== "object" || Array.isArray(page) || !Array.isArray(page.items) || page.next_cursor !== null || !page.items.every(row => row && typeof row.id === "string" && row.id.length > 0 && typeof row.invoice_number === "string" && row.invoice_number.length > 0 && (row.subject === null || typeof row.subject === "string")) || new Set(page.items.map(row => row.id)).size !== page.items.length) {
+    throw new Error("Expected the complete synthetic InvoicePage { items, next_cursor: null } response.");
+  }
+  return page.items;
+}
+
 async function cancelExit(page, message, action) {
   // Observe the waiter immediately, including a failed click or assertion.
   const observed = page.waitForEvent("dialog").then(async dialog => {
@@ -90,7 +99,7 @@ test("Finance compatibility retains drafts, blocks pending tabs and preserves al
   } finally { release(); await page.unroute(target, holdCreate); }
   expect(count).toBe(1);
   await expect(form).toBeHidden();
-  const records = await api(page, "GET", "/finance/invoices");
+  const records = invoiceRecords(await api(page, "GET", "/finance/invoices"));
   const created = records.filter(item => item.subject === "Retained compatibility draft");
   expect(created).toHaveLength(1);
   expect((await api(page, "GET", `/finance/invoices/${created[0].id}`)).terms_conditions).toBe("Synthetic terms\nNo external commitment");
@@ -149,7 +158,7 @@ test("Finance compatibility retains drafts, blocks pending tabs and preserves al
   await expect(form.getByRole("button", { name: "Create draft invoice", exact: true })).toBeDisabled();
   expect(aborted).toBe(1);
   } finally { await page.unroute(target, abortCreate); }
-  const finalRecords = await api(page, "GET", "/finance/invoices");
+  const finalRecords = invoiceRecords(await api(page, "GET", "/finance/invoices"));
   expect(finalRecords.filter(item => item.subject === "Synthetic uncertain draft")).toHaveLength(0);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath("neutral-theme-finance-unknown-mobile.png"), fullPage: false });
