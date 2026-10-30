@@ -4,7 +4,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from '
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
 
-import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure } from './support/evidence.mjs';
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure, exactHeading } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -125,7 +125,8 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       if (route.kind === 'alias') await expect(page).toHaveURL(new URL(route.expected_url, baseURL).href);
       await expect(page.locator('body')).not.toContainText(/Application error: a client-side exception|This page could not be found/);
       for (const requiredPath of contract.expected_get_paths || []) await expect.poll(() => successfulRouteRead(responses, route.id, requiredPath)).toBe(true);
-      const heading = page.getByRole('heading', { name: contract.heading, exact: true, ...(contract.heading_level ? { level: contract.heading_level } : {}) });
+      const heading = exactHeading(page, contract);
+      await expect(heading).toHaveCount(1);
       await expect(heading).toBeVisible();
       for (const value of contract.ready_text || []) await expect(page.locator('body')).toContainText(value);
       if (contract.ready_button) await expect(page.getByRole('button', { name: contract.ready_button, exact: true })).toBeEnabled();

@@ -148,7 +148,7 @@ def commercial_routes(ids, rows, labels):
     def add(pattern, actual, heading, paths, source, texts=(), button=None):
         required('[' not in actual and ']' not in actual, 'Unresolved browser route')
         overrides[pattern] = actual
-        contracts[pattern] = {'heading': heading, 'ready_text': list(texts), 'expected_get_paths': paths,
+        contracts[pattern] = {'heading': heading, 'heading_level': 1, 'ready_text': list(texts), 'expected_get_paths': paths,
                               'source': source, 'expected_mode': 'ready'}
         if button:
             contracts[pattern]['ready_button'] = button
@@ -200,6 +200,8 @@ def commercial_routes(ids, rows, labels):
         if suffix == 'credentials/[recordId]/edit':
             texts.append('The current secret is not loaded into this editor. Leave the new secret blank to keep it unchanged.')
         add(p+'/[projectId]/'+suffix, p+'/'+pid+'/'+actual_suffix, ready, pgets, psrc, texts=texts)
+    for suffix in ('tasks/[recordId]', 'milestones/[recordId]'):
+        contracts[p+'/[projectId]/'+suffix]['heading_level'] = 2
     # Credential edit GET loads masked metadata only. No reveal/download/save click is in this registry.
     inv = '/dashboard/inventory'
     isrc = 'frontend/src/components/inventory/inventory-workspace.tsx'
@@ -254,4 +256,6 @@ def commercial_routes(ids, rows, labels):
             contract['expected_get_paths'] = contract['expected_get_paths'] + ['/api/services/catalog']
         elif pattern.startswith(inv+'/adjustments') or pattern.startswith(inv+'/transfers'):
             contract['expected_get_paths'] = contract['expected_get_paths'] + ['/api/inventory/stock']
+    for section in ('items', 'suppliers', 'warehouses', 'purchases'):
+        contracts[inv+'/'+section+'/[recordId]']['heading_level'] = 2
     return overrides, contracts

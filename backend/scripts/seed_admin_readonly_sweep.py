@@ -58,6 +58,8 @@ def validate_registry(registry, manifest):
             'Every exact route must have one reviewed readiness contract before browser execution')
     require(set(registry['route_overrides']) <= patterns, 'Unknown route override')
     for pattern in patterns:
+        level = registry['route_contracts'][pattern].get('heading_level')
+        require(type(level) is int and 1 <= level <= 6, 'Reviewed exact heading level required: ' + pattern)
         actual = registry['route_overrides'].get(pattern)
         require('[' not in pattern or actual is not None, 'Missing typed fixture route override: ' + pattern)
         if actual is None: continue

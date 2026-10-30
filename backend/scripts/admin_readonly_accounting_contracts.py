@@ -25,7 +25,7 @@ def accounting_route_contracts(shared_ids, fixture_labels, fixture_date):
     root = '/dashboard/accounting'
     def add(suffix, heading, source, gets=(), texts=(), actual=None, fields=(), button=None):
         pattern = root+suffix
-        contracts[pattern] = {'heading':heading, 'ready_text':list(texts), 'expected_get_paths':list(gets),
+        contracts[pattern] = {'heading':heading, 'heading_level':1, 'ready_text':list(texts), 'expected_get_paths':list(gets),
                              'source':'frontend/src/components/'+source+'.tsx', 'expected_mode':'ready'}
         if fields: contracts[pattern]['ready_fields'] = [{'label':k,'value':v} for k,v in fields]
         if button: contracts[pattern]['ready_button'] = button

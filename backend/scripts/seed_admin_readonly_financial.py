@@ -171,7 +171,7 @@ def financial_route_contracts(registry: FinancialRegistry, names: dict[str, str]
     contracts = {}
 
     def add(pattern, heading, source, *, texts=(), button=None):
-        value = {'heading': heading, 'expected_mode': 'ready', 'ready_text': list(texts),
+        value = {'heading': heading, 'heading_level': 1, 'expected_mode': 'ready', 'ready_text': list(texts),
                  'source': base + source, 'expected_get_paths': []}
         if button: value['ready_button'] = button
         contracts[pattern] = value
@@ -354,7 +354,7 @@ def control_and_finance_contracts(registry: dict) -> dict[str, dict]:
     periods = '/api/finance-controls/accounting-periods'
 
     def add(pattern, heading, source, paths=(), texts=(), button=None, mode='ready'):
-        value = {'heading': heading, 'expected_mode': mode, 'ready_text': list(texts),
+        value = {'heading': heading, 'heading_level': 1, 'expected_mode': mode, 'ready_text': list(texts),
                  'expected_get_paths': list(paths), 'source': 'frontend/src/components/' + source}
         if button: value['ready_button'] = button
         contracts[pattern] = value

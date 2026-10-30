@@ -130,7 +130,7 @@ def hr_route_contracts(ids, names):
         for key, value in ids.items():
             actual = actual.replace('['+key+']', value)
         _require('[' not in actual, 'Unresolved HR route placeholder')
-        contracts[pattern] = {'heading':heading, 'ready_text':list(texts),
+        contracts[pattern] = {'heading':heading, 'heading_level':1, 'ready_text':list(texts),
             'expected_get_paths':list(gets), 'source':source if source.startswith('frontend/') else 'frontend/src/components/'+source,
             'expected_mode':'ready'}
         if button: contracts[pattern]['ready_button']=button

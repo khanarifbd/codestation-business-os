@@ -13,7 +13,7 @@ export function resolveAliases(registry) {
   if (!invoiceContract?.heading) throw new Error('Verified invoice readiness contract required');
   const targets = ['/dashboard/hr/settings', '/dashboard/clients', '/dashboard/hr/me', invoice, `/print/invoices/${id}`];
   const contracts = [registry.route_contracts?.[targets[0]], registry.route_contracts?.[targets[1]], {
-    heading: 'My HR & Pay', expected_mode: 'ready', ready_text: [],
+    heading: 'My HR & Pay', heading_level: 1, expected_mode: 'ready', ready_text: [],
     expected_get_paths: ['/api/hr/self', '/api/hr/self/home', '/api/hr/self/attendance-plan', '/api/hr/self-meta', '/api/hr/self/leave-balance', '/api/hr/self/policy-acknowledgements', '/api/hr/self/attendance/monthly'],
     source: 'frontend/src/components/self-service/self-service-register.tsx',
   }, invoiceContract, {

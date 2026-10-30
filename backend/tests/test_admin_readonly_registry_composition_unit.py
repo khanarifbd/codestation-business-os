@@ -45,4 +45,9 @@ class RegistryCompositionTests(unittest.TestCase):
         validate_registry(registry,manifest)
         self.assertEqual(len(registry['route_contracts']),194)
         self.assertTrue(all('source' in c for c in registry['route_contracts'].values()))
+        level_two={route for route,c in registry['route_contracts'].items() if c['heading_level']==2}
+        expected={f'/dashboard/inventory/{section}/[recordId]' for section in ['items','suppliers','warehouses','purchases']}
+        expected.update(f'/dashboard/projects/[projectId]/{section}/[recordId]' for section in ['tasks','milestones'])
+        self.assertEqual(level_two,expected)
+        self.assertEqual(sum(c['heading_level']==1 for c in registry['route_contracts'].values()),188)
 if __name__=='__main__':unittest.main()

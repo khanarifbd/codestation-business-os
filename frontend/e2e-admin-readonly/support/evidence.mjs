@@ -81,3 +81,8 @@ export function reconciledReadFailure(failure, events) {
     && event.transport_code === failure.transport_code && event.replacement_request_id > failure.request_id
     && event.replacement_status >= 200 && event.replacement_status < 300 && event.replacement_body_complete === true);
 }
+
+export function exactHeading(page, contract) {
+  if (!contract || typeof contract.heading !== 'string' || !contract.heading.trim() || !Number.isInteger(contract.heading_level) || contract.heading_level < 1 || contract.heading_level > 6) throw new Error('Source-reviewed exact heading level required');
+  return page.getByRole('heading', { name: contract.heading, exact: true, level: contract.heading_level });
+}
