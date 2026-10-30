@@ -1,7 +1,19 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),vm=require('node:vm'),ts=require('typescript');
 const root=path.join(__dirname,'..'),read=p=>fs.readFileSync(path.join(root,p),'utf8'),hash=s=>crypto.createHash('sha256').update(s).digest('hex');
 const spec=read('e2e/qc-owner-financial-ux.spec.mjs'),source=read('e2e/support/reports-readonly-browser.mjs'),review=require('./helpers/reviewed-reports-browser.json');
-function verify(s=spec,h=source){const imported="import { verifyReportsReadOnly } from './support/reports-readonly-browser.mjs';\n",call='\n  await verifyReportsReadOnly(page, testInfo, today, project, costClient);';assert.equal(s.split(imported).length,2);assert.equal(s.split(call).length,2);assert.equal(hash(s.replace(imported,'').replace(call,'')),review.baselineHash);assert.equal(hash(h.replace("      if (size === 'mobile' && ['clients', 'performance', 'position', 'projects'].includes(name)) {\n        const disclosure = page.locator('.or-data-details > summary');\n        let opened = false;\n        try {\n          if (name === 'performance') { await disclosure.click(); opened = true; }\n          const target = name === 'position'\n            ? page.getByRole('heading', { name: 'Active account balances', exact: true })\n            : page.getByRole('region', { name: { clients: 'Client performance table', projects: 'Project performance table', performance: 'USD monthly values table' }[name], exact: true }).getByRole('row').nth(1);\n          await target.scrollIntoViewIfNeeded();\n          await expect(target).toBeVisible();\n          await expect(target).toBeInViewport();\n          await page.screenshot({ path: info.outputPath(`neutral-theme-reports-${name}-mobile-results.png`), fullPage: false });\n        } finally { if (opened) await disclosure.click(); }\n      }\n", "")),review.helperHash);}
+function restoreApprovedFinancialAdditions(s) {
+  for (const fragment of [
+    'import { verifyFinancialReviewCancel } from "./support/financial-review-cancel.mjs";\n',
+    'import { verifyMoneyOutUnknownAction } from "./support/money-out-safe-action.mjs";\n',
+    '  await verifyMoneyOutUnknownAction(page, testInfo, api, account, category, today);\n',
+    '  await verifyFinancialReviewCancel(page, testInfo, api, account, today);\n',
+  ]) {
+    assert.equal(s.split(fragment).length, 2, 'Exactly one reviewed addition must remain');
+    s = s.replace(fragment, '');
+  }
+  return s;
+}
+function verify(s=spec,h=source){s=restoreApprovedFinancialAdditions(s);const imported="import { verifyReportsReadOnly } from './support/reports-readonly-browser.mjs';\n",call='\n  await verifyReportsReadOnly(page, testInfo, today, project, costClient);';assert.equal(s.split(imported).length,2);assert.equal(s.split(call).length,2);assert.equal(hash(s.replace(imported,'').replace(call,'')),review.baselineHash);assert.equal(hash(h.replace("      if (size === 'mobile' && ['clients', 'performance', 'position', 'projects'].includes(name)) {\n        const disclosure = page.locator('.or-data-details > summary');\n        let opened = false;\n        try {\n          if (name === 'performance') { await disclosure.click(); opened = true; }\n          const target = name === 'position'\n            ? page.getByRole('heading', { name: 'Active account balances', exact: true })\n            : page.getByRole('region', { name: { clients: 'Client performance table', projects: 'Project performance table', performance: 'USD monthly values table' }[name], exact: true }).getByRole('row').nth(1);\n          await target.scrollIntoViewIfNeeded();\n          await expect(target).toBeVisible();\n          await expect(target).toBeInViewport();\n          await page.screenshot({ path: info.outputPath(`neutral-theme-reports-${name}-mobile-results.png`), fullPage: false });\n        } finally { if (opened) await disclosure.click(); }\n      }\n", "")),review.helperHash);}
 test('full original financial fixture/assertions/actions/timeouts unchanged except one read-only helper call',()=>{verify();assert.ok(review.originalAssertions>=94);for(const [a,b]of [['USD 169.00','USD 170.00'],['180_000','240_000'],['today, project, costClient','today, project, null']])assert.throws(()=>verify(spec.replace(a,b)));assert.throws(()=>verify(spec,source.replace("toBe(200)","toBe(201)")));});
 function fn(name,globals){const tree=ts.createSourceFile('helper.mjs',source,99,true),node=tree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);return vm.runInNewContext('('+node.getText(tree).replace(/^export /,'')+')',{URL,...globals});}
 const expect=value=>({toBe:x=>assert.equal(value,x),toEqual:x=>assert.equal(JSON.stringify(value),JSON.stringify(x)),toHaveAttribute:async()=>{}});
@@ -23,4 +35,17 @@ for(const failure of ['none','capture','readiness'])test('mobile performance tab
 test('targeted report capture inverse rejects changed readiness and disclosure cleanup',()=>{
  assert.throws(()=>verify(spec,source.replace('await expect(target).toBeInViewport();','')));
  assert.throws(()=>verify(spec,source.replace('if (opened) await disclosure.click();','')));
+});
+
+test('approved financial helper coexistence rejects changed, missing or duplicated imports and calls',()=>{
+ for(const fragment of [
+  'import { verifyFinancialReviewCancel } from "./support/financial-review-cancel.mjs";',
+  'import { verifyMoneyOutUnknownAction } from "./support/money-out-safe-action.mjs";',
+  'await verifyMoneyOutUnknownAction(page, testInfo, api, account, category, today);',
+  'await verifyFinancialReviewCancel(page, testInfo, api, account, today);',
+ ]) {
+  assert.throws(()=>verify(spec.replace(fragment, '')));
+  assert.throws(()=>verify(spec.replace(fragment, fragment+'\n'+fragment)));
+  assert.throws(()=>verify(spec.replace(fragment, fragment.replace('verify', 'changed'))));
+ }
 });
