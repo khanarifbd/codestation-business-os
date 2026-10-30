@@ -66,3 +66,10 @@ test('HR setup header inverse rejects broadened or altered mobile layout',()=>{
  for(const changed of [css.replace(hrSetupMobileFit,''),css+hrSetupMobileFit,css.replace(hrSetupMobileFit,hrSetupMobileFit.replace('column','row')),css.replace(hrSetupMobileFit,hrSetupMobileFit.replace('.ht-setup > ',''))])assert.throws(()=>beforeHRSetupMobileFit(file,changed));
  const altered=css.replace('gap:18px','gap:19px');assert.notEqual(digest(restore(beforeHRSetupMobileFit(file,altered))),baseline[file]);
 });
+
+test('Invoice action minimum inverse rejects regressions and unrelated geometry',()=>{
+ const file='src/components/invoices/invoice-design.css',css=read(file);
+ for(const changed of [css.replace('min-width:max-content','min-width:0'),css.replace('min-width:max-content','min-width:80px'),css+'.invoice-filter-actions>button { flex:1; width:auto; min-width:max-content; white-space:nowrap; }'])assert.throws(()=>assert.equal(digest(restore(beforeReviewedFinanceCompatibility(file,changed))),baseline[file]));
+ const changed=css.replace('.invoice-filter-actions { display:flex; flex-wrap:wrap; gap:9px; }','.invoice-filter-actions { display:flex; flex-wrap:nowrap; gap:9px; }');
+ assert.throws(()=>beforeReviewedFinanceCompatibility(file,changed));
+});

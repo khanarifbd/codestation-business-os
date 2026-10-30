@@ -24,7 +24,7 @@
 .invoice-filter-grid { display:grid; grid-template-columns:minmax(220px,1.6fr) repeat(3,minmax(115px,.8fr)) auto; gap:9px; }
 .invoice-filter-grid :is(input,select,button) { width:100%; min-width:0; border-color:var(--workspace-neutral-border, #d9e2d2); border-radius:8px; font-size:11px; }
 .invoice-filter-actions { display:flex; flex-wrap:wrap; gap:9px; }
-.invoice-filter-actions>button { flex:1; width:auto; white-space:nowrap; }
+.invoice-filter-actions>button { flex:1; width:auto; min-width:max-content; white-space:nowrap; }
 .invoice-filters>p { color:var(--workspace-neutral-muted, #647b60); font-size:10px; }
 .invoice-register { overflow-x:auto; }
 .invoice-register table { width:100%; border-collapse:collapse; text-align:left; }
