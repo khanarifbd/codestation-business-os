@@ -36,8 +36,10 @@ test('clients final revision: international create/edit, validation recovery and
   const requestedFonts = [];
   page.on('request', request => { if (request.resourceType() === 'font') requestedFonts.push(request.url()); });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  const fixturePassword = process.env.E2E_PASSWORD;
+  expect(fixturePassword, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy();
   const login = await page.request.post('/api/auth/login', { data: {
-    email: 'neutral-theme@example.com', password: process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!',
+    email: 'neutral-theme@example.com', password: fixturePassword,
   } });
   expect(login.status()).toBe(200);
   const organizationResponse = await page.request.post('/api/organizations', { data: {
@@ -175,5 +177,98 @@ test('clients final revision: international create/edit, validation recovery and
   expect(requestedFonts.length).toBeGreaterThan(0);
   expect(requestedFonts.every(url => new URL(url).origin === new URL(baseURL).origin)).toBe(true);
   console.log('CLIENT_FONT_REQUESTS', JSON.stringify([...new Set(requestedFonts)]));
+
+  await test.step('Synthetic vault: hide and rotation invalidate a delayed real reveal', async () => {
+    // Same authenticated disposable client and existing CI pgcrypto configuration.
+    // All screenshots above precede secrets; this step deliberately captures none.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`/dashboard/clients/${created.id}`);
+    await page.getByRole('button', { name: 'Credentials', exact: true }).click();
+    const credentialName = 'Synthetic lifecycle credential';
+    const oldSecret = `ci-only-vault-old-${Date.now()}`;
+    const newSecret = `ci-only-vault-new-${Date.now()}`;
+    const credentialPath = `/api/crm/clients/${created.id}/credentials`;
+    let releaseOld = () => {};
+    let delayedHandler;
+    let delayedStarted = false;
+    let delayedDone = Promise.resolve();
+    let revealPath;
+    try {
+      await page.getByRole('button', { name: 'Add credential', exact: true }).click();
+      const createForm = page.locator('form').filter({ has: page.getByRole('button', { name: 'Encrypt and save credential', exact: true }) });
+      await createForm.getByLabel('Name', { exact: true }).fill(credentialName);
+      await createForm.getByLabel('Environment', { exact: true }).fill('test');
+      await createForm.getByLabel('Secret', { exact: true }).fill(oldSecret);
+      const createResponse = page.waitForResponse(response => response.url().endsWith(credentialPath) && response.request().method() === 'POST');
+      await createForm.getByRole('button', { name: 'Encrypt and save credential', exact: true }).click();
+      const saved = await createResponse;
+      expect(saved.status()).toBe(201);
+      const credential = await saved.json();
+      expect(Object.hasOwn(credential, 'secret')).toBe(false);
+      revealPath = `${credentialPath}/${credential.id}/reveal`;
+      const vault = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Client Credentials', exact: true }) });
+      const card = vault.locator('article').filter({ has: page.getByText(credentialName, { exact: true }) });
+      await expect(card).toHaveCount(1);
+      const shows = value => card.evaluate((element, expected) => [...element.querySelectorAll('p')].some(node => node.textContent === expected), value);
+      await card.getByRole('button', { name: 'Reveal secret', exact: true }).click();
+      await expect.poll(() => shows(oldSecret)).toBe(true);
+      await card.getByRole('button', { name: 'Hide secret', exact: true }).click();
+      await expect.poll(() => shows(oldSecret)).toBe(false);
+
+      let readyResolve, readyReject, doneResolve, doneReject;
+      const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+      void ready.catch(() => {});
+      const held = new Promise(resolve => { releaseOld = resolve; });
+      delayedDone = new Promise((resolve, reject) => { doneResolve = resolve; doneReject = reject; });
+      // Attach immediately so a route failure cannot create an unhandled rejection.
+      void delayedDone.catch(() => {});
+      delayedHandler = async route => {
+        delayedStarted = true;
+        try {
+          const response = await route.fetch(); // Actual encrypted-vault read and audit POST, no fabricated payload.
+          expect(response.status()).toBe(200);
+          readyResolve();
+          await held;
+          await route.fulfill({ response });
+          doneResolve();
+        } catch (reason) {
+          await route.abort('failed').catch(() => {}); // Never leave the browser request orphaned after a forwarding failure.
+          readyReject(reason); doneReject(reason);
+        }
+      };
+      await page.route(`**${revealPath}`, delayedHandler, { times: 1 });
+      await card.getByRole('button', { name: 'Reveal secret', exact: true }).click();
+      await ready;
+      await card.getByRole('button', { name: 'Edit credential', exact: true }).click();
+      const editForm = page.locator('form').filter({ has: page.getByRole('button', { name: 'Save credential', exact: true }) });
+      await editForm.getByLabel('New secret (leave blank to keep current)', { exact: true }).fill(newSecret);
+      const rotationResponse = page.waitForResponse(response => response.url().endsWith(`${credentialPath}/${credential.id}`) && response.request().method() === 'PATCH');
+      await editForm.getByRole('button', { name: 'Save credential', exact: true }).click();
+      expect((await rotationResponse).status()).toBe(200);
+      await expect(editForm).toHaveCount(0);
+      const browserOldResponse = page.waitForResponse(response => response.url().endsWith(revealPath) && response.request().method() === 'POST');
+      releaseOld();
+      await delayedDone;
+      await (await browserOldResponse).finished();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await expect(card.getByRole('button', { name: 'Reveal secret', exact: true })).toBeVisible();
+      expect(await shows(oldSecret)).toBe(false);
+      expect(await shows(newSecret)).toBe(false);
+      await page.unroute(`**${revealPath}`, delayedHandler);
+      delayedHandler = undefined;
+      await card.getByRole('button', { name: 'Reveal secret', exact: true }).click();
+      await expect.poll(() => shows(newSecret)).toBe(true);
+      expect(await shows(oldSecret)).toBe(false);
+      await card.getByRole('button', { name: 'Hide secret', exact: true }).click();
+      await expect.poll(() => shows(newSecret)).toBe(false);
+    } finally {
+      releaseOld();
+      if (delayedStarted) await delayedDone.catch(() => {});
+      if (delayedHandler && revealPath) await page.unroute(`**${revealPath}`, delayedHandler);
+      // Unmount the vault before teardown/failure artifacts; no planned secret screenshot or log.
+      await page.goto(`/dashboard/clients/${created.id}`);
+      await expect(page.getByRole('button', { name: 'Overview', exact: true })).toHaveAttribute('aria-current', 'page');
+    }
+  });
 
 });

@@ -6,7 +6,7 @@ const {createHash}=require('node:crypto');
 const baseline=require('./neutral-palette-baseline.json');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const restore=s=>s.replace(/var\(--workspace-(?:neutral-[\w-]+|surface(?:-[\w-]+)?),\s*(#[\da-fA-F]{3,8}|white)\)/g,'$1');
+const restore=s=>s.replace('font-family:var(--font-sans);','font-family:var(--font-inter),Arial,sans-serif;').replace(/var\(--workspace-(?:neutral-[\w-]+|surface(?:-[\w-]+)?),\s*(#[\da-fA-F]{3,8}|white)\)/g,'$1');
 const digest=s=>createHash('sha256').update(s.replace(/\s+/g,'')).digest('hex');
 for(const [file,sha] of Object.entries(baseline))test(`${file}: only palette references change; original dark fallback, selectors and geometry remain exact`,()=>{
  const css=read(file);assert.equal(digest(restore(css)),sha);
@@ -27,4 +27,11 @@ test('marked surfaces and primary actions use central palette instead of decorat
  assert.match(inventory,/\.inventory-primary,\.inventory-secondary\{[^}]*background:var\(--workspace-neutral-action,/);
  assert.match(inventory,/\.inventory-primary,\.inventory-secondary\{[^}]*color:var\(--workspace-neutral-on-action, white\)/);
  assert.match(inventory,/\.inventory-negative\{color:#a34237\}/);
+});
+
+test('centralized shell font normalization rejects altered or duplicated overrides',()=>{
+ const file='src/components/dashboard/dashboard-design.css'; const css=read(file);
+ assert.equal((css.match(/font-family:var\(--font-sans\);/g)||[]).length,1);
+ assert.notEqual(digest(restore(css.replace('font-family:var(--font-sans);','font-family:Arial,sans-serif;'))),baseline[file]);
+ assert.notEqual(digest(restore(css.replace('font-family:var(--font-sans);','font-family:var(--font-sans);font-family:var(--font-sans);'))),baseline[file]);
 });

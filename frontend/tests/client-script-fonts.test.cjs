@@ -50,3 +50,45 @@ test('Glyph probe accepts actually used self-hosted script face and Inter togeth
   const calls=await probe([inter,{familyName:'Noto Sans Bengali',isCustomFont:true,glyphCount:7}]);assert.ok(calls.includes('CSS.getPlatformFontsForNode'));assert.equal(calls[0],'font-ready-and-paint');
 });
 for(const [label,fonts] of [['only Latin',[inter]],['system fallback',[inter,{familyName:'Noto Sans Bengali',isCustomFont:false,glyphCount:7}]],['unused font',[inter,{familyName:'Noto Sans Bengali',isCustomFont:true,glyphCount:0}]],['lost Inter',[{familyName:'Noto Sans Bengali',isCustomFont:true,glyphCount:7}]]])test(`Glyph probe rejects ${label}, even with matching CSS names`,async()=>{await assert.rejects(()=>probe(fonts));});
+
+test('Shared sans token is emitted even without utility usage or the separate shell stylesheet', async () => {
+  const block = css.match(/@theme inline static \{([^}]+)\}/)?.[0];
+  assert.ok(block, 'workspace CSS requires a retained runtime token');
+  const tailwind = require(require.resolve('tailwindcss', { paths: [path.dirname(require.resolve('@tailwindcss/postcss'))] }));
+  const compiler = await tailwind.compile(block);
+  const output = compiler.build([]);
+  assert.match(output, /:root, :host/);
+  assert.ok(output.includes('--font-sans: var(--font-inter), var(--font-noto-bengali), var(--font-noto-japanese), system-ui, sans-serif;'));
+});
+
+test('Authenticated CSS and inline styles do not bypass centralized sans fallbacks', () => {
+  const files = directory => fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const file = path.join(directory, entry.name);
+    return entry.isDirectory() ? files(file) : [file];
+  });
+  for (const file of [...files(path.join(root, 'src/components')), ...files(path.join(root, 'src/app/dashboard'))]) {
+    if (!/\.(css|tsx|ts)$/.test(file)) continue;
+    const source = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /fontFamily\s*:/, `${file}: inline family requires explicit central-stack review`);
+    for (const [, value] of source.matchAll(/(?:font-family|\bfont)\s*:\s*([^;}]+)/g)) {
+      assert.ok(value === 'inherit' || value === 'var(--font-sans)' || /(?:^|,)\s*(?:ui-)?monospace(?:,|$)/.test(value) || /\bui-monospace\b/.test(value), `${file}: unexpected font override ${value}`);
+    }
+  }
+  const shell = read('src/components/dashboard/dashboard-design.css');
+  assert.match(shell, /\.workspace-shell \{[^}]*font-family:var\(--font-sans\);/);
+});
+
+test('Clients browser fixture requires existing environment configuration without a literal password fallback', () => {
+  function verify(source) {
+    assert.match(source, /const fixturePassword = process\.env\.E2E_PASSWORD;/);
+    assert.match(source, /expect\(fixturePassword, '[^']+'\)\.toBeTruthy\(\);/);
+    assert.match(source, /password: fixturePassword/);
+    assert.doesNotMatch(source, /E2E_PASSWORD\s*(?:\?\?|\|\|)/);
+    assert.doesNotMatch(source, /password:\s*['"`]/);
+    assert.ok(source.indexOf('expect(fixturePassword,') < source.indexOf("page.request.post('/api/auth/login'"));
+  }
+  verify(spec);
+  assert.throws(() => verify(spec.replace('process.env.E2E_PASSWORD;', "process.env.E2E_PASSWORD || 'dummy-not-a-credential';")));
+  assert.throws(() => verify(spec.replace(/expect\(fixturePassword, '[^']+'\)\.toBeTruthy\(\);/, '')));
+  assert.throws(() => verify(spec.replace('password: fixturePassword', "password: 'dummy-not-a-credential'")));
+});
