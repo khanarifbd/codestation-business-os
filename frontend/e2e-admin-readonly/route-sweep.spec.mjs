@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
+
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -17,14 +19,21 @@ const eventFile = path.join(evidenceDir, `batch-${batch}.ndjson`);
 const emit = event => appendFileSync(eventFile, `${JSON.stringify({ at: Date.now(), batch, ...event })}\n`);
 let context, page, routeId = 'setup';
 const responses = [], errors = [], writes = [];
+const ownership = requestOwnership();
 
 test.beforeAll(async ({ browser }) => {
   const password = process.env.E2E_PASSWORD;
   if (!password || registry.owner_email !== process.env.E2E_EMAIL) throw new Error('Existing explicit disposable owner credentials required');
-  context = await browser.newContext({ baseURL, extraHTTPHeaders: { Origin: baseURL, Connection: 'close' }, viewport: { width: 1440, height: 1000 } });
+  const authPath = process.env.ADMIN_SWEEP_AUTH_STATE;
+  if (!authPath) throw new Error('Private temporary auth state path required');
+  const reuseAuth = existsSync(authPath);
+  context = await browser.newContext({ ...(reuseAuth ? { storageState: authPath } : {}), baseURL, extraHTTPHeaders: { Origin: baseURL, Connection: 'close' }, viewport: { width: 1440, height: 1000 } });
   page = await context.newPage();
-  const login = await page.request.post('/api/auth/login', { data: { email: registry.owner_email, password } });
-  expect(login.ok(), 'Existing fixture owner authentication').toBeTruthy();
+  page.on('request', request => ownership.started(request, routeId));
+  if (!reuseAuth) {
+    const login = await page.request.post('/api/auth/login', { data: { email: registry.owner_email, password } });
+    expect(login.ok(), 'Existing fixture owner authentication').toBeTruthy();
+  }
   await context.addCookies([{ name: 'organization_id', value: registry.organization_id, url: baseURL, httpOnly: true, sameSite: 'Lax' }]);
   const tenantResponse = await page.request.get('/api/tenant/context');
   expect(tenantResponse.ok()).toBeTruthy();
@@ -32,6 +41,7 @@ test.beforeAll(async ({ browser }) => {
   expect(tenant.organization.id).toBe(registry.organization_id);
   expect(tenant.membership_id).toBe(registry.membership_id);
   expect(tenant.is_owner).toBe(true);
+  if (!reuseAuth) { await context.storageState({ path: authPath }); chmodSync(authPath, 0o600); }
   await context.route('**/api/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname;
     if (request.method() === 'POST' && pathname === '/api/auth/session/activity') emit({ event: 'heartbeat_request', route_id: routeId });
@@ -43,12 +53,12 @@ test.beforeAll(async ({ browser }) => {
   page.on('response', response => {
     const pathname = new URL(response.url()).pathname;
     if (!pathname.startsWith('/api/')) return;
-    const entry = { event: 'api_response', route_id: routeId, method: response.request().method(), pathname, status: response.status() };
+    const entry = { event: 'api_response', route_id: ownership.owner(response.request()), method: response.request().method(), pathname, status: response.status() };
     responses.push(entry); emit(entry);
     if (entry.status >= 400) errors.push(entry);
   });
-  page.on('pageerror', error => { const entry = { event: 'page_error', route_id: routeId, message: error.message }; errors.push(entry); emit(entry); });
-  page.on('console', message => { if (message.type() === 'error') { const entry = { event: 'console_error', route_id: routeId, message: message.text() }; errors.push(entry); emit(entry); } });
+  page.on('pageerror', () => { const entry = safeError('page_error', routeId); errors.push(entry); emit(entry); });
+  page.on('console', message => { if (message.type() === 'error') { const entry = safeError('console_error', routeId); errors.push(entry); emit(entry); } });
 });
 
 test.afterAll(async () => {
@@ -59,22 +69,22 @@ test.afterAll(async () => {
 for (const [index, group] of groups.entries()) test(`readonly batch${batch} group${index}: ${group.map(r => r.id).join(',')}`, async ({}, info) => {
   for (const route of group) {
     const contract = registry.route_contracts?.[route.pattern];
-    if (route.status !== 'ready' || !contract?.heading || contract.expected_mode !== 'ready') {
+    if (route.status !== 'ready' || !contract?.heading || !['ready', 'empty', 'ineligible', 'restricted'].includes(contract.expected_mode)) {
       emit({ event: 'blocked_route', route_id: route.id, pattern: route.pattern, reason: route.status !== 'ready' ? route.status : 'missing_reviewed_readiness_contract' });
       continue;
     }
     await test.step(route.pattern, async () => {
       routeId = route.id;
-      const startErrors = errors.length, startResponses = responses.length;
+      const startErrors = errors.length;
       const response = await page.goto(route.url, { timeout: 30_000 });
       expect(response?.status(), route.pattern).toBeLessThan(400);
       await expect(page).not.toHaveURL(/\/login(?:[/?]|$)/);
       await expect(page.locator('body')).not.toContainText(/Application error: a client-side exception|This page could not be found/);
+      for (const requiredPath of contract.expected_get_paths || []) await expect.poll(() => successfulRouteRead(responses, route.id, requiredPath)).toBe(true);
       const heading = page.getByRole('heading', { name: contract.heading, exact: true, ...(contract.heading_level ? { level: contract.heading_level } : {}) });
       await expect(heading).toBeVisible();
       for (const value of contract.ready_text || []) await expect(page.locator('body')).toContainText(value);
       if (contract.ready_button) await expect(page.getByRole('button', { name: contract.ready_button, exact: true })).toBeEnabled();
-      for (const requiredPath of contract.expected_get_paths || []) await expect.poll(() => responses.slice(startResponses).some(r => r.method === 'GET' && r.pathname === requiredPath && r.status >= 200 && r.status < 300)).toBe(true);
       const captures = [];
       for (const [size, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
         await page.setViewportSize({ width, height });
@@ -82,11 +92,11 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
         await expect(heading).toBeVisible();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${route.id} ${size} width`).toBe(true);
         const filename = `admin-readonly-${route.id}-${size}.png`;
-        await page.screenshot({ path: info.outputPath(filename) }); captures.push(filename);
+        await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(filename);
         if (size === 'mobile' && await page.evaluate(() => document.documentElement.scrollHeight > innerHeight * 1.25)) {
           await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
           const bottom = `admin-readonly-${route.id}-mobile-bottom.png`;
-          await page.screenshot({ path: info.outputPath(bottom) }); captures.push(bottom);
+          await page.screenshot({ path: info.outputPath(bottom), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(bottom);
         }
       }
       expect(errors.slice(startErrors), route.pattern).toEqual([]);

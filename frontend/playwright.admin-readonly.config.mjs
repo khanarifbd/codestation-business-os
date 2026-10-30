@@ -3,6 +3,8 @@ import base from './playwright.config.mjs';
 // Separate disposable QA process. Existing60-journey config is unchanged.
 const config = {
   ...base,
+  use: { ...base.use, trace: 'off', video: 'off', screenshot: 'off' },
+  reporter: [['line']],
   testDir: './e2e-admin-readonly',
   timeout: 120_000, // Four readonly routes/case, bounded30s navigation each.
   fullyParallel: false,

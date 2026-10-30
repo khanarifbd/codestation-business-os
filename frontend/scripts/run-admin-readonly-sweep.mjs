@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { localBaseURL, nextBatchDelay, ROUTES_PER_BATCH, resolveRoutes } from '../e2e-admin-readonly/support/registry.mjs';
 
@@ -11,7 +12,7 @@ export function summarize(manifest, events) {
   const rendered = new Map(events.filter(e => e.event === 'route_rendered').map(e => [e.route_id, e]));
   const blocked = new Map(events.filter(e => e.event === 'blocked_route').map(e => [e.route_id, e]));
   const routes = manifest.routes.map(route => ({ id: route.id, pattern: route.pattern, ...(rendered.get(route.id) || blocked.get(route.id) || { event: 'not_executed' }), visual_review: 'pending_actual_pixel_inspection' }));
-  return { route_count: routes.length, rendered: routes.filter(r => r.event === 'route_rendered').length, blocked: routes.filter(r => r.event === 'blocked_route').length, not_executed: routes.filter(r => r.event === 'not_executed').length, mutation_attempts: events.filter(e => e.event === 'blocked_mutation').length, rate_limit_responses: events.filter(e => e.event === 'api_response' && e.status === 429).length, routes };
+  return { unexpected_errors: events.filter(e => e.event === 'page_error' || e.event === 'console_error' || e.event === 'api_response' && e.status >= 400).length, route_count: routes.length, rendered: routes.filter(r => r.event === 'route_rendered').length, blocked: routes.filter(r => r.event === 'blocked_route').length, not_executed: routes.filter(r => r.event === 'not_executed').length, mutation_attempts: events.filter(e => e.event === 'blocked_mutation').length, rate_limit_responses: events.filter(e => e.event === 'api_response' && e.status === 429).length, routes };
 }
 async function executeBatch(batch, directory, env) {
   return new Promise((resolve, reject) => {
@@ -31,6 +32,9 @@ export async function runSweep(env = process.env) {
   const registry = JSON.parse(readFileSync(env.ADMIN_SWEEP_FIXTURE, 'utf8'));
   resolveRoutes(manifest, registry); // Validate every supplied ID before browser activity.
   let batchFailure = null;
+  const privateAuth = mkdtempSync(path.join(tmpdir(), 'admin-sweep-auth-'));
+  const batchEnv = { ...env, ADMIN_SWEEP_AUTH_STATE: path.join(privateAuth, 'state.json') };
+  try {
   for (let batch = 0; batch < Math.ceil(manifest.routes.length / ROUTES_PER_BATCH); batch++) {
     const prior = readEvents(directory), timestamps = prior.filter(e => e.event === 'heartbeat_request').map(e => e.at);
     const delay = nextBatchDelay(timestamps, Date.now());
@@ -38,13 +42,16 @@ export async function runSweep(env = process.env) {
       console.log(`Read-only batch${batch}: waiting ${delay}ms for the existing session activity budget; no identity rotation or retry`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
-    const code = await executeBatch(batch, directory, env);
+    let code;
+    try { code = await executeBatch(batch, directory, batchEnv); }
+    catch { batchFailure = { batch, classification: 'batch_process_failure' }; break; }
     if (code !== 0) { batchFailure = { batch, code }; break; }
-    if (readEvents(directory).some(e => e.event === 'api_response' && e.status === 429)) throw new Error('Rate-limit response is a failure; never retry or mask it');
+    if (readEvents(directory).some(e => e.event === 'api_response' && e.status === 429)) { batchFailure = { batch, classification: 'rate_limit_failure' }; break; }
   }
+  } finally { rmSync(privateAuth, { recursive: true, force: true }); }
   const summary = { ...summarize(manifest, readEvents(directory)), batch_failure: batchFailure, head: env.GITHUB_SHA || null, no_live_verification: true };
   writeFileSync(path.join(directory, 'route-evidence.json'), JSON.stringify(summary, null, 2));
-  if (batchFailure || summary.blocked || summary.not_executed || summary.mutation_attempts || summary.rate_limit_responses) throw new Error('Read-only sweep incomplete; consult exact route-evidence.json, no automatic retry');
+  if (batchFailure || summary.blocked || summary.not_executed || summary.mutation_attempts || summary.rate_limit_responses || summary.unexpected_errors) throw new Error('Read-only sweep incomplete; consult exact route-evidence.json, no automatic retry');
   return summary;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) runSweep().then(summary => console.log(`Rendered ${summary.rendered} readonly route patterns; actual pixel review still required`)).catch(error => { console.error(error.message); process.exitCode = 1; });
