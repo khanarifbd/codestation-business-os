@@ -32,11 +32,15 @@ async function captureCapitalViewport(page,info,label,heading){
   if(size==='mobile'&&['owner','company','project','investments'].includes(label)){
    const tabName={owner:'Owner Equity',company:'Company Funding',project:'Project Funding',investments:'Our Investments'}[label];
    const selected=page.getByRole('button',{name:tabName,exact:true});
-   await selected.scrollIntoViewIfNeeded();
+   await selected.evaluate(node=>node.scrollIntoView({block:'center',inline:'center',behavior:'instant'}));
+   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-mobile-selected-tab.png`),fullPage:false});
+   expect(await selected.evaluate(node=>{
+    const rect=node.getBoundingClientRect(),strip=node.parentElement,clip=strip.getBoundingClientRect();
+    return rect.left>=Math.max(0,clip.left+strip.clientLeft)&&rect.right<=Math.min(window.innerWidth,clip.left+strip.clientLeft+strip.clientWidth)&&rect.top>=80&&rect.bottom<=window.innerHeight-80;
+   })).toBe(true);
    await expect(selected).toBeInViewport({ratio:1});
    await expect(selected).toHaveClass(/bg-neutral-950/);
    await expect(page.getByRole('heading',{name:heading,exact:true})).toBeVisible();
-   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-mobile-selected-tab.png`),fullPage:false});
   }
  }}finally{if(original)await page.setViewportSize(original);}
 }
