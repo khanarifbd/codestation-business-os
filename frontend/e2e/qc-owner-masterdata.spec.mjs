@@ -1,7 +1,8 @@
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { expect, test } from '@playwright/test';
 const email = process.env.E2E_QC_MASTERDATA_EMAIL ?? 'qc-masterdata@example.com';
-const password = process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!';
+const password = process.env.E2E_PASSWORD;
+if (!password?.trim()) throw new Error('E2E_PASSWORD must be supplied by the isolated CI fixture.');
 const today = () => new Date().toISOString().slice(0, 10);
 function threeMonthInclusiveEnd(start) {
   const d = new Date(`${start}T00:00:00Z`);
@@ -114,17 +115,34 @@ test('owner CRM missing activities, follow-up, lost, custom stages and sources',
     await page.getByLabel('Probability %', {
       exact: true
     }).fill('101');
-    const invalid = page.waitForResponse(r => new URL(r.url()).pathname === '/api/crm/leads' && r.request().method() === 'POST');
-    await page.getByRole('button', {
-      name: 'Create lead',
-      exact: true
-    }).click();
-    expect((await invalid).status()).toBe(422);
-    await expect(page.getByText(/less than or equal to 100/)).toBeVisible();
-    e.cases.push({
-      id: 'CRM02',
-      actual: '101 rejected HTTP422 with visible bound error'
-    });
+    // Native max=100 prevents dispatch. Verify it without waiting for a POST that
+    // must not happen, then independently exercise the real backend constraint.
+    const probability = page.getByLabel('Probability %', { exact: true });
+    let invalidUiPosts = 0;
+    const countInvalidCreate = request => {
+      if (new URL(request.url()).pathname === '/api/crm/leads' && request.method() === 'POST') invalidUiPosts++;
+    };
+    page.on('request', countInvalidCreate);
+    try {
+      await page.getByRole('button', { name: 'Create lead', exact: true }).click();
+      expect(await probability.evaluate(el => el.validity.rangeOverflow)).toBe(true);
+      expect(await probability.evaluate(el => el.validationMessage.length > 0)).toBe(true);
+      await expect(probability).toBeFocused();
+      expect(invalidUiPosts).toBe(0);
+    } finally {
+      page.off('request', countInvalidCreate);
+    }
+    const invalid = await context.request.post('/api/crm/leads', { data: {
+      lead_type: 'company', company_name: e.marker, contact_name: 'Synthetic gap prospect', probability_percent: 101
+    } });
+    expect(invalid.status()).toBe(422);
+    const invalidBody = await invalid.json();
+    expect(typeof invalidBody.detail).toBe('string');
+    expect(invalidBody.detail).toMatch(/Probability Percent:.*less than or equal to 100\b/i);
+    expect(Array.isArray(invalidBody.validation_errors)).toBe(true);
+    expect(invalidBody.validation_errors.some(issue => issue.loc.includes('probability_percent') && issue.type === 'less_than_equal' && issue.ctx?.le === 100)).toBe(true);
+    expect((await api(context.request, '/api/crm/leads', undefined, 'get')).items).toHaveLength(0);
+    e.cases.push({ id: 'CRM02', actual: 'Native101 rangeOverflow focuses field with no UI POST; independent backend422 probability<=100; no lead persisted' });
     await page.getByLabel('Probability %', {
       exact: true
     }).fill('35');
@@ -1272,7 +1290,7 @@ test('owner client profile notes secure text read and CRM catalog interests', as
       name: 'Save requirements',
       exact: true
     }).click());
-    await expect(page.getByText('USD 200', {
+    await expect(page.getByText('USD 200.00', {
       exact: true
     })).toBeVisible();
     const interests = await api(context.request, `/api/crm/leads/${lead.id}/interests`, undefined, 'get');

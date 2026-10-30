@@ -5,7 +5,11 @@ import { expect, test } from "@playwright/test";
 // writes. API mutations are limited to fresh-organization setup and explicit
 // negative guard probes that the UI prevents. All successful CRM mutations use UI.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
-const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
+const password = process.env.E2E_PASSWORD;
+
+test.beforeEach(() => {
+  expect(password, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy();
+});
 const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
 async function readJson(request, path) {
@@ -116,6 +120,102 @@ test("fresh owner: create leads → qualify → win → convert one client → r
       expect(saved.city).toBe("Dhaka");
       evidence.records.leadIds = [lead.id, other.id];
       evidence.uiActions.push("Created Alpha and Beta leads through owner UI with blank email fields");
+    });
+
+    await test.step("Four-place CRM requirements persist and remain readable on desktop/mobile", async () => {
+      await page.getByRole("row").filter({ hasText: companyName }).getByRole("button", { name: /^Open lead / }).click();
+      const drawer = page.getByRole("dialog");
+      await expect(drawer.getByText(companyName, { exact: true }).first()).toBeVisible();
+      await drawer.getByRole("button", { name: "Add requirements", exact: true }).click();
+      await drawer.getByLabel("Requirement name", { exact: true }).fill("Synthetic precision fixture");
+      await drawer.getByLabel("Quantity", { exact: true }).fill("1.2345");
+      await drawer.getByLabel(/Estimated unit value/).fill("12.3456");
+      const saved = await mutateViaUI(page, `/api/crm/leads/${lead.id}/interests`, "PUT", () => drawer.getByRole("button", { name: "Save requirements", exact: true }).click());
+      expect(saved).toHaveLength(1);
+      expect(saved[0].quantity).toBe("1.2345");
+      expect(saved[0].estimated_unit_price).toBe("12.3456");
+      await expect(drawer.getByText("Synthetic precision fixture", { exact: true })).toBeVisible();
+      const reread = await readJson(context.request, `/api/crm/leads/${lead.id}/interests`);
+      expect(reread[0].quantity).toBe("1.2345");
+      expect(reread[0].estimated_unit_price).toBe("12.3456");
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-crm-requirements-desktop.png") });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await drawer.getByRole("heading", { name: "Interested products & services" }).scrollIntoViewIfNeeded();
+      await expect(drawer.getByRole("heading", { name: "Interested products & services" })).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-crm-requirements-mobile.png") });
+      await drawer.getByRole("button", { name: "Close lead detail", exact: true }).click();
+      await expect(drawer).toHaveCount(0);
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      evidence.uiActions.push("Custom requirement four-place decimals persisted exactly and desktop/mobile drawer screenshots captured using the same owner session");
+    });
+
+    await test.step("Dismissed drawer stays closed after a delayed genuine detail response", async () => {
+      const detailPath = `/api/crm/leads/${lead.id}`;
+      let release;
+      let detailFetched = false;
+      const hold = new Promise(resolve => { release = resolve; });
+      const routePattern = `**${detailPath}`;
+      // Delay only: preserve the actual backend status/body, no fabricated API response.
+      await page.route(routePattern, async route => {
+        const response = await route.fetch();
+        detailFetched = true;
+        await hold;
+        await route.fulfill({ response });
+      });
+      try {
+        await page.getByRole("row").filter({ hasText: companyName }).getByRole("button", { name: /^Open lead / }).click();
+        await expect.poll(() => detailFetched).toBe(true);
+        await page.getByRole("button", { name: "Close lead detail", exact: true }).click();
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+        const completed = page.waitForResponse(response => new URL(response.url()).pathname === detailPath);
+        release();
+        await (await completed).finished();
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        await expect(page.getByRole("dialog")).toHaveCount(0);
+      } finally {
+        release();
+        await page.unroute(routePattern);
+      }
+      evidence.uiActions.push("Closed loading drawer; delayed real GET completed without reopening it");
+    });
+
+    await test.step("Existing lead contact/address edit and nested dialog keyboard flow", async () => {
+      await page.getByRole("row").filter({ hasText: otherName }).getByRole("button", { name: /^Open lead / }).click();
+      const drawer = page.getByRole("dialog", { name: otherName, exact: true });
+      const editButton = drawer.getByRole("button", { name: "Edit lead details", exact: true });
+      await editButton.click();
+      let editor = page.getByRole("dialog", { name: "Edit lead details", exact: true });
+      await expect(editor).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(editor).toHaveCount(0);
+      await expect(editButton).toBeFocused();
+      await editButton.click();
+      editor = page.getByRole("dialog", { name: "Edit lead details", exact: true });
+      await editor.getByLabel("Address", { exact: true }).fill("42 Synthetic Lane");
+      await editor.getByLabel("City", { exact: true }).fill("London");
+      await editor.getByLabel("State / Province / Region", { exact: true }).fill("Greater London");
+      await editor.getByLabel("WhatsApp", { exact: true }).fill("+44 20 7946 0000");
+      await editor.getByLabel("Website", { exact: true }).fill("https://example.invalid");
+      await editor.getByRole("button", { name: "Country", exact: true }).click();
+      await editor.getByRole("listbox").getByRole("button", { name: /United Kingdom/ }).click();
+      await editor.getByLabel("Contact person", { exact: true }).focus();
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-crm-editor-desktop.png") });
+      await page.setViewportSize({ width: 390, height: 844 });
+      await editor.getByLabel("Contact person", { exact: true }).scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-crm-editor-mobile.png") });
+      await mutateViaUI(page, `/api/crm/leads/${other.id}`, "PATCH", () => editor.getByRole("button", { name: "Save lead details", exact: true }).click());
+      await expect(editor).toHaveCount(0);
+      const saved = await readJson(context.request, `/api/crm/leads/${other.id}`);
+      expect(saved.address_line1).toBe("42 Synthetic Lane");
+      expect(saved.city).toBe("London");
+      expect(saved.country_code).toBe("GB");
+      expect(saved.whatsapp).toBe("+44 20 7946 0000");
+      expect(saved.website).toBe("https://example.invalid");
+      expect(saved.lead.estimated_value).toBe("12500.50");
+      expect(saved.lead.status_id).toBe(other.status_id);
+      await drawer.getByRole("button", { name: "Close lead detail", exact: true }).click();
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      evidence.uiActions.push("Existing lead international contact/address fields persisted; generic edit preserved status/value; nested Escape restored opener focus");
     });
 
     await test.step("Real lead search by name/code, no-match search, and clearing/reset", async () => {
