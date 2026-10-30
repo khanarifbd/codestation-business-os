@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -19,6 +19,8 @@ import {
   Users,
   type LucideIcon,
 } from "lucide-react";
+
+import { formatDashboardMoney, reportingRange } from "@/lib/dashboard-reporting";
 
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { CurrencyTrendCard, FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
@@ -157,32 +159,12 @@ type DashboardPulseOverview = {
 
 type Preset = "month" | "last_month" | "quarter" | "year";
 
-function iso(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function presetRange(preset: Preset) {
-  const now = new Date();
-  if (preset === "last_month") {
-    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const end = new Date(now.getFullYear(), now.getMonth(), 0);
-    return { from: iso(start), to: iso(end), label: "Last month" };
-  }
-  if (preset === "quarter") {
-    const quarterStart = Math.floor(now.getMonth() / 3) * 3;
-    return { from: iso(new Date(now.getFullYear(), quarterStart, 1)), to: iso(now), label: "This quarter" };
-  }
-  if (preset === "year") {
-    return { from: iso(new Date(now.getFullYear(), 0, 1)), to: iso(now), label: "This year" };
-  }
-  return { from: iso(new Date(now.getFullYear(), now.getMonth(), 1)), to: iso(now), label: "This month" };
+function presetRange(preset: Preset, timezone?: string) {
+  return reportingRange(preset, timezone);
 }
 
 function money(value: string | number, currency: string) {
-  return `${currency} ${Number(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatDashboardMoney(value, currency);
 }
 
 function percent(value: string | null) {
@@ -223,12 +205,16 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reportRetry, setReportRetry] = useState(0);
+  const [detailsRetry, setDetailsRetry] = useState(0);
+  const reportEpoch = useRef(0);
 
   useEffect(() => {
     if (!tenant) return;
     let active = true;
+    reportEpoch.current += 1;
     void (async () => {
-      const range = presetRange("month");
+      const range = presetRange("month", tenant.organization.timezone);
       setLoading(true);
       setError(null);
       try {
@@ -241,17 +227,25 @@ export default function DashboardPage() {
         }
         if (response.ok) {
           const payload = (await response.json()) as Overview;
-          if (active) setReportResult({ organizationId: tenant.organization.id, value: payload });
-        }
-        else if (response.status !== 403) throw new Error("Unable to load dashboard metrics");
+          if (active) {
+            setReportResult({ organizationId: tenant.organization.id, value: payload });
+            setPreset("month");
+          }
+        } else if (response.status === 403) {
+          setReportResult(null);
+          setPreset("month");
+        } else throw new Error("Unable to load dashboard metrics");
       } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
+        if (active) {
+          setReportResult(null);
+          setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
+        }
       } finally {
-        if (active) setLoading(false);
+        if (active) { setLoading(false); setReportLoading(false); }
       }
     })();
-    return () => { active = false; };
-  }, [router, tenant]);
+    return () => { active = false; reportEpoch.current += 1; };
+  }, [router, tenant, reportRetry]);
 
   useEffect(() => {
     if (!tenant) return;
@@ -295,6 +289,15 @@ export default function DashboardPage() {
           if (!controller.signal.aborted) router.replace("/login");
           return;
         }
+        if (response.status === 403) {
+          if (!controller.signal.aborted) {
+            reportEpoch.current += 1;
+            setReportResult(null);
+            setError(null);
+            setReportLoading(false);
+          }
+          return;
+        }
         if (!response.ok) throw new Error("Dashboard details unavailable");
         const payload = (await response.json()) as DashboardDetails;
         if (!controller.signal.aborted) {
@@ -307,32 +310,43 @@ export default function DashboardPage() {
       }
     })();
     return () => controller.abort();
-  }, [activeOrganizationId, periodStart, periodEnd, router]);
+  }, [activeOrganizationId, periodStart, periodEnd, router, detailsRetry]);
 
   async function changePreset(next: Preset) {
-    if (next === preset) return;
-    const range = presetRange(next);
+    if (!tenant || next === preset) return;
+    const organizationId = tenant.organization.id;
+    const requestEpoch = ++reportEpoch.current;
+    const currentRequest = () => reportEpoch.current === requestEpoch;
+    const range = presetRange(next, tenant.organization.timezone);
     setReportLoading(true);
     setError(null);
     const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
     try {
       const response = await fetch(`/api/reports/dashboard?${params}`, { cache: "no-store" });
+      if (!currentRequest()) return;
       if (response.status === 401) {
         router.replace("/login");
         return;
       }
+      if (response.status === 403) {
+        setReportResult(null);
+        setError(null);
+        return;
+      }
       if (!response.ok) throw new Error("Unable to load dashboard metrics");
-      setReportResult({ organizationId: tenant!.organization.id, value: (await response.json()) as Overview });
+      const payload = (await response.json()) as Overview;
+      if (!currentRequest()) return;
+      setReportResult({ organizationId, value: payload });
       setPreset(next);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load dashboard metrics");
+      if (currentRequest()) setError(reason instanceof Error ? reason.message : "Unable to load dashboard metrics");
     } finally {
-      setReportLoading(false);
+      if (currentRequest()) setReportLoading(false);
     }
   }
 
   const company = tenant?.organization;
-  const rangeLabel = presetRange(preset).label;
+  const rangeLabel = presetRange(preset, company?.timezone).label;
 
   const financialRows = useMemo(() => {
     if (!data || !company) return [];
@@ -385,6 +399,18 @@ export default function DashboardPage() {
     return <AppPage width="wide" className="dashboard-overview dashboard-composed"><p className="text-sm text-red-700">{error ?? "Workspace unavailable"}</p></AppPage>;
   }
 
+  if (!data && error) {
+    return (
+      <AppPage width="wide" className="dashboard-overview dashboard-composed">
+        <PageHeader eyebrow={company.name} title="Dashboard unavailable" description="Dashboard reports could not be loaded. Retry to reconnect to the reporting service." />
+        <Surface className="mt-6 p-5 sm:p-6">
+          <p role="alert" className="text-sm text-red-700">{error}</p>
+          <button type="button" onClick={() => setReportRetry((value) => value + 1)} className="mt-4 inline-flex min-h-10 items-center rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2">Retry dashboard</button>
+        </Surface>
+      </AppPage>
+    );
+  }
+
   if (!data) {
     return (
       <AppPage width="wide" className="dashboard-overview dashboard-composed">
@@ -413,6 +439,7 @@ export default function DashboardPage() {
             <>
               <span className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600">{rangeLabel} · {data.date_from} — {data.date_to}</span>
               <span className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600">Reporting currency · {company.currency}</span>
+              <span className="rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-neutral-600">Company timezone · {company.timezone || "UTC"}</span>
             </>
           }
           actions={
@@ -556,7 +583,7 @@ export default function DashboardPage() {
         <div className="dashboard-economics-grid grid gap-5 xl:grid-cols-2">
           <Surface className="p-5 sm:p-6">
             <SectionHeading title="Financial accounts" note={details ? `${details.accounts.length} active account${details.accounts.length === 1 ? "" : "s"}` : "Account balances"} href="/dashboard/accounting/accounts" icon={Landmark} />
-            {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.accounts.length ? (
+            {detailsError ? <DetailUnavailable onRetry={() => setDetailsRetry((value) => value + 1)} /> : detailsLoading || !details ? <DetailPlaceholder /> : details.accounts.length ? (
               <div className="mt-4 divide-y">
                 {details.accounts.slice(0, 8).map((row) => (
                   <Link prefetch={false} key={row.account_id} href={`/dashboard/accounting/accounts/${row.account_id}`} className="group -mx-2 flex flex-col items-start gap-2 rounded-lg px-2 py-3.5 text-sm transition-colors hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
@@ -570,7 +597,7 @@ export default function DashboardPage() {
 
           <Surface className="p-5 sm:p-6">
             <SectionHeading title="Recent project economics" note={`${rangeLabel} profitability`} href="/dashboard/reports" icon={FolderKanban} />
-            {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.projects.length ? (
+            {detailsError ? <DetailUnavailable onRetry={() => setDetailsRetry((value) => value + 1)} /> : detailsLoading || !details ? <DetailPlaceholder /> : details.projects.length ? (
               <div className="mt-4 divide-y">
                 {details.projects.slice(0, 6).map((row) => (
                   <Link prefetch={false} key={row.project_id} href={`/dashboard/projects/${row.project_id}`} className="group -mx-2 block rounded-lg px-2 py-3.5 transition-colors hover:bg-neutral-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300">
@@ -588,7 +615,7 @@ export default function DashboardPage() {
 
         <Surface className="dashboard-client-economics p-5 sm:p-6">
           <SectionHeading title="Client economics" note={`${rangeLabel} client performance`} href="/dashboard/clients" icon={Users} />
-          {detailsError ? <DetailUnavailable /> : detailsLoading || !details ? <DetailPlaceholder /> : details.clients.length ? (
+          {detailsError ? <DetailUnavailable onRetry={() => setDetailsRetry((value) => value + 1)} /> : detailsLoading || !details ? <DetailPlaceholder /> : details.clients.length ? (
             <div className="dashboard-client-ledger">
               {details.clients.slice(0, 9).map((row) => (
                 <Link prefetch={false} key={`${row.client_id}-${row.currency}`} href={`/dashboard/clients/${row.client_id}`} className="dashboard-client-row group rounded-xl border border-neutral-200 bg-white p-4 transition-[border-color,box-shadow] hover:border-neutral-300 hover:shadow-[0_4px_14px_rgba(15,23,42,0.045)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-300 sm:p-5">
@@ -692,6 +719,6 @@ function DetailPlaceholder() {
   );
 }
 
-function DetailUnavailable() {
-  return <div role="alert" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Dashboard details are temporarily unavailable. Other business metrics remain accessible.</div>;
+function DetailUnavailable({ onRetry }: { onRetry: () => void }) {
+  return <div role="alert" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><p>Dashboard details are temporarily unavailable. Other business metrics remain accessible.</p><button type="button" onClick={onRetry} className="mt-3 min-h-10 rounded-lg border border-current px-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2">Retry dashboard details</button></div>;
 }

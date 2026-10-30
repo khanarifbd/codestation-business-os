@@ -28,10 +28,17 @@ function strings(node) {
   if (node.props) return Object.values(node.props).filter(value => typeof value !== 'function').map(strings).join(' ');
   return '';
 }
+function reportingModule(file = 'dashboard-reporting.ts') {
+  const filename=path.join(root,'src/lib',file), mod=new Module(filename,module);
+  mod.filename=filename; mod.paths=module.paths;
+  mod.require=id=>id==='./sales-money-preview'?reportingModule('sales-money-preview.ts'):require(id);
+  mod._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,filename);
+  return mod.exports;
+}
 function harness(file = 'src/app/dashboard/page.tsx', exported = 'default', privateNames = []) {
-  const states = [], effects = [], requests = [], navigation = [], nativeNavigation = [], prefetches = [];
+  const states = [], refs = [], effects = [], requests = [], navigation = [], nativeNavigation = [], prefetches = [];
   let workspaceExitAllowed = true, workspaceExitChecks = 0;
-  let cursor = 0, tenant = structuredClone(owner), workspaces = null, pathname = '/dashboard', response = () => success({});
+  let cursor = 0, refCursor = 0, tenant = structuredClone(owner), workspaces = null, pathname = '/dashboard', response = () => success({});
   const router = { replace: p => navigation.push(p), push: p => navigation.push(p), refresh: () => navigation.push('refresh'), prefetch: p => prefetches.push(p) };
   const source = fs.readFileSync(path.join(root, file), 'utf8');
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -41,11 +48,12 @@ function harness(file = 'src/app/dashboard/page.tsx', exported = 'default', priv
   const code = ts.transpileModule(source + (privateNames.length ? '\nexport const __test = {' + privateNames.join(',') + '};' : ''), { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 } }).outputText;
   const mod = new Module(__filename, module); mod.filename = __filename; mod.paths = module.paths;
   mod.require = id => {
-    if (id === 'react') return { useState: initial => { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial; return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; }, useMemo: fn => fn(), useEffect: fn => effects.push(fn), useRef: () => ({ current: null }) };
+    if (id === 'react') return { useState: initial => { const i = cursor++; if (!(i in states)) states[i] = typeof initial === 'function' ? initial() : initial; return [states[i], value => { states[i] = typeof value === 'function' ? value(states[i]) : value; }]; }, useMemo: fn => fn(), useEffect: fn => effects.push(fn), useRef: initial => { const i = refCursor++; if (!(i in refs)) refs[i] = { current: initial }; return refs[i]; } };
     if (id === 'next/navigation') return { useRouter: () => router, usePathname: () => pathname };
     if (id === 'next/link') return { default: 'a' };
     if (id === '@/components/dashboard-session-context') return { useDashboardSession: () => ({ tenant, profile: { full_name: 'Synthetic Preview', email: 'preview@example.invalid', has_avatar: false }, workspaces: workspaces ?? [tenant], setTenant: next => { tenant = next; } }) };
     if (id === '@/lib/workspace-navigation') return { requestWorkspaceExit: () => { workspaceExitChecks += 1; return workspaceExitAllowed; } };
+    if (id === '@/lib/dashboard-reporting') return reportingModule();
     if (id === '@/lib/cn') return { cn: (...values) => values.filter(Boolean).join(' ') };
     if (id.endsWith('.css')) return {};
     if (id.startsWith('@/components/')) return new Proxy({}, { get: (_target, name) => String(name) });
@@ -57,7 +65,7 @@ function harness(file = 'src/app/dashboard/page.tsx', exported = 'default', priv
   global.fetch = async (url, options) => { requests.push({ url, options }); return response(url, options); };
   global.Date = class extends original.Date { constructor(...args) { super(...(args.length ? args : ['2026-10-24T12:00:00Z'])); } static now() { return new original.Date('2026-10-24T12:00:00Z').getTime(); } };
   global.document = { body: { style: { overflow: 'auto' } }, addEventListener() {}, removeEventListener() {} };
-  return { states, effects, requests, navigation, nativeNavigation, prefetches, setWorkspaceExitAllowed: value => { workspaceExitAllowed = value; }, workspaceExitChecks: () => workspaceExitChecks, helpers: mod.exports.__test, all, render: props => { cursor = 0; effects.length = 0; return (mod.exports[exported] ?? mod.exports.__test[exported])(props ?? {}); }, state: name => states[stateNames.indexOf(name)], setState: (name, value) => { const i = stateNames.indexOf(name); assert.ok(i >= 0, name); states[i] = value; }, setTenant: value => { tenant = value; }, getTenant: () => tenant, setWorkspaces: value => { workspaces = value; }, setPath: value => { pathname = value; }, setResponse: fn => { response = fn; }, cleanup: () => Object.assign(global, original) };
+  return { states, effects, requests, navigation, nativeNavigation, prefetches, setWorkspaceExitAllowed: value => { workspaceExitAllowed = value; }, workspaceExitChecks: () => workspaceExitChecks, helpers: mod.exports.__test, all, render: props => { cursor = 0; refCursor = 0; effects.length = 0; return (mod.exports[exported] ?? mod.exports.__test[exported])(props ?? {}); }, state: name => states[stateNames.indexOf(name)], setState: (name, value) => { const i = stateNames.indexOf(name); assert.ok(i >= 0, name); states[i] = value; }, setTenant: value => { tenant = value; }, getTenant: () => tenant, setWorkspaces: value => { workspaces = value; }, setPath: value => { pathname = value; }, setResponse: fn => { response = fn; }, cleanup: () => Object.assign(global, original) };
 }
 function withDashboard(name, check) { test(name, async () => { const h = harness(); try { await check(h); } finally { h.cleanup(); } }); }
 function ready(h, data = overview) { h.render(); h.setState('reportResult', { organizationId: 'synthetic-a', value: structuredClone(data) }); h.setState('loading', false); return h.render(); }
@@ -390,3 +398,90 @@ withSwitcher('Canceled imperative exit blocks tenant POST before picker or tenan
 withSwitcher('Selecting the already-active tenant is not an exit and never prompts',h=>{h.setWorkspaceExitAllowed(false);h.render();h.setState('open',true);h.all(h.render(),'button').find(n=>strings(n).includes(organization.name)&&n.props['aria-expanded']===undefined).props.onClick();assert.equal(h.workspaceExitChecks(),0);assert.equal(h.state('open'),false);assert.deepEqual(h.requests,[]);});
 withSwitcher('Canceled Create company workspace keeps picker open and never navigates',h=>{h.setWorkspaceExitAllowed(false);h.render();h.setState('open',true);h.all(h.render(),'button').find(n=>strings(n).includes('Create company workspace')).props.onClick();assert.equal(h.workspaceExitChecks(),1);assert.equal(h.state('open'),true);assert.deepEqual(h.navigation,[]);assert.deepEqual(h.nativeNavigation,[]);assert.deepEqual(h.requests,[]);});
 withSwitcher('Accepted Create company workspace retains its onboarding route without a mutation',h=>{h.render();h.setState('open',true);h.all(h.render(),'button').find(n=>strings(n).includes('Create company workspace')).props.onClick();assert.equal(h.workspaceExitChecks(),1);assert.equal(h.state('open'),false);assert.deepEqual(h.navigation,[]);assert.deepEqual(h.nativeNavigation,[['assign','/onboarding?new=1']]);assert.deepEqual(h.requests,[]);});
+
+withDashboard('Initial network/server errors show recoverable dashboard error, never a false permission message', async h => {
+  for (const response of [() => failure(500), () => { throw new Error('Synthetic offline'); }]) {
+    h.setResponse(response); h.render(); h.effects[0](); await settle();
+    const tree=h.render(); assert.match(strings(tree),/Dashboard unavailable/);
+    assert.doesNotMatch(strings(tree),/financial reporting is restricted/);
+    const retry=h.all(tree,'button').find(n=>strings(n).includes('Retry dashboard'));
+    assert.ok(retry); retry.props.onClick(); assert.ok(h.state('reportRetry') > 0);
+    h.setResponse(()=>success(overview)); h.render(); h.effects[0](); await settle();
+    assert.equal(h.all(h.render(),'MetricCard').length,4); assert.equal(h.state('error'),null);
+  }
+});
+withDashboard('Tenant reload clears the prior report and period, including a new restricted tenant', async h => {
+  ready(h); h.setState('preset','last_month');
+  h.setTenant({...owner,organization:{...organization,id:'synthetic-b'}});
+  h.setResponse(()=>failure(403)); h.render(); h.effects[0](); await settle();
+  assert.equal(h.state('reportResult'),null); assert.equal(h.state('preset'),'month');
+  const tree=h.render(); assert.equal(h.all(tree,'MetricCard').length,0);
+  assert.match(strings(tree),/financial reporting is restricted/); assert.doesNotMatch(strings(tree),/Loading dashboard/);
+});
+withDashboard('Late old-tenant preset response cannot replace a new tenant or its period', async h => {
+  let finishOld; const oldTree=ready(h);
+  h.setResponse(()=>new Promise(resolve=>{finishOld=resolve;}));
+  periodSelect(h,oldTree).props.onChange({target:{value:'year'}});
+  h.setTenant({...owner,organization:{...organization,id:'synthetic-b'}});
+  assert.equal(h.all(h.render(),'MetricCard').length,0);
+  const newReport={...overview,operations:{...overview.operations,active_clients:99}};
+  h.setResponse(()=>success(newReport)); h.effects[0](); await settle();
+  finishOld(success({...overview,date_from:'2026-01-01'})); await settle();
+  assert.equal(h.state('reportResult').organizationId,'synthetic-b');
+  assert.equal(h.state('reportResult').value.operations.active_clients,99);
+  assert.equal(h.state('preset'),'month'); assert.equal(h.state('reportLoading'),false);
+});
+withDashboard('Unmount invalidates pending preset success and stale unauthenticated redirects', async h => {
+  for(const result of [success({...overview,date_from:'2026-01-01'}),failure(401)]) {
+    h.setResponse(()=>success(overview)); h.render(); const cleanup=h.effects[0](); await settle();
+    let finish; const tree=h.render(); h.setResponse(()=>new Promise(resolve=>{finish=resolve;}));
+    periodSelect(h,tree).props.onChange({target:{value:'year'}}); cleanup(); finish(result); await settle();
+    assert.equal(h.state('reportResult').value.date_from,'2026-10-01');
+    assert.equal(h.state('preset'),'month'); assert.deepEqual(h.navigation,[]);
+  }
+});
+withDashboard('Overlapping preset responses keep only newest report and pending ownership', async h => {
+  const finish=[]; const tree=ready(h); h.setResponse(()=>new Promise(resolve=>finish.push(resolve)));
+  periodSelect(h,tree).props.onChange({target:{value:'year'}});
+  periodSelect(h,tree).props.onChange({target:{value:'last_month'}});
+  finish[0](failure(500)); await settle(); assert.equal(h.state('reportLoading'),true); assert.equal(h.state('error'),null);
+  finish[1](success({...overview,date_from:'2026-09-01',date_to:'2026-09-30'})); await settle();
+  assert.equal(h.state('preset'),'last_month'); assert.equal(h.state('reportResult').value.date_from,'2026-09-01');
+  assert.equal(h.state('reportLoading'),false);
+});
+withDashboard('Details retry remains read-only and preserves primary dashboard metrics', async h => {
+  ready(h); h.setState('detailsError',true); const panels=h.all(h.render(),'DetailUnavailable');
+  assert.equal(panels.length,3); panels[0].props.onRetry(); assert.equal(h.state('detailsRetry'),1);
+  h.setResponse(()=>success({accounts:[],projects:[],clients:[]})); h.render(); h.effects[2](); await settle();
+  assert.equal(h.state('detailsError'),false); assert.equal(h.all(h.render(),'MetricCard').length,4);
+  assert.match(h.requests[0].url,/^\/api\/reports\/dashboard-details\?/); assert.equal(h.requests[0].options.method,undefined);
+});
+
+withDashboard('A current preset 403 removes previously visible report data instead of presenting stale metrics', async h => {
+  const tree=ready(h); h.setResponse(()=>failure(403));
+  periodSelect(h,tree).props.onChange({target:{value:'year'}}); await settle();
+  assert.equal(h.state('reportResult'),null); assert.equal(h.state('error'),null);
+  assert.equal(h.all(h.render(),'MetricCard').length,0);
+  assert.match(strings(h.render()),/financial reporting is restricted/);
+});
+
+withDashboard('Current details 403 clears reporting data and invalidates an in-flight period response', async h => {
+  const tree=ready(h); let finish;
+  h.setResponse(()=>new Promise(resolve=>{finish=resolve;}));
+  periodSelect(h,tree).props.onChange({target:{value:'year'}});
+  h.setResponse(()=>failure(403)); h.effects[2](); await settle();
+  finish(success({...overview,date_from:'2026-01-01'})); await settle();
+  assert.equal(h.state('reportResult'),null); assert.equal(h.state('error'),null);
+  assert.equal(h.state('reportLoading'),false); assert.equal(h.all(h.render(),'MetricCard').length,0);
+  assert.match(strings(h.render()),/financial reporting is restricted/);
+});
+withDashboard('Aborted old details 403 cannot clear a different active tenant report', async h => {
+  ready(h); let finish; h.setResponse(()=>new Promise(resolve=>{finish=resolve;}));
+  const cancel=h.effects[2](); cancel();
+  h.setTenant({...owner,organization:{...organization,id:'synthetic-b'}});
+  h.setState('reportResult',{organizationId:'synthetic-b',value:{...overview,operations:{...overview.operations,active_clients:99}}});
+  finish(failure(403)); await settle();
+  assert.equal(h.state('reportResult').organizationId,'synthetic-b');
+  assert.equal(h.state('reportResult').value.operations.active_clients,99);
+  assert.equal(h.all(h.render(),'MetricCard').length,4);
+});
