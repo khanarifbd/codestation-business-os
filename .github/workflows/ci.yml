@@ -265,6 +265,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Prepare E2E backend
         working-directory: backend
         run: |
@@ -279,6 +282,8 @@ jobs:
           E2E_EMAIL=neutral-theme@example.com uv run python scripts/seed_browser_e2e.py
           uv run python scripts/seed_qc_personal_client_browser.py
           nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/business-os-backend.log 2>&1 &
+          backend_pid=$!
+          nohup node ../frontend/scripts/ci-transport-observer.cjs --watch-pid "$backend_pid" >/dev/null 2>&1 &
       - name: Wait for backend
         run: |
           for i in {1..30}; do
@@ -287,9 +292,6 @@ jobs:
           done
           cat /tmp/business-os-backend.log || true
           exit 1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
       - run: corepack enable
       - name: Build frontend and install Playwright test runner
         working-directory: frontend
@@ -306,7 +308,7 @@ jobs:
           INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
-        run: nohup pnpm exec next dev --turbopack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
+        run: BOS_TRANSPORT_DIAGNOSTICS=1 NODE_OPTIONS="${NODE_OPTIONS:-} --require=$PWD/scripts/ci-transport-observer.cjs" nohup pnpm exec next dev --turbopack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
       - name: Wait for frontend
         run: |
           for i in {1..30}; do
@@ -317,13 +319,15 @@ jobs:
           exit 1
       - name: Run critical browser journey
         working-directory: frontend
-        run: pnpm exec playwright test
+        run: BOS_TRANSPORT_DIAGNOSTICS=1 NODE_OPTIONS="${NODE_OPTIONS:-} --require=$PWD/scripts/ci-transport-observer.cjs" pnpm exec playwright test
       - name: Preserve neutral workspace visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: neutral-workspace-screenshots
-          path: frontend/test-results/**/neutral-theme-*.png
+          path: |
+            frontend/test-results/**/neutral-theme-*.png
+            /tmp/business-os-transport/*.ndjson
           if-no-files-found: warn
           retention-days: 7
       - name: Print service logs on failure
