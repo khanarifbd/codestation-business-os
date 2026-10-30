@@ -25,6 +25,14 @@ export async function captureCompanyPanel(page, expect, info, name, ready) {
       await expect(ready).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: info.outputPath(`neutral-theme-company-${name}-${size}.png`) });
+      if (name === 'gateways' && size === 'mobile') {
+        for (const mode of ['Test', 'Live']) {
+          const heading = page.getByRole('heading', { name: `Stripe ${mode} Mode`, exact: true });
+          await heading.scrollIntoViewIfNeeded();
+          await expect(heading).toBeInViewport({ratio:1});
+          await page.screenshot({ path: info.outputPath(`neutral-theme-company-gateways-${mode.toLowerCase()}-mobile-card.png`) });
+        }
+      }
     }
   } finally { if (previous) await page.setViewportSize(previous); }
 }

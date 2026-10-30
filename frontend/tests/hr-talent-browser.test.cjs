@@ -19,8 +19,8 @@ for(const fail of [false,true])test('actual read outage always unregisters befor
  assert.deepEqual(calls,fail?['route','goto','unroute']:['route','goto','unroute','retry']);
 });
 for(const fail of [false,true])test('actual Talent captures restore viewport on success/failure '+fail,async()=>{
- const original={width:900,height:700},sizes=[];const p={viewportSize:()=>original,setViewportSize:async v=>sizes.push(v),getByRole:()=>({click:async()=>{}}),getByText:()=>({}),evaluate:async()=>true,screenshot:async()=>{if(fail)throw Error('capture failed');}};
- const expect=v=>({toBeVisible:async()=>{},toBe:x=>assert.equal(v,x)}),run=vm.runInNewContext('('+helper('captureTalentTabs')+')',{expect});
+ const original={width:900,height:700},sizes=[];const p={viewportSize:()=>original,setViewportSize:async v=>sizes.push(v),getByRole:()=>({click:async()=>{},scrollIntoViewIfNeeded:async()=>{}}),getByText:()=>({scrollIntoViewIfNeeded:async()=>{}}),evaluate:async()=>true,screenshot:async()=>{if(fail)throw Error('capture failed');}};
+ const expect=v=>({toBeVisible:async()=>{},toBeInViewport:async()=>{},toBe:x=>assert.equal(v,x)}),run=vm.runInNewContext('('+helper('captureTalentTabs')+')',{expect});
  if(fail)await assert.rejects(()=>run(p,{outputPath:x=>x}),/capture failed/);else await run(p,{outputPath:x=>x});
  assert.equal(sizes.at(-1),original);
 });

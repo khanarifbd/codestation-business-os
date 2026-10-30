@@ -93,6 +93,10 @@ export async function verifyCompanyUnknownBoundaries({ page, context, expect, ap
       await page.evaluate(() => window.scrollTo(0, 0));
       await expect(days).toBeVisible();
       await page.screenshot({ path: info.outputPath('neutral-theme-company-defaults-unknown-mobile.png') });
+      const unknownWarning = page.getByText(/The save outcome is unknown/);
+      await unknownWarning.scrollIntoViewIfNeeded();
+      await expect(unknownWarning).toBeInViewport({ratio:1});
+      await page.screenshot({ path: info.outputPath('neutral-theme-company-defaults-unknown-mobile-warning.png') });
       await companyLeaveDialog(page, () => page.getByRole('button', { name: 'General', exact: true }).click(), false, expect);
       await expect(days).toBeDisabled();
       await companyLeaveDialog(page, () => page.getByRole('button', { name: 'General', exact: true }).click(), true, expect);

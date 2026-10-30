@@ -229,6 +229,12 @@ async function captureTalentTabs(p,info){
     await p.evaluate(()=>window.scrollTo(0,0));
     expect(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
     await p.screenshot({path:info.outputPath(`neutral-theme-talent-${tab.toLowerCase().replaceAll(' ','-')}-${size}.png`),fullPage:false});
+    if(size==='mobile'){
+     const target=tab==='Performance'?p.getByRole('button',{name:record,exact:true}):p.getByText(record,{exact:true});
+     await target.scrollIntoViewIfNeeded();
+     await expect(target).toBeInViewport({ratio:1});
+     await p.screenshot({path:info.outputPath(`neutral-theme-talent-${tab.toLowerCase().replaceAll(' ','-')}-mobile-record.png`),fullPage:false});
+    }
    }
   }
  }finally{if(viewport)await p.setViewportSize(viewport);}
@@ -265,6 +271,13 @@ async function captureHRResponsive(p,info,label,ready){
   await p.setViewportSize({width,height});await expect(ready).toBeVisible();await p.evaluate(()=>window.scrollTo(0,0));
   expect(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await p.screenshot({path:info.outputPath(`neutral-theme-${label}-${size}.png`),fullPage:false});
+  if(label==='hr-upload-unknown'){
+   const dialog=p.getByRole('dialog',{name:'Upload employee document',exact:true});
+   await dialog.evaluate(node=>{node.scrollTop=0;});
+   await expect(ready).toBeInViewport({ratio:1});
+   await expect(p.getByRole('button',{name:'Close document upload',exact:true})).toBeInViewport({ratio:1});
+   await p.screenshot({path:info.outputPath(`neutral-theme-${label}-${size}-dialog-top.png`),fullPage:false});
+  }
  }}finally{if(viewport)await p.setViewportSize(viewport);}
 }
 async function verifyAttendanceSetupEvidence(p,info,employee,office){
