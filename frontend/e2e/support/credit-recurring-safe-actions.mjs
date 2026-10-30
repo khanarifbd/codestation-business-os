@@ -31,9 +31,11 @@ export async function verifyRecurringUnknownAction(page, info, api, bank, marker
     schedules: await api(page, 'GET', '/finance-controls/recurring-expenses'),
     expenses: await api(page, 'GET', '/finance/expenses'),
     account: (await api(page, 'GET', '/finance/accounts')).find(row => row.id === bank.id),
+    journals: await api(page, 'GET', '/accounting/journals?limit=200'),
   });
   const before = await readState();
   expect(before.account?.id).toBe(bank.id);
+  expect(before.journals.length).toBeLessThan(200);
   expect(before.schedules.find(row => row.id === schedule.id)).toMatchObject({ is_active: true, auto_post: false, next_due_date: today });
   const endpoint = `/api/finance-controls/recurring-expenses/${schedule.id}/post`;
   await withUnforwardedFinancialAttempts(page, endpoint, async attempts => {
@@ -46,6 +48,7 @@ export async function verifyRecurringUnknownAction(page, info, api, bank, marker
     await expect(page.getByText('Posting outcome needs verification', { exact: true })).toBeVisible();
     expect(attempts).toHaveLength(1);
     expect(attempts[0].key).toBeTruthy();
+    expect(JSON.parse(attempts[0].body)).toEqual({ expense_date: today, expense_amount: '1.01', account_amount: null, profitability_amount: null, reference: `RECURRING-NOT-SENT-${marker}`, notes: null });
     await expect(page.getByLabel('Expense amount (USD)', { exact: true })).toBeDisabled();
     await expect(review).toBeDisabled();
     expect(await readState()).toEqual(before);
@@ -76,9 +79,11 @@ export async function verifyCreditUnknownAction(page, info, api, bank, marker, t
     invoice: await api(page, 'GET', `/finance/invoices/${invoice.id}`),
     advance: await api(page, 'GET', `/accounting/customer-advances/${advance.id}`),
     account: (await api(page, 'GET', '/finance/accounts')).find(row => row.id === bank.id),
+    journals: await api(page, 'GET', '/accounting/journals?limit=200'),
   });
   const before = await readState();
   expect(before.account?.id).toBe(bank.id);
+  expect(before.journals.length).toBeLessThan(200);
   expect(String(before.invoice.balance_due)).toBe('1.01');
   expect(String(before.advance.remaining_amount)).toBe('1.01');
   expect(before.advance.client_id).toBe(client.id);
@@ -93,6 +98,7 @@ export async function verifyCreditUnknownAction(page, info, api, bank, marker, t
     await expect(page.getByRole('heading', { name: 'Application outcome is uncertain', exact: true })).toBeVisible();
     expect(attempts).toHaveLength(1);
     expect(attempts[0].key).toBeTruthy();
+    expect(JSON.parse(attempts[0].body)).toEqual({ invoice_id: invoice.id, application_date: today, amount: 1.01 });
     await expect(review).toHaveCount(0);
     await page.getByRole('button', { name: 'Read current records', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Review same-operation retry', exact: true })).toBeEnabled();
