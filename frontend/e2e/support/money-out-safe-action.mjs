@@ -26,7 +26,10 @@ export async function verifyMoneyOutUnknownAction(page, info, api, account, cate
     await page.getByRole('listbox').getByRole('button').filter({ has: page.getByText(account.name, { exact: true }) }).click();
     await page.getByLabel(/^Gross expense amount/).fill('1.01');
     await page.getByLabel('Expense date', { exact: true }).fill(today);
-    await page.getByLabel('Payment method', { exact: true }).selectOption('bank_transfer');
+    const paymentMethod = page.locator('label').filter({ has: page.locator('span').filter({ hasText: /^Payment method$/ }) }).locator('select');
+    await expect(paymentMethod).toHaveCount(1);
+    await paymentMethod.selectOption('bank_transfer');
+    await expect(paymentMethod).toHaveValue('bank_transfer');
     await page.getByLabel('Reference (optional)', { exact: true }).fill(reference);
     const review = page.getByRole('button', { name: 'Review paid expense', exact: true });
     await expect(review).toBeEnabled();
