@@ -303,31 +303,24 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
           pnpm build
-      - name: Start isolated development frontend for functional browser QA
+      - name: Run critical browser journey in fixed52+8 compiler phases
         working-directory: frontend
         env:
           INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
-        run: BOS_TRANSPORT_DIAGNOSTICS=1 NODE_OPTIONS="${NODE_OPTIONS:-} --require=$PWD/scripts/ci-transport-observer.cjs" nohup pnpm exec next dev --turbopack -H 127.0.0.1 -p 3000 >/tmp/business-os-frontend.log 2>&1 &
-      - name: Wait for frontend
-        run: |
-          for i in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:3000/login >/dev/null; then exit 0; fi
-            sleep 1
-          done
-          cat /tmp/business-os-frontend.log || true
-          exit 1
-      - name: Run critical browser journey
-        working-directory: frontend
-        run: BOS_TRANSPORT_DIAGNOSTICS=1 NODE_OPTIONS="${NODE_OPTIONS:-} --require=$PWD/scripts/ci-transport-observer.cjs" pnpm exec playwright test
+          BOS_FUNCTIONAL_EVIDENCE: ${{ runner.temp }}/functional-phases
+        # Same backend/DB/fixtures/limiter; no failed phase retry. Original60 cases once.
+        run: BOS_TRANSPORT_DIAGNOSTICS=1 NODE_OPTIONS="${NODE_OPTIONS:-} --require=$PWD/scripts/ci-transport-observer.cjs" node scripts/run-functional-phases.mjs
       - name: Preserve neutral workspace visual evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: neutral-workspace-screenshots
           path: |
-            frontend/test-results/**/neutral-theme-*.png
+            ${{ runner.temp }}/functional-phases/**/test-results/**/neutral-theme-*.png
+            ${{ runner.temp }}/functional-phases/summary.json
+            ${{ runner.temp }}/functional-phases/**/lifecycle.ndjson
             /tmp/business-os-transport/*.ndjson
           if-no-files-found: warn
           retention-days: 7
@@ -337,7 +330,7 @@ jobs:
           echo "--- backend ---"
           cat /tmp/business-os-backend.log || true
           echo "--- frontend ---"
-          cat /tmp/business-os-frontend.log || true
+          cat "$RUNNER_TEMP"/functional-phases/phase-*/frontend-*.log || true
 
   admin-readonly:
     # Independent disposable DB/processes; never shares or modifies the60-case job.
