@@ -331,6 +331,11 @@ def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request],
                 '/dashboard/accounting/money-in/receipts/[kind]/[receiptId]': f'/dashboard/accounting/money-in/receipts/payment/{payment.id}',
             }}
 
+    result['route_overrides']['/dashboard/finance/transfers/[transferId]'] = f'/dashboard/finance/transfers/{transfer.id}'
+    for family, suffixes in [('recurring', ('', '/post', '/status')), ('automation', ('', '/configure', '/retry'))]:
+        for suffix in suffixes:
+            result['route_overrides'][f'/dashboard/accounting/controls/{family}/[recurringId]{suffix}'] = (
+                f'/dashboard/accounting/controls/{family}/{recurring.id}{suffix}')
     result['route_contracts'] = control_and_finance_contracts(result)
     return result
 

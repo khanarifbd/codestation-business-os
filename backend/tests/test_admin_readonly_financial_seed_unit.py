@@ -251,6 +251,14 @@ class RemainingSeedTests(unittest.TestCase):
         self.assertEqual(by_name('create_advance')[0][0].amount, Decimal('1'))
         self.assertEqual(result['route_overrides']['/dashboard/accounting/money-in/receipts/[kind]/[receiptId]'], '/dashboard/accounting/money-in/receipts/payment/payment')
         self.assertEqual(len(result['route_contracts']), 18)
+        for pattern in result['route_contracts']:
+            if '[' in pattern:
+                self.assertIn(pattern, result['route_overrides'])
+                self.assertNotIn('[', result['route_overrides'][pattern])
+                if '[recurringId]' in pattern:
+                    self.assertEqual(result['route_overrides'][pattern], pattern.replace('[recurringId]', result['recurring_id']))
+                if '[transferId]' in pattern:
+                    self.assertEqual(result['route_overrides'][pattern], pattern.replace('[transferId]', result['transfer_id']))
         app = Path(__file__).parents[2] / 'frontend/src/app'
         patterns = {'/' + str(p.relative_to(app).parent) for p in (app / 'dashboard/accounting/controls').rglob('page.tsx')}
         patterns.update('/' + str(p.relative_to(app).parent) for p in (app / 'dashboard/finance').rglob('page.tsx') if '/invoices/' not in str(p))
