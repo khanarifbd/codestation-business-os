@@ -145,9 +145,14 @@ export function useAccountingTransfers() {
       if (!mounted.current) return;
       if (!response.ok) {
         authenticatedFailure = response.status === 401;
-        uncertain.current = response.status >= 500 || response.status === 409;
+        // A later rejection cannot prove that an earlier ambiguous attempt did not post.
+        // The proxy synthetic parse-failure message is not a backend rejection either.
+        const definiteRejection = response.status >= 400 && response.status < 500
+          && response.status !== 408 && response.status !== 409
+          && getApiErrorMessage(body, "").trim().length > 0 && getApiErrorMessage(body, "").trim() !== "Unexpected upstream response";
+        uncertain.current = uncertain.current || !definiteRejection;
         setPhase(uncertain.current ? "uncertain" : "idle");
-        throw new Error(getApiErrorMessage(body, "The transfer was not confirmed."));
+        throw new Error(getApiErrorMessage(body, "The transfer was not confirmed.") + (uncertain.current ? " The outcome remains uncertain. Keep the original transfer request and retry key; a later rejection does not prove the earlier attempt failed." : ""));
       }
       uncertain.current = false; setPhase("confirmed"); setConfirmOpen(false); navigation.markClean();
       const sent = JSON.parse(operation.current.body) as ReturnType<typeof transferPayload>;

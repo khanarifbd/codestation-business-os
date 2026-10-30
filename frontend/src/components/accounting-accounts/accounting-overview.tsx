@@ -21,11 +21,11 @@ function AccountingOverviewContent() {
     if (!vm.canView)
         return <RelationshipPage className="aa-workspace"><AccountState title="Accounting is restricted">Your current company role does not include finance viewing permission.</AccountState></RelationshipPage>;
     const positions = accountPositions(data.accounts ?? []);
-    const cashCurrencies = new Map(positions.available), receivables = new Map((data.summary?.by_currency ?? []).map(row => [row.currency, Number(row.outstanding)]));
-    const payableTotals = new Map(accountGroups(data.payables ?? [], row => row.currency, row => Number(row.balance_due)));
-    const loanTotals = new Map(accountGroups(data.loans ?? [], row => row.currency, row => Number(row.outstanding_principal)));
+    const cashCurrencies = new Map(positions.available), receivables = new Map((data.summary?.by_currency ?? []).map(row => [row.currency, String(row.outstanding)]));
+    const payableTotals = new Map(accountGroups(data.payables ?? [], row => row.currency, row => row.balance_due));
+    const loanTotals = new Map(accountGroups(data.loans ?? [], row => row.currency, row => row.outstanding_principal));
     const codes = [...new Set([...cashCurrencies.keys(), ...receivables.keys(), ...payableTotals.keys(), ...loanTotals.keys()])].sort();
-    const amount = (available: boolean, values: Map<string, number>, code: string) => available ? values.has(code) ? accountMoney(values.get(code)!, code) : "—" : "Unavailable";
+    const amount = (available: boolean, values: Map<string, string>, code: string) => available ? values.has(code) ? accountMoney(values.get(code)!, code) : "—" : "Unavailable";
     return <RelationshipPage className="aa-workspace">
     <AccountHeading eyebrow="Finance workspace" title="Finance & Accounting" description="See the current position. Open the right record before moving money." actions={<><button className="aa-icon-button" disabled={vm.loading} aria-label="Refresh accounting overview" onClick={() => void vm.load()}><RefreshCw aria-hidden="true"/></button><Link className="aa-primary" href="/dashboard/accounting/accounts">Open accounts<ArrowRight aria-hidden="true"/></Link></>}/>
     {Object.keys(vm.errors).length ? <RelationshipNotice tone="error">Some financial sections could not be loaded. Unavailable values are not zero. <button className="aa-text-button" disabled={vm.loading} onClick={() => void vm.load()}>Retry overview</button></RelationshipNotice> : null}

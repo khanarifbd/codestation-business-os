@@ -15,10 +15,11 @@ export function AccountEditor({ vm }: {
     <AccountHeading eyebrow="Finance / Account settings" title={edit ? `Edit ${vm.account!.name}` : "Add a financial account"} description={edit ? "Update account identity and payment defaults without changing ledger history." : "Record an existing financial account and its opening position."}/>
     {vm.gatewayError ? <RelationshipNotice tone="error">{vm.gatewayError} {edit ? "Existing links are retained; retry loading before changing a link." : "A manual account does not require a connection."} {vm.canView ? <button className="aa-text-button" disabled={vm.loading} onClick={() => void vm.load()}>Retry connections</button> : null}</RelationshipNotice> : null}
     {edit ? <div className="aa-immutable"><span>{accountLabel(vm.account!.account_type)}</span><strong>{vm.account!.currency}</strong><span>Opening {accountMoney(vm.account!.opening_balance, vm.account!.currency)}</span><p>Type, currency and opening balance cannot be edited here.</p></div> : null}
+    {vm.uncertain ? <RelationshipNotice tone="error">Creation is not confirmed. This draft is frozen to prevent another opening-balance entry. {vm.canView ? <a href="/dashboard/accounting/accounts" target="_blank" rel="noopener noreferrer">Review Accounts in a separate tab</a> : "Ask a colleague with finance viewing permission to review Accounts."} A missing or similarly named account is not proof of this request’s outcome. Reloading or leaving loses this document-only protection. <button type="button" className="aa-text-button" onClick={vm.back}>Leave after review</button></RelationshipNotice> : null}
     <form className="aa-editor" onSubmit={event => {
         event.preventDefault();
         void vm.save();
-    }}><fieldset disabled={vm.saving || vm.committed}>
+    }}><fieldset disabled={vm.saving || vm.committed || vm.uncertain}>
       <EditorSection number="01" title="Account identity" description="Use a name your team recognizes.">
         {!edit ? <Field label="Account type"><select value={v.account_type} onChange={event => vm.change("account_type", event.target.value)}>{ACCOUNT_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select><small>{ACCOUNT_TYPES.find(type => type.value === v.account_type)?.help}</small></Field> : null}
         <Field label="Account name"><input required maxLength={edit ? 180 : undefined} value={v.name} onChange={event => vm.change("name", event.target.value)} placeholder="Business bank account"/></Field>

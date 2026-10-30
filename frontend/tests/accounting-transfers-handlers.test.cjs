@@ -40,3 +40,50 @@ check('rapid double Next creates only one history entry while async cursor hashi
 check('filter navigation invalidates an older delayed Next request',async h=>{await ready(h,'register');h.respond(()=>ok({items:[transfer],next_cursor:'next'}));await h.api().loadPage();const vm=h.render();let release;window.crypto={randomUUID:require('node:crypto').randomUUID,subtle:{digest:()=>new Promise(r=>release=r)}};const pending=vm.nextPage();vm.changeBrowse({currency:'USD'});release(new Uint8Array(32).buffer);await pending;assert.equal(h.nav.length,1);assert.match(h.nav[0][1],/currency=USD/);assert.doesNotMatch(h.nav[0][1],/cursor=/);});
 check('uncertain draft requests truthful shared exit warning rather than ordinary unsaved wording',async h=>{const vm=await filled(h);h.respond(()=>{throw new TypeError('Interrupted');});await vm.postTransfer();h.render();assert.match(h.guards.at(-1).options.discardMessage,/may already be recorded/);assert.match(h.guards.at(-1).options.discardMessage,/retry key/);});
 check('financial confirmation preserves the original optional Reference row alongside amounts/date',async h=>{const vm=await filled(h);const tree=h.component(editor,'TransferEditor',{vm});const dialog=nodes(tree,'TransferConfirmation')[0];assert.ok(dialog);assert.equal(dialog.props.details.find(row=>row.label==='Reference').value,'SYN-REF');for(const label of ['From account','To account','Total deducted','Fee included','Net transferred','Actual received','Effective rate','Transfer date'])assert.ok(dialog.props.details.some(row=>row.label===label));const empty=nodes(h.component(editor,'TransferEditor',{vm:{...vm,values:{...vm.values,reference:''}}}),'TransferConfirmation')[0];assert.equal(empty.props.details.some(row=>row.label==='Reference'),false);});
+
+// Synthetic transport only. No accounts or financial records are written by these tests.
+for(const status of [400,401,403,404,405,408,409,410,413,415,422,429,500,502,503])check(`unknown then HTTP ${status} retains original operation despite attempted edit`,async h=>{
+ const vm=await filled(h);h.respond(()=>{throw new TypeError('Synthetic lost response');});await vm.postTransfer();
+ const first=h.calls.find(c=>c.init?.method);h.render().review();h.respond(()=>fail(status));await h.render().postTransfer();
+ let next=h.render();assert.equal(next.phase,'uncertain');assert.equal(next.dirty,true);assert.match(next.writeError,/later rejection does not prove/);
+ next.change('source_amount','50');next.change('notes','Replacement forbidden');next.change('from_account_id',destination.id);
+ next=h.render();assert.equal(next.values.source_amount,'25.00');assert.equal(next.values.notes,'Synthetic context');assert.equal(next.values.from_account_id,account.id);
+ const beforeReads=h.calls.length;await next.loadAccounts();assert.equal(h.calls.length,beforeReads,'A reread cannot reset operation');
+ next.review();await h.render().postTransfer();const posts=h.calls.filter(c=>c.init?.method);assert.equal(posts.length,3);
+ for(const post of posts){assert.equal(post.init.body,first.init.body);assert.equal(post.init.headers['Idempotency-Key'],first.init.headers['Idempotency-Key']);}
+ assert.equal(h.render().phase,'uncertain');if(status===401)assert.ok(h.nav.every(item=>item[0]==='replace'&&item[1]==='/login'));
+});
+check('unknown then rejected replay resolves only through original keyed success and never enables fresh write',async h=>{
+ const vm=await filled(h);h.respond(()=>{throw new TypeError('Synthetic lost response');});await vm.postTransfer();const first=h.calls.find(c=>c.init?.method);
+ h.render().review();h.respond(()=>fail(422));await h.render().postTransfer();h.render().review();h.respond(()=>ok(transfer));await h.render().postTransfer();
+ const next=h.render();assert.equal(next.phase,'confirmed');assert.equal(next.receipt.id,transfer.id);assert.equal(next.accounts[0].current_balance,account.current_balance);
+ next.change('source_amount','50');next.review();await h.render().postTransfer();const posts=h.calls.filter(c=>c.init?.method);assert.equal(posts.length,3);for(const post of posts){assert.equal(post.init.body,first.init.body);assert.equal(post.init.headers['Idempotency-Key'],first.init.headers['Idempotency-Key']);}
+});
+check('pending retry after unknown rejects duplicate confirm and closes without a new operation',async h=>{
+ const vm=await filled(h);h.respond(()=>{throw new TypeError('Synthetic lost response');});await vm.postTransfer();h.render().review();let release;h.respond(()=>new Promise(r=>release=r));const retry=h.render();const pending=retry.postTransfer();await retry.postTransfer();retry.cancelReview();retry.change('reference','Replacement');retry.back();assert.equal(h.calls.filter(c=>c.init?.method).length,2);assert.equal(h.render().confirmOpen,true);assert.equal(h.nav.length,0);release(fail(403));await pending;assert.equal(h.render().phase,'uncertain');assert.equal(h.render().values.reference,'SYN-REF');
+});
+check('late rejection after workspace cleanup cannot redirect or replace unknown UI state',async h=>{
+ const vm=await filled(h);const cleanup=h.runEffect(/mounted.current = true/);h.respond(()=>{throw new TypeError('Synthetic lost response');});await vm.postTransfer();h.render().review();let release;h.respond(()=>new Promise(r=>release=r));const pending=h.render().postTransfer();cleanup();release(fail(401));await pending;assert.deepEqual(h.nav,[]);assert.equal(h.render().phase,'uncertain');assert.equal(h.calls.filter(c=>c.init?.method).length,2);
+});
+check('unknown result and rejected replay retain truthful leave warning; Cancel leaves original operation intact',async h=>{
+ const vm=await filled(h);h.respond(()=>fail(503));await vm.postTransfer();h.render().review();h.respond(()=>fail(400));await h.render().postTransfer();h.render();assert.match(h.guards.at(-1).options.discardMessage,/retained retry key/);h.confirm(false);h.render().back();assert.deepEqual(h.nav,[]);assert.equal(h.render().phase,'uncertain');
+});
+
+// Initial unreadable HTTP failures are not proof that the write did not commit.
+for(const status of [400,401,403,404,405,408,409,410,413,415,422,429,500,502,503])for(const [kind,json] of [
+ ['malformed',async()=>({detail:{unexpected:'not an API rejection'}})],
+ ['null',async()=>null],
+ ['empty',async()=>({detail:'  '})],
+ ['body-read-failure',async()=>{throw new TypeError('Synthetic unreadable response');}],
+])check(`initial HTTP ${status} ${kind} preserves original operation and blocks edits`,async h=>{
+ const vm=await filled(h);h.respond(()=>({ok:false,status,json}));await vm.postTransfer();
+ const first=h.calls.find(c=>c.init?.method);let next=h.render();assert.equal(next.phase,'uncertain');assert.match(next.writeError,/outcome remains uncertain/);
+ next.change('source_amount','50');next.change('notes','Forbidden replacement');next=h.render();assert.equal(next.values.source_amount,'25.00');assert.equal(next.values.notes,'Synthetic context');
+ next.review();await h.render().postTransfer();const posts=h.calls.filter(c=>c.init?.method);assert.equal(posts.length,2);assert.equal(posts[1].init.body,first.init.body);assert.equal(posts[1].init.headers['Idempotency-Key'],first.init.headers['Idempotency-Key']);assert.equal(h.render().phase,'uncertain');
+});
+check('initial structured HTTP 408 retains uncertain operation until keyed success',async h=>{
+ const vm=await filled(h);h.respond(()=>fail(408));await vm.postTransfer();assert.equal(h.render().phase,'uncertain');const first=h.calls.find(c=>c.init?.method);h.render().change('source_amount','50');assert.equal(h.render().values.source_amount,'25.00');h.render().review();h.respond(()=>ok(transfer));await h.render().postTransfer();assert.equal(h.render().phase,'confirmed');const posts=h.calls.filter(c=>c.init?.method);assert.equal(posts[1].init.body,first.init.body);assert.equal(posts[1].init.headers['Idempotency-Key'],first.init.headers['Idempotency-Key']);
+});
+for(const detail of ['Rejected by validation',[{loc:['body','source_amount'],msg:'Invalid amount',type:'value_error'}],{message:'Account not available'}])check('initial structured 422 remains explicitly correctable: '+JSON.stringify(detail),async h=>{
+ const vm=await filled(h);h.respond(()=>fail(422,detail));await vm.postTransfer();assert.equal(h.render().phase,'idle');h.render().change('reference','Corrected');assert.equal(h.render().values.reference,'Corrected');
+});

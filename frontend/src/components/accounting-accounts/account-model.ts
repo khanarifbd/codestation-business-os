@@ -1,3 +1,5 @@
+import { accountOpening, accountSum, accountFormat } from "./account-money";
+import { CURRENCY_OPTIONS } from "@/lib/company-options";
 import type { FinancialAccountEditData } from "@/components/financial-account-edit-panel";
 export type FinancialAccount = FinancialAccountEditData;
 export type AccountType = "bank" | "cash" | "mobile_wallet" | "credit_card" | "payment_gateway" | "petty_cash" | "other";
@@ -106,9 +108,9 @@ export function isAccountingLoans(value: unknown): value is AccountingLoan[] {
 export function isAccountingPayables(value: unknown): value is AccountingPayable[] {
     return Array.isArray(value) && value.every(row => accountRecord(row) && text(row.id) && text(row.currency) && amount(row.balance_due));
 }
-export function accountInitialValues(account?: FinancialAccount | null): AccountValues {
+export function accountInitialValues(account?: FinancialAccount | null, tenantCurrency?: string): AccountValues {
     return {
-        name: account?.name ?? "", account_type: account?.account_type ?? "bank", provider_name: account?.provider_name ?? "", gateway_connection_id: account?.gateway_connection_id ?? "", account_holder_name: account?.account_holder_name ?? "", account_reference: account?.account_reference ?? "", currency: account?.currency ?? "BDT", opening_balance: String(account?.opening_balance ?? "0"), notes: account?.notes ?? "", payment_url: account?.payment_url ?? "", payment_instructions: account?.payment_instructions ?? "", is_active: account?.is_active ?? true
+        name: account?.name ?? "", account_type: account?.account_type ?? "bank", provider_name: account?.provider_name ?? "", gateway_connection_id: account?.gateway_connection_id ?? "", account_holder_name: account?.account_holder_name ?? "", account_reference: account?.account_reference ?? "", currency: account?.currency ?? (CURRENCY_OPTIONS.some(option => option.value === tenantCurrency) ? tenantCurrency! : ""), opening_balance: String(account?.opening_balance ?? "0"), notes: account?.notes ?? "", payment_url: account?.payment_url ?? "", payment_instructions: account?.payment_instructions ?? "", is_active: account?.is_active ?? true
     };
 }
 /** Preserve the two existing endpoint payloads; immutable ledger fields never enter PATCH. */
@@ -120,33 +122,28 @@ export function accountPayload(values: AccountValues, editing: boolean, account?
             name: values.name, provider_name: values.provider_name.trim() || null, account_holder_name: values.account_holder_name.trim() || null, account_reference: values.account_reference.trim() || null, gateway_connection_id: account.account_type === "payment_gateway" ? values.gateway_connection_id || null : null, payment_url: values.payment_url.trim() || null, payment_instructions: values.payment_instructions.trim() || null, notes: values.notes.trim() || null, is_active: values.is_active
         };
     }
+    if (!CURRENCY_OPTIONS.some(option => option.value === values.currency)) throw new Error("Select a supported account currency.");
     return {
-        name: values.name, account_type: values.account_type, currency: values.currency, opening_balance: Number(values.opening_balance || 0), provider_name: values.provider_name || null, account_holder_name: values.account_holder_name || null, account_reference: values.account_reference || null, gateway_connection_id: values.account_type === "payment_gateway" ? values.gateway_connection_id || null : null, payment_url: values.payment_url || null, payment_instructions: values.payment_instructions || null, notes: values.notes || null
+        name: values.name, account_type: values.account_type, currency: values.currency, opening_balance: accountOpening(values.opening_balance, values.account_type === "credit_card"), provider_name: values.provider_name || null, account_holder_name: values.account_holder_name || null, account_reference: values.account_reference || null, gateway_connection_id: values.account_type === "payment_gateway" ? values.gateway_connection_id || null : null, payment_url: values.payment_url || null, payment_instructions: values.payment_instructions || null, notes: values.notes || null
     };
 }
 export function accountMoney(value: string | number, currency: string) {
-    return `${currency} ${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return accountFormat(value, currency);
 }
 export function accountLabel(value: string) {
     return ACCOUNT_TYPES.find(type => type.value === value)?.label ?? value.replaceAll("_", " ").replace(/\b\w/g, char => char.toUpperCase());
 }
-export function accountGroups<T>(rows: T[], currency: (row: T) => string, value: (row: T) => number): [
-    string,
-    number
-][] {
-    const totals = new Map<string, number>();
-    rows.forEach(row => {
-        const code = currency(row);
-        totals.set(code, (totals.get(code) ?? 0) + value(row));
-    });
-    return [...totals.entries()].sort(([a], [b]) => a.localeCompare(b));
+export function accountGroups<T>(rows: T[], currency: (row: T) => string, value: (row: T) => string | number): [string, string][] {
+    const groups = new Map<string, Array<string | number>>();
+    rows.forEach(row => { const code = currency(row); groups.set(code, [...(groups.get(code) ?? []), value(row)]); });
+    return [...groups.entries()].map(([code, values]): [string, string] => [code, accountSum(values)]).sort(([a], [b]) => a.localeCompare(b));
 }
 export function accountPositions(accounts: FinancialAccount[]) {
     const active = accounts.filter(row => row.is_active);
-    return { active, available: accountGroups(active.filter(row => row.account_type !== "credit_card"), row => row.currency, row => Number(row.current_balance)), liabilities: accountGroups(active.filter(row => row.account_type === "credit_card"), row => row.currency, row => Number(row.current_balance)) };
+    return { active, available: accountGroups(active.filter(row => row.account_type !== "credit_card"), row => row.currency, row => row.current_balance), liabilities: accountGroups(active.filter(row => row.account_type === "credit_card"), row => row.currency, row => row.current_balance) };
 }
 export function accountLedgerTotals(rows: AccountTransaction[]) {
-    return rows.reduce((sum, row) => ({ credit: sum.credit + (row.direction === "credit" ? Number(row.amount) : 0), debit: sum.debit + (row.direction === "debit" ? Number(row.amount) : 0) }), { credit: 0, debit: 0 });
+    return { credit: accountSum(rows.filter(row => row.direction === "credit").map(row => row.amount)), debit: accountSum(rows.filter(row => row.direction === "debit").map(row => row.amount)) };
 }
 export function accountLedgerCsv(rows: AccountTransaction[]) {
     const header = ["Date", "Description", "Source", "Source ID", "Reference", "Debit", "Credit"];

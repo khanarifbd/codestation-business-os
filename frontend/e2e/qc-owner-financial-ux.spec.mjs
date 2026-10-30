@@ -1,11 +1,14 @@
+import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 // Real local Next proxy, FastAPI and PostgreSQL. API setup is explicit; every
-// stated UI mutation/preview assertion is real, without request interception.
+// original UI mutation/preview assertion is real. Added uncertainty cases explicitly
+// abort before forwarding and then use real readback; successful writes are never mocked.
 test.use({ actionTimeout: 15_000 });
 const email = process.env.E2E_QC_FINANCIAL_UX_EMAIL ?? "qc-financial-ux@example.com";
-const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
+const password = process.env.E2E_PASSWORD;
+if (!password?.trim()) throw new Error("E2E_PASSWORD must be supplied by the isolated CI fixture.");
 const today = new Date().toISOString().slice(0, 10);
 const first = `${today.slice(0, 7)}-01`;
 const last = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).toISOString().slice(0, 10);
@@ -43,6 +46,112 @@ async function rejectedUI(page, button, path, method = "POST") {
 
 // Current editors reject malformed values before a request. Check that UI
 // protection separately from the server's independent 422 validation contract.
+
+// Isolated-fixture uncertainty cases abort BEFORE forwarding, never fabricate a
+// successful response. Only that deliberate non-delivery makes absence provable.
+async function verifyAccountCreateBoundary(page, testInfo) {
+  const name = `Synthetic exact account ${randomUUID().slice(0, 8)}`;
+  await page.goto("/dashboard/accounting/accounts/new");
+  await expect(page.getByRole("heading", { name: "Add a financial account", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Currency", exact: true })).toContainText("USD");
+  await page.getByLabel("Account name", { exact: true }).fill(name);
+  await page.getByLabel(/^Opening balance/).fill("100.01");
+  const saved = page.waitForResponse(response => new URL(response.url()).pathname === "/api/accounting/financial-accounts" && response.request().method() === "POST");
+  const [account, response] = await Promise.all([
+    captureJsonResponse(page, { path: "/api/accounting/financial-accounts", action: () => page.getByRole("button", { name: "Create account", exact: true }).click() }),
+    saved,
+  ]);
+  expect(response.ok()).toBeTruthy();
+  expect(response.request().postDataJSON().opening_balance).toBe("100.01");
+  await expect(page).toHaveURL(new RegExp(`/dashboard/accounting/accounts/${account.id}`));
+  const accounts = await api(page, "GET", "/finance/accounts");
+  expect(accounts.filter(row => row.id === account.id)).toHaveLength(1);
+  expect(accounts.find(row => row.id === account.id).opening_balance).toBe("100.01");
+  expect(accounts.find(row => row.id === account.id).current_balance).toBe("100.01");
+  await expect(page.locator(".aa-account-balance")).toContainText("USD 100.01");
+  await page.screenshot({ path: testInfo.outputPath("neutral-theme-account-exact-desktop.png"), fullPage: true });
+
+  const unknownName = `Synthetic not-forwarded account ${randomUUID().slice(0, 8)}`;
+  await page.goto("/dashboard/accounting/accounts/new");
+  await page.getByLabel("Account name", { exact: true }).fill(unknownName);
+  await page.getByLabel(/^Opening balance/).fill("10.01");
+  let interceptedCreates = 0;
+  const createRoute = "**/api/accounting/financial-accounts";
+  const abortCreate = async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    interceptedCreates++;
+    await route.abort("failed"); // Never route.fetch/continue this POST.
+  };
+  await page.route(createRoute, abortCreate);
+  try {
+    await page.getByRole("button", { name: "Create account", exact: true }).click();
+    await expect(page.getByText(/Creation is not confirmed/)).toBeVisible();
+    await expect(page.getByLabel("Account name", { exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Create account", exact: true })).toBeDisabled();
+    await page.locator("form.aa-editor").evaluate(form => form.requestSubmit());
+    expect(interceptedCreates).toBe(1);
+    expect((await api(page, "GET", "/finance/accounts")).some(row => row.name === unknownName)).toBe(false);
+    await expect(page.getByRole("link", { name: "Review Accounts in a separate tab", exact: true })).toHaveAttribute("target", "_blank");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath("neutral-theme-account-unknown-mobile.png"), fullPage: false });
+  } finally {
+    await page.unroute(createRoute, abortCreate);
+  }
+}
+
+async function verifyTransferRetryBoundary(page, testInfo) {
+  const from = await api(page, "POST", "/accounting/financial-accounts", { name: "Synthetic retry source", account_type: "cash", currency: "USD", opening_balance: "100.01" });
+  const to = await api(page, "POST", "/accounting/financial-accounts", { name: "Synthetic retry destination", account_type: "cash", currency: "USD", opening_balance: "0" });
+  const reference = `SYN-RETRY-${randomUUID().slice(0, 8)}`;
+  await page.goto("/dashboard/accounting/transfers/new");
+  for (const [label, name] of [["From account", from.name], ["To account", to.name]]) {
+    await page.getByRole("button", { name: label, exact: true }).click();
+    await page.getByRole("listbox").getByRole("button", { name: new RegExp(name) }).click();
+  }
+  await page.getByLabel(/^Total deducted from source/).fill("25.01");
+  await page.getByLabel("Reference", { exact: true }).fill(reference);
+  const attempts = [];
+  const transferRoute = "**/api/finance/transfers";
+  const interceptTransfer = async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    attempts.push({ key: route.request().headers()["idempotency-key"], body: route.request().postData() });
+    if (attempts.length === 1) return route.abort("failed"); // Known not delivered.
+    await route.continue(); // Explicit same-operation retry reaches the real backend.
+  };
+  await page.route(transferRoute, interceptTransfer);
+  try {
+    await page.getByRole("button", { name: "Review transfer", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm & record", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Review same-operation retry", exact: true })).toBeVisible();
+    await expect(page.getByLabel(/^Total deducted from source/)).toBeDisabled();
+    expect(attempts).toHaveLength(1);
+    expect((await api(page, "GET", `/finance/transfer-page?search=${encodeURIComponent(reference)}`)).items).toHaveLength(0);
+    await page.screenshot({ path: testInfo.outputPath("neutral-theme-transfer-unknown-desktop.png"), fullPage: true });
+    await page.getByRole("button", { name: "Review same-operation retry", exact: true }).click();
+    const acknowledged = page.waitForResponse(response => new URL(response.url()).pathname === "/api/finance/transfers" && response.request().method() === "POST");
+    await page.getByRole("button", { name: "Retry same operation", exact: true }).click();
+    const response = await acknowledged;
+    expect(response.ok()).toBeTruthy();
+    const receipt = await response.json();
+    await expect(page.getByRole("heading", { name: "Transfer recorded", exact: true })).toBeVisible();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].key).toBeTruthy();
+    expect(attempts[1]).toEqual(attempts[0]);
+    const recorded = await api(page, "GET", `/finance/transfers/${receipt.id}`);
+    expect([recorded.source_amount, recorded.destination_amount, recorded.reference]).toEqual(["25.01", "25.01", reference]);
+    const accounts = await api(page, "GET", "/finance/accounts");
+    expect(accounts.find(row => row.id === from.id).current_balance).toBe("75.00");
+    expect(accounts.find(row => row.id === to.id).current_balance).toBe("25.01");
+    expect((await api(page, "GET", `/finance/transfer-page?search=${encodeURIComponent(reference)}`)).items).toHaveLength(1);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath("neutral-theme-transfer-confirmed-mobile.png"), fullPage: false });
+  } finally {
+    await page.unroute(transferRoute, interceptTransfer);
+  }
+}
+
 async function rejectedAPI(page, method, path, data, field) {
   const response = await page.request.fetch(`/api${path}`, { method, data });
   const body = await response.json();
@@ -214,6 +323,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.goto(`/dashboard/accounting/invoices/${otherInvoice.id}`);
   await expect(preview).not.toContainText("Tax ID");
   await testInfo.attach("tax-snapshot-evidence", { body: JSON.stringify({ otherExcluded: true, recognizedVatIncluded: true, issuedSnapshotsImmutable: true }), contentType: "application/json" });
+  await verifyAccountCreateBoundary(page, testInfo);
 });
 
  test("rendered operational and accrual reporting reconciles project revenue and cost-only client", async ({ page }, testInfo) => {
@@ -252,6 +362,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await expect(page.locator(`a[href="/dashboard/projects/${project.id}"]`)).toContainText("USD 175.00");
   await expect(page.locator(`a[href="/dashboard/clients/${costClient.id}"]`)).toContainText("USD -6.00");
   await testInfo.attach("rendered-report-reconciliation", { body: JSON.stringify({ issued: 200, collected: 200, projectCost: 25, costOnlyClient: 6, operationalMargin: 169, unpaidAP: 10, accrualProfit: 159, projectProfit: 175, cash: 169 }), contentType: "application/json" });
+  await verifyTransferRetryBoundary(page, testInfo);
 });
 
 test("owner source selectors omit billed work and overpayment is blocked before confirmation", async ({ page }, testInfo) => {
