@@ -30,6 +30,7 @@ class FinancialRegistry(TypedDict):
     loan_paid_id: str
     tax_code_id: str
     tax_settlement_id: str
+    payable_bill_id: str
     reconciliation_id: str
     fixture_date: str
     currency: str
@@ -112,7 +113,7 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
     code = call(create_code, TaxCodeCreate(code=f'ROWH{marker}', name='Read-only sweep withholding',
         tax_kind='withholding', rate=Decimal('10'), effective_from=fixture_date), path='/accounting/tax/codes')
     expense = system_account(db, tenant.organization_id, 'operating_expenses')
-    call(create_payable_bill, PayableBillCreate(supplier_name=f'Read-only sweep supplier {marker}',
+    bill = call(create_payable_bill, PayableBillCreate(supplier_name=f'Read-only sweep supplier {marker}',
         bill_date=fixture_date, currency=currency, amount=Decimal('10'),
         withholding_tax_code_id=code['id'], expense_ledger_account_id=expense.id,
         description='Synthetic read-only sweep liability', reference=f'RO-bill-{marker}'), path='/accounting/payables')
@@ -129,7 +130,7 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
     registry: FinancialRegistry = {
         'account_id': account.id, 'loan_draft_id': draft['id'], 'loan_active_id': active['id'],
         'loan_paid_id': paid['id'], 'tax_code_id': code['id'], 'tax_settlement_id': settlement['id'],
-        'reconciliation_id': reconciliation['id'], 'fixture_date': fixture_date.isoformat(),
+        'payable_bill_id': bill.id, 'reconciliation_id': reconciliation['id'], 'fixture_date': fixture_date.isoformat(),
         'currency': currency, 'accounting_integrity': True,
         'route_contracts': {},
         'route_overrides': {

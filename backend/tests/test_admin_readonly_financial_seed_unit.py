@@ -99,6 +99,7 @@ class SeedBoundaryTests(unittest.TestCase):
                     return {'loan': {'id': args[0], 'status': 'paid' if paid else 'active',
                             'outstanding_principal': Decimal('0' if paid else '9'),
                             'undisbursed_amount': Decimal('0' if paid else '10')}}
+                if name == 'create_payable_bill': return NS(id='payable-bill')
                 if name == 'create_code': return {'id': 'code'}
                 if name == 'create_settlement': return {'id': 'settlement'}
                 if name == 'create_reconciliation': return {'id': 'reconciliation', 'status': 'draft'}
@@ -132,6 +133,7 @@ class SeedBoundaryTests(unittest.TestCase):
         self.assertEqual(result['route_overrides']['/dashboard/accounting/loans/[loanId]/close'], '/dashboard/accounting/loans/loan2/close')
         self.assertEqual(result['route_overrides']['/dashboard/accounting/loans/[loanId]/approve'], '/dashboard/accounting/loans/loan0/approve')
         self.assertEqual(result['loan_active_id'], 'loan1')
+        self.assertEqual(result['payable_bill_id'], 'payable-bill')
         self.assertTrue(result['accounting_integrity'])
         contracts = result['route_contracts']
         routes = Path(__file__).parents[2] / 'frontend/src/app/dashboard/accounting'
