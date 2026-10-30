@@ -64,7 +64,7 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
               ['client', 'quotation', 'order', 'project', 'milestone', 'task', 'document', 'credential',
                'category', 'warehouse', 'item', 'supplier', 'expense category', 'expense']}
     def req(method, path):
-        return request_factory(method, '/api/v1'+path)
+        return request_factory(method, path)
     client = create_client(ClientCreate(display_name=labels['client'], country_code='US', currency='USD'),
                            req('POST', '/crm/clients'), db, tenant)
     client_id = value(client, 'id')
@@ -77,8 +77,8 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
     accepted = quote()
     for status in ['sent', 'accepted']:
         accepted = change_quotation_status(value(accepted, 'id'), QuotationStatusChange(status=status),
-                                           req('PATCH', '/sales/quotations/status'), db, tenant)
-    project_order = create_order_from_quotation(value(accepted, 'id'), req('POST', '/sales/orders/from-quotation'), db, tenant)
+                                           req('PATCH', f"/sales/quotations/{value(accepted, 'id')}/status"), db, tenant)
+    project_order = create_order_from_quotation(value(accepted, 'id'), req('POST', f"/sales/orders/from-quotation/{value(accepted, 'id')}"), db, tenant)
     manual = create_manual_order(ManualOrderCreate(client_id=client_id, subject=labels['order'], order_date=fixture_date,
                                  currency='USD', items=[OrderItemInput(**item)]), req('POST', '/sales/orders'), db, tenant)
     settlement_order = create_manual_order(ManualOrderCreate(client_id=client_id, subject='Synthetic settlement read-only form',
@@ -86,25 +86,25 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
                                             req('POST', '/sales/orders'), db, tenant)
     for status in ['in_progress', 'completed']:
         settlement_order = change_order_status(value(settlement_order, 'id'), OrderStatusChange(status=status),
-                                               req('PATCH', '/sales/orders/status'), db, tenant)
+                                               req('PATCH', f"/sales/orders/{value(settlement_order, 'id')}/status"), db, tenant)
     # Converted order supports project; independent manual order remains editable and unbilled.
     project = create_project_from_order(value(project_order, 'id'), ProjectCreateFromOrder(name=labels['project'],
-                                        planned_start_date=fixture_date), req('POST', '/projects/from-order'), db, tenant)
+                                        planned_start_date=fixture_date), req('POST', f"/projects/from-order/{value(project_order, 'id')}"), db, tenant)
     project_id = value(project, 'id')
-    milestone = create_milestone(project_id, MilestoneCreate(title=labels['milestone']), req('POST', '/projects/milestones'), db, tenant)
+    milestone = create_milestone(project_id, MilestoneCreate(title=labels['milestone']), req('POST', f'/projects/{project_id}/milestones'), db, tenant)
     task = create_task(project_id, TaskCreate(title=labels['task'], milestone_id=value(milestone, 'id')),
-                       req('POST', '/projects/tasks'), db, tenant)
+                       req('POST', f'/projects/{project_id}/tasks'), db, tenant)
     file = UploadFile(filename='synthetic-readonly-note.txt', file=BytesIO(b'Synthetic QA fixture. No client data.\n'),
                       headers=Headers({'content-type': 'text/plain'}))
     try:
-        document = upload_project_document(project_id, req('POST', '/projects/documents'), db, tenant, file,
+        document = upload_project_document(project_id, req('POST', f'/projects/{project_id}/documents/upload'), db, tenant, file,
                                            labels['document'], 'other', 'Synthetic read-only QA fixture')
     finally:
         file.file.close()
     credential = create_credential(project_id, CredentialCreate(name=labels['credential'], environment='test',
                                    secret='NONFUNCTIONAL SYNTHETIC QA TEXT — grants no access',
                                    notes='Synthetic QA fixture, never reveal', access_level='manager_only'),
-                                   req('POST', '/projects/credentials'), db, tenant)
+                                   req('POST', f'/projects/{project_id}/credentials'), db, tenant)
     category = create_category(CategoryCreate(name=labels['category']), req('POST', '/inventory/categories'), db, tenant)
     warehouse = create_warehouse(WarehouseCreate(code=f'QA-{marker}', name=labels['warehouse'], is_default=True),
                                  req('POST', '/inventory/warehouses'), db, tenant)

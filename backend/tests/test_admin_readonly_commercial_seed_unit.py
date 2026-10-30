@@ -34,6 +34,17 @@ class CommercialPublicBindingTests(unittest.TestCase):
 
 
 class CommercialSeedTests(unittest.TestCase):
+    def test_request_paths_match_registered_routes_without_double_api_prefix(self):
+        from app.main import app
+        from starlette.routing import compile_path
+        routes = app.openapi()["paths"]
+        seed.seed_commercial(self.db, self.tenant, self.req, DAY, {'account_id': 'account'})
+        for method, path in self.requests:
+            self.assertFalse(path.startswith('/api/'), path)
+            matches = [route for route, operations in routes.items()
+                       if method.lower() in operations and compile_path(route)[0].fullmatch('/api/v1'+path)]
+            self.assertEqual(1, len(matches), (method, path))
+
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
