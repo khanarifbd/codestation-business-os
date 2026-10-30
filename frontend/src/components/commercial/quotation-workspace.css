@@ -34,7 +34,7 @@
 .quotation-register-filters form { flex:1; min-width:160px; }
 .quotation-status-filter { display:flex; gap:7px; flex:0 0 auto; }
 .quotation-status-filter select { width:135px; }
-.quotation-status-filter button { color:#48623f; background:#f5f8f1; border-color:var(--quote-line); border-radius:6px; }
+.quotation-status-filter button { color:var(--workspace-neutral-ink, #48623f); background:var(--workspace-surface, #f5f8f1); border-color:var(--quote-line); border-radius:6px; }
 .quotation-register-columns,.quotation-register-row { display:grid; grid-template-columns:minmax(180px,1.5fr) minmax(125px,1fr) minmax(105px,.75fr) minmax(100px,.65fr) minmax(115px,.8fr) 16px; align-items:center; gap:18px; padding:0 19px; }
 .quotation-register-columns { padding-top:9px; padding-bottom:9px; background:var(--workspace-surface, #f6f8f3); border-block:1px solid var(--workspace-neutral-border, #e5ebdf); color:var(--workspace-neutral-muted, #67795e); text-transform:uppercase; font-size:10px; letter-spacing:.9px; }
 .quotation-register-columns>span:nth-child(5) { text-align:right; }
