@@ -391,6 +391,7 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
     const state = await page.context().storageState();
     const otherTenant = await playwrightRequest.newContext({
       baseURL: appUrl,
+      extraHTTPHeaders: testInfo.project.use.extraHTTPHeaders,
       storageState: { ...state, cookies: state.cookies.map((cookie) => cookie.name === "organization_id" ? { ...cookie, value: originalOrganizationId } : cookie) },
     });
     try {

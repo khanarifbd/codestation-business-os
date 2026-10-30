@@ -89,3 +89,43 @@ test('fresh-connection request still reports a real reset and does not replay a 
     await new Promise(resolve => server.close(resolve));
   }
 });
+test('all manually created contexts inherit fixture headers without altering cross-tenant cookies', () => {
+  const fs = require('node:fs');
+  const ts = require('typescript');
+  const vm = require('node:vm');
+  function verify(source) {
+    const ast = ts.createSourceFile('fixture.mjs', source, ts.ScriptTarget.Latest, true);
+    const contexts = [];
+    function visit(node) {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'newContext') {
+        const options = node.arguments[0];
+        assert.ok(options && ts.isObjectLiteralExpression(options), 'Manual context must use explicit reviewed options');
+        const header = options.properties.find(prop => ts.isPropertyAssignment(prop) && prop.name.getText(ast) === 'extraHTTPHeaders');
+        assert.ok(header, 'Manual context must inherit configured fixture headers');
+        assert.match(header.initializer.getText(ast), /^(testInfo|info)\.project\.use\.extraHTTPHeaders$/);
+        contexts.push({ name: node.expression.expression.getText(ast), options: options.getText(ast) });
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(ast);
+    return contexts;
+  }
+  const e2e = path.join(root, 'e2e');
+  const files = fs.readdirSync(e2e, { recursive: true }).filter(file => file.endsWith('.mjs'));
+  const contexts = files.flatMap(file => verify(fs.readFileSync(path.join(e2e, file), 'utf8')));
+  assert.equal(contexts.length, 2);
+  const inventory = fs.readFileSync(path.join(e2e, 'qc-owner-inventory.spec.mjs'), 'utf8');
+  assert.throws(() => verify(inventory.replace('extraHTTPHeaders: testInfo.project.use.extraHTTPHeaders,', '')), /must inherit/);
+  assert.throws(() => verify(inventory.replace('extraHTTPHeaders: testInfo.project.use.extraHTTPHeaders,', 'extraHTTPHeaders: {},')), /match/);
+  const headers = { Origin: 'http://localhost:3000', Connection: 'close' };
+  const state = { cookies: [{ name: 'organization_id', value: 'current' }, { name: 'session', value: 'synthetic-session' }], origins: [{ origin: 'synthetic' }] };
+  const options = vm.runInNewContext(`(${contexts.find(row => row.name === 'playwrightRequest').options})`, {
+    appUrl: 'http://localhost:3000', state, originalOrganizationId: 'other-authorized-company', testInfo: { project: { use: { extraHTTPHeaders: headers } } },
+  });
+  assert.equal(options.extraHTTPHeaders, headers);
+  assert.equal(options.baseURL, 'http://localhost:3000');
+  assert.equal(options.storageState.cookies[0].value, 'other-authorized-company');
+  assert.equal(options.storageState.cookies[1], state.cookies[1]);
+  assert.equal(options.storageState.origins, state.origins);
+  assert.equal(state.cookies[0].value, 'current');
+});
