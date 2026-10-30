@@ -21,9 +21,10 @@ function findNode(node, predicate) {
   if (predicate(node)) return node;
   return findNode(node.props?.children, predicate);
 }
-function componentFixture(relativePath, { states, fetch, confirm = () => true, params = {}, router = {}, exportName = 'default', props = {} }) {
+function componentFixture(relativePath, { states, fetch, confirm = () => true, params = {}, router = {}, exportName = 'default', props = {}, session = { tenant: { organization: { id: 'synthetic-organization' } } }, globals = {} }) {
   const values = [...states];
   let cursor = 0;
+  const refs = []; let refCursor = 0;
   let tree;
   let effects = [];
   const modules = new Map();
@@ -34,7 +35,9 @@ function componentFixture(relativePath, { states, fetch, confirm = () => true, p
       if (!(index in values)) values[index] = typeof initial === 'function' ? initial() : initial;
       return [values[index], next => { values[index] = typeof next === 'function' ? next(values[index]) : next; }];
     },
+    useRef(initial) { return refs[refCursor++] ??= { current: initial }; },
     useEffect(effect) { effects.push(effect); },
+    useLayoutEffect(effect) { effects.push(effect); },
     useMemo: calculate => calculate(),
     useCallback: callback => callback,
   };
@@ -46,11 +49,12 @@ function componentFixture(relativePath, { states, fetch, confirm = () => true, p
       compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
     }).outputText;
     vm.runInNewContext(source, {
-      module: compiled, exports: compiled.exports, Error, console,
+      module: compiled, exports: compiled.exports, Error, console, ...globals,
       fetch: fetch || (() => { throw new Error('Unexpected fixture request'); }),
       window: { confirm },
       require(name) {
         if (name === 'react') return hooks;
+        if (name === '@/components/dashboard-session-context') return { useDashboardSession: () => session };
         if (name === 'next/navigation') return { useParams: () => params, useRouter: () => router };
         if (name === 'next/link') return { default: ({ href, children }) => React.createElement('a', { href }, children) };
         if (name === 'lucide-react') return new Proxy({}, { get: () => () => null });
@@ -67,7 +71,7 @@ function componentFixture(relativePath, { states, fetch, confirm = () => true, p
   const Component = load(path.resolve(__dirname, '../../src', relativePath))[exportName];
   return {
     states: values,
-    render() { cursor = 0; effects = []; tree = Component(props); return renderToStaticMarkup(tree); },
+    render() { cursor = 0; refCursor = 0; effects = []; tree = Component(props); return renderToStaticMarkup(tree); },
     effects() { return [...effects]; },
     find(predicate) { return findNode(tree, predicate); },
     button(label) { const button = findNode(tree, node => node.type === 'button' && textOf(node) === label); assert.ok(button, `Button not found: ${label}`); return button; },

@@ -1,11 +1,40 @@
 import { expect, test } from '@playwright/test';
 
+// Verify real Chrome glyph selection, not just CSS family names/fonts.check.
+async function assertRenderedScriptFont(page, locator, familyPattern, label) {
+  await expect(locator).toBeVisible();
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const marker = `client-font-${label}`;
+  await locator.evaluate((element, value) => element.setAttribute('data-client-font-probe', value), marker);
+  const session = await page.context().newCDPSession(page);
+  try {
+    await session.send('DOM.enable');
+    await session.send('CSS.enable');
+    const { root } = await session.send('DOM.getDocument');
+    const { nodeId } = await session.send('DOM.querySelector', { nodeId: root.nodeId, selector: `[data-client-font-probe="${marker}"]` });
+    expect(nodeId).toBeGreaterThan(0);
+    const { fonts } = await session.send('CSS.getPlatformFontsForNode', { nodeId });
+    expect(fonts.some(font => font.isCustomFont && font.glyphCount > 0 && familyPattern.test(font.familyName)), JSON.stringify({ label, fonts })).toBe(true);
+    expect(fonts.some(font => font.isCustomFont && font.glyphCount > 0 && /Inter/i.test(font.familyName)), JSON.stringify({ label, fonts })).toBe(true);
+    console.log('CLIENT_RENDERED_FONTS', JSON.stringify({ label, fonts }));
+  } finally {
+    await session.detach();
+    await locator.evaluate(element => element.removeAttribute('data-client-font-probe'));
+  }
+}
+
+
 // Real application and disposable CI database; never runs against a live tenant.
 test('clients final revision: international create/edit, validation recovery and responsive detail', async ({ page, context }, info) => {
   // One authenticated journey across two cold Next routes, no request retries.
   test.setTimeout(90_000);
   const baseURL = info.project.use.baseURL;
   expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(baseURL).hostname);
+  const requestedFonts = [];
+  page.on('request', request => { if (request.resourceType() === 'font') requestedFonts.push(request.url()); });
   await page.setViewportSize({ width: 1440, height: 1000 });
   const login = await page.request.post('/api/auth/login', { data: {
     email: 'neutral-theme@example.com', password: process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!',
@@ -107,6 +136,15 @@ test('clients final revision: international create/edit, validation recovery and
   expect(await updatedResponse.json()).toMatchObject({ contact_name: 'François Müller', phone: '+44 20 7946 0958 ext 12', whatsapp: '+880 1712 345678', postal_code: 'SW1A 1AA', country_code: 'GB', currency: 'GBP' });
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await assertRenderedScriptFont(page, page.getByRole('button', { name: 'Müller 株式会社', exact: true }), /Noto.*JP/i, 'japanese-company');
+  await assertRenderedScriptFont(page, page.getByRole('button', { name: displayName, exact: true }), /Noto.*Bengali/i, 'bengali-directory');
+  const fontTiming = await page.evaluate(() => performance.getEntriesByType('resource')
+    .filter(entry => /\.woff2?(?:[?#]|$)/i.test(entry.name))
+    .map(entry => ({ url: entry.name, initiatorType: entry.initiatorType, transferSize: entry.transferSize, encodedBodySize: entry.encodedBodySize, decodedBodySize: entry.decodedBodySize })));
+  expect(fontTiming.every(entry => new URL(entry.url).origin === new URL(baseURL).origin)).toBe(true);
+  // Resource timing can report zero for cached assets; this is observation, not a budget claim.
+  console.log('CLIENT_FONT_RESOURCE_TIMING', JSON.stringify(fontTiming));
+
   await page.screenshot({ path: info.outputPath('neutral-theme-clients-final-directory-desktop.png') });
 
   await page.goto(`/dashboard/clients/${created.id}`);
@@ -116,20 +154,26 @@ test('clients final revision: international create/edit, validation recovery and
   await expect(page.locator('.client-business-surface')).toContainText('GBP');
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await assertRenderedScriptFont(page, page.getByRole('heading', { name: displayName, exact: true }), /Noto.*Bengali/i, 'bengali-desktop');
   await page.screenshot({ path: info.outputPath('neutral-theme-clients-final-detail-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo(0, 0));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expect(page.getByRole('heading', { name: displayName, exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await assertRenderedScriptFont(page, page.getByRole('heading', { name: displayName, exact: true }), /Noto.*Bengali/i, 'bengali-mobile');
   await page.screenshot({ path: info.outputPath('neutral-theme-clients-final-detail-mobile.png') });
   await page.goto(`/dashboard/clients?edit=${created.id}`);
   const mobileEditor = page.getByRole('dialog', { name: 'Edit client record', exact: true });
   await expect(mobileEditor.getByLabel('Display name', { exact: true })).toHaveValue(displayName);
   await mobileEditor.getByLabel('Display name', { exact: true }).focus();
   await expect(mobileEditor.getByLabel('Display name', { exact: true })).toBeFocused();
+  await assertRenderedScriptFont(page, mobileEditor.getByRole('heading', { name: displayName, exact: true }), /Noto.*Bengali/i, 'bengali-editor');
   await page.screenshot({ path: info.outputPath('neutral-theme-clients-final-editor-mobile.png') });
   await page.keyboard.press('Escape');
   await expect(mobileEditor).not.toBeVisible();
+  expect(requestedFonts.length).toBeGreaterThan(0);
+  expect(requestedFonts.every(url => new URL(url).origin === new URL(baseURL).origin)).toBe(true);
+  console.log('CLIENT_FONT_REQUESTS', JSON.stringify([...new Set(requestedFonts)]));
 
 });

@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useDashboardSession } from "@/components/dashboard-session-context";
+
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   Copy,
   Download,
@@ -285,7 +287,50 @@ export function ClientDocumentsSection({ clientId, canManage }: { clientId: stri
   </Panel>;
 }
 
+/** Ephemeral, request-owned plaintext cache. Never persisted or logged. */
+export function createCredentialRevealSession(onChange: (values: Record<string, string>) => void) {
+  let active = true;
+  const values: Record<string, string> = {};
+  const versions = new Map<string, number>();
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pending = new Map<string, Promise<string | null>>();
+  function hide(id: string) {
+    versions.set(id, (versions.get(id) ?? 0) + 1);
+    const timer = timers.get(id); if (timer) clearTimeout(timer);
+    timers.delete(id); pending.delete(id); delete values[id];
+    if (active) onChange({ ...values });
+  }
+  function clear() { for (const id of new Set([...versions.keys(), ...Object.keys(values), ...pending.keys()])) hide(id); }
+  return {
+    hide, clear,
+    owns: (id: string, value: string) => active && values[id] === value,
+    dispose() { active = false; clear(); },
+    read(id: string, request: () => Promise<unknown>): Promise<string | null> {
+      if (!active) return Promise.resolve(null);
+      if (values[id] !== undefined) return Promise.resolve(values[id]);
+      const existing = pending.get(id); if (existing) return existing;
+      const version = versions.get(id) ?? 0;
+      versions.set(id, version);
+      const work = (async () => {
+        try {
+          const payload = await request() as { secret?: unknown } | null;
+          if (!active || versions.get(id) !== version) return null;
+          if (!payload || typeof payload.secret !== "string") throw new Error("Credential response could not be verified.");
+          values[id] = payload.secret;
+          onChange({ ...values });
+          timers.set(id, setTimeout(() => hide(id), 30000));
+          return payload.secret;
+        } finally { if (versions.get(id) === version) pending.delete(id); }
+      })();
+      pending.set(id, work);
+      return work;
+    },
+  };
+}
+
 export function ClientCredentialsSection({ clientId, canManage }: { clientId: string; canManage: boolean }) {
+  const { tenant } = useDashboardSession();
+  const organizationId = tenant?.organization.id;
   const [items, setItems] = useState<ClientCredential[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -295,18 +340,36 @@ export function ClientCredentialsSection({ clientId, canManage }: { clientId: st
   const [selected, setSelected] = useState<ClientCredential | null>(null);
   const [form, setForm] = useState<CredentialForm>(blankCredential);
   const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const scope = `${organizationId ?? ""}:${clientId}:${canManage}`;
+  const sessionScope = useRef("");
+  const revealSession = useRef<ReturnType<typeof createCredentialRevealSession> | null>(null);
+  const loadEpoch = useRef(0);
+  const credentialWrite = useRef(false);
+  const copyTimers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  useLayoutEffect(() => {
+    const session = createCredentialRevealSession(setRevealed);
+    const timers = copyTimers.current;
+    revealSession.current = session; sessionScope.current = scope; credentialWrite.current = false;
+    setVisibleScope(scope); setRevealed({}); setItems([]); setForm(blankCredential);
+    setSelected(null); setModal(false); setCopied(null); setSaving(false); setError(null); setMessage(null);
+    return () => { session.dispose(); revealSession.current = null; loadEpoch.current += 1; for (const timer of timers) clearTimeout(timer); timers.clear(); };
+  }, [scope]);
   const [copied, setCopied] = useState<string | null>(null);
+  const [visibleScope, setVisibleScope] = useState(scope);
 
   const load = useCallback(async () => {
+    const session = revealSession.current;
+    if (!session || sessionScope.current !== scope) return;
+    const epoch = ++loadEpoch.current;
+    const current = () => session === revealSession.current && sessionScope.current === scope && epoch === loadEpoch.current;
     setLoading(true); setError(null);
     try {
-      setItems(await api(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials`) as ClientCredential[]);
+      const rows = await api(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials`) as ClientCredential[];
+      if (current()) setItems(rows);
     } catch (reason) {
-      setError(vaultMessage(reason));
-    } finally {
-      setLoading(false);
-    }
-  }, [clientId]);
+      if (current()) { revealSession.current?.clear(); setItems([]); setError(vaultMessage(reason)); }
+    } finally { if (current()) setLoading(false); }
+  }, [clientId, scope]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -330,7 +393,12 @@ export function ClientCredentialsSection({ clientId, canManage }: { clientId: st
   }
 
   async function save(event: React.FormEvent) {
-    event.preventDefault(); setSaving(true); setError(null); setMessage(null);
+    event.preventDefault();
+    if (sessionScope.current !== scope || !canManage || credentialWrite.current) return;
+    credentialWrite.current = true;
+    const session = revealSession.current;
+    if (selected) session?.hide(selected.id);
+    setSaving(true); setError(null); setMessage(null);
     try {
       const payload = {
         name: form.name,
@@ -351,83 +419,98 @@ export function ClientCredentialsSection({ clientId, canManage }: { clientId: st
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      setModal(false); setSelected(null); setMessage(selected ? "Credential updated securely." : "Credential encrypted and saved."); await load();
+      if (session !== revealSession.current) return;
+      if (selected) session?.hide(selected.id);
+      setModal(false); setSelected(null); setForm(blankCredential); setMessage(selected ? "Credential updated securely." : "Credential encrypted and saved."); await load();
     } catch (reason) {
-      setError(vaultMessage(reason));
+      if (session === revealSession.current) setError(vaultMessage(reason));
     } finally {
-      setSaving(false);
+      if (session === revealSession.current) { credentialWrite.current = false; setSaving(false); }
     }
   }
 
   async function accessSecret(item: ClientCredential) {
-    if (revealed[item.id]) return revealed[item.id];
-    const payload = await api(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(item.id)}/reveal`, { method: "POST" }) as { secret: string };
-    setRevealed((current) => ({ ...current, [item.id]: payload.secret }));
-    window.setTimeout(() => setRevealed((current) => { const next = { ...current }; delete next[item.id]; return next; }), 30000);
-    await load();
-    return payload.secret;
+    const session = revealSession.current;
+    if (!session || sessionScope.current !== scope || credentialWrite.current) return null;
+    return session.read(item.id, async () => {
+      const payload = await api(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(item.id)}/reveal`, { method: "POST" });
+      if (session === revealSession.current) await load(); // Refresh server-authored reveal audit metadata.
+      return payload;
+    });
   }
 
   async function reveal(item: ClientCredential) {
+    const session = revealSession.current;
     setError(null); setMessage(null);
     try { await accessSecret(item); }
-    catch (reason) { setError(vaultMessage(reason)); }
+    catch (reason) { if (session === revealSession.current) setError(vaultMessage(reason)); }
   }
 
-  function hide(id: string) {
-    setRevealed((current) => { const next = { ...current }; delete next[id]; return next; });
-  }
+  function hide(id: string) { revealSession.current?.hide(id); }
 
   async function copy(value: string, key: string, label: string) {
+    const session = revealSession.current;
     try {
-      await navigator.clipboard.writeText(value); setCopied(key); setMessage(`${label} copied to clipboard.`);
-      window.setTimeout(() => setCopied((current) => current === key ? null : current), 1800);
+      await navigator.clipboard.writeText(value);
+      if (session !== revealSession.current) return;
+      setCopied(key); setMessage(`${label} copied to clipboard.`);
+      const timer = setTimeout(() => { copyTimers.current.delete(timer); if (session === revealSession.current) setCopied((current) => current === key ? null : current); }, 1800);
+      copyTimers.current.add(timer);
     } catch {
-      setError(`Unable to copy ${label.toLowerCase()}.`);
+      if (session === revealSession.current) setError(`Unable to copy ${label.toLowerCase()}.`);
     }
   }
 
   async function copySecret(item: ClientCredential) {
     setError(null);
-    try { await copy(await accessSecret(item), `secret:${item.id}`, "Secret"); }
-    catch (reason) { setError(vaultMessage(reason)); }
+    const session = revealSession.current;
+    try {
+      const secret = await accessSecret(item);
+      if (secret !== null && session === revealSession.current && session?.owns(item.id, secret)) await copy(secret, `secret:${item.id}`, "Secret");
+    } catch (reason) { if (session === revealSession.current) setError(vaultMessage(reason)); }
   }
 
   async function remove(item: ClientCredential) {
+    if (sessionScope.current !== scope || !canManage || credentialWrite.current) return;
     if (!window.confirm(`Delete credential “${item.name}”? This cannot be undone.`)) return;
+    credentialWrite.current = true;
+    const session = revealSession.current; session?.hide(item.id);
     setSaving(true); setError(null); setMessage(null);
     try {
       await api(`/api/crm/clients/${encodeURIComponent(clientId)}/credentials/${encodeURIComponent(item.id)}`, { method: "DELETE" });
-      hide(item.id); setMessage("Credential deleted."); await load();
+      if (session !== revealSession.current) return;
+      session?.hide(item.id); setMessage("Credential deleted."); await load();
     } catch (reason) {
-      setError(vaultMessage(reason));
+      if (session === revealSession.current) setError(vaultMessage(reason));
     } finally {
-      setSaving(false);
+      if (session === revealSession.current) { credentialWrite.current = false; setSaving(false); }
     }
   }
 
+  const visibleSecrets = visibleScope === scope ? revealed : {};
+  const visibleItems = visibleScope === scope ? items : [];
   return <Panel
     icon={KeyRound}
     title="Client Credentials"
     description="Store client-wide credentials that may be reused across multiple projects. Secrets are encrypted at rest and every reveal is recorded in the audit trail."
     action={canManage ? <PrimaryButton onClick={openCreate}><Plus className="size-4" />Add credential</PrimaryButton> : null}
   >
-    <Notices error={error} message={message} />
+    <Notices error={visibleScope === scope ? error : null} message={visibleScope === scope ? message : null} />
     <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">Use this vault for credentials owned by the client relationship, such as a shared Apple Developer account. Keep credentials that belong to only one project inside that project.</div>
-    {loading ? <Loading /> : items.length ? <div className="grid gap-4 lg:grid-cols-2">{items.map((item) => <article key={item.id} className="rounded-2xl border bg-neutral-50 p-4 sm:p-5">
+    {loading ? <Loading /> : visibleItems.length ? <div className="grid gap-4 lg:grid-cols-2">{visibleItems.map((item) => <article key={item.id} className="rounded-2xl border bg-neutral-50 p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="break-words font-semibold">{item.name}</p><span className="rounded-full border bg-white px-2 py-0.5 text-[11px] text-neutral-500">{pretty(item.access_level)}</span></div><p className="mt-1 text-xs text-neutral-400">{pretty(item.credential_type)} · {pretty(item.environment)}</p></div>{canManage ? <div className="flex shrink-0 gap-1"><IconButton title="Edit credential" onClick={() => openEdit(item)}><Pencil className="size-4" /></IconButton><IconButton title="Delete credential" danger onClick={() => void remove(item)}><Trash2 className="size-4" /></IconButton></div> : null}</div>
-      <div className="mt-4 space-y-3 text-sm"><CredentialLine label="Username" value={item.username ?? "—"} action={item.username ? <button type="button" onClick={() => void copy(item.username!, `user:${item.id}`, "Username")} className="text-neutral-400 hover:text-neutral-900"><Copy className="size-4" /></button> : null} /><CredentialLine label="Secret" value={revealed[item.id] ?? "••••••••••••"} action={<div className="flex items-center gap-2"><button type="button" onClick={() => revealed[item.id] ? hide(item.id) : void reveal(item)} className="text-neutral-400 hover:text-neutral-900">{revealed[item.id] ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button><button type="button" onClick={() => void copySecret(item)} className="text-neutral-400 hover:text-neutral-900"><Copy className="size-4" /></button></div>} />{item.url ? <CredentialLine label="URL" value={item.url} action={<a href={item.url} target="_blank" rel="noreferrer noopener" className="text-xs font-semibold text-blue-600">Open</a>} /> : null}</div>
+      <div className="mt-4 space-y-3 text-sm"><CredentialLine label="Username" value={item.username ?? "—"} action={item.username ? <button type="button" onClick={() => void copy(item.username!, `user:${item.id}`, "Username")} className="text-neutral-400 hover:text-neutral-900"><Copy className="size-4" /></button> : null} /><CredentialLine label="Secret" value={visibleSecrets[item.id] ?? "••••••••••••"} action={<div className="flex items-center gap-2"><button type="button" disabled={saving} aria-label={visibleSecrets[item.id] ? "Hide secret" : "Reveal secret"} onClick={() => visibleSecrets[item.id] ? hide(item.id) : void reveal(item)} className="text-neutral-400 hover:text-neutral-900">{visibleSecrets[item.id] ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button><button type="button" disabled={saving} aria-label="Copy secret" onClick={() => void copySecret(item)} className="text-neutral-400 hover:text-neutral-900"><Copy className="size-4" /></button></div>} />{item.url ? <CredentialLine label="URL" value={item.url} action={<a href={item.url} target="_blank" rel="noreferrer noopener" className="text-xs font-semibold text-blue-600">Open</a>} /> : null}</div>
       {item.notes ? <p className="mt-4 whitespace-pre-wrap break-words rounded-xl bg-white p-3 text-sm leading-6 text-neutral-600">{item.notes}</p> : null}
       <p className="mt-4 break-words text-xs text-neutral-400">Last revealed {dateTime(item.last_revealed_at)}{item.last_revealed_by ? ` by ${item.last_revealed_by}` : ""}</p>
       {copied === `secret:${item.id}` || copied === `user:${item.id}` ? <p className="mt-1 text-xs text-emerald-600">Copied</p> : null}
     </article>)}</div> : <Empty text={canManage ? "No client-level credentials yet." : "No team-access client credentials are available."} />}
 
-    {modal ? <Modal title={selected ? "Edit client credential" : "Add client credential"} onClose={() => setModal(false)} wide>
-      <form onSubmit={save} className="space-y-4">
+    {visibleScope === scope && modal ? <Modal title={selected ? "Edit client credential" : "Add client credential"} onClose={() => { if (!credentialWrite.current) { setForm(blankCredential); setModal(false); } }} wide>
+      <form onSubmit={save} className="space-y-4"><fieldset disabled={saving} className="min-w-0 space-y-4">
         {error ? <ErrorBox text={error} /> : null}
         <div className="grid gap-4 sm:grid-cols-2"><Field label="Name"><input required maxLength={180} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input" placeholder="Apple Developer Account" /></Field><Field label="Credential type"><input required maxLength={40} value={form.credential_type} onChange={(e) => setForm({ ...form, credential_type: e.target.value })} className="input" placeholder="login, api_key, recovery..." /></Field><Field label="Environment"><input required maxLength={32} value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })} className="input" placeholder="production" /></Field><Field label="Access"><select value={form.access_level} onChange={(e) => setForm({ ...form, access_level: e.target.value })} className="input"><option value="manager_only">Manager only</option><option value="team">Team</option></select></Field><Field label="Username / Email"><input maxLength={320} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="input" /></Field><Field label={selected ? "New secret (leave blank to keep current)" : "Secret"}><input required={!selected} type="password" maxLength={10000} value={form.secret} onChange={(e) => setForm({ ...form, secret: e.target.value })} className="input" autoComplete="new-password" /></Field><Field label="URL" wide><input maxLength={1000} value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} className="input" placeholder="https://developer.apple.com/..." /></Field><Field label="Notes" wide><textarea rows={4} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="textarea" /></Field></div>
         <button disabled={saving} className="btn-primary w-full">{saving ? "Saving securely..." : selected ? "Save credential" : "Encrypt and save credential"}</button>
-      </form>
+      </fieldset></form>
     </Modal> : null}
   </Panel>;
 }

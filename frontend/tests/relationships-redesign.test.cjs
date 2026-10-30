@@ -32,7 +32,8 @@ test('Underlying client access, resource, service and lead-requirements behavior
 test('Reviewed Clients allowance rejects tampered exact deltas rather than masking changes',()=>{
  const changes=require('./helpers/reviewed-clients-revision.json');
  for(const [file,hunks] of Object.entries(changes)){
-  const source=fs.readFileSync(path.join(root,file),'utf8');
-  for(const [,after] of hunks)assert.throws(()=>restoreReviewedClients(file,source.replace(after,after+'/* unauthorized */').replace(after,after.slice(0,-1))),/exact reviewed Clients hunk/);
+  const {restoreClientSubmodules,restorePriorClients}=require('./helpers/reviewed-clients-revision.cjs');
+  const source=restoreClientSubmodules(file,fs.readFileSync(path.join(root,file),'utf8'));
+  for(const [,after] of hunks)assert.throws(()=>restorePriorClients(file,source.replace(after,after+'/* unauthorized */').replace(after,after.slice(0,-1))),/exact reviewed Clients hunk/);
  }
 });
