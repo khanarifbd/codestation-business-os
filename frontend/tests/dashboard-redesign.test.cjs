@@ -1,3 +1,4 @@
+const { restoreDashboardRevision } = require('./helpers/reviewed-dashboard-revision.cjs');
 const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /** Presentation-only dashboard guardrails against the verified QA baseline. */
 const { test } = require('node:test');
@@ -14,14 +15,16 @@ const shell = 'src/components/dashboard-shell.tsx';
 const insights = 'src/components/dashboard/financial-insights.tsx';
 const read = (dir, file) => fs.readFileSync(path.join(dir, file), 'utf8');
 function source(dir, file) { return ts.createSourceFile(file, read(dir, file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX); }
-function namedFunction(dir, file, name) {
-  const ast = source(dir, file); let result;
+function namedFunction(dir, file, name, reviewedDashboard = false) {
+  const ast = reviewedDashboard && dir === root && file === dashboard
+    ? ts.createSourceFile(file, restoreDashboardRevision(read(dir, file)), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    : source(dir, file); let result;
   const visit = node => { if (ts.isFunctionDeclaration(node) && node.name?.text === name) result = node; ts.forEachChild(node, visit); };
   visit(ast); assert.ok(result, `${name} exists`); return { ast, node: result };
 }
 function hasJsx(node) { let yes = false; const visit = n => { if (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n)) yes = true; ts.forEachChild(n, visit); }; visit(node); return yes; }
 function logic(dir, file, name) {
-  const { ast, node } = namedFunction(dir, file, name);
+  const { ast, node } = namedFunction(dir, file, name, true);
   const firstRender = node.body.statements.find(hasJsx);
   return ast.text.slice(node.body.getStart(ast) + 1, firstRender ? firstRender.getStart(ast) : node.body.end - 1);
 }
@@ -62,7 +65,7 @@ for (const [file, name] of [[dashboard, 'DashboardPage'], [shell, 'DashboardShel
 }
 for (const [file, names] of [[dashboard, ['iso', 'presetRange', 'money', 'percent', 'periodLabel', 'changePreset']], [shell, ['hasAnyPermission', 'isEmployeeSelfServiceContext', 'isFinanceArea', 'isActive', 'isFinanceItemActive', 'profileInitials', 'logout']], [insights, ['positiveAmount']], ['src/components/workspace-switcher.tsx', ['relationshipLabel', 'switchWorkspace']]]) {
   for (const name of names) test(`${name}: original calculation, routing or mutation contract unchanged`, () => {
-    const a = namedFunction(root, file, name), b = namedFunction(baseline, file, name);
+    const a = namedFunction(root, file, name, true), b = namedFunction(baseline, file, name);
     assert.equal(withoutControlsAutoPostAlias(withoutWorkspaceExitGate(a.node.getText(a.ast), ['logout','switchWorkspace'].includes(name)), name === 'isFinanceItemActive'), b.node.getText(b.ast));
   });
 }
@@ -73,7 +76,7 @@ for (const name of ['staffNavigation', 'employeeNavigation', 'clientNavigation',
   });
 }
 test('Dashboard loading, missing workspace and restricted-report guards retain their conditions', () => {
-  function guards(dir) { const { ast, node } = namedFunction(dir, dashboard, 'DashboardPage'); return node.body.statements.filter(ts.isIfStatement).map(n => n.expression.getText(ast)); }
+  function guards(dir) { const { ast, node } = namedFunction(dir, dashboard, 'DashboardPage', true); return node.body.statements.filter(ts.isIfStatement).map(n => n.expression.getText(ast)); }
   assert.deepEqual(guards(root), guards(baseline));
 });
 test('Four rail metrics retain baseline values/routes and two operational alerts move into the attention queue', () => {
@@ -171,4 +174,21 @@ test('Controls retains Auto Post alias activation without activating other finan
   }
   assert.equal(active('/dashboard/finance/transfers', '/dashboard/accounting/controls'), false);
   assert.equal(active('/dashboard/accounting/reports', '/dashboard/accounting/controls'), false);
+});
+
+
+test('Dashboard revision compatibility rejects tampering and retains every unrelated baseline byte', () => {
+  const actual=read(root,dashboard), restored=restoreDashboardRevision(actual);
+  for(const [from,to] of [
+    ['const requestEpoch = ++reportEpoch.current;', 'const requestEpoch = 0;'],
+    ['if (!currentRequest()) return;', 'if (false) return;'],
+    ['setPreset("month");', 'setPreset("year");'],
+    ['return formatDashboardMoney(value, currency);', 'return String(Number(value));'],
+    ['return reportingRange(preset, timezone);', 'return reportingRange(preset, "UTC");'],
+    ['if (!data && error)', 'if (!data)'],
+  ]) assert.throws(()=>restoreDashboardRevision(actual.replace(from,to)),from);
+  // A mutation outside a reviewed hunk is never normalized away.
+  const altered=actual.replace('a.currency.localeCompare(b.currency)', 'b.currency.localeCompare(a.currency)');
+  assert.notEqual(restoreDashboardRevision(altered),restored);
+  assert.equal((restored.match(/response.status === 401/g)||[]).length,3);
 });
