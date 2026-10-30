@@ -20,21 +20,29 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   }
   await context.addCookies([{ name: 'organization_id', value: organizations[0].id, url: baseURL, httpOnly: true, sameSite: 'Lax' }]);
   await page.setViewportSize({ width: 1440, height: 1000 });
-  // Inject a transport outage only. Recovery and all business payloads use the real app/database.
-  await page.route('**/api/reports/dashboard?*', route => route.abort('failed'), { times: 1 });
-  await page.route('**/api/reports/dashboard-details?*', route => route.abort('failed'), { times: 1 });
+  // Hold a transport outage through StrictMode effect remounts, until the active UI observes it.
+  // Recovery and all business payloads still use the real app/database.
+  const reportOutage = route => route.abort('failed');
+  const detailsOutage = route => route.abort('failed');
+  await page.route('**/api/reports/dashboard?*', reportOutage);
+  await page.route('**/api/reports/dashboard-details?*', detailsOutage);
   await page.goto('/dashboard');
   await expect(page.getByRole('heading', { name: 'Dashboard unavailable', exact: true })).toBeVisible();
   await expect(page.getByText(/financial reporting is restricted/)).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-recoverable-error.png'), fullPage: false });
+  await page.unroute('**/api/reports/dashboard?*', reportOutage);
   await page.getByRole('button', { name: 'Retry dashboard', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toBeVisible();
   const retryDetails = page.getByRole('button', { name: 'Retry dashboard details', exact: true });
   await expect(retryDetails).toHaveCount(3);
+  await page.unroute('**/api/reports/dashboard-details?*', detailsOutage);
   await retryDetails.first().click();
   await expect(retryDetails).toHaveCount(0);
   await expect(page.getByText('No financial accounts', { exact: true })).toBeVisible();
   const period = page.getByRole('combobox', { name: 'Reporting period', exact: true });
+  // Assert the approved shared font resolves on both heading and native form control.
+  await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toHaveCSS('font-family', /Inter/i);
+  await expect(period).toHaveCSS('font-family', /Inter/i);
   await period.selectOption('last_month');
   await expect(period).toHaveValue('last_month');
   await expect(period).toBeEnabled();
