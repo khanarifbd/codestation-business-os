@@ -3,6 +3,7 @@ from contextlib import ExitStack
 from datetime import date
 from decimal import Decimal
 import json
+import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
@@ -14,6 +15,22 @@ SERVICES = ['create_client', 'create_quotation', 'change_quotation_status', 'cre
             'create_task', 'upload_project_document', 'create_credential', 'create_category', 'create_warehouse',
             'create_product', 'create_supplier', 'receive_purchase', 'create_expense_category', 'create_expense']
 DAY = date(2026, 10, 30)
+
+
+class CommercialPublicBindingTests(unittest.TestCase):
+    def test_expense_binding_is_public_atomic_handler_not_shadowed_core(self):
+        from app.api.v1.financial_safety import safe_create_expense
+        self.assertIs(seed.create_expense, safe_create_expense)
+        source = Path(seed.__file__).read_text()
+        def binding(text):
+            imports = [(node.module, alias.name, alias.asname or alias.name)
+                       for node in ast.walk(ast.parse(text)) if isinstance(node, ast.ImportFrom)
+                       for alias in node.names if (alias.asname or alias.name) == 'create_expense']
+            self.assertEqual([('app.api.v1.financial_safety', 'safe_create_expense', 'create_expense')], imports)
+        binding(source)
+        with self.assertRaises(AssertionError):
+            binding(source.replace('from app.api.v1.financial_safety import safe_create_expense as create_expense',
+                                   'from app.api.v1.finance_expenses import create_expense'))
 
 
 class CommercialSeedTests(unittest.TestCase):

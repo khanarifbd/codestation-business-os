@@ -19,7 +19,8 @@ from app.api.v1.projects import create_project_from_order
 from app.api.v1.project_execution import create_milestone, create_task, create_credential, upload_project_document
 from app.api.v1.inventory import create_category, create_warehouse, create_product, receive_purchase
 from app.api.v1.inventory_management import create_supplier
-from app.api.v1.finance_expenses import create_expense_category, create_expense
+from app.api.v1.finance_expenses import create_expense_category
+from app.api.v1.financial_safety import safe_create_expense as create_expense
 from app.schemas.crm import ClientCreate
 from app.schemas.sales import QuotationCreate, QuotationStatusChange, QuotationItemInput
 from app.schemas.orders import ManualOrderCreate, OrderItemInput, OrderStatusChange
