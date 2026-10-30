@@ -102,7 +102,7 @@ class CommercialSeedTests(unittest.TestCase):
         file = self.services['upload_project_document'].call_args.args[4]
         self.assertTrue(file.file.closed)
         self.assertFalse(any('/reveal' in path for _,path in self.requests))
-        self.assertEqual(set(result), {'typed_ids','route_overrides','route_contracts','accounting_integrity'})
+        self.assertEqual(set(result), {'typed_ids','route_overrides','route_contracts','accounting_integrity','fixture_labels'})
 
     def test_every_assigned_route_has_typed_actual_path_and_read_contract(self):
         result = self.run_seed()

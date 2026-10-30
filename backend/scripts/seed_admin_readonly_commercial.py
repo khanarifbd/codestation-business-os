@@ -37,6 +37,7 @@ class CommercialRegistry(TypedDict):
     route_overrides: dict[str, str]
     route_contracts: dict[str, dict]
     accounting_integrity: bool
+    fixture_labels: dict[str, str]
 
 
 def value(row, key):
@@ -136,7 +137,8 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
     ids['vendor_id'] = ids['supplier_id']
     required(all(ids.values()), 'Every fixture must return an actual record ID')
     overrides, contracts = commercial_routes(ids, rows, labels)
-    return {'typed_ids': ids, 'route_overrides': overrides, 'route_contracts': contracts, 'accounting_integrity': True}
+    return {'typed_ids': ids, 'route_overrides': overrides, 'route_contracts': contracts, 'accounting_integrity': True,
+            'fixture_labels': {'expense_number': value(expense, 'expense_number'), 'expense': labels['expense'], 'client': labels['client']}}
 
 
 def commercial_routes(ids, rows, labels):
