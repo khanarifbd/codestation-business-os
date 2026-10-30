@@ -133,3 +133,72 @@ test('neutral workspace: real business overview cards and primary action use the
   await page.mouse.move(1000, 5);
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-desktop.png'), fullPage: true });
 });
+
+test('neutral workspace: text field focus matches Company Settings without an outer box', async ({ page, context }, info) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await isolatedWorkspace(page, context, info);
+  await page.goto('/dashboard/company');
+  const reference = page.getByLabel('Legal company name', { exact: true });
+  await reference.focus();
+  await expect(reference).toBeFocused();
+  await expect(reference).toHaveCSS('outline-style', 'none');
+  await expect(reference).toHaveCSS('box-shadow', 'none');
+  // Wait out the existing transition before using this real reference's color.
+  await expect.poll(() => reference.evaluate(element => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--color-neutral-500)';
+    element.parentElement.appendChild(probe);
+    const expected = getComputedStyle(probe).color;
+    probe.remove();
+    return getComputedStyle(element).borderTopColor === expected;
+  })).toBe(true);
+  const referenceBorder = await reference.evaluate(element => getComputedStyle(element).borderTopColor);
+  await page.screenshot({ path: info.outputPath('neutral-theme-company-field-focus.png'), fullPage: true });
+
+  await page.goto('/dashboard/clients');
+  const opener = page.getByRole('button', { name: 'Add client', exact: true });
+  await opener.click();
+  const dialog = page.getByRole('dialog', { name: 'Add client', exact: true });
+  const legal = dialog.getByLabel('Legal name', { exact: true });
+  const contact = dialog.getByLabel('Contact person', { exact: true });
+  const legalUnfocused = await legal.evaluate(element => getComputedStyle(element).borderTopColor);
+  await legal.fill('Focus preview only — not saved');
+  await expect(legal).toBeFocused();
+  await expect(legal).toHaveCSS('outline-style', 'none');
+  await expect(legal).toHaveCSS('box-shadow', 'none');
+  await expect(legal).toHaveCSS('border-top-width', '1px');
+  await expect(legal).toHaveCSS('border-top-color', referenceBorder);
+  expect(referenceBorder).not.toBe(legalUnfocused);
+  await page.screenshot({ path: info.outputPath('neutral-theme-client-field-focus-desktop.png'), fullPage: true });
+  await page.keyboard.press('Tab');
+  await expect(contact).toBeFocused();
+  await expect(contact).toHaveCSS('outline-style', 'none');
+  await expect(contact).toHaveCSS('border-top-color', referenceBorder);
+  await expect(legal).toHaveCSS('border-top-color', legalUnfocused);
+  for (const field of [dialog.getByLabel('Notes', { exact: true }), dialog.getByLabel('Client type', { exact: true })]) {
+    await field.focus();
+    await expect(field).toHaveCSS('outline-style', 'none');
+    await expect(field).toHaveCSS('box-shadow', 'none');
+    await expect(field).toHaveCSS('border-top-color', referenceBorder);
+  }
+  // Buttons retain their visible keyboard focus, unlike text fields.
+  const cancel = dialog.getByRole('button', { name: 'Cancel', exact: true });
+  await cancel.focus();
+  await expect(cancel).toHaveCSS('outline-width', '3px');
+  await expect(cancel).toHaveCSS('outline-style', 'solid');
+  await cancel.click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/dashboard\/clients$/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await opener.click();
+  await expect(legal).toHaveValue('');
+  await legal.fill('Mobile focus preview only');
+  await expect(legal).toHaveCSS('outline-style', 'none');
+  await expect(legal).toHaveCSS('box-shadow', 'none');
+  await expect(legal).toHaveCSS('border-top-color', referenceBorder);
+  await page.screenshot({ path: info.outputPath('neutral-theme-client-field-focus-mobile.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Close client form', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/dashboard\/clients$/);
+});

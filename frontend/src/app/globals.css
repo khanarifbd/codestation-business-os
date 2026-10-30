@@ -177,3 +177,28 @@
   --workspace-neutral-scrim-a3: #000000a3;
   --workspace-neutral-scrim-aa: #000000aa;
 }
+
+/* Match Company Settings' single-border field focus across authenticated modules.
+   Unlayered, deliberately specific: later module focus-visible rules must not
+   recreate a second outer box. Do not change buttons, links or choice controls. */
+:root:not(.dark) .workspace-shell:not(.dark):not(.dark *) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select):focus {
+  outline: none;
+  outline-offset: 0;
+  box-shadow: none;
+}
+
+:root:not(.dark) .workspace-shell:not(.dark):not(.dark *) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select):focus:not([aria-invalid="true"]):not([data-invalid]):not(:user-invalid) {
+  border-color: var(--color-neutral-500, #737373);
+}
+
+/* Keep validation borders intact; an inset underline still identifies focus. */
+:root:not(.dark) .workspace-shell:not(.dark):not(.dark *) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select):focus:is([aria-invalid="true"], [data-invalid], :user-invalid) {
+  box-shadow: inset 0 -1px 0 var(--color-neutral-500, #737373);
+}
+
+@media (forced-colors: active) {
+  :root:not(.dark) .workspace-shell:not(.dark):not(.dark *) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select):focus {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}
