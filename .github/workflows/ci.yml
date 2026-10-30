@@ -317,6 +317,14 @@ jobs:
       - name: Run critical browser journey
         working-directory: frontend
         run: pnpm exec playwright test
+      - name: Preserve neutral workspace visual evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: neutral-workspace-screenshots
+          path: frontend/test-results/**/neutral-theme-*.png
+          if-no-files-found: warn
+          retention-days: 7
       - name: Print service logs on failure
         if: failure()
         run: |
