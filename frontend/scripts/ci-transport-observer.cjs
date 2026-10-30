@@ -51,24 +51,26 @@ function install({ directory = DIRECTORY, ports = [3000, 8000] } = {}) {
     if (!socket) return null;
     let state = sockets.get(socket);
     if (state) return state;
-    state = { id: ++socketSequence, first: performance.now(), uses: 0, lastComplete: null };
+    state = { id: ++socketSequence, first: performance.now(), uses: 0, lastComplete: null, localPort: Number.isInteger(socket.localPort) ? socket.localPort : null, remotePort: Number.isInteger(socket.remotePort) ? socket.remotePort : null, lastRequest: null };
     sockets.set(socket, state);
     const onClose = hadError => record('socket_close', { socket_id: state.id, had_error: !!hadError, socket_observed_age_ms: Math.round(performance.now() - state.first) });
-    const onError = error => record('socket_error', { socket_id: state.id, code: errorCode(error) });
+    const onError = error => record('socket_error', { ...socketFields(socket, state), code: errorCode(error), observed_socket_uses: state.uses, socket_direction: state.lastRequest?.kind === 'node_server' ? 'inbound' : state.lastRequest ? 'outbound' : 'unknown', last_request_id: state.lastRequest?.id ?? null, last_request_kind: state.lastRequest?.kind ?? null, last_method: state.lastRequest?.method ?? null, last_pathname: state.lastRequest?.pathname ?? null, request_context: 'LAST_OBSERVED_REQUEST', causal_request_known: false, last_request_stage: state.lastRequest?.stage ?? 'unknown', last_request_started_at: state.lastRequest?.startedAt ?? null, last_request_observed_at: state.lastRequest?.observedAt ?? null });
     socket.once('close', onClose); socket.on(errorMonitor, onError);
     // WeakMap owns no socket lifetime; listeners are on the observed socket only.
     return state;
   }
   function socketFields(socket, state) {
-    return { socket_id: state?.id ?? null, local_port: Number.isInteger(socket?.localPort) ? socket.localPort : null,
-      remote_port: Number.isInteger(socket?.remotePort) ? socket.remotePort : null,
+    return { socket_id: state?.id ?? null, local_port: Number.isInteger(socket?.localPort) ? socket.localPort : state?.localPort ?? null,
+      remote_port: Number.isInteger(socket?.remotePort) ? socket.remotePort : state?.remotePort ?? null,
       socket_observed_age_ms: state ? Math.round(performance.now() - state.first) : null,
       since_last_response_event_ms: state?.lastComplete == null ? null : Math.round(performance.now() - state.lastComplete) };
   }
-  function requestFields(request, kind, socket) {
+  function requestFields(request, kind, socket, stage) {
     let meta = requests.get(request);
-    if (!meta) { meta = { request_id: ++sequence, kind, method: ['GET','POST','PATCH','PUT','DELETE','HEAD','OPTIONS'].includes(request.method) ? request.method : 'OTHER', pathname: safePath(request.path ?? request.url) }; requests.set(request, meta); }
-    return { request_id: meta.request_id, kind: meta.kind, method: meta.method, pathname: meta.pathname, ...socketFields(socket, observeSocket(socket)) };
+    if (!meta) { meta = { request_id: ++sequence, kind, method: ['GET','POST','PATCH','PUT','DELETE','HEAD','OPTIONS'].includes(request.method) ? request.method : 'OTHER', pathname: safePath(request.path ?? request.url), at: new Date().toISOString() }; requests.set(request, meta); }
+    const state = observeSocket(socket);
+    if (state) state.lastRequest = { id: meta.request_id, kind: meta.kind, method: meta.method, pathname: meta.pathname, startedAt: meta.at, observedAt: new Date().toISOString(), stage: stage ?? 'unknown' };
+    return { request_id: meta.request_id, kind: meta.kind, method: meta.method, pathname: meta.pathname, ...socketFields(socket, state) };
   }
   function socketAllowed(socket, side) { return socket && loopback(socket.remoteAddress) && allowed.has(side === 'server' ? socket.localPort : socket.remotePort); }
   function subscribe(name, fn) { const safe = message => { try { fn(message); } catch { /* Observer failures must not affect application behavior. */ } }; dc.subscribe(name, safe); subscriptions.push([name,safe]); }
@@ -78,23 +80,23 @@ function install({ directory = DIRECTORY, ports = [3000, 8000] } = {}) {
       try {
         if (!socketAllowed(socket, 'client')) return;
         const state = observeSocket(socket); state.uses++;
-        record('http_client_start', { ...requestFields(request,'node_http',socket), reused_socket: !!request.reusedSocket, observed_socket_uses: state.uses });
+        record('http_client_start', { ...requestFields(request,'node_http',socket,'request_start'), reused_socket: !!request.reusedSocket, observed_socket_uses: state.uses });
       } catch { /* observation only */ }
     };
     if (socket?.connecting) socket.once('connect', connected); else connected();
   });
-  subscribe('http.client.request.error', ({request,error}) => { if (requests.has(request)) record('http_client_error', { ...requestFields(request,'node_http',request.socket), reused_socket: !!request.reusedSocket, code:errorCode(error) }); });
-  subscribe('http.client.response.finish', ({request,response}) => { if (requests.has(request)) { const state=observeSocket(request.socket); if(state)state.lastComplete=performance.now(); record('http_client_response', { ...requestFields(request,'node_http',request.socket), status:response.statusCode }); } });
-  subscribe('http.server.request.start', ({request,socket}) => { if(socketAllowed(socket,'server')) { const state=observeSocket(socket);state.uses++;record('http_server_start',requestFields(request,'node_server',socket)); } });
-  subscribe('http.server.response.finish', ({request,response,socket}) => { if(requests.has(request)) { const state=observeSocket(socket);if(state)state.lastComplete=performance.now();record('http_server_response',{...requestFields(request,'node_server',socket),status:response.statusCode}); } });
+  subscribe('http.client.request.error', ({request,error}) => { if (requests.has(request)) record('http_client_error', { ...requestFields(request,'node_http',request.socket,'request_error'), reused_socket: !!request.reusedSocket, code:errorCode(error) }); });
+  subscribe('http.client.response.finish', ({request,response}) => { if (requests.has(request)) { const state=observeSocket(request.socket); if(state)state.lastComplete=performance.now(); record('http_client_response', { ...requestFields(request,'node_http',request.socket,'response_event'), status:response.statusCode }); } });
+  subscribe('http.server.request.start', ({request,socket}) => { if(socketAllowed(socket,'server')) { const state=observeSocket(socket);state.uses++;record('http_server_start',requestFields(request,'node_server',socket,'request_received')); } });
+  subscribe('http.server.response.finish', ({request,response,socket}) => { if(requests.has(request)) { const state=observeSocket(socket);if(state)state.lastComplete=performance.now();record('http_server_response',{...requestFields(request,'node_server',socket,'response_finished'),status:response.statusCode}); } });
   subscribe('undici:client:sendHeaders', ({request,socket}) => { // Deliberately never reads the event's headers property.
     if(!socketAllowed(socket,'client'))return;
     const state=observeSocket(socket);state.uses++;
-    record('undici_send',{...requestFields(request,'undici',socket),observed_socket_uses:state.uses,reused_observed_socket:state.uses>1});
+    record('undici_send',{...requestFields(request,'undici',socket,'request_send'),observed_socket_uses:state.uses,reused_observed_socket:state.uses>1});
     requests.get(request).socket=socket;
   });
-  subscribe('undici:request:error', ({request,error}) => { const meta=requests.get(request);if(meta)record('undici_error',{...requestFields(request,'undici',meta.socket),code:errorCode(error)}); });
-  subscribe('undici:request:trailers', ({request}) => { const meta=requests.get(request);if(meta) { const state=observeSocket(meta.socket);if(state)state.lastComplete=performance.now();record('undici_complete',requestFields(request,'undici',meta.socket)); } });
+  subscribe('undici:request:error', ({request,error}) => { const meta=requests.get(request);if(meta)record('undici_error',{...requestFields(request,'undici',meta.socket,'request_error'),code:errorCode(error)}); });
+  subscribe('undici:request:trailers', ({request}) => { const meta=requests.get(request);if(meta) { const state=observeSocket(meta.socket);if(state)state.lastComplete=performance.now();record('undici_complete',requestFields(request,'undici',meta.socket,'response_complete')); } });
   record('process_start',{node:process.version,ppid:process.ppid});
   let last = performance.now();
   const timer=setInterval(()=> {const now=performance.now();record('process_sample',{rss_bytes:process.memoryUsage().rss,event_loop_delay_ms:Math.max(0,Math.round(now-last-5000))});last=now;flush();},5000);timer.unref();

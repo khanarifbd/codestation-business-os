@@ -66,3 +66,27 @@ test('PID watcher records disposable process start and exit, without altering ex
 test('unwritable diagnostic destination cannot alter requests or throw observer failure',()=>{
  const dir=directory();try{const file=path.join(dir,'not-a-directory');fs.writeFileSync(file,'x');const obs=observer.install({directory:file});assert.doesNotThrow(()=>{obs.flush();obs.stop();});}finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+test('real reset retains only sanitized last-request/socket context after ordinary ring eviction',async()=>{
+ const dir=directory();let accepted,serverSocket,count=0;const arrival=new Promise(r=>accepted=r);
+ const server=http.createServer(req=>{count++;serverSocket=req.socket;accepted();});await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port,obs=observer.install({directory:dir,ports:[port]});
+ try {
+  const pending=new Promise((resolve,reject)=>http.get(`http://127.0.0.1:${port}/api/clients/PRIVATEID?token=QUERYSECRET`,resolve).on('error',reject)).then(value=>({value}),error=>({error}));
+  await arrival;
+  const filler=new (require('node:events').EventEmitter)();Object.assign(filler,{remoteAddress:'127.0.0.1',remotePort:port,localPort:40000});
+  for(let i=0;i<4000;i++)dc.channel('http.client.request.start').publish({request:{socket:filler,method:'GET',path:'/api/tenant'}});
+  serverSocket.resetAndDestroy();const outcome=await pending;assert.equal(outcome.error?.code,'ECONNRESET');assert.equal(count,1);obs.flush();
+  const raw=fs.readFileSync(obs.file,'utf8'),rows=raw.trim().split('\n').map(JSON.parse),error=rows.find(r=>r.event==='socket_error'&&r.code==='ECONNRESET'&&r.last_request_kind==='node_http');
+  assert.ok(error);assert.equal(error.last_method,'GET');assert.equal(error.last_pathname,'/api/clients/:id');assert.equal(error.socket_direction,'outbound');assert.equal(error.remote_port,port);assert(Number.isInteger(error.local_port));assert.equal(error.observed_socket_uses,1);assert.equal(typeof error.last_request_observed_at,'string');
+  assert(!rows.some(r=>r.event==='http_client_start'&&r.request_id===error.last_request_id));assert(!/PRIVATEID|QUERYSECRET|token=|headers|cookie|stack|message/i.test(raw));assert(fs.statSync(obs.file).size<=observer.MAX_BYTES);
+  for(const value of Object.values(error))assert(value===null||['string','number','boolean'].includes(typeof value));
+ } finally {obs.stop();server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('reused socket error identifies last observed second request, never prior completed request as cause',async()=>{
+ const dir=directory();let count=0;const server=http.createServer((req,res)=>{count++;if(count===1)res.end('first');else req.socket.resetAndDestroy();});await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port,obs=observer.install({directory:dir,ports:[port]}),agent=new http.Agent({keepAlive:true,maxSockets:1});
+ const send=(method,pathname)=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port,agent,method,path:pathname},res=>{res.resume();res.on('end',resolve);});req.on('error',reject);req.end();});
+ try{await send('GET','/api/clients/OLDSECRET');await assert.rejects(send('POST','/api/orders/NEWSECRET?key=QUERYSECRET'),{code:'ECONNRESET'});assert.equal(count,2);obs.flush();const raw=fs.readFileSync(obs.file,'utf8'),rows=raw.trim().split('\n').map(JSON.parse);const error=rows.find(r=>r.event==='socket_error'&&r.code==='ECONNRESET'&&r.last_request_kind==='node_http');assert.ok(error);assert.equal(error.last_method,'POST');assert.equal(error.last_pathname,'/api/orders/:id');assert.equal(error.observed_socket_uses,2);assert.equal(error.last_request_stage,'request_start');assert.equal(error.request_context,'LAST_OBSERVED_REQUEST');assert.equal(error.causal_request_known,false);assert(!/OLDSECRET|NEWSECRET|QUERYSECRET/.test(raw));
+ }finally{obs.stop();agent.destroy();server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('post-response socket error labels completed context as last observed, not an active or causal request',()=>{
+ const dir=directory(),obs=observer.install({directory:dir,ports:[3000]});try{const socket=new(require('node:events').EventEmitter)();Object.assign(socket,{remoteAddress:'127.0.0.1',remotePort:3000,localPort:40001});const request={socket,method:'GET',path:'/api/tenant'};dc.channel('http.client.request.start').publish({request});dc.channel('http.client.response.finish').publish({request,response:{statusCode:200}});socket.emit(require('node:events').errorMonitor,{code:'ECONNRESET',message:'SECRET'});obs.flush();const row=fs.readFileSync(obs.file,'utf8').trim().split('\n').map(JSON.parse).find(r=>r.event==='socket_error');assert.equal(row.last_request_stage,'response_event');assert.equal(row.request_context,'LAST_OBSERVED_REQUEST');assert.equal(row.causal_request_known,false);assert.equal(row.last_pathname,'/api/tenant');assert.equal(row.remote_port,3000);assert.equal(typeof row.last_request_observed_at,'string');}finally{obs.stop();fs.rmSync(dir,{recursive:true,force:true});}
+});
