@@ -46,16 +46,20 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await period.selectOption('last_month');
   await expect(period).toHaveValue('last_month');
   await expect(period).toBeEnabled();
-  await expect(page.locator('.dashboard-heading')).toContainText('Last month');
+  const displayedRange = page.locator('.dashboard-heading span').filter({ hasText: / · \d{4}-\d{2}-\d{2} — \d{4}-\d{2}-\d{2}$/ });
+  await expect(displayedRange).toHaveCount(1);
+  await expect(displayedRange).toContainText('Last month ·');
 
   // Delay one actual old-tenant response; never fabricate business metrics.
   let releaseOld;
   let oldResponseReady;
   const ready = new Promise(resolve => { oldResponseReady = resolve; });
   const release = new Promise(resolve => { releaseOld = resolve; });
+  let delayedRequest;
   let oldRouteCompleted;
   const completed = new Promise(resolve => { oldRouteCompleted = resolve; });
   await page.route('**/api/reports/dashboard?*', async route => {
+    delayedRequest = route.request();
     const response = await route.fetch();
     oldResponseReady();
     await release;
@@ -71,11 +75,16 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect(page.locator('.dashboard-heading')).toContainText(organizations[1].name);
   await expect(period).toHaveValue('month');
   await expect(period).toBeEnabled();
+  const oldBrowserResponse = page.waitForResponse(response => response.request() === delayedRequest);
   releaseOld();
   await completed;
+  expect(await (await oldBrowserResponse).finished()).toBeNull();
+  // Give the delivered fetch continuation and React paint a turn before checking stale-state rejection.
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(page.locator('.dashboard-heading')).toContainText('Reporting currency · GBP');
   await expect(period).toHaveValue('month');
-  await expect(page.locator('.dashboard-heading')).not.toContainText('This year');
+  await expect(displayedRange).toContainText('This month ·');
+  await expect(displayedRange).not.toContainText('This year ·');
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-final-desktop.png'), fullPage: false });
   await page.setViewportSize({ width: 390, height: 844 });
