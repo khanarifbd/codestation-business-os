@@ -2,10 +2,13 @@ import { expect, test } from "@playwright/test";
 
 // Authentication is real against the isolated local fixture. Every invoice/payment
 // request below is mocked: these tests cannot send mail or move money.
+const password = process.env.E2E_PASSWORD;
+if (!password?.trim()) throw new Error("E2E_PASSWORD must be supplied by the isolated CI fixture.");
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel(/email or username/i).fill(process.env.E2E_EMAIL ?? "e2e-owner@example.com");
-  await page.getByLabel("Password", { exact: true }).fill(process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!");
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: /sign in securely/i }).click();
   await expect(page).toHaveURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
 });
@@ -19,7 +22,7 @@ async function mockInvoice(page, invoice, payments = []) {
     const url = new URL(route.request().url());
     if (url.pathname.includes("stripe-checkout")) return route.fulfill({ json: { gateway_connected: false, checkout_available: false, attempts: [], sessions: [] } });
     if (url.pathname.endsWith("/payment-destinations")) return route.fulfill({ json: [] });
-    if (url.pathname.endsWith("/payment-instructions")) return route.fulfill({ json: { invoice_id: invoice.id, locked: invoice.status !== "draft", payment_method: null, payment_account_id: null, payment_url: null } });
+    if (url.pathname.endsWith("/payment-instructions")) return route.fulfill({ json: { invoice_id: invoice.id, invoice_number: invoice.invoice_number, invoice_status: invoice.status, invoice_currency: invoice.currency, locked: invoice.status !== "draft", payment_method: null, payment_account_id: null, payment_account_name: null, payment_provider: null, payment_account_holder: null, payment_account_reference: null, payment_currency: null, payment_url: null, payment_instructions: null } });
     if (url.pathname.endsWith("/payments")) return route.fulfill({ json: payments });
     if (url.pathname.endsWith("/draft") && route.request().method() === "PATCH") {
       const body = route.request().postDataJSON();

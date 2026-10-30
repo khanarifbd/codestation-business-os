@@ -152,6 +152,60 @@ async function verifyTransferRetryBoundary(page, testInfo) {
   }
 }
 
+// Real invoice lifecycle checks: only hold the original PATCH before forwarding.
+// No financial response or successful mutation is fabricated.
+async function verifyInvoiceDraftCancellation(page) {
+  await page.getByRole("button", { name: "Edit draft", exact: true }).click();
+  await page.getByRole("textbox", { name: "Subject", exact: true }).fill("Discard this synthetic draft text");
+  await page.getByRole("button", { name: "Cancel edit", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit draft", exact: true })).toBeVisible();
+}
+async function verifyInvoiceDraftPendingBoundary(page, testInfo, invoiceId, savedSubject) {
+  await expect(page.getByRole("textbox", { name: "Subject", exact: true })).toHaveValue(savedSubject || "");
+  const draftRoute = `**/api/finance/invoices/${invoiceId}/draft`;
+  let release, finished, started = false, forwarded = 0, forwardingError, clickError;
+  const gate = new Promise(resolve => { release = resolve; });
+  const completed = new Promise(resolve => { finished = resolve; });
+  const holdDraft = async route => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    started = true; forwarded++;
+    try { await gate; await route.continue(); }
+    catch (error) { forwardingError = error; await route.abort("failed").catch(() => {}); }
+    finally { finished(); }
+  };
+  await page.route(draftRoute, holdDraft);
+  let click;
+  try {
+    click = page.getByRole("button", { name: "Save changes", exact: true }).click().catch(error => { clickError = error; });
+    await expect.poll(() => started).toBe(true);
+    await expect(page.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Cancel edit", exact: true })).toBeDisabled();
+    await expect(page.getByRole("textbox", { name: "Subject", exact: true })).toBeDisabled();
+    await expect(page.locator('input[type="number"]').nth(1)).toBeDisabled();
+    await page.screenshot({ path: testInfo.outputPath("neutral-theme-invoice-pending-draft.png"), fullPage: false });
+  } finally {
+    release();
+    if (click) await click;
+    if (started) await completed;
+    await page.unroute(draftRoute, holdDraft);
+  }
+  if (clickError) throw clickError;
+  if (forwardingError) throw forwardingError;
+  expect(forwarded).toBe(1);
+}
+async function verifyInvoiceReversalBack(page) {
+  await page.getByRole("dialog").getByRole("button", { name: "Go back", exact: true }).click();
+  await expect(page.getByLabel("Reason for reversal")).toHaveValue("Synthetic correction of duplicate receipt");
+  await page.getByRole("button", { name: "Review reversal", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Confirm reversal", exact: true })).toBeEnabled();
+}
+async function verifyInvoiceCancellationBack(page) {
+  await page.getByLabel("Cancellation reason").fill("Retain this synthetic cancellation draft");
+  await page.getByRole("dialog").getByRole("button", { name: "Go back", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel invoice", exact: true }).click();
+  await expect(page.getByLabel("Cancellation reason")).toHaveValue("Retain this synthetic cancellation draft");
+}
+
 async function rejectedAPI(page, method, path, data, field) {
   const response = await page.request.fetch(`/api${path}`, { method, data });
   const body = await response.json();
@@ -168,9 +222,10 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.goto(`/dashboard/accounting/invoices/${edited.id}`);
   const preview = page.locator("#invoice-client-preview");
   await expect(preview).toContainText("USD 12.34");
+  await verifyInvoiceDraftCancellation(page);
   await page.getByRole("button", { name: "Edit draft", exact: true }).click();
   await page.locator('input[type="number"]').nth(1).fill("24.68");
-  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await verifyInvoiceDraftPendingBoundary(page, testInfo, edited.id, edited.subject);
   await expect(preview).toContainText("USD 24.68");
   await expect(preview).not.toContainText("USD 12.34");
   expect(Number((await api(page, "GET", `/finance/invoices/${edited.id}`)).total)).toBe(24.68);
@@ -187,6 +242,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.getByRole("row").filter({ hasText: receipt.payment_number }).getByRole("button", { name: "Reverse payment", exact: true }).click();
   await page.getByLabel("Reason for reversal").fill("Synthetic correction of duplicate receipt");
   await page.getByRole("button", { name: "Review reversal", exact: true }).click();
+  await verifyInvoiceReversalBack(page);
   await page.getByRole("button", { name: "Confirm reversal", exact: true }).click();
   await expect(preview.getByText("Paid", { exact: true }).locator("..")).toContainText("USD 80.00");
   for (const due of await preview.getByText("Amount due", { exact: true }).all()) await expect(due.locator("..")).toContainText("USD 120.00");
@@ -207,6 +263,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await page.getByRole("button", { name: "Cancel invoice", exact: true }).click();
   const confirmation = page.getByRole("dialog");
   await expect(confirmation.getByRole("button", { name: "Cancel invoice", exact: true })).toBeDisabled();
+  await verifyInvoiceCancellationBack(page);
   await page.getByLabel("Cancellation reason").fill("Synthetic duplicate draft, never issued");
   await confirmation.getByRole("button", { name: "Cancel invoice", exact: true }).click();
   await expect(page.getByText("Cancelled invoices are retained for audit history and cannot be collected.", { exact: true })).toBeVisible();

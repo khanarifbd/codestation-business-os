@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useLayoutEffect } from "react";
 import { ExternalLink, Landmark, Link2, LockKeyhole, Pencil, Printer, QrCode, Save, WalletCards, X } from "lucide-react";
 
 import { SearchableSelect } from "@/components/searchable-select";
+import { useDashboardSession } from "@/components/dashboard-session-context";
+import { getApiErrorMessage } from "@/lib/api-error";
 import QRCode from "@/lib/qrcode-svg";
 
 type PaymentMethod = "bank_transfer" | "cash" | "card" | "payoneer" | "wise" | "stripe" | "paypal" | "other";
@@ -150,44 +152,64 @@ function LocalPaymentQr({ value }: { value: string }) {
 }
 
 export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
+  const { tenant } = useDashboardSession();
+  const scope = JSON.stringify([tenant?.organization?.id, tenant?.membership_id, tenant?.role_id, tenant?.permissions, invoiceId]);
+  const activeScope = useRef<string | null>(scope), mounted = useRef(true), readEpoch = useRef(0), reading = useRef(false), failedRead = useRef(false), pending = useRef(false), acknowledged = useRef(false), unknown = useRef(false), editGeneration = useRef(0);
+  const generation = editGeneration.current;
+  const renderedReadEpoch = readEpoch.current;
+  useLayoutEffect(() => { const epoch = readEpoch; activeScope.current = scope; mounted.current = true; return () => { activeScope.current = null; mounted.current = false; ++epoch.current; }; }, [scope]);
+  const ownsScope = useCallback(() => mounted.current && activeScope.current === scope, [scope]);
+  const canView = Boolean(tenant?.permissions.some(value => value === "*" || value === "finance.view"));
+  const canManage = Boolean(tenant?.permissions.some(value => value === "*" || value === "finance.manage"));
+  const [blocked, setBlocked] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [payment, setPayment] = useState<PaymentInstructions | null>(null);
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [form, setForm] = useState<PaymentForm>({ method: "", accountId: "", paymentUrl: "", instructions: "" });
   const [editing, setEditing] = useState(false);
+  const editingRef = useRef(false);
   const [saveDefaults, setSaveDefaults] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const verifiedPayment = useCallback((value: unknown): value is PaymentInstructions => {
+    if (!value || typeof value !== "object") return false;
+    const row = value as PaymentInstructions;
+    return row.invoice_id === invoiceId && typeof row.invoice_number === "string" && typeof row.invoice_status === "string" && typeof row.invoice_currency === "string" && typeof row.locked === "boolean"
+      && [row.payment_method, row.payment_account_id, row.payment_account_name, row.payment_provider, row.payment_account_holder, row.payment_account_reference, row.payment_currency, row.payment_url, row.payment_instructions].every(item => item === null || typeof item === "string");
+  }, [invoiceId]);
+  const load = useCallback(async (replaceDraft = false) => {
+    if (!ownsScope() || !canView || pending.current && !replaceDraft) return false;
+    const epoch = ++readEpoch.current; reading.current = true;
+    const current = () => ownsScope() && epoch === readEpoch.current;
+    setLoading(true); setError(null);
     try {
       const [invoiceResponse, paymentResponse, destinationResponse] = await Promise.all([
         fetch(`/api/finance/invoices/${invoiceId}`, { cache: "no-store" }),
         fetch(`/api/finance/invoices/${invoiceId}/payment-instructions`, { cache: "no-store" }),
-        fetch("/api/finance/payment-destinations", { cache: "no-store" }),
+        canManage ? fetch("/api/finance/payment-destinations", { cache: "no-store" }) : Promise.resolve(null),
       ]);
       const [invoicePayload, paymentPayload, destinationPayload] = await Promise.all([
-        invoiceResponse.json(),
-        paymentResponse.json(),
-        destinationResponse.json(),
+        invoiceResponse.json().catch(() => null), paymentResponse.json().catch(() => null), destinationResponse?.json().catch(() => null) ?? Promise.resolve([]),
       ]);
+      if (!current()) return false;
       if (!invoiceResponse.ok) throw new Error(apiError(invoicePayload, "Could not load invoice preview"));
       if (!paymentResponse.ok) throw new Error(apiError(paymentPayload, "Could not load payment instructions"));
-      if (!destinationResponse.ok) throw new Error(apiError(destinationPayload, "Could not load payment destinations"));
-      setInvoice(invoicePayload as Invoice);
-      setPayment(paymentPayload as PaymentInstructions);
-      setDestinations(destinationPayload as Destination[]);
-      setForm(toForm(paymentPayload as PaymentInstructions));
+      if (!invoicePayload || invoicePayload.id !== invoiceId || typeof invoicePayload.status !== "string" || typeof invoicePayload.display_status !== "string" || !Array.isArray(invoicePayload.items)) throw new Error("Invoice preview identity could not be verified. Retry loading.");
+      if (!verifiedPayment(paymentPayload)) throw new Error("Payment instruction identity could not be verified. Retry loading.");
+      if (destinationResponse && (!destinationResponse.ok || !Array.isArray(destinationPayload) || destinationPayload.some((row: Destination) => !row || typeof row.id !== "string" || typeof row.name !== "string" || typeof row.account_type !== "string"))) throw new Error("Payment destinations could not be verified. Retry loading.");
+      setInvoice(invoicePayload); setPayment(paymentPayload); setDestinations(destinationPayload);
+      if (replaceDraft || !editingRef.current && !unknown.current) setForm(toForm(paymentPayload));
+      failedRead.current = false; setReadFailed(false);
+      return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not load invoice payment details");
-    } finally {
-      setLoading(false);
-    }
-  }, [invoiceId]);
+      if (current()) { failedRead.current = true; setReadFailed(true); setError(reason instanceof Error ? reason.message : "Could not load invoice payment details"); }
+      return false;
+    } finally { if (current()) { reading.current = false; setLoading(false); } }
+  }, [invoiceId, ownsScope, canView, canManage, verifiedPayment]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -205,6 +227,8 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
   const currencyMismatch = Boolean(selectedDestination && invoice && selectedDestination.currency !== invoice.currency);
 
   function selectDestination(accountId: string) {
+    if (!canChange()) return;
+    ++editGeneration.current;
     const account = destinations.find((item) => item.id === accountId);
     if (!account) {
       setForm((value) => ({ ...value, accountId: "" }));
@@ -219,6 +243,8 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
   }
 
   function changeMethod(method: PaymentMethod | "") {
+    if (!canChange()) return;
+    ++editGeneration.current;
     if (!method) {
       setForm({ method: "", accountId: "", paymentUrl: "", instructions: "" });
       setSaveDefaults(false);
@@ -227,60 +253,69 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
     setForm((value) => ({ ...value, method }));
   }
 
+  function currentDocument() { return ownsScope() && renderedReadEpoch === readEpoch.current && canView && !reading.current && !failedRead.current && !loading && !readFailed && invoice?.id === invoiceId && payment?.invoice_id === invoiceId; }
+  function canChange() { return currentDocument() && editingRef.current && canManage && generation === editGeneration.current && !pending.current && !unknown.current && !acknowledged.current && !payment?.locked && invoice?.status === "draft"; }
+  function beginEdit() {
+    if (!currentDocument() || generation !== editGeneration.current || !canManage || editingRef.current || pending.current || unknown.current || payment?.locked || invoice?.status !== "draft" || !payment) return;
+    acknowledged.current = false; ++editGeneration.current;
+    setForm(toForm(payment)); setEditing(true); editingRef.current = true;
+  }
+  function cancelEdit() { if (!canChange() || !payment) return; editingRef.current = false; ++editGeneration.current; setForm(toForm(payment)); setEditing(false); setSaveDefaults(false); }
+  function changeField(field: "paymentUrl" | "instructions", value: string) { if (canChange()) { ++editGeneration.current; setForm(current => ({ ...current, [field]: value })); } }
+  function changeDefaults(value: boolean) { if (value !== saveDefaults && canChange()) { ++editGeneration.current; setSaveDefaults(value); } }
   async function savePaymentInstructions() {
-    if (!invoice || !payment) return;
+    if (!canChange() || !invoice || !payment) return;
     if (!form.method && (form.accountId || form.paymentUrl.trim() || form.instructions.trim())) {
-      setError("Choose a payment method or clear all payment instructions.");
-      return;
+      setError("Choose a payment method or clear all payment instructions."); return;
     }
-    setSaving(true);
-    setError(null);
-    setMessage(null);
+    pending.current = true;
+    setSaving(true); setError(null); setMessage(null);
+    let definiteRejection = false;
     try {
       const response = await fetch(`/api/finance/invoices/${invoice.id}/payment-instructions`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          payment_method: form.method || null,
-          payment_account_id: form.accountId || null,
-          payment_url: form.paymentUrl.trim() || null,
-          payment_instructions: form.instructions.trim() || null,
-        }),
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_method: form.method || null, payment_account_id: form.accountId || null, payment_url: form.paymentUrl.trim() || null, payment_instructions: form.instructions.trim() || null }),
       });
+      if (response.ok && ownsScope()) acknowledged.current = true;
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(apiError(payload, "Could not save payment instructions"));
-
-      let defaultWarning = "";
-      if (saveDefaults && form.accountId) {
-        const defaultsResponse = await fetch(`/api/finance/payment-destinations/${form.accountId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ payment_url: form.paymentUrl.trim() || null, payment_instructions: form.instructions.trim() || null }),
-        });
-        if (!defaultsResponse.ok) defaultWarning = " Invoice saved, but account defaults could not be updated.";
+      if (!ownsScope()) return;
+      if (!response.ok) {
+        definiteRejection = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && getApiErrorMessage(payload, "").trim().length > 0 && getApiErrorMessage(payload, "").trim() !== "Unexpected upstream response";
+        throw new Error(apiError(payload, "Could not save payment instructions"));
       }
-
+      let defaultWarning = "";
+      if (!verifiedPayment(payload)) defaultWarning = " The saved response could not be verified; review the refreshed invoice. Account defaults were not changed.";
+      else if (saveDefaults && form.accountId) {
+        try {
+          const defaultsResponse = await fetch(`/api/finance/payment-destinations/${form.accountId}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ payment_url: form.paymentUrl.trim() || null, payment_instructions: form.instructions.trim() || null }),
+          });
+          if (!defaultsResponse.ok) defaultWarning = " Invoice saved, but account defaults could not be updated.";
+        } catch { defaultWarning = " Invoice saved, but the account-default update outcome is unknown. Review the account before attempting another defaults update."; }
+      }
+      if (!ownsScope()) return;
       setMessage(`Payment instructions saved.${defaultWarning}`);
-      setEditing(false);
-      setSaveDefaults(false);
-      await load();
+      setEditing(false); editingRef.current = false; setSaveDefaults(false);
+      const refreshed = await load(true);
+      if (ownsScope() && !refreshed) setError("Payment instructions were saved, but the latest preview could not be verified. Retry the read-only refresh; do not repeat the save.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save payment instructions");
-    } finally {
-      setSaving(false);
-    }
+      if (!ownsScope()) return;
+      if (!acknowledged.current && !definiteRejection) { unknown.current = true; setBlocked(true); }
+      setError(acknowledged.current ? "Payment instructions were saved, but the latest result could not be verified. Do not repeat the save." : unknown.current ? "The payment-instruction save outcome is unknown. Keep this draft and review the saved invoice; do not repeat the save. Reloading loses this document-only protection." : reason instanceof Error ? reason.message : "Could not save payment instructions");
+    } finally { pending.current = false; if (ownsScope()) setSaving(false); }
   }
 
   function printInvoice() {
-    if (!invoice) return;
+    if (!currentDocument() || !invoice) return;
     window.open(`/print/invoices/${encodeURIComponent(invoice.id)}`, "_blank", "noopener,noreferrer");
   }
 
   if (loading && !invoice) return <div className="mx-auto max-w-7xl px-4 pb-8 text-sm text-neutral-400 sm:px-6 lg:px-8">Loading payment instructions…</div>;
-  if (!invoice || !payment) return <div className="mx-auto max-w-7xl px-4 pb-8 sm:px-6 lg:px-8">{error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}</div>;
+  if (!canView || !invoice || !payment || invoice.id !== invoiceId || payment.invoice_id !== invoiceId) return <div className="mx-auto max-w-7xl px-4 pb-8 sm:px-6 lg:px-8">{error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}</div>;
 
   const hasPaymentInstructions = Boolean(payment.payment_method || payment.payment_account_id || payment.payment_url || payment.payment_instructions);
-  const canEdit = !payment.locked && invoice.status === "draft";
+  const canEdit = canManage && canView && !loading && !readFailed && !blocked && !payment.locked && invoice.status === "draft" && invoice.id === invoiceId && payment.invoice_id === invoiceId;
 
   return <div className="mx-auto max-w-7xl space-y-6 px-4 pb-10 sm:px-6 lg:px-8">
     <style jsx global>{`
@@ -295,24 +330,25 @@ export function InvoicePaymentWorkspace({ invoiceId }: { invoiceId: string }) {
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
+    {blocked ? <div role="alert" className="rounded-xl border bg-white p-4">This save may already have completed. The draft is frozen; a read-only refresh does not authorize repeating it. Reloading or leaving loses this local protection. <button type="button" disabled={loading || saving} onClick={() => void load()}>Refresh saved instructions</button></div> : readFailed ? <button type="button" disabled={loading || saving} onClick={() => void load()}>Retry payment preview</button> : null}
     <section className="rounded-2xl border bg-white p-5 sm:p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex items-center gap-2"><WalletCards className="size-5" /><h2 className="text-lg font-semibold">Payment instructions</h2>{payment.locked ? <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-600"><LockKeyhole className="size-3" />Locked</span> : null}</div>
           <p className="mt-1 max-w-2xl text-sm text-neutral-500">Choose how the client should pay this invoice. Bank details are snapshotted so a sent invoice never changes when the account is edited later.</p>
         </div>
-        {canEdit && !editing ? <button type="button" onClick={() => { setForm(toForm(payment)); setEditing(true); }} className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium"><Pencil className="size-4" />Edit payment details</button> : null}
-        {editing ? <div className="flex gap-2"><button type="button" onClick={() => { setForm(toForm(payment)); setEditing(false); setSaveDefaults(false); }} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium"><X className="size-4" />Cancel</button><button type="button" disabled={saving} onClick={() => void savePaymentInstructions()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"><Save className="size-4" />{saving ? "Saving…" : "Save"}</button></div> : null}
+        {canEdit && !editing ? <button type="button" disabled={saving} onClick={beginEdit} className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium"><Pencil className="size-4" />Edit payment details</button> : null}
+        {editing ? <div className="flex gap-2"><button type="button" disabled={saving || blocked} onClick={cancelEdit} className="inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium"><X className="size-4" />Cancel</button><button type="button" disabled={saving || blocked || !canEdit} onClick={() => void savePaymentInstructions()} className="inline-flex items-center gap-2 rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50"><Save className="size-4" />{saving ? "Saving…" : "Save"}</button></div> : null}
       </div>
 
-      {editing ? <div className="mt-6 grid gap-4 md:grid-cols-2">
+      {editing && canManage ? <fieldset disabled={saving || blocked || !canEdit} className="mt-6 grid gap-4 md:grid-cols-2" style={{ border: 0, padding: 0, minWidth: 0 }}>
         <Field label="Payment method"><select value={form.method} onChange={(event) => changeMethod(event.target.value as PaymentMethod | "")} className="w-full rounded-xl border bg-white px-3 py-2.5 text-sm">{methodOptions.map((item) => <option key={item.value || "none"} value={item.value}>{item.label}</option>)}</select></Field>
         <SearchableSelect label="Receive into" value={form.accountId} onValueChange={selectDestination} options={accountOptions} placeholder="Select bank, wallet or gateway" searchPlaceholder="Search account, provider, currency..." clearable />
-        <div className="md:col-span-2"><Field label="Payment URL"><div className="relative"><Link2 className="absolute left-3 top-3 size-4 text-neutral-400" /><input type="url" value={form.paymentUrl} onChange={(event) => setForm((value) => ({ ...value, paymentUrl: event.target.value }))} className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm" placeholder="https://pay.example.com/..." /></div><p className="mt-1 text-xs text-neutral-400">When a URL is present, the client-facing invoice shows a clickable link and locally generated QR code.</p></Field></div>
-        <div className="md:col-span-2"><Field label="Client payment instructions"><textarea value={form.instructions} onChange={(event) => setForm((value) => ({ ...value, instructions: event.target.value }))} className="min-h-24 w-full rounded-xl border px-3 py-2.5 text-sm" placeholder="Use the invoice number as the payment reference." /></Field></div>
+        <div className="md:col-span-2"><Field label="Payment URL"><div className="relative"><Link2 className="absolute left-3 top-3 size-4 text-neutral-400" /><input type="url" value={form.paymentUrl} onChange={(event) => changeField("paymentUrl", event.target.value)} className="w-full rounded-xl border py-2.5 pl-9 pr-3 text-sm" placeholder="https://pay.example.com/..." /></div><p className="mt-1 text-xs text-neutral-400">When a URL is present, the client-facing invoice shows a clickable link and locally generated QR code.</p></Field></div>
+        <div className="md:col-span-2"><Field label="Client payment instructions"><textarea value={form.instructions} onChange={(event) => changeField("instructions", event.target.value)} className="min-h-24 w-full rounded-xl border px-3 py-2.5 text-sm" placeholder="Use the invoice number as the payment reference." /></Field></div>
         {currencyMismatch ? <div className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Invoice currency is <strong>{invoice.currency}</strong>, but the selected destination is <strong>{selectedDestination?.currency}</strong>. Business OS will not invent a converted amount. Record the actual exchange rate when the payment is received.</div> : null}
-        {form.accountId ? <label className="md:col-span-2 flex items-start gap-3 rounded-xl border bg-neutral-50 px-4 py-3 text-sm"><input type="checkbox" checked={saveDefaults} onChange={(event) => setSaveDefaults(event.target.checked)} className="mt-1" /><span><strong>Save URL and instructions as defaults for this account</strong><span className="mt-0.5 block text-xs text-neutral-500">Future invoices selecting this account can prefill the same client payment details.</span></span></label> : null}
-      </div> : hasPaymentInstructions ? <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {form.accountId ? <label className="md:col-span-2 flex items-start gap-3 rounded-xl border bg-neutral-50 px-4 py-3 text-sm"><input type="checkbox" checked={saveDefaults} onChange={(event) => changeDefaults(event.target.checked)} className="mt-1" /><span><strong>Save URL and instructions as defaults for this account</strong><span className="mt-0.5 block text-xs text-neutral-500">Future invoices selecting this account can prefill the same client payment details.</span></span></label> : null}
+      </fieldset> : hasPaymentInstructions ? <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Info label="Method" value={methodLabel(payment.payment_method)} />
         <Info label="Destination" value={payment.payment_account_name || "Custom payment link"} />
         <Info label="Provider" value={payment.payment_provider || "—"} />
