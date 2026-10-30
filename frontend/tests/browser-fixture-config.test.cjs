@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, '..');
 function config(baseURL) {
   const env = { ...process.env };
   delete env.E2E_BASE_URL;
+  delete env.CI;
   if (baseURL !== undefined) env.E2E_BASE_URL = baseURL;
   return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', "import config from './playwright.config.mjs'; console.log(JSON.stringify(config.use));"], { cwd: root, env, encoding: 'utf8' }));
 }
