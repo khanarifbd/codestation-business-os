@@ -10,6 +10,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import aliased
 
 from app.api.dependencies import DbSession, require_tenant_permission
+from app.core.localization import normalize_country_code, normalize_currency_code
 from app.models.company_defaults import OrganizationSystemDefaults
 from app.models.crm import Client, Lead, LeadInteraction, LeadSource, LeadStatus
 from app.models.membership import Membership
@@ -539,6 +540,13 @@ def convert_lead(
     tax_identifier = _clean(_payload_value(payload, "tax_identifier", None))
 
     currency_value = _payload_value(payload, "currency", lead.currency)
+    # An omitted override inherits lead data, including older unvalidated values.
+    # Validate the effective codes before any client/sequence mutation.
+    try:
+        country_value = normalize_country_code(country_value) if country_value is not None else None
+        currency_value = normalize_currency_code(currency_value) if currency_value is not None else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     assigned_employee_id = _payload_value(payload, "assigned_employee_id", lead.assigned_employee_id)
     _tenant_employee(db, tenant.organization_id, assigned_employee_id)
     notes = _clean(_payload_value(payload, "notes", lead.notes))

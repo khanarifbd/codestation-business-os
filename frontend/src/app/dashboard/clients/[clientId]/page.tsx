@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { formatMoneyExact } from "@/lib/sales-money-preview";
+import { getApiErrorMessage } from "@/lib/api-error";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Banknote,
@@ -53,9 +55,9 @@ type Workspace = { client: ClientDetail; access: Access; counts: Counts; busines
 type Tab = "overview" | "sales" | "projects" | "finance" | "activity" | "access" | "services" | "notes" | "documents" | "credentials";
 
 function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
-function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function money(value: string | number, currency: string) { return formatMoneyExact(value, currency); }
 function date(value: string | null) { return value ? new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(new Date(`${value.length === 10 ? `${value}T00:00:00` : value}`)) : "—"; }
-function dateTime(value: string) { return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)); }
+function dateTime(value: string) { return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value)); }
 function statusClass(status: string) {
   const value = status.toLowerCase();
   if (["active", "paid", "completed", "accepted", "confirmed", "won"].includes(value)) return "border-emerald-200 bg-emerald-50 text-emerald-700";
@@ -73,21 +75,26 @@ export default function ClientWorkspacePage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const workspaceRequest = useRef(0);
 
   const load = useCallback(async () => {
+    const request = ++workspaceRequest.current;
     setLoading(true); setError(null);
     try {
       const response = await fetch(`/api/crm/clients/${encodeURIComponent(clientId)}/workspace?limit=50`, { cache: "no-store" });
+      if (request !== workspaceRequest.current) return;
       if (response.status === 401) { router.replace("/login"); return; }
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to load client workspace.");
+      if (request !== workspaceRequest.current) return;
+      if (!response.ok) throw new Error(getApiErrorMessage(payload, "Unable to load client workspace."));
+      if ((payload as Workspace)?.client?.id !== clientId) throw new Error("The returned client does not match this workspace.");
       setWorkspace(payload as Workspace);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load client workspace.");
-    } finally { setLoading(false); }
+      if (request === workspaceRequest.current) { setWorkspace(null); setError(reason instanceof Error ? reason.message : "Unable to load client workspace."); }
+    } finally { if (request === workspaceRequest.current) setLoading(false); }
   }, [clientId, router]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { workspaceRequest.current += 1; }; }, [load]);
 
   const tabs = useMemo(() => {
     if (!workspace) return [{ value: "overview" as Tab, label: "Overview" }];
@@ -105,8 +112,8 @@ export default function ClientWorkspacePage() {
     ];
   }, [workspace]);
 
-  if (loading) return <main className="client-detail-workspace flex min-h-[70vh] items-center justify-center" role="status" aria-label="Loading client workspace"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
-  if (error || !workspace) return <main className="client-detail-workspace min-h-screen bg-[var(--app-canvas)] p-4 sm:p-8"><div className="mx-auto max-w-6xl"><Link href="/dashboard/clients" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500"><ArrowLeft className="size-4" />Back to clients</Link><div role="alert" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:mt-6 sm:p-5">{error ?? "Client workspace unavailable."}</div></div></main>;
+  if (loading || (workspace && workspace.client.id !== clientId)) return <main className="client-detail-workspace flex min-h-[70vh] items-center justify-center" role="status" aria-label="Loading client workspace"><Loader2 className="size-7 animate-spin text-neutral-400" /></main>;
+  if (error || !workspace) return <main className="client-detail-workspace min-h-screen bg-[var(--app-canvas)] p-4 sm:p-8"><div className="mx-auto max-w-6xl"><Link href="/dashboard/clients" className="inline-flex items-center gap-2 text-sm font-medium text-neutral-500"><ArrowLeft className="size-4" />Back to clients</Link><div role="alert" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 sm:mt-6 sm:p-5">{error ?? "Client workspace unavailable."}</div><button type="button" onClick={() => void load()} className="mt-4 min-h-10 rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white">Retry client workspace</button></div></main>;
 
   const { client, access, counts } = workspace;
   const country = COUNTRY_OPTIONS.find((item) => item.value === client.country_code)?.label ?? client.country_code ?? "—";
@@ -179,7 +186,7 @@ function Overview({ workspace, country, address }: { workspace: Workspace; count
       <Section className="client-activity-surface" title="Recent activity"><div className="client-timeline">{timeline.slice(0, 7).map((item, index) => <TimelineRow key={`${item.kind}-${item.occurred_at}-${index}`} item={item} />)}</div></Section>
     </div>
     <aside className="client-overview-profile">
-      <Section className="client-profile-surface" title="Client profile"><dl className="space-y-4 text-sm"><Detail icon={Building2} label="Legal name" value={client.legal_name ?? client.display_name} /><Detail icon={UserRound} label="Contact person" value={client.contact_name ?? "—"} /><Detail icon={Mail} label="Email" value={client.email ?? "—"} /><Detail icon={Mail} label="Billing email" value={client.billing_email ?? "—"} /><Detail icon={Phone} label="Phone" value={client.phone ?? "—"} /><Detail icon={MapPin} label="Country" value={country} /><Detail icon={MapPin} label="Address" value={address} /></dl></Section>
+      <Section className="client-profile-surface" title="Client profile"><dl className="space-y-4 text-sm"><Detail icon={Building2} label="Legal name" value={client.legal_name ?? client.display_name} /><Detail icon={UserRound} label="Contact person" value={client.contact_name ?? "—"} /><Detail icon={Mail} label="Email" value={client.email ?? "—"} /><Detail icon={Mail} label="Billing email" value={client.billing_email ?? "—"} /><Detail icon={Phone} label="Phone" value={client.phone ?? "—"} /><Detail icon={Phone} label="WhatsApp" value={client.whatsapp ?? "—"} /><Detail icon={MapPin} label="Country" value={country} /><Detail icon={MapPin} label="Address" value={address} /></dl></Section>
       <Section className="client-business-surface" title="Business details"><dl className="space-y-4 text-sm"><PlainDetail label="Default currency" value={client.currency ?? "—"} /><PlainDetail label="Tax / VAT identifier" value={client.tax_identifier ?? "—"} /><PlainDetail label="Assigned owner" value={client.assigned_employee_name ?? "Unassigned"} /><PlainDetail label="Website" value={client.website ?? "—"} /><PlainDetail label="Created" value={dateTime(client.created_at)} /></dl>{client.notes ? <div className="mt-5 border-t pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Notes</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">{client.notes}</p></div> : null}</Section>
     </aside>
   </div>;

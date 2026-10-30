@@ -1,5 +1,5 @@
 /* Shared workspace shell + scoped overview: existing route/role logic is untouched. */
-.workspace-shell { --workspace-ink:var(--workspace-neutral-ink, #19332f); --workspace-muted:var(--workspace-neutral-muted, #66776e); --workspace-border:var(--workspace-neutral-border, #dfe6df); --workspace-accent:var(--workspace-surface-selected, #d7efa9); color:var(--workspace-ink); font-family:var(--font-inter),Arial,sans-serif; }
+.workspace-shell { --workspace-ink:var(--workspace-neutral-ink, #19332f); --workspace-muted:var(--workspace-neutral-muted, #66776e); --workspace-border:var(--workspace-neutral-border, #dfe6df); --workspace-accent:var(--workspace-surface-selected, #d7efa9); color:var(--workspace-ink); font-family:var(--font-sans); }
 .workspace-shell :is(a,button,select,summary):focus-visible { outline:3px solid var(--workspace-neutral-focus, #7ea98d); outline-offset:3px; }
 .ws-sidebar { width:244px; background:var(--workspace-surface, #142e33); border-right:1px solid var(--workspace-neutral-border, #142e33); color:var(--workspace-neutral-muted, #e0ece5); padding:25px 14px 14px; }
 .ws-brand { gap:11px; padding:0 4px 7px; }

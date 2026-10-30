@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Inter } from "next/font/google";
+import { Geist_Mono, Inter, Noto_Sans_Bengali, Noto_Sans_JP } from "next/font/google";
 import "./globals.css";
 import { SessionActivityTracker } from "@/components/session-activity-tracker";
 
@@ -7,6 +7,22 @@ const inter = Inter({
   variable: "--font-inter",
   subsets: ["latin"],
   display: "swap",
+});
+
+// Script fallback only: Inter remains primary. Next self-hosts Unicode-range
+// shards; these families are deliberately not preloaded for Latin-only pages.
+const notoBengali = Noto_Sans_Bengali({
+  variable: "--font-noto-bengali",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
+});
+
+const notoJapanese = Noto_Sans_JP({
+  variable: "--font-noto-japanese",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
 });
 
 const geistMono = Geist_Mono({
@@ -31,7 +47,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${notoBengali.variable} ${notoJapanese.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground"><SessionActivityTracker />{children}</body>
     </html>

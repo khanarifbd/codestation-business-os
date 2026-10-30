@@ -2,7 +2,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_validator
+
+from app.core.localization import normalize_country_code, normalize_currency_code
 
 
 class LeadStatusRead(BaseModel):
@@ -237,7 +239,21 @@ class LeadDetail(BaseModel):
     interactions: list[LeadInteractionRead]
 
 
-class ClientCreate(BaseModel):
+class _ClientLocalizationFields(BaseModel):
+    """Client code normalization without changing omitted/null PATCH semantics."""
+
+    @field_validator("country_code", mode="before", check_fields=False)
+    @classmethod
+    def normalize_client_country(cls, value):
+        return normalize_country_code(value) if isinstance(value, str) else value
+
+    @field_validator("currency", mode="before", check_fields=False)
+    @classmethod
+    def normalize_client_currency(cls, value):
+        return normalize_currency_code(value) if isinstance(value, str) else value
+
+
+class ClientCreate(_ClientLocalizationFields):
     client_type: Literal["company", "individual"] = "company"
     display_name: str = Field(min_length=1, max_length=220)
     legal_name: str | None = Field(default=None, max_length=220)
@@ -259,8 +275,13 @@ class ClientCreate(BaseModel):
     assigned_employee_id: str | None = None
     notes: str | None = None
 
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def normalize_display_name(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
-class ClientUpdate(BaseModel):
+
+class ClientUpdate(_ClientLocalizationFields):
     client_type: Literal["company", "individual"] | None = None
     display_name: str | None = Field(default=None, min_length=1, max_length=220)
     legal_name: str | None = Field(default=None, max_length=220)
@@ -282,6 +303,13 @@ class ClientUpdate(BaseModel):
     assigned_employee_id: str | None = None
     status: Literal["active", "inactive"] | None = None
     notes: str | None = None
+
+    @field_validator("display_name", "client_type", "status", mode="before")
+    @classmethod
+    def validate_required_patch_field(cls, value, info: ValidationInfo):
+        if value is None:
+            raise ValueError(f"{info.field_name} cannot be null")
+        return value.strip() if info.field_name == "display_name" and isinstance(value, str) else value
 
 
 class ClientListItem(BaseModel):
@@ -306,7 +334,7 @@ class ClientPage(BaseModel):
     next_cursor: str | None
 
 
-class LeadConvertRequest(BaseModel):
+class LeadConvertRequest(_ClientLocalizationFields):
     client_type: Literal["company", "individual"] | None = None
     display_name: str | None = Field(default=None, max_length=220)
     legal_name: str | None = Field(default=None, max_length=220)

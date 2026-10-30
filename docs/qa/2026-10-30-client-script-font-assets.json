@@ -1,0 +1,37 @@
+{
+  "measurement": "Webpack emitted assets; not HTTP transfer. Eligible shards selected by generated CSS unicode-range intersection, not all-family preload.",
+  "families": {
+    "Inter": {
+      "shards": 7,
+      "bytes": 218888
+    },
+    "Geist Mono": {
+      "shards": 6,
+      "bytes": 70516
+    },
+    "Noto Sans Bengali": {
+      "shards": 3,
+      "bytes": 147144
+    },
+    "Noto Sans JP": {
+      "shards": 124,
+      "bytes": 5470704
+    }
+  },
+  "fixture_eligible_shards": {
+    "Noto Sans Bengali": {
+      "text": "মোঃ আরিফ",
+      "files": {
+        "a3a053d5ba3eaf5e.woff2": 107884
+      },
+      "bytes": 107884
+    },
+    "Noto Sans JP": {
+      "text": "株式会社",
+      "files": {
+        "e8b0a6e706ee1409.woff2": 13004
+      },
+      "bytes": 13004
+    }
+  }
+}
