@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getApiErrorMessage } from "@/lib/api-error";
 
@@ -8,9 +8,10 @@ import { getApiErrorMessage } from "@/lib/api-error";
 export function useExpenseResource<T>(url: string, enabled: boolean, validate: (value: unknown) => value is T) {
   const router = useRouter();
   const mounted = useRef(true), epoch = useRef(0);
+  const current = useRef({ url, enabled, validate });
   const [state, setState] = useState<{ key: string; value: T | null; loading: boolean; error: string | null }>({ key: "", value: null, loading: false, error: null });
   const refresh = useCallback(async () => {
-    if (!enabled || !mounted.current) return null;
+    if (!enabled || !mounted.current || current.current.url !== url || current.current.enabled !== enabled || current.current.validate !== validate) return null;
     const identity = ++epoch.current;
     setState({ key: url, value: null, loading: true, error: null });
     try {
@@ -27,14 +28,15 @@ export function useExpenseResource<T>(url: string, enabled: boolean, validate: (
       return null;
     }
   }, [enabled, url, validate, router]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     let active = true;
     mounted.current = true;
+    current.current = { url, enabled, validate };
     // Defer the external read until setup settles; cancelled effects must not
     // start requests (including Strict Mode's first setup).
     queueMicrotask(() => { if (active) void refresh(); });
     return () => { active = false; mounted.current = false; epoch.current += 1; };
-  }, [refresh]);
+  }, [refresh, url, enabled, validate]);
   return {
     value: enabled && state.key === url ? state.value : null,
     error: enabled && state.key === url ? state.error : null,

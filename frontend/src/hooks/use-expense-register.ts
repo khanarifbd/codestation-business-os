@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { accountCursorHistoryScope, readPreviousAccountCursor, rememberAccountCursorStep } from "@/lib/account-cursor-history";
@@ -21,13 +21,14 @@ export function useExpenseRegister() {
   const profitability = useExpenseResource("/api/finance/profitability", canView && browse.tab === "profitability", isProfitability);
   const current = { search: browse.search, direction: "all" as const, source_type: `${browse.status}|${browse.category}`, date_from: "", date_to: "", size: 50, cursor: browse.cursor, page: browse.page };
   const scope = accountCursorHistoryScope(tenant?.organization.id || "", tenant?.membership_id || "", "expenses", current);
-  const position = JSON.stringify([scope, browse.page, browse.cursor]);
+  const position = JSON.stringify([scope, browse.page, browse.cursor, browse.tab]);
   const [previous, setPrevious] = useState<{ key: string; cursor: string | undefined } | null>(null);
   const [paging, setPaging] = useState<{ key: string; busy: boolean }>({ key: "", busy: false });
   const [navigationError, setNavigationError] = useState<string | null>(null);
+  const currentPosition = useRef(position);
   const mounted = useRef(true), navEpoch = useRef(0), navBusy = useRef(false);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; navEpoch.current += 1; }; }, []);
-  useEffect(() => { navEpoch.current += 1; navBusy.current = false; }, [position]);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; navEpoch.current += 1; }; }, []);
+  useLayoutEffect(() => { navEpoch.current += 1; navBusy.current = false; currentPosition.current = position; }, [position]);
   useEffect(() => {
     let active = true;
     const current = { search: browse.search, direction: "all" as const, source_type: `${browse.status}|${browse.category}`, date_from: "", date_to: "", size: 50, cursor: browse.cursor, page: browse.page };
@@ -40,21 +41,21 @@ export function useExpenseRegister() {
     return () => window.clearTimeout(id);
   }, [page.value, browse.focus]);
   const change = useCallback((changes: Partial<ExpenseBrowse>) => {
-    if (!requestWorkspaceExit()) return;
+    if (!mounted.current || currentPosition.current !== position || !requestWorkspaceExit()) return;
     navEpoch.current += 1; navBusy.current = false;
     setNavigationError(null);
     router.replace(expensesListHref({ ...browse, ...changes, cursor: "", page: 1, focus: "" }), { scroll: false });
-  }, [browse, router]);
+  }, [browse, router, position]);
   async function refreshCurrent() {
     // Refreshing setup clears the row components. Give a pending or uncertain
     // status operation the same preflight protection as leaving the view.
-    if (!requestWorkspaceExit()) return;
+    if (!mounted.current || currentPosition.current !== position || !requestWorkspaceExit()) return;
     if (browse.tab === "profitability") await profitability.refresh();
     else await Promise.all([meta.refresh(), ...(browse.tab === "expenses" ? [page.refresh(), summary.refresh()] : [])]);
   }
   async function nextPage() {
     const cursor = page.value?.next_cursor;
-    if (!cursor || page.loading || navBusy.current) return;
+    if (!mounted.current || currentPosition.current !== position || !cursor || page.loading || navBusy.current) return;
     const identity = ++navEpoch.current; navBusy.current = true; setPaging({ key: position, busy: true }); setNavigationError(null);
     try {
       await rememberAccountCursorStep(scope, current, cursor);
@@ -65,7 +66,7 @@ export function useExpenseRegister() {
     }
   }
   function previousPage() {
-    if (page.loading || previous?.key !== position || previous.cursor === undefined) return;
+    if (!mounted.current || currentPosition.current !== position || page.loading || previous?.key !== position || previous.cursor === undefined) return;
     navEpoch.current += 1; navBusy.current = false;
     router.push(expensesListHref({ ...browse, cursor: previous.cursor, page: browse.page - 1, focus: "" }), { scroll: false });
   }

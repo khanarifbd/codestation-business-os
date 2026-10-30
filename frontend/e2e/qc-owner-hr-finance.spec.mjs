@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 // Real Next.js proxy + FastAPI + disposable PostgreSQL only. Do not mock business
 // APIs, visit employee/client portals, send invitations, or invoke payment rails.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
-const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
+const password = process.env.E2E_PASSWORD;
 const today = new Date().toISOString().slice(0, 10);
 const monthStart = `${today.slice(0, 7)}-01`;
 const monthEnd = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).toISOString().slice(0, 10);
@@ -25,6 +25,7 @@ async function post(page, path, data) {
 }
 
 async function setupWorkspace(page, label) {
+  expect(password, "E2E_PASSWORD must be configured for the disposable CI fixture").toBeTruthy();
   await post(page, "/api/auth/login", { email, password });
   const name = `QC owner ${label} ${randomUUID().slice(0, 8)}`;
   const workspace = await post(page, "/api/organizations", {
@@ -121,7 +122,7 @@ test("owner edits employee, records precise attendance and approves leave withou
   });
 });
 
-test("owner approves exact payroll, views payslip and reconciles expense with posted financial statements", async ({ page, context }) => {
+test("owner approves exact payroll, views payslip and reconciles expense with posted financial statements", async ({ page, context }, testInfo) => {
   test.setTimeout(210_000);
   const { employee, name } = await setupWorkspace(page, "payroll-finance");
   // This is a synthetic ledger account, not a connected bank or payment provider.
@@ -213,6 +214,26 @@ test("owner approves exact payroll, views payslip and reconciles expense with po
     await payslip.close();
   });
 
+  let expenseVendor;
+  await test.step("Create optional international vendor fields through UI and verify persisted values", async () => {
+    await page.goto("/dashboard/expenses?tab=vendors");
+    await page.getByRole("link", { name: "New vendor", exact: true }).click();
+    await page.getByLabel("Vendor name", { exact: true }).fill("QC international expense vendor");
+    await page.getByLabel(/^Website \(optional\)/).fill("https://vendor.example.invalid/reference");
+    await page.getByLabel(/^Tax \/ business identifier \(optional\)/).fill("GB / QC-001");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByLabel(/^Website \(optional\)/).scrollIntoViewIfNeeded();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("neutral-theme-expense-vendor-mobile.png"), fullPage: false });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    expenseVendor = await submit(page, page.getByRole("button", { name: "Create vendor", exact: true }), "/api/finance/vendors");
+    expect(expenseVendor.website).toBe("https://vendor.example.invalid/reference");
+    expect(expenseVendor.tax_identifier).toBe("GB / QC-001");
+    const persistedVendor = (await get(page, "/api/finance/vendors")).find(item => item.id === expenseVendor.id);
+    expect(persistedVendor.website).toBe(expenseVendor.website);
+    expect(persistedVendor.tax_identifier).toBe(expenseVendor.tax_identifier);
+  });
+
   await test.step("Post a synthetic cash expense through the owner UI", async () => {
     await page.goto("/dashboard/expenses");
     await page.getByRole("link", { name: "Record expense", exact: true }).click();
@@ -224,9 +245,42 @@ test("owner approves exact payroll, views payslip and reconciles expense with po
     const category = expenseMeta.categories.find(item => item.is_active);
     expect(category).toBeTruthy();
     await choose(page, "Category", category.name);
+    await choose(page, "Vendor (optional)", "QC international expense vendor");
     await choose(page, "Deduct from account", "QC synthetic USD cash");
     await page.getByRole("button", { name: "Review expense", exact: true }).click();
-    const expense = await submit(page, page.getByRole("button", { name: "Post expense", exact: true }), "/api/finance/expenses");
+    // Known non-delivery: abort before forwarding; no fake financial response.
+    const expensePostUrl = new URL("/api/finance/expenses", page.url()).href;
+    let originalExpenseRequest, abortedPosts = 0;
+    const abortExpense = async route => {
+      const request = route.request();
+      if (request.method() !== "POST") return route.fallback();
+      abortedPosts += 1;
+      originalExpenseRequest = { body: request.postData(), key: request.headers()["idempotency-key"] };
+      await route.abort("failed");
+    };
+    await page.route(expensePostUrl, abortExpense);
+    try {
+      const failed = page.waitForEvent("requestfailed", { predicate: request => request.url() === expensePostUrl && request.method() === "POST" });
+      await Promise.all([failed, page.getByRole("button", { name: "Post expense", exact: true }).click()]);
+      await expect(page.getByText(/^The outcome is uncertain\./)).toBeVisible();
+      expect(abortedPosts).toBe(1);
+      expect(originalExpenseRequest.key).toBeTruthy();
+      await expect(page.getByLabel("Description", { exact: true })).toBeDisabled();
+      await expect(page.getByLabel(/^Gross expense amount/)).toBeDisabled();
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-expense-uncertain-desktop.png"), fullPage: false });
+    } finally {
+      await page.unroute(expensePostUrl, abortExpense);
+    }
+    await page.getByRole("button", { name: "Review same-request retry", exact: true }).click();
+    const retriedRequest = page.waitForRequest(request => request.url() === expensePostUrl && request.method() === "POST");
+    const [expense, actualRetry] = await Promise.all([
+      submit(page, page.getByRole("button", { name: "Retry original request", exact: true }), "/api/finance/expenses"),
+      retriedRequest,
+    ]);
+    expect(actualRetry.postData()).toBe(originalExpenseRequest.body);
+    expect(actualRetry.headers()["idempotency-key"]).toBe(originalExpenseRequest.key);
+    expect(expense.vendor_id).toBe(expenseVendor.id);
     expect(expense.status).toBe("posted");
     expect(cents(expense.expense_amount)).toBe(12345);
     expect(cents(expense.account_amount)).toBe(12345);
