@@ -2,7 +2,7 @@
 import importlib.util
 import json
 from pathlib import Path
-from datetime import date
+from datetime import date, timedelta
 from contextlib import ExitStack
 from types import SimpleNamespace as NS
 import sys
@@ -97,6 +97,23 @@ class HRSeedTests(unittest.TestCase):
         seed.payroll.approve_run.return_value=NS(id='run-2',status='draft')
         seed.payroll.approve_run.side_effect=None
         with self.assertRaisesRegex(RuntimeError,'Approved synthetic'):self.run_seed()
+
+    def test_dynamic_contracts_require_loaded_record_not_static_shell(self):
+        result=self.run_seed();contracts=result['route_contracts'];ids=result['typed_ids']
+        root='/dashboard/hr/settings/attendance'
+        for kind,key in [('offices','officeId'),('policies','employeeId'),('requests','requestId')]:
+            detail=contracts[root+'/'+kind+'/['+key+']']
+            self.assertEqual(detail['ready_text'],['Read-only record',ids[key]])
+            action='review' if kind=='requests' else 'edit'
+            editor=contracts[root+'/'+kind+'/['+key+']/'+action]
+            self.assertEqual(editor['ready_button'],'Review changes')
+            self.assertEqual(editor['ready_text'],['Review attendance request' if kind=='requests' else 'Edit attendance setup'])
+            self.assertNotIn('Back to register',editor['ready_text'])
+        attendance=contracts['/dashboard/hr/time/attendance/[attendanceId]']['ready_text']
+        self.assertEqual(attendance,['Attendance record','Synthetic Owner',date.today().isoformat(),'480 minutes'])
+        for suffix in ['', '/review']:
+            leave=contracts['/dashboard/hr/time/leave/[leaveId]'+suffix]['ready_text']
+            self.assertEqual(leave,['Leave request','Synthetic Owner',(date.today()+timedelta(days=7)).isoformat(),'Synthetic read-only pending review'])
 
     def test_fresh_contracts_are_json_safe_and_variants_honest(self):
         result=self.run_seed();json.dumps(result)

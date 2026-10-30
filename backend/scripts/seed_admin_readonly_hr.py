@@ -50,7 +50,8 @@ def seed_hr(db, tenant, request_factory, fixture_date: date, shared_ids=None) ->
     names = {'owner': owner.full_name, 'office': f'Synthetic sweep office {marker}',
              'document': f'Synthetic metadata-only document {marker}', 'event': f'Synthetic confirmation {marker}',
              'job': f'Synthetic sweep job {marker}', 'candidate': f'Synthetic sweep candidate {marker}',
-             'period': f'Synthetic draft period {marker}'}
+             'period': f'Synthetic draft period {marker}', 'work_date': fixture_date.isoformat(),
+             'leave_date': (fixture_date+timedelta(days=7)).isoformat()}
 
     def call(fn, *args, path, method='POST'):
         if not db.in_transaction():
@@ -154,10 +155,11 @@ def hr_route_contracts(ids, names):
     add(a,'Attendance setup',source,('/api/hr/attendance/offices',),(names['office'],))
     for kind,key,title,api in [('offices','officeId','Office locations','offices'),('policies','employeeId','Weekly work policies','policies'),('requests','requestId','Attendance requests','requests')]:
         root=a+'/'+kind; gets=('/api/hr/attendance/'+api,)
-        add(root+'/['+key+']',title,source,gets,('Back to register',))
+        add(root+'/['+key+']',title,source,gets,('Read-only record',ids[key]))
         action='review' if kind=='requests' else 'edit'
-        add(root+'/['+key+']/'+action,title,source,gets,('Back to register',))
-        if kind!='requests': add(root+'/new',title,source,gets,('Back to register',))
+        add(root+'/['+key+']/'+action,title,source,gets,
+            ('Review attendance request' if kind=='requests' else 'Edit attendance setup',),button='Review changes')
+        if kind!='requests': add(root+'/new',title,source,gets,('Create attendance setup',),button='Review changes')
     add(h+'/talent','Talent','frontend/src/app/dashboard/hr/talent/page.tsx',('/api/hr/jobs',),(names['job'],))
     add(h+'/talent/hiring','Job openings','hr-talent-hiring/workspace.tsx',('/api/hr/jobs',),(names['job'],))
     add(h+'/talent/hiring/jobs/[jobId]','Hiring record','hr-talent-hiring/workspace.tsx',('/api/hr/jobs',),(names['job'],))
@@ -165,7 +167,12 @@ def hr_route_contracts(ids, names):
     for suffix,title,path in [('/time','Time & Leave','attendance'),('/time/attendance/new','New attendance record','meta'),
         ('/time/attendance/[attendanceId]','Time & leave record','attendance'),('/time/leave/[leaveId]','Time & leave record','leave-requests'),
         ('/time/leave/[leaveId]/review','Review leave','leave-requests')]:
-        add(h+suffix,title,'hr-time/hr-time-workspace.tsx',('/api/hr/'+path,))
+        texts = ()
+        if '[attendanceId]' in suffix:
+            texts = ('Attendance record',names['owner'],names['work_date'],'480 minutes')
+        elif '[leaveId]' in suffix:
+            texts = ('Leave request',names['owner'],names['leave_date'],'Synthetic read-only pending review')
+        add(h+suffix,title,'hr-time/hr-time-workspace.tsx',('/api/hr/'+path,),texts)
     register='payroll/payroll-register.tsx'; editors='payroll/payroll-editors.tsx'; docs='payroll/payroll-documents.tsx'
     add(p,'Payroll, ready for review',register,('/api/payroll/runs',),(names['period'],))
     add(p+'/periods/[periodId]',names['period'],docs,('/api/payroll/periods',),('Start date',))
