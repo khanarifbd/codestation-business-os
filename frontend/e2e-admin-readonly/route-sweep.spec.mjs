@@ -4,7 +4,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from '
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
 
-import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure, exactHeading } from './support/evidence.mjs';
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure, exactHeading, verifyResponseIdentities } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -13,6 +13,7 @@ const manifest = JSON.parse(readFileSync(new URL('./routes.json', import.meta.ur
 const baseURL = localBaseURL(process.env.E2E_BASE_URL || 'http://localhost:3000');
 const batch = Number(process.env.ADMIN_SWEEP_BATCH);
 const groups = [...groupedRoutes(resolveRoutes(manifest, registry), batch), ...aliasGroups(manifest, registry, batch)];
+const routeContracts = new Map(groups.flat().map(route => [route.id, route.contract || registry.route_contracts?.[route.pattern]]));
 const evidenceDir = process.env.ADMIN_SWEEP_EVIDENCE;
 if (!evidenceDir) throw new Error('ADMIN_SWEEP_EVIDENCE directory is required');
 mkdirSync(evidenceDir, { recursive: true });
@@ -79,12 +80,20 @@ test.beforeAll(async ({ browser }) => {
   page.on('response', response => {
     const pathname = new URL(response.url()).pathname;
     if (!pathname.startsWith('/api/')) return;
-    const entry = { event: 'api_response', route_id: ownership.owner(response.request()), method: response.request().method(), pathname, status: response.status() };
+    const entry = { event: 'api_response', route_id: ownership.owner(response.request()), request_id: ownership.sequence(response.request()), method: response.request().method(), pathname, status: response.status() };
     const completion = (async () => {
       try {
         const failed = await response.finished();
         if (failed) throw new Error('Response body incomplete');
-        ownership.completed(response.request(), entry.status);
+        const identityChecks = (routeContracts.get(entry.route_id)?.expected_response_identities || []).filter(check => check.pathname === pathname);
+        if (entry.status >= 200 && entry.status < 300 && entry.method === 'GET' && identityChecks.length) {
+          let verified = false;
+          try { verified = verifyResponseIdentities(await response.json(), identityChecks); } catch { /* No raw body or parse error enters evidence. */ }
+          entry.identity_verified = verified;
+          emit({ event: 'response_identity', route_id: entry.route_id, request_id: entry.request_id, pathname, verified });
+          if (!verified) { const failure = { event: 'api_identity_failure', route_id: entry.route_id, request_id: entry.request_id, pathname, classification: 'unexpected_fixture_identity' }; errors.push(failure); emit(failure); }
+        }
+        if (entry.identity_verified !== false) ownership.completed(response.request(), entry.status);
         responses.push(entry); emit(entry);
         if (entry.status >= 400) errors.push(entry);
       } catch {
@@ -125,6 +134,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       if (route.kind === 'alias') await expect(page).toHaveURL(new URL(route.expected_url, baseURL).href);
       await expect(page.locator('body')).not.toContainText(/Application error: a client-side exception|This page could not be found/);
       for (const requiredPath of contract.expected_get_paths || []) await expect.poll(() => successfulRouteRead(responses, route.id, requiredPath)).toBe(true);
+      for (const check of contract.expected_response_identities || []) await expect.poll(() => responses.some(entry => entry.route_id === route.id && entry.pathname === check.pathname && entry.identity_verified === true)).toBe(true);
       const heading = exactHeading(page, contract);
       await expect(heading).toHaveCount(1);
       await expect(heading).toBeVisible();

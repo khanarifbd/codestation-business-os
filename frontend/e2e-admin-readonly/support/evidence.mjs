@@ -86,3 +86,21 @@ export function exactHeading(page, contract) {
   if (!contract || typeof contract.heading !== 'string' || !contract.heading.trim() || !Number.isInteger(contract.heading_level) || contract.heading_level < 1 || contract.heading_level > 6) throw new Error('Source-reviewed exact heading level required');
   return page.getByRole('heading', { name: contract.heading, exact: true, level: contract.heading_level });
 }
+
+export function verifyResponseIdentities(payload, checks) {
+  if (!Array.isArray(checks) || !checks.length) return false;
+  return checks.every(check => {
+    if (!check || typeof check.expected_value !== 'string' || !check.expected_value.trim()) return false;
+    const fields = check.field_path;
+    if (fields) {
+      if (![['id'], ['order_id'], ['client', 'id']].some(allowed => JSON.stringify(allowed) === JSON.stringify(fields))) return false;
+      let value = payload;
+      for (const field of fields) { if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, field)) return false; value = value[field]; }
+      return value === check.expected_value;
+    }
+    const collection = check.collection_path;
+    if (!Array.isArray(collection) || collection.length !== 1 || !['tasks', 'milestones', 'documents', 'credentials'].includes(collection[0])) return false;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !Object.hasOwn(payload, collection[0]) || !Array.isArray(payload[collection[0]])) return false;
+    return payload[collection[0]].filter(row => row && typeof row === 'object' && !Array.isArray(row) && row.id === check.expected_value).length === 1;
+  });
+}

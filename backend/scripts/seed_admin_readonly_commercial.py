@@ -258,4 +258,27 @@ def commercial_routes(ids, rows, labels):
             contract['expected_get_paths'] = contract['expected_get_paths'] + ['/api/inventory/stock']
     for section in ('items', 'suppliers', 'warehouses', 'purchases'):
         contracts[inv+'/'+section+'/[recordId]']['heading_level'] = 2
+    # Explicit response-model identities, not a generic top-level-id assumption.
+    identities = {
+        f'/api/sales/quotations/{qid}': (['id'], qid),
+        f'/api/sales/quotations/{qid}/commercial': (['id'], qid),
+        f'/api/sales/orders/{oid}': (['id'], oid),
+        f'/api/sales/orders/{oid}/commercial': (['order_id'], oid),
+        f"/api/sales/orders/{ids['settlement_order_id']}": (['id'], ids['settlement_order_id']),
+        f"/api/sales/orders/{ids['project_order_id']}": (['id'], ids['project_order_id']),
+        f'/api/projects/{pid}': (['id'], pid),
+        f"/api/crm/clients/{ids['client_id']}/workspace": (['client', 'id'], ids['client_id']),
+        f'/api/finance/expenses/{eid}': (['id'], eid),
+    }
+    for pattern, contract in contracts.items():
+        checks = []
+        for pathname in contract['expected_get_paths']:
+            if pathname in identities:
+                fields, expected = identities[pathname]
+                checks.append({'pathname': pathname, 'field_path': fields, 'expected_value': expected})
+        for section, key in [('tasks', 'task_id'), ('milestones', 'milestone_id'), ('documents', 'document_id'), ('credentials', 'credential_id')]:
+            if pattern.startswith(p+'/[projectId]/'+section+'/[recordId]'):
+                checks.append({'pathname': f'/api/projects/{pid}/workspace', 'collection_path': [section], 'expected_value': ids[key]})
+        if checks:
+            contract['expected_response_identities'] = checks
     return overrides, contracts

@@ -50,4 +50,22 @@ class RegistryCompositionTests(unittest.TestCase):
         expected.update(f'/dashboard/projects/[projectId]/{section}/[recordId]' for section in ['tasks','milestones'])
         self.assertEqual(level_two,expected)
         self.assertEqual(sum(c['heading_level']==1 for c in registry['route_contracts'].values()),188)
+        contracts=registry['route_contracts']
+        for suffix in ['', '/edit']:
+            checks=contracts['/dashboard/quotations/[quotationId]'+suffix]['expected_response_identities']
+            self.assertEqual([c['field_path'] for c in checks],[['id'],['id']])
+        self.assertEqual(contracts['/dashboard/orders/[orderId]/commercial']['expected_response_identities'][0]['field_path'],['order_id'])
+        self.assertEqual(contracts['/dashboard/clients/[clientId]']['expected_response_identities'][0]['field_path'],['client','id'])
+        for section in ['tasks','milestones','documents','credentials']:
+            pattern='/dashboard/projects/[projectId]/'+section+'/[recordId]/edit'
+            checks=contracts[pattern]['expected_response_identities']
+            self.assertEqual(checks[0]['field_path'],['id'])
+            self.assertEqual(checks[1]['collection_path'],[section])
+            self.assertNotIn('field_path',checks[1])
+        self.assertNotIn('expected_response_identities',contracts['/dashboard/accounting/invoices/[invoiceId]'])
+        for contract in contracts.values():
+            for check in contract.get('expected_response_identities',[]):
+                self.assertIn(check['pathname'],contract['expected_get_paths'])
+                self.assertTrue(check['expected_value'])
+
 if __name__=='__main__':unittest.main()
