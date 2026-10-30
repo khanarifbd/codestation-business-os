@@ -59,6 +59,14 @@ def replace_sections(db: Session, quotation: Quotation, payloads: list[Quotation
             QuotationSection.quotation_id == quotation.id,
         )
     ).all()
+    def legacy_projection(section_rows: list[QuotationSection], section_type: str) -> str | None:
+        ordered = sorted(section_rows, key=lambda item: (item.sort_order, item.section_type))
+        return "\n\n".join(item.content for item in ordered if item.section_type == section_type and item.is_visible) or None
+
+    # Snapshot before deleting rows: an unrelated V2 save must not overwrite
+    # independently stored legacy text with unchanged/default empty sections.
+    prior_notes = legacy_projection(existing, "additional_notes")
+    prior_terms = legacy_projection(existing, "terms_conditions")
     for row in existing:
         db.delete(row)
     db.flush()
@@ -77,11 +85,12 @@ def replace_sections(db: Session, quotation: Quotation, payloads: list[Quotation
         db.add(row)
         rows.append(row)
 
-    ordered = sorted(rows, key=lambda item: (item.sort_order, item.section_type))
-    notes = [item.content for item in ordered if item.section_type == "additional_notes" and item.is_visible]
-    terms = [item.content for item in ordered if item.section_type == "terms_conditions" and item.is_visible]
-    quotation.notes = "\n\n".join(notes) or None
-    quotation.terms_conditions = "\n\n".join(terms) or None
+    next_notes = legacy_projection(rows, "additional_notes")
+    next_terms = legacy_projection(rows, "terms_conditions")
+    if next_notes != prior_notes:
+        quotation.notes = next_notes
+    if next_terms != prior_terms:
+        quotation.terms_conditions = next_terms
     db.flush()
     return rows
 
