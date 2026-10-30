@@ -14,3 +14,13 @@ export function successfulRouteRead(responses, routeId, pathname) {
   return responses.some(r => r.route_id === routeId && r.method === 'GET' && r.pathname === pathname && r.status >= 200 && r.status < 300);
 }
 export const sensitiveFields = 'input[type="password"], input[autocomplete="current-password"], input[autocomplete="new-password"], [data-sensitive="true"]';
+export async function verifyReadyFields(page, expect, fields = []) {
+  for (const field of fields) {
+    if (typeof field.label !== 'string' || !field.label.trim() || typeof field.value !== 'string') throw new Error('Invalid exact field readiness contract');
+    const control = page.getByLabel(field.label, { exact: true });
+    await expect(control).toHaveCount(1);
+    await expect(control).toBeVisible();
+    await expect(control).toBeEnabled();
+    await expect(control).toHaveValue(field.value);
+  }
+}
