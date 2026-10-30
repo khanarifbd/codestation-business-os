@@ -37,6 +37,7 @@ class FinancialRegistry(TypedDict):
     accounting_integrity: bool
     route_overrides: dict[str, str]
     route_contracts: dict[str, dict]
+    fixture_labels: dict[str, str]
 
 
 def _require(condition: bool, message: str) -> None:
@@ -132,6 +133,7 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
         'loan_paid_id': paid['id'], 'tax_code_id': code['id'], 'tax_settlement_id': settlement['id'],
         'payable_bill_id': bill.id, 'reconciliation_id': reconciliation['id'], 'fixture_date': fixture_date.isoformat(),
         'currency': currency, 'accounting_integrity': True,
+        'fixture_labels': {'account': account.name, 'bill_number': bill.bill_number},
         'route_contracts': {},
         'route_overrides': {
             '/dashboard/accounting/tax': f'/dashboard/accounting/tax?date_from={fixture_date.isoformat()}&date_to={fixture_date.isoformat()}',
@@ -307,11 +309,13 @@ def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request],
              'Control fixture status mismatch')
     _require(audit_organization_accounting(db, tenant.organization_id).ok,
              'Remaining financial seed integrity check failed')
-    return {'transfer_id': transfer.id, 'destination_account_id': destination.id, 'journal_id': journal.id,
+    result = {'transfer_id': transfer.id, 'destination_account_id': destination.id, 'journal_id': journal.id,
             'asset_id': asset['id'], 'recurring_id': recurring.id, 'open_period_id': opened.id,
             'closed_period_id': closed.id, 'invoice_id': invoice.id, 'payment_id': payment.id,
             'advance_id': advance.id, 'accounting_integrity': True,
-            'fixture_labels': {'transfer': transfer.transfer_number, 'journal': journal.entry_number,
+            'fixture_labels': {'account': account.name, 'destination': destination.name, 'client': client.display_name,
+                               'asset_code': asset['asset_code'], 'payment_number': payment.payment_number,
+                               'advance_client': client.display_name, 'transfer': transfer.transfer_number, 'journal': journal.entry_number,
                                'asset': f'Read-only opening asset {marker}', 'recurring': recurring.name,
                                'open_period': opened.name, 'closed_period': closed.name,
                                'invoice': verified_invoice.invoice_number},
@@ -321,3 +325,59 @@ def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request],
                 '/dashboard/accounting/controls/periods/[periodId]/reopen': f'/dashboard/accounting/controls/periods/{closed.id}/reopen',
                 '/dashboard/accounting/money-in/receipts/[kind]/[receiptId]': f'/dashboard/accounting/money-in/receipts/payment/{payment.id}',
             }}
+
+    result['route_contracts'] = control_and_finance_contracts(result)
+    return result
+
+
+def control_and_finance_contracts(registry: dict) -> dict[str, dict]:
+    """Six legacy Finance wrappers and twelve Controls routes, no browser writes."""
+    contracts = {}
+    control = '/dashboard/accounting/controls'
+    labels = registry['fixture_labels']
+    recurring = '/api/finance-controls/recurring-expenses'
+    automation = '/api/finance-controls/recurring-auto-post'
+    periods = '/api/finance-controls/accounting-periods'
+
+    def add(pattern, heading, source, paths=(), texts=(), button=None, mode='ready'):
+        value = {'heading': heading, 'expected_mode': mode, 'ready_text': list(texts),
+                 'expected_get_paths': list(paths), 'source': 'frontend/src/components/' + source}
+        if button: value['ready_button'] = button
+        contracts[pattern] = value
+
+    add('/dashboard/finance', 'Finance', 'finance/finance-compatibility-shell.tsx',
+        ('/api/finance/summary', '/api/finance/invoice-page'),
+        ('Recorded invoice amounts by currency', labels['invoice']))
+    add('/dashboard/finance/transfers', 'Money in motion', 'accounting-transfers/transfer-workspace.tsx',
+        ('/api/finance/transfer-page',), (labels['transfer'],))
+    add('/dashboard/finance/transfers/new', 'Move money between accounts', 'accounting-transfers/transfer-editor.tsx',
+        ('/api/finance/accounts',), ('01 / Choose the accounts',), 'From account')
+    add('/dashboard/finance/transfers/[transferId]', labels['transfer'], 'accounting-transfers/transfer-workspace.tsx',
+        (f"/api/finance/transfers/{registry['transfer_id']}",), ('Movement breakdown', labels['destination']))
+    add('/dashboard/finance/controls', 'Recurring schedules', 'finance-controls/control-register.tsx',
+        (recurring,), (labels['recurring'],))
+    add('/dashboard/finance/auto-post', 'Auto Post', 'finance-controls/control-register.tsx',
+        (automation,), (labels['recurring'],))
+    add(control, 'Recurring schedules', 'finance-controls/control-register.tsx', (recurring,), (labels['recurring'],))
+    add(control+'/recurring/new', 'New recurring schedule', 'finance-controls/control-create.tsx',
+        ('/api/finance/expense-meta','/api/finance/accounts'), ('01 · Schedule identity',), 'Expense category')
+    add(control+'/recurring/[recurringId]', labels['recurring'], 'finance-controls/control-document.tsx',
+        (recurring,), ('Configured expense per occurrence',))
+    add(control+'/recurring/[recurringId]/status', 'Change schedule availability', 'finance-controls/control-action.tsx',
+        (recurring,), (labels['recurring'],), 'Review change')
+    add(control+'/recurring/[recurringId]/post', 'Post one recurring expense', 'finance-controls/control-manual-post.tsx',
+        (recurring,), (labels['recurring'],), 'Review expense posting')
+    add(control+'/automation/[recurringId]', labels['recurring'], 'finance-controls/control-document.tsx',
+        (automation,), ('Configured expense per occurrence', 'Disabled'))
+    add(control+'/automation/[recurringId]/configure', 'Configure Auto Post', 'finance-controls/control-action.tsx',
+        (automation,), (labels['recurring'],), 'Review change')
+    add(control+'/automation/[recurringId]/retry', 'Review due-occurrence attempt', 'finance-controls/control-action.tsx',
+        (automation,), (labels['recurring'], 'This action is not available for the current record state.'), mode='ineligible')
+    add(control+'/periods/new', 'New accounting period', 'finance-controls/control-create.tsx', texts=('Period definition',))
+    add(control+'/periods/[periodId]', labels['open_period'], 'finance-controls/control-document.tsx',
+        (periods,), ('Inclusive accounting dates',))
+    add(control+'/periods/[periodId]/close', 'Close accounting period', 'finance-controls/control-action.tsx',
+        (periods,), (labels['open_period'],), 'Review change')
+    add(control+'/periods/[periodId]/reopen', 'Reopen accounting period', 'finance-controls/control-action.tsx',
+        (periods,), (labels['closed_period'],), 'Review change')
+    return contracts

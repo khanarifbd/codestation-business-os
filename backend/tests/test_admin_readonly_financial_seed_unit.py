@@ -89,7 +89,7 @@ class SeedBoundaryTests(unittest.TestCase):
                     raise RuntimeError('Synthetic service failure')
                 if name == 'create_account':
                     self.assertEqual(args[0].opening_balance, Decimal('0'))
-                    return NS(id='account')
+                    return NS(id='account', name='Synthetic account')
                 if name == 'create_accounting_loan':
                     item = {'id': f'loan{len(loans)}', 'status': 'draft'}
                     loans.append(item)
@@ -99,7 +99,7 @@ class SeedBoundaryTests(unittest.TestCase):
                     return {'loan': {'id': args[0], 'status': 'paid' if paid else 'active',
                             'outstanding_principal': Decimal('0' if paid else '9'),
                             'undisbursed_amount': Decimal('0' if paid else '10')}}
-                if name == 'create_payable_bill': return NS(id='payable-bill')
+                if name == 'create_payable_bill': return NS(id='payable-bill', bill_number='BILL-SYNTHETIC')
                 if name == 'create_code': return {'id': 'code'}
                 if name == 'create_settlement': return {'id': 'settlement'}
                 if name == 'create_reconciliation': return {'id': 'reconciliation', 'status': 'draft'}
@@ -182,26 +182,27 @@ class RemainingSeedTests(unittest.TestCase):
         import app.api.v1.finance_controls as controls
         import app.api.v1.finance as finance
         import app.api.v1.customer_advances as advances
-        self.rows[FinancialAccount] = NS(id='account', organization_id='org', currency='USD', is_active=True, opening_balance=Decimal('0'))
-        self.rows[Client] = NS(id='client', organization_id='org')
+        self.rows[FinancialAccount] = NS(id='account', name='Synthetic account', organization_id='org', currency='USD', is_active=True, opening_balance=Decimal('0'))
+        self.rows[Client] = NS(id='client', display_name='Synthetic client', organization_id='org')
         calls = []
         def handler(name, result):
             def run(*args):
                 calls.append((name, args))
+                if name == 'create_ledger_account': return NS(id='ledger-'+args[0].normal_balance)
                 return result
             return run
         targets = [
-            (seed, 'create_account', NS(id='destination')),
+            (seed, 'create_account', NS(id='destination', name='Synthetic destination')),
             (transfers, 'record_transfer', NS(id='transfer', transfer_number='TR-SYNTHETIC')),
             (accounting, 'create_ledger_account', NS(id='ledger')),
             (accounting, 'create_manual_journal', NS(id='journal', entry_number='JE-SYNTHETIC')),
-            (assets, 'create_asset', {'id': 'asset'}),
+            (assets, 'create_asset', {'id': 'asset', 'asset_code': 'ASSET-SYNTHETIC'}),
             (controls, 'create_recurring_expense', NS(id='recurring', name='Synthetic recurring', auto_post=False)),
             (controls, 'create_accounting_period', NS(id='period', name='Synthetic period', status='open')),
             (controls, 'close_accounting_period', NS(id='closed-period', name='Synthetic closed period', status='closed')),
             (finance, 'create_invoice', NS(id='invoice')),
             (finance, 'change_invoice_status', NS(id='invoice')),
-            (finance, 'record_payment', NS(id='payment')),
+            (finance, 'record_payment', NS(id='payment', payment_number='PAY-SYNTHETIC')),
             (advances, 'create_advance', NS(id='advance')),
             (finance, 'get_invoice', NS(id='invoice', invoice_number='INV-SYNTHETIC', balance_due=Decimal('9'), amount_paid=Decimal('1'))),
         ]
@@ -221,6 +222,7 @@ class RemainingSeedTests(unittest.TestCase):
         journal = by_name('create_manual_journal')[0][0]
         self.assertEqual(sum(line.debit for line in journal.lines), Decimal('1.01'))
         self.assertEqual(sum(line.credit for line in journal.lines), Decimal('1.01'))
+        self.assertEqual(len({line.ledger_account_id for line in journal.lines}), 2)
         self.assertTrue(all(line.currency == 'USD' and line.original_amount == Decimal('1.01') for line in journal.lines))
         asset = by_name('create_asset')[0][0]
         self.assertEqual(asset.record_mode, 'opening')
@@ -236,6 +238,16 @@ class RemainingSeedTests(unittest.TestCase):
         self.assertEqual(by_name('record_payment')[0][0].invoice_amount, Decimal('1'))
         self.assertEqual(by_name('create_advance')[0][0].amount, Decimal('1'))
         self.assertEqual(result['route_overrides']['/dashboard/accounting/money-in/receipts/[kind]/[receiptId]'], '/dashboard/accounting/money-in/receipts/payment/payment')
+        self.assertEqual(len(result['route_contracts']), 18)
+        app = Path(__file__).parents[2] / 'frontend/src/app'
+        patterns = {'/' + str(p.relative_to(app).parent) for p in (app / 'dashboard/accounting/controls').rglob('page.tsx')}
+        patterns.update('/' + str(p.relative_to(app).parent) for p in (app / 'dashboard/finance').rglob('page.tsx') if '/invoices/' not in str(p))
+        self.assertEqual(set(result['route_contracts']), patterns)
+        for contract in result['route_contracts'].values():
+            self.assertTrue(contract['ready_text'] or contract.get('ready_button'))
+            self.assertTrue((Path(__file__).parents[2] / contract['source']).is_file())
+        self.assertEqual(result['route_contracts']['/dashboard/accounting/controls/automation/[recurringId]/retry']['expected_mode'], 'ineligible')
+        self.assertNotIn('ready_button', result['route_contracts']['/dashboard/accounting/controls/automation/[recurringId]/retry'])
         self.db.add.assert_not_called()
         self.db.add_all.assert_not_called()
 
