@@ -1,0 +1,13 @@
+[
+  "expect((await get(p,root+'/workspace')).milestones).toHaveLength(0)",
+  "expect(await get(p,root)).toMatchObject({description:updatedProject.description,notes:updatedProject.notes})",
+  "expect(interruptedRequests).toBe(1)",
+  "expect(p.getByLabel('Project name',{exact:true})).toBeVisible()",
+  "expect(p.getByLabel('Project name',{exact:true})).toHaveValue(project.name)",
+  "expect(p.getByRole('button',{name:'Back to project',exact:true})).toBeVisible()",
+  "expect(p.getByRole('button',{name:'Save',exact:true})).toBeDisabled()",
+  "expect(p.getByRole('heading',{name:'Edit project details',exact:true})).toBeVisible()",
+  "expect(p.getByText('The save result is uncertain. Submitting again is blocked. Return to the project and review the latest records before starting another change.',{exact:true})).toBeVisible()",
+  "expect(password, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy()",
+  "expect(updatedProject).toMatchObject({id:project.id,name:project.name,priority:'high',due_date:'2026-12-31',description:'Synthetic international delivery scope',notes:'Synthetic internal delivery handoff',currency:project.currency,contract_value:project.contract_value,project_manager_employee_id:employee.id})"
+]

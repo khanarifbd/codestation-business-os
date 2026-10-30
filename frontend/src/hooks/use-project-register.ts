@@ -1,19 +1,22 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
+import { ProjectRequestRejected, projectRequestWasRejected } from "@/lib/project-request";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { PROJECTS_PATH, projectBrowseHref, projectBrowseState, projectCreateHref, projectDetailHref, safeProjectsReturnHref } from "@/lib/project-navigation";
 import { type ProjectCreateValues, type ExistingProjectLink, type ProjectOrder, type ProjectListMeta, type ProjectSummary, type ProjectListRow, projectToday } from "@/components/projects/project-list-model";
 
 function useProjectRequest() {
   const router = useRouter();
-  return useCallback(async <T,>(path: string, init?: RequestInit): Promise<T> => {
+  return useCallback(async <T,>(path: string, init?: RequestInit, current: () => boolean = () => true): Promise<T> => {
     const response = await fetch(path, { cache: "no-store", ...init });
-    if (response.status === 401) { router.replace("/login"); throw new Error("Authentication required"); }
+    if (!current()) throw new Error("Project request is no longer current.");
+    if (response.status === 401) { router.replace("/login"); throw new ProjectRequestRejected("Authentication required"); }
     const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(getApiErrorMessage(payload, "Project request failed."));
+    if (!current()) throw new Error("Project request is no longer current.");
+    if (!response.ok) throw new (projectRequestWasRejected(response.status, payload) ? ProjectRequestRejected : Error)(getApiErrorMessage(payload, "Project request failed."));
     return payload as T;
   }, [router]);
 }
@@ -30,18 +33,22 @@ export function useProjectRegister() {
   const [state, setState] = useState<ListState>({ key: "", rows: [], nextCursor: null, pages: 0, loading: true, error: null });
   const cache = useRef<ListCache>({ key: "", rows: [], nextCursor: null, pages: 0 });
   const listIdentity = useRef(0), metaIdentity = useRef(0), mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const invalidateList = useCallback(() => { listIdentity.current += 1; }, []);
   const invalidateMeta = useCallback(() => { metaIdentity.current += 1; }, []);
   const [searchInput, setSearchInput] = useState<{ query: string; value: string } | null>(null);
   const searchDraft = searchInput?.query === query ? searchInput.value : browse.search;
   const orderId = params.get("order_id") || "";
+  const handoffScope = useRef(0);
+  useLayoutEffect(() => { listIdentity.current += 1; }, [query, browse.pages]);
+  useLayoutEffect(() => { handoffScope.current += 1; }, [orderId, meta?.can_manage_projects]);
   const [handoff, setHandoff] = useState<{ id: string; order: ProjectOrder | null; link: ExistingProjectLink | null; error: string | null; loading: boolean }>({ id: "", order: null, link: null, error: null, loading: false });
 
   const loadMeta = useCallback(async () => {
     const identity = ++metaIdentity.current;
     setMetaError(null);
     try {
-      const [m, s] = await Promise.all([request<ProjectListMeta>("/api/projects/meta"), request<ProjectSummary>("/api/projects/summary")]);
+      const [m, s] = await Promise.all([request<ProjectListMeta>("/api/projects/meta", undefined, () => mounted.current && identity === metaIdentity.current), request<ProjectSummary>("/api/projects/summary", undefined, () => mounted.current && identity === metaIdentity.current)]);
       if (!mounted.current || identity !== metaIdentity.current) return;
       setMeta(m); setSummary(s);
     } catch (reason) { if (mounted.current && identity === metaIdentity.current) { setMeta(null); setSummary(null); setMetaError(reason instanceof Error ? reason.message : "Unable to load project access."); } }
@@ -53,7 +60,7 @@ export function useProjectRegister() {
     try {
       while (current.pages < browse.pages && (current.pages === 0 || current.nextCursor)) {
         const p = new URLSearchParams(query); if (current.pages && current.nextCursor) p.set("cursor", current.nextCursor);
-        const result = await request<{ items: ProjectListRow[]; next_cursor: string | null }>(`/api/projects?${p}`);
+        const result = await request<{ items: ProjectListRow[]; next_cursor: string | null }>(`/api/projects?${p}`, undefined, () => mounted.current && identity === listIdentity.current);
         if (!mounted.current || identity !== listIdentity.current) return;
         const seen = new Set(current.rows.map(row => row.id));
         current = { key: query, rows: [...current.rows, ...result.items.filter(row => !seen.has(row.id))], nextCursor: result.next_cursor, pages: current.pages + 1 };
@@ -71,12 +78,14 @@ export function useProjectRegister() {
   useEffect(() => {
     if (!orderId || !meta?.can_manage_projects) return;
     let active = true;
+    const scope = handoffScope.current;
+    const current = () => active && mounted.current && scope === handoffScope.current;
     void (async () => {
       setHandoff({ id: orderId, order: null, link: null, error: null, loading: true });
       try {
-        const [order, link] = await Promise.all([request<ProjectOrder>(`/api/sales/orders/${encodeURIComponent(orderId)}`), request<ExistingProjectLink | null>(`/api/projects/order/${encodeURIComponent(orderId)}/link`)]);
-        if (active) setHandoff({ id: orderId, order, link, error: null, loading: false });
-      } catch (reason) { if (active) setHandoff({ id: orderId, order: null, link: null, error: reason instanceof Error ? reason.message : "Unable to load order handoff.", loading: false }); }
+        const [order, link] = await Promise.all([request<ProjectOrder>(`/api/sales/orders/${encodeURIComponent(orderId)}`, undefined, current), request<ExistingProjectLink | null>(`/api/projects/order/${encodeURIComponent(orderId)}/link`, undefined, current)]);
+        if (current()) setHandoff({ id: orderId, order, link, error: null, loading: false });
+      } catch (reason) { if (current()) setHandoff({ id: orderId, order: null, link: null, error: reason instanceof Error ? reason.message : "Unable to load order handoff.", loading: false }); }
     })();
     return () => { active = false; };
   }, [orderId, meta?.can_manage_projects, request]);
@@ -99,9 +108,13 @@ export function useProjectCreate() {
   const [order, setOrder] = useState<ProjectOrder | null>(null), [link, setLink] = useState<ExistingProjectLink | null>(null);
   const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null), [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<ProjectCreateValues | null>(null);
+  const [unknownWrite, setUnknownWrite] = useState(false);
+  const unknownWriteRef = useRef(false);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const [startDate] = useState(projectToday);
   const requestId = useRef(0), inFlight = useRef(false), committedId = useRef<string | null>(null), mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useLayoutEffect(() => { requestId.current += 1; }, [orderId]);
   const invalidateCreate = useCallback(() => { requestId.current += 1; }, []);
   const initial: ProjectCreateValues = { name: order?.subject || (order ? `${order.client_name_snapshot} · ${order.order_number}` : ""), priority: "normal", managerId: order?.assigned_employee_id || "", memberIds: order?.assigned_employee_id ? [order.assigned_employee_id] : [], plannedStartDate: startDate, dueDate: "", description: "" };
   const values = draft ?? initial;
@@ -113,11 +126,11 @@ export function useProjectCreate() {
     setLoading(true); setError(null); setOrder(null); setLink(null); setMeta(null);
     try {
       if (!orderId) throw new Error("Choose an eligible order before creating a project.");
-      const m = await request<ProjectListMeta>("/api/projects/meta");
+      const m = await request<ProjectListMeta>("/api/projects/meta", undefined, () => mounted.current && identity === requestId.current);
       if (!mounted.current || identity !== requestId.current) return;
       setMeta(m);
       if (!m.can_manage_projects) return;
-      const [o, existing] = await Promise.all([request<ProjectOrder>(`/api/sales/orders/${encodeURIComponent(orderId)}`), request<ExistingProjectLink | null>(`/api/projects/order/${encodeURIComponent(orderId)}/link`)]);
+      const [o, existing] = await Promise.all([request<ProjectOrder>(`/api/sales/orders/${encodeURIComponent(orderId)}`, undefined, () => mounted.current && identity === requestId.current), request<ExistingProjectLink | null>(`/api/projects/order/${encodeURIComponent(orderId)}/link`, undefined, () => mounted.current && identity === requestId.current)]);
       if (!mounted.current || identity !== requestId.current) return;
       if (o.id !== orderId) throw new Error("Order identity could not be verified. Return to the order before continuing.");
       setOrder(o); setLink(existing);
@@ -126,15 +139,18 @@ export function useProjectCreate() {
   }, [request, orderId]);
   useEffect(() => { mounted.current = true; void load(); return () => { mounted.current = false; invalidateCreate(); }; }, [load, invalidateCreate]);
   async function createProject() {
-    if (inFlight.current || committedId.current || !ready || !order || order.id !== orderId || !values.name.trim()) return;
+    if (unknownWriteRef.current || inFlight.current || committedId.current || !ready || !order || order.id !== orderId || !values.name.trim()) return;
     inFlight.current = true; setSaving(true); setError(null);
     try {
-      const created = await request<{ id: string }>(`/api/projects/from-order/${encodeURIComponent(orderId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: values.name.trim(), priority: values.priority, project_manager_employee_id: values.managerId || null, member_employee_ids: values.memberIds, planned_start_date: values.plannedStartDate || null, due_date: values.dueDate || null, description: values.description.trim() || null }) });
+      const created = await request<{ id: string }>(`/api/projects/from-order/${encodeURIComponent(orderId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: values.name.trim(), priority: values.priority, project_manager_employee_id: values.managerId || null, member_employee_ids: values.memberIds, planned_start_date: values.plannedStartDate || null, due_date: values.dueDate || null, description: values.description.trim() || null }) }, () => mounted.current);
+      if (!created || typeof created.id !== "string" || !created.id.trim()) throw new Error("Saved project identity could not be confirmed.");
       committedId.current = created.id;
       if (!mounted.current) return;
       setCreatedId(created.id); navigation.markClean(); navigation.navigate(projectDetailHref(created.id, "overview", returnHref), { discard: true, replace: true });
-    } catch (reason) { if (mounted.current) setError(committedId.current ? "The project was created, but navigation failed. Open the saved project below; do not create it again." : reason instanceof Error ? reason.message : "Unable to create project."); }
+    } catch (reason) {
+      if (!committedId.current && !(reason instanceof ProjectRequestRejected)) { unknownWriteRef.current = true; if (mounted.current) setUnknownWrite(true); }
+      if (mounted.current) setError(committedId.current ? "The project was created, but navigation failed. Open the saved project below; do not create it again." : unknownWriteRef.current ? "The creation result is uncertain. Do not create again. Check the order’s existing project link below." : reason instanceof Error ? reason.message : "Unable to create project."); }
     finally { inFlight.current = false; if (mounted.current) setSaving(false); }
   }
-  return { orderId, meta, order, link, loading, error, saving, values, setDraft, ready, createdId, returnHref, load, createProject, close: () => navigation.navigate(returnHref), openCreated: () => createdId && navigation.navigate(projectDetailHref(createdId, "overview", returnHref), { discard: true, replace: true }), existingHref: link ? projectDetailHref(link.project_id, "overview", returnHref) : PROJECTS_PATH };
+  return { orderId, meta, order, link, loading, error, saving, unknownWrite, values, setDraft, ready, createdId, returnHref, load, createProject, close: () => navigation.navigate(returnHref), openCreated: () => createdId && navigation.navigate(projectDetailHref(createdId, "overview", returnHref), { discard: true, replace: true }), existingHref: link ? projectDetailHref(link.project_id, "overview", returnHref) : PROJECTS_PATH };
 }

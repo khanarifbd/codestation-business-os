@@ -4,7 +4,11 @@ import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 // Owner-admin routes only. No self-service, invitations, real mail or payment rails.
 const email=process.env.E2E_QC_HR_PROJECT_EMAIL ?? 'qc-hr-project@example.com';
-const password=process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!';
+const password = process.env.E2E_PASSWORD;
+
+test.beforeEach(() => {
+  expect(password, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy();
+});
 const today=new Date().toISOString().slice(0,10);
 const yesterday=new Date(Date.now()-86400000).toISOString().slice(0,10);
 async function json(r){const text=await r.text();expect(r.ok(),`${r.status()} ${text}`).toBeTruthy();return JSON.parse(text);}
@@ -22,6 +26,17 @@ async function submit(p,name,path,method='POST'){
  return captureJsonResponse(p,{path:'/api'+path,method,action:()=>p.getByRole('button',{name,exact:true}).last().click()});
 }
 async function choose(p,label,option){await p.getByRole('button',{name:label,exact:true}).click();await p.getByRole('listbox').getByRole('button',{name:option}).click();}
+
+async function withProjectViewportRestore(page, action) {
+ const viewport=page.viewportSize();
+ try { return await action(); }
+ finally { if(viewport)await page.setViewportSize(viewport); }
+}
+async function withProjectTemporaryRoute(page, endpoint, handler, action) {
+ await page.route(endpoint,handler);
+ try { return await withProjectViewportRestore(page,action); }
+ finally { await page.unroute(endpoint,handler); }
+}
 
 test('PRJ01-11 PRJ13-14 owner execution, rollups, notes, locks and document metadata',async({page:p},info)=>{
  test.setTimeout(210000); const employee=await setup(p,'project extended');
@@ -41,9 +56,43 @@ test('PRJ01-11 PRJ13-14 owner execution, rollups, notes, locks and document meta
  expect(project.due_date).toBe('2026-12-31');expect(project.priority).toBe('high');console.log('PASS PRJ01-02 native owner project creation/handoff and due date');
  const root=`/projects/${project.id}`;
  await p.goto('/dashboard'+root);
+ await p.getByRole('button',{name:'Edit details',exact:true}).click();
+ await expect(p.getByRole('heading',{name:'Edit project details',exact:true})).toBeVisible();
+ await expect(p.getByLabel('Project name',{exact:true})).toHaveValue(project.name);
+ await p.getByLabel('Description',{exact:true}).fill('Synthetic international delivery scope');
+ await p.getByLabel('Internal notes',{exact:true}).fill('Synthetic internal delivery handoff');
+ await p.screenshot({path:info.outputPath('neutral-theme-project-details-desktop.png'),fullPage:true});
+ await withProjectViewportRestore(p,async()=>{
+ await p.setViewportSize({width:390,height:844});await p.evaluate(()=>window.scrollTo(0,0));
+ await expect(p.getByLabel('Project name',{exact:true})).toBeVisible();
+ await p.screenshot({path:info.outputPath('neutral-theme-project-details-mobile.png'),fullPage:true});
+ });
+ const updatedProject=await submit(p,'Save',root,'PATCH');
+ expect(updatedProject).toMatchObject({id:project.id,name:project.name,priority:'high',due_date:'2026-12-31',description:'Synthetic international delivery scope',notes:'Synthetic internal delivery handoff',currency:project.currency,contract_value:project.contract_value,project_manager_employee_id:employee.id});
+ expect(await get(p,root)).toMatchObject({description:updatedProject.description,notes:updatedProject.notes});
  await p.getByRole('button',{name:'Review & Tips',exact:true}).click();
  await expect(p.getByText('Review & Tips unlock after project completion',{exact:true})).toBeVisible();await expect(p.getByRole('button',{name:'Add review',exact:true})).toHaveCount(0);
  await p.getByRole('button',{name:'Milestones',exact:true}).click();
+ await p.getByRole('button',{name:'Add milestone',exact:true}).click();
+ await p.getByLabel('Title',{exact:true}).fill('QC milestone');
+ await p.getByLabel('Due date',{exact:true}).fill('2026-12-20');
+ // Abort before server delivery: verify the real editor blocks an uncertain repeat,
+ // then explicitly inspect authoritative records before starting a new operation.
+ const milestoneEndpoint=url=>url.pathname==='/api'+root+'/milestones';
+ let interruptedRequests=0;
+ const interruptMilestone=async route=>{if(route.request().method()==='POST'){interruptedRequests++;await route.abort('failed');}else await route.continue();};
+ await withProjectTemporaryRoute(p,milestoneEndpoint,interruptMilestone,async()=>{
+ await p.getByRole('button',{name:'Save',exact:true}).click();
+ await expect(p.getByText('The save result is uncertain. Submitting again is blocked. Return to the project and review the latest records before starting another change.',{exact:true})).toBeVisible();
+ await expect(p.getByRole('button',{name:'Save',exact:true})).toBeDisabled();
+ expect(interruptedRequests).toBe(1);
+ expect((await get(p,root+'/workspace')).milestones).toHaveLength(0);
+ await p.screenshot({path:info.outputPath('neutral-theme-project-unknown-write-desktop.png'),fullPage:true});
+ await p.setViewportSize({width:390,height:844});await p.evaluate(()=>window.scrollTo(0,0));
+ await expect(p.getByRole('button',{name:'Back to project',exact:true})).toBeVisible();
+ await p.screenshot({path:info.outputPath('neutral-theme-project-unknown-write-mobile.png'),fullPage:true});
+ });
+ await p.getByRole('button',{name:'Back to project',exact:true}).click();
  await p.getByRole('button',{name:'Add milestone',exact:true}).click();
  await p.getByLabel('Title',{exact:true}).fill('QC milestone');
  await p.getByLabel('Due date',{exact:true}).fill('2026-12-20');

@@ -33,13 +33,14 @@ function ProjectWorkspaceContent() {
     {vm.message ? <RelationshipNotice tone="success">{vm.message}</RelationshipNotice> : null}
     {vm.error ? <RelationshipNotice tone="error">{vm.error}</RelationshipNotice> : null}
     {vm.credentialError && !vm.isEditor ? <RelationshipNotice tone="error">{vm.credentialError}</RelationshipNotice> : null}
+    {vm.unknownWrite ? <RelationshipNotice tone="error">The save result is uncertain. Submitting again is blocked. Return to the project and review the latest records before starting another change.</RelationshipNotice> : null}
     {vm.saving ? <RelationshipNotice>Saving this change. Keep this page open; if the connection is interrupted, verify the saved result before retrying.</RelationshipNotice> : null}
     {vm.route.kind === "invalid" ? <State title="Project page not found" text="Return to the project workspace to select an available record or action." />
       : !vm.routeAllowed ? <State title="This section is restricted" text="Your project tab access does not include this workspace." />
       : vm.isEditor && !vm.editorRecordExists ? <State title="Record unavailable" text="The requested record was not found in this project. No empty replacement form has been opened." />
       : vm.isEditor && !vm.editorAllowed ? <State title="This action is unavailable" text={!vm.isOpen ? "Completed and cancelled projects retain their history, but execution changes are locked." : "Your role or project assignment does not permit this action."} />
       : vm.isEditor && vm.documentCommitted ? <State title="Change saved" text="The operation has completed. Return to the project to review it; do not submit it again." action={<button className="project-primary" onClick={vm.closeEditor}>Return to project</button>} />
-      : vm.isEditor ? <ProjectEditor vm={vm} />
+      : vm.isEditor ? <fieldset disabled={vm.unknownWrite} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}><ProjectEditor vm={vm} /></fieldset>
       : showRecord ? <RecordWorkspace vm={vm} />
       : <><ProjectSectionNav vm={vm} /><TabWorkspace vm={vm} /></>}
   </RelationshipPage>;
@@ -47,7 +48,7 @@ function ProjectWorkspaceContent() {
 
 function ProjectHeader({ vm }: VM) {
   const project = vm.project!, workspace = vm.workspace!;
-  return <><header className="project-header"><div><div className="project-status-line"><span>{project.project_number}</span><Badge value={project.status} /><span className="project-priority">{project.priority} priority</span></div><h1>{project.name}</h1><p>{project.client_name}{project.access.can_manage_project ? ` · ${project.order_number}${project.quotation_number ? ` · ${project.quotation_number}` : ""}` : ""}</p></div><div className="project-header-controls"><button className="project-secondary" onClick={() => void vm.retryLoading()} disabled={vm.saving}><RefreshCw aria-hidden="true" />Refresh</button>{project.access.can_manage_project ? <>
+  return <><header className="project-header"><div><div className="project-status-line"><span>{project.project_number}</span><Badge value={project.status} /><span className="project-priority">{project.priority} priority</span></div><h1>{project.name}</h1><p>{project.client_name}{project.access.can_manage_project ? ` · ${project.order_number}${project.quotation_number ? ` · ${project.quotation_number}` : ""}` : ""}</p></div><div className="project-header-controls"><button className="project-secondary" onClick={() => void vm.retryLoading()} disabled={vm.saving}><RefreshCw aria-hidden="true" />Refresh</button>{vm.canManageDetails ? <button className="project-secondary" disabled={vm.saving || vm.unknownWrite} onClick={() => vm.openEditor("project")}><Pencil aria-hidden="true" />Edit details</button> : null}{project.access.can_manage_project ? <>
       {project.order_status === "cancelled" && ["planned", "active", "on_hold"].includes(project.status) ? <button className="project-secondary" disabled={vm.saving} onClick={() => void vm.changeProjectStatus("cancelled")}>Cancel project</button> : null}
       {project.order_status !== "cancelled" && project.status === "planned" ? <button className="project-primary" disabled={vm.saving} onClick={() => void vm.changeProjectStatus("active")}>Start project</button> : null}
       {project.order_status !== "cancelled" && project.status === "active" ? <><button className="project-secondary" disabled={vm.saving} onClick={() => void vm.changeProjectStatus("on_hold")}>Put on hold</button><button className="project-primary" disabled={vm.saving} onClick={() => void vm.changeProjectStatus("completed")}>Complete project</button></> : null}

@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import { getApiErrorMessage } from "@/lib/api-error";
+import { ProjectRequestRejected, projectRequestWasRejected, PROJECT_WRITE_UNKNOWN } from "@/lib/project-request";
 import { requestWorkspaceExit } from "@/lib/workspace-navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { projectDetailHref, projectEditorHref, safeProjectsReturnHref, safeProjectWorkspaceReturnHref } from "@/lib/project-navigation";
-import { tabs, pretty, vaultMessage, parseProjectWorkspaceRoute, type Tab, type ProjectDetail, type Workspace, type Meta, type TaskRow, type CredentialRow, type DocumentRow, type CredentialValues, type TaskEditValues, type ProjectEditorMode } from "@/components/projects/project-model";
+import { tabs, pretty, vaultMessage, parseProjectWorkspaceRoute, type Tab, type ProjectDetail, type Workspace, type Meta, type TaskRow, type CredentialRow, type DocumentRow, type CredentialValues, type TaskEditValues, type ProjectDetailsValues, type ProjectEditorMode } from "@/components/projects/project-model";
 
 export function useProjectWorkspace() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -22,6 +24,8 @@ export function useProjectWorkspace() {
   const [meta, setMeta] = useState<Meta>({ employees: [], can_manage_projects: false });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [unknownWrite, setUnknownWrite] = useState(false);
+  const unknownWriteRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [credentialError, setCredentialError] = useState<string | null>(null);
@@ -31,6 +35,7 @@ export function useProjectWorkspace() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const readIdentityRef = useRef(0);
+  useLayoutEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const writePendingRef = useRef(false);
   const documentCommittedRef = useRef(false);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -47,6 +52,7 @@ export function useProjectWorkspace() {
   const isOpen = Boolean(project && !["completed", "cancelled"].includes(project.status));
   const executionManager = Boolean(project?.access.can_manage_project || project?.access.is_project_manager);
   const canManageExecution = canWork && executionManager && isOpen;
+  const canManageDetails = Boolean(project?.access.can_manage_project && meta.can_manage_projects && isOpen);
   const canManageTeam = Boolean(project?.access.can_manage_project && meta.can_manage_projects && isOpen);
   const canManageCredentials = Boolean(canWork && workspace?.can_manage_credentials && isOpen);
   const selectedMilestone = route.id ? workspace?.milestones.find(item => item.id === route.id) || null : null;
@@ -56,14 +62,16 @@ export function useProjectWorkspace() {
   const canUpdateTask = (task: TaskRow) => Boolean(canWork && isOpen && project?.access.allowed_tabs.includes("tasks") && project.access.current_employee_id && task.status !== "cancelled" && (executionManager || task.assignee_employee_id === project.access.current_employee_id));
   const routeAllowed = !route.section || Boolean(project?.access.allowed_tabs.includes(route.section));
   const editorRecordExists = !route.id || Boolean(editorMode === "milestone_edit" ? selectedMilestone : editorMode === "task_edit" || editorMode === "progress" ? selectedTask : editorMode === "credential_edit" ? selectedCredential : editorMode === "document_edit" ? selectedDocument : false);
-  const editorAllowed = routeAllowed && editorRecordExists && Boolean(editorMode === "team" ? canManageTeam : editorMode === "credential" || editorMode === "credential_edit" ? canManageCredentials : editorMode === "progress" ? selectedTask && canUpdateTask(selectedTask) : canManageExecution);
+  const editorAllowed = routeAllowed && editorRecordExists && Boolean(editorMode === "project" ? canManageDetails : editorMode === "team" ? canManageTeam : editorMode === "credential" || editorMode === "credential_edit" ? canManageCredentials : editorMode === "progress" ? selectedTask && canUpdateTask(selectedTask) : canManageExecution);
 
-  const api = useCallback(async <T = unknown,>(path: string, init?: RequestInit): Promise<T> => {
+  const api = useCallback(async <T = unknown,>(path: string, init?: RequestInit, current: () => boolean = () => mountedRef.current): Promise<T> => {
     const response = await fetch(`/api/projects${path}`, { cache: "no-store", ...init });
-    if (response.status === 401) { router.replace("/login"); throw new Error("Authentication required"); }
+    if (!current()) throw new Error("Project request is no longer current.");
+    if (response.status === 401) { router.replace("/login"); throw new ProjectRequestRejected("Authentication required"); }
     const contentType = response.headers.get("content-type") || "";
     const payload = contentType.includes("application/json") ? await response.json().catch(() => null) : null;
-    if (!response.ok) throw new Error(typeof payload?.detail === "string" ? payload.detail : "Project request failed.");
+    if (!current()) throw new Error("Project request is no longer current.");
+    if (!response.ok) throw new (projectRequestWasRejected(response.status, payload) ? ProjectRequestRejected : Error)(getApiErrorMessage(payload, "Project request failed."));
     return payload as T;
   }, [router]);
 
@@ -71,7 +79,7 @@ export function useProjectWorkspace() {
     const identity = ++readIdentityRef.current;
     setLoading(true); setError(null);
     try {
-      const [projectPayload, workspacePayload, metaPayload] = await Promise.all([api<ProjectDetail>(`/${projectId}`), api<Workspace>(`/${projectId}/workspace`), api<Meta>("/meta")]);
+      const [projectPayload, workspacePayload, metaPayload] = await Promise.all([api<ProjectDetail>(`/${projectId}`, undefined, () => mountedRef.current && identity === readIdentityRef.current), api<Workspace>(`/${projectId}/workspace`, undefined, () => mountedRef.current && identity === readIdentityRef.current), api<Meta>("/meta", undefined, () => mountedRef.current && identity === readIdentityRef.current)]);
       if (!mountedRef.current || identity !== readIdentityRef.current) return false;
       if (!projectPayload?.access || !workspacePayload?.summary || !Array.isArray(workspacePayload.tasks) || !Array.isArray(workspacePayload.milestones) || !metaPayload) throw new Error("Project workspace response was incomplete. Reload to continue.");
       setProject(projectPayload); setWorkspace(workspacePayload); setMeta(metaPayload);
@@ -88,7 +96,7 @@ export function useProjectWorkspace() {
   const refreshWorkspace = useCallback(async () => {
     const identity = ++readIdentityRef.current;
     try {
-      const next = await api<Workspace>(`/${projectId}/workspace`);
+      const next = await api<Workspace>(`/${projectId}/workspace`, undefined, () => mountedRef.current && identity === readIdentityRef.current);
       if (!mountedRef.current || identity !== readIdentityRef.current) return false;
       if (!next?.summary || !Array.isArray(next.credentials)) throw new Error("Project workspace response was incomplete. Reload to continue.");
       credentialIdsRef.current = new Set(next.credentials.map(item => item.id));
@@ -127,7 +135,7 @@ export function useProjectWorkspace() {
   function backToRegister() { if (requestWorkspaceExit()) router.push(workspaceReturnHref); }
   function backToProjects() { if (requestWorkspaceExit()) router.push(listReturnHref); }
   function editorHref(mode: ProjectEditorMode, id?: string) {
-    const suffixes: Record<ProjectEditorMode, string> = { milestone: "milestones/new", milestone_edit: `milestones/${encodeURIComponent(id || "")}/edit`, task: "tasks/new", task_edit: `tasks/${encodeURIComponent(id || "")}/edit`, progress: `tasks/${encodeURIComponent(id || "")}/progress`, document: "documents/new", document_edit: `documents/${encodeURIComponent(id || "")}/edit`, credential: "credentials/new", credential_edit: `credentials/${encodeURIComponent(id || "")}/edit`, team: "team/edit" };
+    const suffixes: Record<ProjectEditorMode, string> = { project: "edit", milestone: "milestones/new", milestone_edit: `milestones/${encodeURIComponent(id || "")}/edit`, task: "tasks/new", task_edit: `tasks/${encodeURIComponent(id || "")}/edit`, progress: `tasks/${encodeURIComponent(id || "")}/progress`, document: "documents/new", document_edit: `documents/${encodeURIComponent(id || "")}/edit`, credential: "credentials/new", credential_edit: `credentials/${encodeURIComponent(id || "")}/edit`, team: "team/edit" };
     return projectEditorHref(projectId, suffixes[mode], workspaceReturnHref);
   }
   function openEditor(mode: ProjectEditorMode, id?: string) { if (requestWorkspaceExit()) navigation.navigate(editorHref(mode, id), { discard: true }); }
@@ -135,7 +143,7 @@ export function useProjectWorkspace() {
   async function retryLoading() { if (saving || !requestWorkspaceExit()) return; if (isEditor) { navigation.navigate(window.location.href, { discard: true, replace: true }); return; } await refresh(); }
 
   async function write(path: string, init: RequestInit, success: string, allowed: boolean, credential = false, refreshOnFailure = false) {
-    if (!allowed || writePendingRef.current || documentCommittedRef.current || !project || !workspace || isEditor && !editorAllowed) return false;
+    if (unknownWriteRef.current || !allowed || writePendingRef.current || documentCommittedRef.current || !project || !workspace || isEditor && !editorAllowed) return false;
     writePendingRef.current = true; setSaving(true); setError(null); setCredentialError(null); setMessage(null);
     let committed = false;
     try {
@@ -150,10 +158,11 @@ export function useProjectWorkspace() {
       }
       return true;
     } catch (reason) {
+      if (!committed && !(reason instanceof ProjectRequestRejected)) { unknownWriteRef.current = true; if (mountedRef.current) setUnknownWrite(true); }
       if (!mountedRef.current) return committed;
       if (refreshOnFailure && !committed) await refresh();
       const detail = credential ? vaultMessage(reason) : reason instanceof Error ? reason.message : "Unable to save this change.";
-      const text = committed ? "The change was saved, but the page could not continue. Reload to review it; do not submit it again." : refreshOnFailure ? `${detail} The document register was rechecked; verify whether the document is still present before retrying.` : detail;
+      const text = committed ? "The change was saved, but the page could not continue. Reload to review it; do not submit it again." : unknownWriteRef.current ? credential ? `${detail} ${PROJECT_WRITE_UNKNOWN}` : PROJECT_WRITE_UNKNOWN : refreshOnFailure ? `${detail} The document register was rechecked; verify whether the document is still present before retrying.` : detail;
       if (credential) setCredentialError(text); else setError(text);
       return committed;
     } finally { writePendingRef.current = false; if (mountedRef.current) setSaving(false); }
@@ -169,6 +178,10 @@ export function useProjectWorkspace() {
       navigation.markClean();
       if (requestWorkspaceExit()) navigation.navigate(projectDetailHref(projectId, "review_tips", listReturnHref), { discard: true });
     }
+  }
+  async function updateProjectDetails(values: ProjectDetailsValues) {
+    if (!canManageDetails || !values.name.trim() || values.name.trim().length > 220 || !["low", "normal", "high", "urgent"].includes(values.priority) || values.planned_start_date && values.due_date && values.due_date < values.planned_start_date) return;
+    await write(`/${projectId}`, json("PATCH", { name: values.name.trim(), priority: values.priority, planned_start_date: values.planned_start_date || null, due_date: values.due_date || null, description: values.description.trim() || null, notes: values.notes.trim() || null }), "Project details updated.", canManageDetails);
   }
   async function createMilestone(values: { title: string; description: string; due_date: string }) { await write(`/${projectId}/milestones`, json("POST", { title: values.title, description: values.description || null, due_date: values.due_date || null }), "Milestone created.", canManageExecution); }
   async function updateMilestone(values: { title: string; description: string; due_date: string }) { if (selectedMilestone) await write(`/${projectId}/milestones/${selectedMilestone.id}`, json("PATCH", { title: values.title, description: values.description || null, due_date: values.due_date || null }), "Milestone schedule updated.", canManageExecution); }
@@ -192,7 +205,7 @@ export function useProjectWorkspace() {
     const pending = revealsPendingRef.current.get(id); if (pending) return pending;
     const epoch = revealEpochRef.current;
     const operation = (async () => {
-      const payload = await api<{ secret: string }>(`/${projectId}/credentials/${id}/reveal`, { method: "POST" });
+      const payload = await api<{ secret: string }>(`/${projectId}/credentials/${id}/reveal`, { method: "POST" }, () => mountedRef.current && epoch === revealEpochRef.current);
       if (!mountedRef.current || epoch !== revealEpochRef.current) throw new Error("Project workspace changed.");
       if (typeof payload?.secret !== "string") throw new Error("Credential could not be revealed.");
       if (!await refreshWorkspace()) throw new Error("Credential audit view could not refresh. Reload the workspace.");
@@ -213,6 +226,6 @@ export function useProjectWorkspace() {
   async function deleteCredential(item: CredentialRow) { if (saving || !canManageCredentials || !window.confirm(`Delete credential “${item.name}”? This cannot be undone.`)) return; hideCredential(item.id); await write(`/${projectId}/credentials/${item.id}`, { method: "DELETE" }, "Credential deleted.", canManageCredentials, true); }
   async function saveTeam(managerId: string, memberIds: string[], memberTabPermissions: Record<string, Tab[]>) { await write(`/${projectId}/team`, json("PUT", { project_manager_employee_id: managerId || null, member_employee_ids: memberIds, member_tab_permissions: memberTabPermissions }), "Project team access updated.", canManageTeam); }
 
-  return { projectId, project, workspace, meta, route, editorMode, isEditor, tab, visibleTabs, loading, saving, error, message, credentialError, revealed, copiedKey, formDirty, setFormDirty, documentCommitted, isOpen, canWork, canManageExecution, canManageTeam, canManageCredentials, canUpdateTask, routeAllowed, editorRecordExists, editorAllowed, selectedMilestone, selectedTask, selectedCredential, selectedDocument, listReturnHref, workspaceReturnHref, refresh, refreshWorkspace, retryLoading, setTab, closeEditor, closeDocument: closeEditor, backToRegister, backToProjects, editorHref, openEditor, openRecord, changeProjectStatus, createMilestone, updateMilestone, createTask, updateTask, updateProgress, uploadDocument, updateDocument, deleteDocument, createCredential, updateCredential, revealCredential, hideCredential, copyValue, copySecret, deleteCredential, saveTeam };
+  return { projectId, project, workspace, meta, route, editorMode, isEditor, tab, visibleTabs, loading, saving, unknownWrite, error, message, credentialError, revealed, copiedKey, formDirty, setFormDirty, documentCommitted, isOpen, canWork, canManageExecution, canManageDetails, canManageTeam, canManageCredentials, canUpdateTask, routeAllowed, editorRecordExists, editorAllowed, selectedMilestone, selectedTask, selectedCredential, selectedDocument, listReturnHref, workspaceReturnHref, refresh, refreshWorkspace, retryLoading, setTab, closeEditor, closeDocument: closeEditor, backToRegister, backToProjects, editorHref, openEditor, openRecord, changeProjectStatus, updateProjectDetails, createMilestone, updateMilestone, createTask, updateTask, updateProgress, uploadDocument, updateDocument, deleteDocument, createCredential, updateCredential, revealCredential, hideCredential, copyValue, copySecret, deleteCredential, saveTeam };
 }
 export type ProjectWorkspaceState = ReturnType<typeof useProjectWorkspace>;
