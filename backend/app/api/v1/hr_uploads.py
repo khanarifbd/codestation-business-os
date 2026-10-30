@@ -48,6 +48,11 @@ def upload_document(
 ):
     employee = db.scalar(select(Employee.id).where(Employee.id == employee_id, Employee.organization_id == tenant.organization_id))
     if employee is None: raise HTTPException(status_code=404, detail="Employee not found")
+    # Match persisted model widths before touching storage; retain existing trim/null semantics.
+    if len(title.strip()) > 180:
+        raise HTTPException(status_code=422, detail="Document title must be at most 180 characters")
+    if len((reference_number or "").strip()) > 120:
+        raise HTTPException(status_code=422, detail="Reference number must be at most 120 characters")
     try:
         key, size = storage.save(organization_id=tenant.organization_id, source=file.file, original_filename=file.filename or "document", content_type=file.content_type)
     except HTTPException as exc:

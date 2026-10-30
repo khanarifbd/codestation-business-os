@@ -1,4 +1,5 @@
 "use client";
+import {verifiedHRRejectionBody} from '@/lib/hr-rejection-body';
 import {useLayoutEffect,useRef,useState} from 'react';
 import {usePathname,useSearchParams} from 'next/navigation';
 import {useHRSettingsIdentity} from './use-hr-settings-identity';
@@ -35,7 +36,7 @@ export function useAttendanceWrite(vm:ReturnType<typeof useAttendanceSetup>){
   const belongs=()=>current()&&operation.current===token;const settle=(phase:Phase,message:string)=>{if(belongs()){lock.current=phase;setState(x=>({...x,owner,phase,message,dirty:phase!=='confirmed'}));}};
   try{const res=await fetch(i.url,{method:i.method,headers:{'Content-Type':'application/json'},body:JSON.stringify(i.payload)});if(!belongs())return;const body=await res.json().catch(()=>null);if(!belongs())return;
    if(res.ok){const match=M.receipt(body,i,res.status);if(match&&record(body))setSaved({owner,reference:String(i.kind==='policies'?body.employee_id:body.id)});settle(match?'confirmed':'acknowledged',match?'Saved. The returned receipt matches this reviewed request.':'The server acknowledged the save, but its receipt could not be matched. Do not submit again.');}
-   else if(M.knownPrecommit(res.status,body,i.kind)||[401,403,404,422].includes(res.status)&&record(body)&&(typeof body.detail==='string'||res.status===422&&Array.isArray(body.detail))){reviewed.current=null;settle('rejected',timeError(body,'The server rejected this request.'));}
+   else if(M.knownPrecommit(res.status,body,i.kind)||[401,403,404,422].includes(res.status)&&verifiedHRRejectionBody(body,res.status===422)){reviewed.current=null;settle('rejected',timeError(body,'The server rejected this request.'));}
    else settle('unknown',timeError(body,'The save outcome is unknown.')+' Do not submit again. Check the current record separately.');
   }catch{if(belongs())settle('unknown','The save outcome is unknown. Do not submit again.');}finally{if(belongs())pending.current=false;}
  }

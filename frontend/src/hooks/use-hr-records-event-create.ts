@@ -1,10 +1,12 @@
 "use client";
 
+import { verifiedHRRejectionBody } from "@/lib/hr-rejection-body";
+
 import { useLayoutEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { useHRAccess } from "@/components/hr-access-context";
-import { isHRTimeMeta, record, timeError, validHRAccess } from "@/components/hr-time/hr-time-model";
+import { isHRTimeMeta, timeError, validHRAccess } from "@/components/hr-time/hr-time-model";
 import { eventIntent, eventReceipt, type EventIntent, type EventReceipt } from "@/components/hr-records/event-create-model";
 import { useDocumentNavigationGuard } from "./use-document-navigation-guard";
 import { useHRTimeLifetime, useHRTimeResource } from "./use-hr-time-resource";
@@ -13,7 +15,7 @@ import { HR_EVENT_CREATE, safeRecordsReturn } from "@/lib/hr-records-navigation"
 type Phase = "idle" | "review" | "pending" | "rejected" | "acknowledged" | "confirmed" | "unknown";
 const UNKNOWN = "The save outcome is unknown. This event may already have been recorded and any employment change may already have taken effect. Do not submit it again.";
 const ACK = "The server acknowledged the save, but a valid event reference was not returned. Do not submit it again.";
-const knownRejection = (status: number, body: unknown) => [400, 401, 403, 404, 422].includes(status) && record(body) && (typeof body.detail === "string" || status === 422 && Array.isArray(body.detail));
+const knownRejection = (status: number, body: unknown) => [400, 401, 403, 404, 422].includes(status) && verifiedHRRejectionBody(body, status === 422);
 
 /** One reviewed intent per page. An uncertain result is never made retryable by a later read. */
 export function useHRRecordsEventCreate() {

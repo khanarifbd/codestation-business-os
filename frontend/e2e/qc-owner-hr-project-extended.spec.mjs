@@ -164,8 +164,78 @@ expect(workspace.recent_work.find(x=>x.progress_percent===25).time_spent_minutes
  await p.screenshot({path:info.outputPath('completed-owner-project.png'),fullPage:true});
 });
 
+// Synthetic owner fixture only: no candidate conversion or invitation.
+async function verifyTalentReadRecovery(p){
+ const pattern='**/api/hr/jobs';
+ const outage=route=>route.request().method()==='GET'?route.abort('failed'):route.fallback();
+ await p.route(pattern,outage);
+ try{
+  await p.goto('/dashboard/hr/talent');
+  await expect(p.getByRole('button',{name:'Retry Talent read',exact:true})).toBeVisible();
+  await expect(p.getByText('Open jobs',{exact:true})).toHaveCount(0);
+  await expect(p.getByText('No candidates found.',{exact:true})).toHaveCount(0);
+ }finally{await p.unroute(pattern,outage);}
+ await p.getByRole('button',{name:'Retry Talent read',exact:true}).click();
+ await expect(p.getByRole('button',{name:'New job',exact:true})).toBeVisible();
+}
+async function verifyTalentSelectDirty(p,employee){
+ const observed=p.waitForEvent('dialog').then(async dialog=>{
+  try{expect(dialog.message()).toBe('Discard this Talent draft?');}
+  finally{await dialog.dismiss();}
+ }).then(()=>({}),error=>({error}));
+ // Only Employee has changed: no native text input change may mask this check.
+ await p.getByRole('heading',{name:'Start performance review',exact:true}).locator('..').getByRole('button').click();
+ const result=await observed;if(result.error)throw result.error;
+ await expect(p.getByRole('heading',{name:'Start performance review',exact:true})).toBeVisible();
+ await expect(p.locator('input[name="employee_id"]')).toHaveValue(employee.id);
+}
+async function verifyTalentReviewRefresh(p,review,saveValid){
+ const path=`/api/hr/performance/${review.id}`;
+ const matches=response=>new URL(response.url()).pathname===path&&response.request().method()==='PATCH';
+ const form=p.locator('form').filter({has:p.getByLabel('Manager review',{exact:true})});
+ const original=await form.evaluate(node=>node.noValidate);
+ let rejected=0,succeeded=0;
+ const count=response=>{if(matches(response)){if(response.status()===422)rejected++;else if(response.ok())succeeded++;}};
+ p.on('response',count);
+ try{
+  const observed=p.waitForResponse(matches).then(response=>({response}),error=>({error}));
+  try{
+   // Original native-invalid assertion already passed. Now verify the real
+   // server boundary with the same invalid synthetic rating, not a fake422.
+   await form.evaluate(node=>{node.noValidate=true;node.requestSubmit();});
+   const result=await observed;if(result.error)throw result.error;
+   expect(result.response.status()).toBe(422);
+  }finally{await form.evaluate((node,value)=>{node.noValidate=value;},original);}
+  const retry=form.locator('..').getByRole('button',{name:'Retry read only',exact:true});
+  await expect(retry).toBeEnabled();
+  const refreshed=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/hr/performance'&&r.request().method()==='GET').then(response=>({response}),error=>({error}));
+  await retry.click();
+  const loaded=await refreshed;if(loaded.error)throw loaded.error;expect(loaded.response.status()).toBe(200);await expect(retry).toHaveCount(0);
+  await expect(p.getByLabel('Manager review',{exact:true})).toHaveValue('Synthetic owner review');
+  await expect(p.getByLabel('Rating (0–5)',{exact:true})).toHaveValue('6');
+  await saveValid();
+  expect(rejected).toBe(1);expect(succeeded).toBe(1);
+ }finally{p.off('response',count);}
+}
+async function captureTalentTabs(p,info){
+ const viewport=p.viewportSize();
+ try{
+  for(const [size,width,height]of [['desktop',1440,1000],['mobile',390,844]]){
+   await p.setViewportSize({width,height});
+   for(const [tab,record]of [['Hiring','Synthetic QA engineer'],['Performance','View / update'],['Company updates','Synthetic QC policy']]){
+    await p.getByRole('button',{name:tab,exact:true}).click();
+    if(tab==='Performance')await expect(p.getByRole('button',{name:record,exact:true})).toBeVisible();
+    else await expect(p.getByText(record,{exact:true})).toBeVisible();
+    await p.evaluate(()=>window.scrollTo(0,0));
+    expect(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+    await p.screenshot({path:info.outputPath(`neutral-theme-talent-${tab.toLowerCase().replaceAll(' ','-')}-${size}.png`),fullPage:false});
+   }
+  }
+ }finally{if(viewport)await p.setViewportSize(viewport);}
+}
+
 test('HR11 HR12 HR13 HR19 owner talent lifecycle and completed review admin edit',async({page:p},info)=>{
- test.setTimeout(150000);const employee=await setup(p,'HR talent');await p.goto('/dashboard/hr/talent');
+ test.setTimeout(150000);const employee=await setup(p,'HR talent');await verifyTalentReadRecovery(p);
  await p.getByRole('button',{name:'New job',exact:true}).click();await p.getByLabel('Job title',{exact:true}).fill('Synthetic QA engineer');await p.getByLabel('Location',{exact:true}).fill('Synthetic office');
  const job=await submit(p,'Create job','/hr/jobs');
  await p.getByRole('button',{name:'Add candidate',exact:true}).click();await choose(p,'Job opening','Synthetic QA engineer');await p.getByLabel('Full name',{exact:true}).fill('Synthetic Candidate');await p.getByLabel('Email',{exact:true}).fill('qc-candidate@example.invalid');
@@ -173,11 +243,11 @@ test('HR11 HR12 HR13 HR19 owner talent lifecycle and completed review admin edit
  const changed=p.waitForResponse(r=>new URL(r.url()).pathname===`/api/hr/candidates/${candidate.id}`&&r.request().method()==='PATCH');await p.locator('select').filter({has:p.locator('option[value="rejected"]')}).selectOption('rejected');await json(await changed);
  await submit(p,'Close',`/hr/jobs/${job.id}/status`,'PATCH');
  expect((await get(p,'/hr/jobs')).find(x=>x.id===job.id).status).toBe('closed');expect((await get(p,'/hr/candidates')).find(x=>x.id===candidate.id).stage).toBe('rejected');await expect(p.locator('article').filter({hasText:'Open jobs'})).toContainText('0');await expect(p.locator('article').filter({hasText:'Candidates active'})).toContainText('0');
- await p.getByRole('button',{name:'Performance',exact:true}).click();await p.getByRole('button',{name:'Start review',exact:true}).click();await choose(p,'Employee',employee.employee_code);
+ await p.getByRole('button',{name:'Performance',exact:true}).click();await p.getByRole('button',{name:'Start review',exact:true}).click();await choose(p,'Employee',employee.employee_code);await verifyTalentSelectDirty(p,employee);
  await p.getByLabel('Period starts',{exact:true}).fill('2026-10-01');await p.getByLabel('Period ends',{exact:true}).fill('2026-10-31');const review=await submit(p,'Start review','/hr/performance');
  await p.getByRole('button',{name:'Review',exact:true}).click();await p.getByLabel('Rating (0–5)',{exact:true}).fill('6');await p.getByLabel('Manager review',{exact:true}).fill('Synthetic owner review');
  await p.getByRole('button',{name:'Save review',exact:true}).click();expect(await p.getByLabel('Rating (0–5)',{exact:true}).evaluate(el=>el.validity.rangeOverflow)).toBe(true);expect((await get(p,'/hr/performance')).find(x=>x.id===review.id).status).not.toBe('completed');
- await p.getByLabel('Rating (0–5)',{exact:true}).fill('4');await p.locator('input[name="complete"]').check();await submit(p,'Save review',`/hr/performance/${review.id}`,'PATCH');
+ await verifyTalentReviewRefresh(p,review,async()=>{ await p.getByLabel('Rating (0–5)',{exact:true}).fill('4');await p.locator('input[name="complete"]').check();await submit(p,'Save review',`/hr/performance/${review.id}`,'PATCH'); });
  await p.getByRole('button',{name:'View / update',exact:true}).click();await p.getByLabel('Rating (0–5)',{exact:true}).fill('4.5');await submit(p,'Save review',`/hr/performance/${review.id}`,'PATCH');
  const saved=(await get(p,'/hr/performance')).find(x=>x.id===review.id);expect(Number(saved.rating)).toBe(4.5);expect(saved.status).toBe('completed');expect(saved.manager_review).toBe('Synthetic owner review');
  await p.getByRole('button',{name:'View / update',exact:true}).click();await p.getByLabel('Rating (0–5)',{exact:true}).fill('4');await submit(p,'Save review',`/hr/performance/${review.id}`,'PATCH');
@@ -186,7 +256,85 @@ test('HR11 HR12 HR13 HR19 owner talent lifecycle and completed review admin edit
  const policy=await submit(p,'Publish now','/hr/announcements');const published=(await get(p,'/hr/announcements')).find(x=>x.id===policy.id);expect(published.is_policy).toBe(true);expect(published.published_at).toBeTruthy();await p.reload();await p.getByRole('button',{name:'Company updates',exact:true}).click();await expect(p.getByText('Synthetic QC policy',{exact:true})).toBeVisible();
  await info.attach('owner-talent-readback.json',{body:JSON.stringify({jobs:await get(p,'/hr/jobs'),candidates:await get(p,'/hr/candidates'),reviews:await get(p,'/hr/performance'),announcements:await get(p,'/hr/announcements')},null,2),contentType:'application/json'});
  await p.screenshot({path:info.outputPath('owner-policy-published.png'),fullPage:true});
+ await captureTalentTabs(p,info);
 });
+
+async function captureHRResponsive(p,info,label,ready){
+ const viewport=p.viewportSize();
+ try{for(const [size,width,height]of [['desktop',1440,1000],['mobile',390,844]]){
+  await p.setViewportSize({width,height});await expect(ready).toBeVisible();await p.evaluate(()=>window.scrollTo(0,0));
+  expect(await p.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await p.screenshot({path:info.outputPath(`neutral-theme-${label}-${size}.png`),fullPage:false});
+ }}finally{if(viewport)await p.setViewportSize(viewport);}
+}
+async function verifyAttendanceSetupEvidence(p,info,employee,office){
+ for(const [path,label,ready]of [
+  ['/dashboard/hr/settings/attendance?view=offices','attendance-offices',()=>p.getByText(office.name,{exact:true})],
+  [`/dashboard/hr/settings/attendance/offices/${office.id}`,'attendance-office-detail',()=>p.getByRole('link',{name:'Edit this record',exact:true})],
+  [`/dashboard/hr/settings/attendance/policies/${employee.id}`,'attendance-policy-detail',()=>p.getByRole('link',{name:'Edit this record',exact:true})],
+  [`/dashboard/hr/settings/attendance/policies/${employee.id}/edit`,'attendance-policy-edit',()=>p.getByRole('combobox',{name:'Monday',exact:true})],
+ ]){await p.goto(path);await captureHRResponsive(p,info,label,ready());}
+ await p.goto(`/dashboard/hr/settings/attendance/offices/${office.id}/edit`);
+ await p.getByLabel('Office name',{exact:true}).fill('Synthetic unforwarded office edit');
+ await p.getByRole('button',{name:'Review changes',exact:true}).click();
+ const path=`/api/hr/attendance/offices/${office.id}`,pattern='**'+path;let attempted=0;
+ // Exact malformed HR proxy rejection shape, intercepted BEFORE any backend write.
+ const malformed=route=>{if(route.request().method()==='PATCH'){attempted++;return route.fulfill({status:422,contentType:'application/json',body:'{"detail":[]}'});}return route.fallback();};
+ await p.route(pattern,malformed);
+ try{
+  const observed=p.waitForResponse(r=>new URL(r.url()).pathname===path&&r.request().method()==='PATCH').then(response=>({response}),error=>({error}));
+  await p.getByRole('button',{name:'Confirm and save once',exact:true}).click();const result=await observed;if(result.error)throw result.error;
+  expect(result.response.status()).toBe(422);
+  await expect(p.getByText('This lock is memory-only. A later read cannot prove whether this particular save completed. Do not repeat it.',{exact:true})).toBeVisible();
+  await expect(p.getByRole('button',{name:'Confirm and save once',exact:true})).toHaveCount(0);
+  await expect(p.getByLabel('Office name',{exact:true})).toBeDisabled();
+  await p.locator('form').filter({has:p.getByLabel('Office name',{exact:true})}).evaluate(form=>form.requestSubmit());
+  expect(attempted).toBe(1);expect((await get(p,'/hr/attendance/offices')).find(x=>x.id===office.id).name).toBe(office.name);
+  await captureHRResponsive(p,info,'attendance-office-unknown',p.getByText('This lock is memory-only. A later read cannot prove whether this particular save completed. Do not repeat it.',{exact:true}));
+ }finally{await p.unroute(pattern,malformed);}
+}
+async function verifyDocumentWidths(p){
+ let requests=0;const count=r=>{if(new URL(r.url()).pathname==='/api/hr-documents/upload'&&r.method()==='POST')requests++;};p.on('request',count);
+ try{
+  for(const [title,reference]of [['x'.repeat(181),'SYNTHETIC-EXPIRY'],['Synthetic expiring document','x'.repeat(121)]]){
+   await p.getByLabel('Document title',{exact:true}).fill(title);await p.getByLabel('Reference number',{exact:true}).fill(reference);
+   await p.getByRole('button',{name:'Upload securely',exact:true}).click();
+   await expect(p.getByText('Document title must be at most 180 characters and reference number at most 120 characters.',{exact:true})).toBeVisible();expect(requests).toBe(0);
+  }
+ }finally{p.off('request',count);await p.getByLabel('Document title',{exact:true}).fill('Synthetic expiring document');await p.getByLabel('Reference number',{exact:true}).fill('SYNTHETIC-EXPIRY');}
+}
+async function verifyRecordsSetupEvidence(p,info,employee,doc){
+ await p.goto(`/dashboard/hr/records/documents/${doc.id}`);
+ await captureHRResponsive(p,info,'hr-document-detail',p.getByRole('heading',{name:'Synthetic expiring document',exact:true}));
+ for(const [path,label,heading]of [
+  ['/dashboard/hr/settings','hr-setup-register','Company HR Setup'],
+  ['/dashboard/hr/settings/catalog/leave/new','hr-leave-create','Add leave type'],
+  ['/dashboard/hr/settings/catalog/shift/new','hr-shift-create','Add work schedule'],
+  ['/dashboard/hr/settings/catalog/holiday/new','hr-holiday-create','Add holiday'],
+  ['/dashboard/hr/records/history/new','hr-event-create','Add employment event'],
+ ]){await p.goto(path);await expect(p.getByRole('heading',{name:heading,exact:true})).toBeVisible();
+  if(path==='/dashboard/hr/settings')await expect(p.getByText('No records were returned for this register.',{exact:true})).toBeVisible();
+  if(path.includes('/catalog/'))await expect(p.getByLabel('Name',{exact:true})).toBeEnabled();
+  if(path.endsWith('/history/new'))await expect(p.getByRole('button',{name:'Employee',exact:true})).toBeEnabled();
+  await captureHRResponsive(p,info,label,p.getByRole('heading',{name:heading,exact:true}));
+ }
+ await p.goto('/dashboard/hr/records');await p.getByRole('button',{name:'Upload document',exact:true}).click();await choose(p,'Employee',employee.employee_code);
+ await p.getByLabel('Document title',{exact:true}).fill('Synthetic unforwarded upload');await p.getByLabel('File',{exact:true}).setInputFiles({name:'synthetic-not-forwarded.txt',mimeType:'text/plain',buffer:Buffer.from('Synthetic fixture only.')});
+ const pattern='**/api/hr-documents/upload';let attempted=0;
+ const malformed=route=>{if(route.request().method()==='POST'){attempted++;return route.fulfill({status:422,contentType:'application/json',body:'{"detail":[]}'});}return route.fallback();};
+ await p.route(pattern,malformed);
+ try{
+  const observed=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/hr-documents/upload'&&r.request().method()==='POST').then(response=>({response}),error=>({error}));
+  await p.getByRole('button',{name:'Upload securely',exact:true}).click();const result=await observed;if(result.error)throw result.error;expect(result.response.status()).toBe(422);
+  await expect(p.getByText("The upload outcome is unknown. The document may already exist. Do not upload it again; neither a matching nor a missing later record proves this request's result.",{exact:true})).toBeVisible();
+  const save=p.getByRole('button',{name:'Upload securely',exact:true});await expect(save).toBeDisabled();await save.evaluate(button=>button.closest('form').requestSubmit());expect(attempted).toBe(1);
+  expect((await get(p,'/hr/documents')).filter(x=>x.title==='Synthetic unforwarded upload')).toHaveLength(0);
+  await captureHRResponsive(p,info,'hr-upload-unknown',p.getByRole('heading',{name:'Upload employee document',exact:true}));
+ }finally{await p.unroute(pattern,malformed);}
+ // Only this deliberately unforwarded fixture is abandoned, never a real unknown write.
+ const leave=dialog=>dialog.accept();p.on('dialog',leave);
+ try{await p.goto('/dashboard/hr/people');}finally{p.off('dialog',leave);}
+}
 
 test('HR07 owner attendance office and explicit weekly modes persist without geolocation access',async({page:p},info)=>{
  test.setTimeout(90000);const employee=await setup(p,'attendance setup');await p.goto('/dashboard/hr/settings/attendance/offices/new');
@@ -205,7 +353,31 @@ test('HR07 owner attendance office and explicit weekly modes persist without geo
  await expect(p.getByRole('combobox',{name:'Assigned active office',exact:true})).toHaveValue(office.id);for(let i=0;i<days.length;i++)await expect(p.getByRole('combobox',{name:days[i],exact:true})).toHaveValue(modes[i]);
  const policies=await get(p,'/hr/attendance/policies');expect(policies[0].weekly_modes).toEqual(modes);
  await info.attach('owner-attendance-policy.json',{body:JSON.stringify(policies,null,2),contentType:'application/json'});
+ await verifyAttendanceSetupEvidence(p,info,employee,office);
 });
+
+// Synthetic transport boundary only: return the HR proxy's null422 shape BEFORE
+// forwarding. This is not an actual backend-invalid POST or a successful receipt.
+async function verifyTimeMalformedRejection(p,info,employee,before){
+ const viewport=p.viewportSize(),pattern='**/api/hr/attendance';let attempts=0;
+ const malformed=async route=>{if(route.request().method()==='POST'){attempts++;await route.fulfill({status:422,contentType:'application/json',body:'null'});}else await route.continue();};
+ try{
+  await p.goto('/dashboard/hr/time/attendance/new');await choose(p,'Employee',employee.employee_code);
+  await p.getByLabel('Company work date',{exact:true}).fill(today);await p.getByLabel('Worked hours',{exact:true}).fill('1');
+  const save=p.getByRole('button',{name:'Save attendance',exact:true});await p.route(pattern,malformed);
+  const observed=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/hr/attendance'&&r.request().method()==='POST').then(response=>({response}),error=>({error}));
+  await save.click();const receipt=await observed;if(receipt.error)throw receipt.error;
+  expect(receipt.response.status()).toBe(422);expect(await receipt.response.json()).toBeNull();
+  await expect(p.getByRole('heading',{name:'Outcome requires review',exact:true})).toBeVisible();
+  await expect(save).toBeDisabled();await expect(p.getByLabel('Worked hours',{exact:true})).toBeDisabled();expect(attempts).toBe(1);
+  expect(await get(p,'/hr/attendance')).toEqual(before);
+  await save.evaluate(button=>button.closest('form').requestSubmit());await expect(save).toBeDisabled();expect(attempts).toBe(1);
+  await p.evaluate(()=>window.scrollTo(0,0));await p.screenshot({path:info.outputPath('neutral-theme-hr-time-malformed-desktop.png'),fullPage:false});
+  await p.setViewportSize({width:390,height:844});await p.evaluate(()=>window.scrollTo(0,0));
+  await expect(p.getByRole('heading',{name:'Outcome requires review',exact:true})).toBeVisible();
+  await p.screenshot({path:info.outputPath('neutral-theme-hr-time-malformed-mobile.png'),fullPage:false});
+ }finally{try{await p.unroute(pattern,malformed);}finally{if(viewport)await p.setViewportSize(viewport);}}
+}
 
 test('HR02 owner duplicate-date guard and HR25 pending leave rejection persistence',async({page:p},info)=>{
  test.setTimeout(120000);const employee=await setup(p,'attendance duplicates');await p.goto('/dashboard/hr/time');
@@ -222,8 +394,40 @@ test('HR02 owner duplicate-date guard and HR25 pending leave rejection persisten
  await p.goto(`/dashboard/hr/time/leave/${leave.id}/review`);await p.getByRole('radio',{name:'Reject request',exact:true}).check();await p.getByRole('button',{name:'Review decision',exact:true}).click();await submit(p,'Confirm decision',`/hr/leave-requests/${leave.id}`,'PATCH');
  expect((await get(p,'/hr/leave-requests')).find(x=>x.id===leave.id).status).toBe('rejected');expect((await get(p,'/hr/workspace-summary')).attention.pending_leave).toBe(0);expect(await get(p,'/hr/attendance')).toEqual(before);
  await info.attach('owner-rejection-readback.json',{body:JSON.stringify({leaves:await get(p,'/hr/leave-requests'),summary:await get(p,'/hr/workspace-summary')},null,2),contentType:'application/json'});
+ await verifyTimeMalformedRejection(p,info,employee,before);
  // Personal entitlement/balance UI deliberately excluded. No verdict on overdraft/day-count policy.
 });
+
+// This fixture aborts before forwarding: absence proves only this disposable request
+// was not delivered, never that an arbitrary interrupted production write failed.
+async function verifyPeopleUnknownCreate(p,info){
+ const beforeViewport=p.viewportSize(),name=`Synthetic unforwarded department ${randomUUID()}`;
+ let attempted=0;
+ const pattern='**/api/hr/people/departments';
+ const abortCreate=async route=>{if(route.request().method()==='POST'){attempted++;await route.abort('failed');}else await route.continue();};
+ try{
+  await p.goto('/dashboard/hr/people/structure/new?kind=department');
+  const field=p.getByLabel('Department name',{exact:true}),save=p.getByRole('button',{name:'Add department',exact:true});
+  await field.fill(name);await field.focus();
+  await p.screenshot({path:info.outputPath('neutral-theme-people-field-desktop.png'),fullPage:false});
+  await p.route(pattern,abortCreate);
+  await save.click();
+  await expect(p.getByText('The outcome of the previous People save is unknown.',{exact:false})).toBeVisible();
+  await expect(field).toBeDisabled();await expect(save).toBeDisabled();expect(attempted).toBe(1);
+  const after=await get(p,'/hr/people');expect(after.departments.some(row=>row.name===name)).toBe(false);
+  // Exercise the real React admission handler despite the disabled native button.
+  await save.evaluate(button=>button.closest('form').requestSubmit());
+  await expect(save).toBeDisabled();expect(attempted).toBe(1);
+  await expect(p.getByRole('link',{name:'Review records in a new tab',exact:true})).toHaveAttribute('target','_blank');
+  await p.evaluate(()=>window.scrollTo(0,0));
+  await p.screenshot({path:info.outputPath('neutral-theme-people-unknown-desktop.png'),fullPage:false});
+  await p.setViewportSize({width:390,height:844});await p.evaluate(()=>window.scrollTo(0,0));
+  await expect(field).toBeDisabled();
+  await p.screenshot({path:info.outputPath('neutral-theme-people-unknown-mobile.png'),fullPage:false});
+ }finally{
+  try{await p.unroute(pattern,abortCreate);}finally{if(beforeViewport)await p.setViewportSize(beforeViewport);}
+ }
+}
 
 test('HR01 HR09 owner structure search and document expiry aggregation',async({page:p},info)=>{
  test.setTimeout(120000);const employee=await setup(p,'structure expiry');await p.goto('/dashboard/hr/people');await p.getByRole('button',{name:'Structure',exact:true}).click();
@@ -246,9 +450,12 @@ test('HR01 HR09 owner structure search and document expiry aggregation',async({p
  const person=(await get(p,'/hr/people')).people.find(x=>x.id===employee.id);expect(person.department_name).toBe('QC Engineering');expect(person.designation_name).toBe('QC Engineer');
  await p.goto('/dashboard/hr/records');await p.getByRole('button',{name:'Upload document',exact:true}).click();await choose(p,'Employee',employee.employee_code);await p.getByLabel('Document title',{exact:true}).fill('Synthetic expiring document');await p.getByRole('combobox',{name:/^Document type/}).selectOption('other');await p.getByLabel('Reference number',{exact:true}).fill('SYNTHETIC-EXPIRY');
  const expiry=new Date(Date.now()+10*86400000).toISOString().slice(0,10);await p.getByLabel('Expires on',{exact:true}).fill(expiry);await p.getByLabel('File',{exact:true}).setInputFiles({name:'synthetic-expiry.txt',mimeType:'text/plain',buffer:Buffer.from('Synthetic expiry document; no personal data.')});
+ await verifyDocumentWidths(p);
  const doc=await submit(p,'Upload securely','/hr-documents/upload');await p.reload();await expect(p.getByText(`Expires ${expiry}`,{exact:true})).toBeVisible();expect((await get(p,'/hr/workspace-summary')).attention.documents_expiring_30d).toBe(1);
  const stored=(await get(p,'/hr/documents')).find(x=>x.id===doc.id);expect(stored.employee_id).toBe(employee.id);expect(stored.reference_number).toBe('SYNTHETIC-EXPIRY');expect(stored.expires_on).toBe(expiry);
  await info.attach('owner-structure-expiry.json',{body:JSON.stringify({person,document:stored,summary:await get(p,'/hr/workspace-summary')},null,2),contentType:'application/json'});
+ await verifyRecordsSetupEvidence(p,info,employee,doc);
+ await verifyPeopleUnknownCreate(p,info);
 });
 
 test('HR14 HR15 HR20 HR21 HR24 owner payroll guard UI, draft reload and withholding date preview',async({page:p},info)=>{

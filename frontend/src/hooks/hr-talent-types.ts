@@ -1,0 +1,10 @@
+export type Employee = { id: string; employee_code: string; name: string };
+export type Meta = { employees: Employee[]; departments: { id: string; name: string }[] };
+export type Job = { id: string; title: string; department_id?: string | null; employment_type: string; location?: string | null; openings: number; status: string; description?: string | null };
+export type Candidate = { id: string; job_opening_id: string; job_title?: string | null; full_name: string; email: string; phone?: string | null; stage: string; rating?: string | null; notes?: string | null };
+export type Review = { id: string; employee_id: string; employee_name?: string | null; reviewer_employee_id?: string | null; period_start: string; period_end: string; status: string; goals: Record<string, unknown>[]; self_review?: string | null; manager_review?: string | null; rating?: string | null };
+export type Announcement = { id: string; title: string; body: string; audience: string; is_policy: boolean; published_at?: string | null };
+export type RecruitmentMeta = { roles: { id: string; name: string }[]; departments: { id: string; name: string }[]; designations: { id: string; name: string }[] };
+export type View = "hiring" | "performance" | "updates";
+export type Modal = "job" | "candidate" | "review" | "announcement" | null;
+

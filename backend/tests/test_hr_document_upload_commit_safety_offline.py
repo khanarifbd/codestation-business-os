@@ -191,6 +191,34 @@ class HRDocumentUploadCommitSafetyTests(unittest.TestCase):
         docs, audit = self.stored()
         self.assertEqual((len(docs), len(audit)), (0, 0))
 
+    def test_title_and_reference_model_bounds_reject_before_storage(self):
+        self.assertEqual(EmployeeHRDocument.__table__.c.title.type.length, 180)
+        self.assertEqual(EmployeeHRDocument.__table__.c.reference_number.type.length, 120)
+        for field, size in (("title", 181), ("reference_number", 121)):
+            for character in ("x", "😀"):
+                with self.subTest(field=field, character=character):
+                    with self.assertRaises(HTTPException) as caught:
+                        self.invoke(**{field: character * size})
+                    self.assertEqual(caught.exception.status_code, 422)
+                    self.assertEqual(self.storage.saved, [])
+                    self.assertEqual(self.storage.deleted, [])
+                    self.assertEqual(self.db.commits, 0)
+                    self.audit.assert_not_called()
+                    self.assert_no_rows()
+
+    def test_exact_unicode_model_bounds_and_surrounding_whitespace_survive(self):
+        self.invoke(title="  " + "😀" * 180 + "  ", reference_number="  " + "ব" * 120 + "  ")
+        docs, _ = self.stored()
+        self.assertEqual(docs[0].title, "😀" * 180)
+        self.assertEqual(docs[0].reference_number, "ব" * 120)
+        self.assertEqual(len(self.storage.saved), 1)
+
+    def test_no_new_required_title_or_optional_reference_semantics(self):
+        self.invoke(title="  ", reference_number=" " * 121)
+        docs, _ = self.stored()
+        self.assertEqual(docs[0].title, "")
+        self.assertIsNone(docs[0].reference_number)
+
     def test_invalid_issued_date_cleans_saved_object_without_partial_rows(self):
         with self.assertRaises(HTTPException) as error:
             self.invoke(issued_on='not-a-date')
