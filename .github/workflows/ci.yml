@@ -281,7 +281,8 @@ jobs:
           E2E_EMAIL=qc-notification@example.com uv run python scripts/seed_browser_e2e.py
           E2E_EMAIL=neutral-theme@example.com uv run python scripts/seed_browser_e2e.py
           uv run python scripts/seed_qc_personal_client_browser.py
-          nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 >/tmp/business-os-backend.log 2>&1 &
+          # CI-only idle-close margin for the Next-to-Uvicorn hop; no HTTP retries.
+          nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-keep-alive 60 >/tmp/business-os-backend.log 2>&1 &
           backend_pid=$!
           nohup node ../frontend/scripts/ci-transport-observer.cjs --watch-pid "$backend_pid" >/dev/null 2>&1 &
       - name: Wait for backend
@@ -367,7 +368,8 @@ jobs:
           uv run alembic upgrade head
           uv run python scripts/seed_browser_e2e.py
           uv run python scripts/seed_admin_readonly_sweep.py
-          nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 >"$RUNNER_TEMP/admin-readonly-backend.log" 2>&1 &
+          # CI-only idle-close margin for the Next-to-Uvicorn hop; no HTTP retries.
+          nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-keep-alive 60 >"$RUNNER_TEMP/admin-readonly-backend.log" 2>&1 &
       - name: Wait for isolated backend
         run: |
           for i in {1..30}; do
