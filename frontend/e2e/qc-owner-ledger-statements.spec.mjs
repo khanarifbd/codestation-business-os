@@ -1,12 +1,15 @@
+import { verifyAdvancedReviewRefresh, verifyManualBillUnknown } from "./support/accounting-family-boundaries.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 // FIN29 original ledger/source/reference UI controls, plus FIN22 statement UI.
-// Real authenticated Next proxy + FastAPI + local PostgreSQL, no interception.
+// Real authenticated Next proxy + FastAPI + local PostgreSQL.
+// Appended negative transport boundaries never forward a new financial write.
 // This one fresh synthetic workspace is deliberately retained for evidence.
 test.use({ actionTimeout: 15_000, viewport: { width: 1440, height: 1100 } });
 const email = process.env.E2E_QC_FINANCIAL_UX_EMAIL ?? "qc-financial-ux@example.com";
-const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
+const password = process.env.E2E_PASSWORD;
+if (!password) throw new Error("E2E_PASSWORD is required for the disposable CI fixture");
 const today = new Date().toISOString().slice(0, 10);
 async function api(page, method, path, data, status) {
   const response = await page.request.fetch(`/api${path}`, { method, data });
@@ -155,4 +158,6 @@ test("FIN29 real owner historical trial, ledger search, source filters and rejec
   await expect(statementTable.locator("tbody tr")).toHaveCount(5);
   await page.screenshot({ path: testInfo.outputPath("fin22-five-movement-statement-reconciled.png"), fullPage: true });
   await testInfo.attach("fin29-fin22-real-owner-evidence", { body: JSON.stringify({ organizationId: workspace.organization.id, preservedSynthetic: true, trialTotals: { august: 0, september: 120, october: 162 }, journals: 7, manual: 3, reversal: 3, operational: 1, rejectedReference, rejectedStatus: 409, rejectedRowsAbsent: true, headlineTotalsUnchangedByFilters: true, bankId: bank.id, statement: { opening: 0, count: 5, credit: 200, debit: 55, closing: 145 } }), contentType: "application/json" });
+  await verifyAdvancedReviewRefresh(page, testInfo, marker);
+  await verifyManualBillUnknown(page, testInfo, marker);
 });

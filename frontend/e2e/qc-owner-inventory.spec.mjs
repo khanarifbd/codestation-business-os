@@ -1,3 +1,4 @@
+import { verifyPayableRetainedRetry } from "./support/accounting-family-boundaries.mjs";
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { expect, test, request as playwrightRequest } from "@playwright/test";
 import { randomUUID } from "node:crypto";
@@ -6,7 +7,9 @@ import { writeFile } from "node:fs/promises";
 // Local-only owner QC: all business requests hit the real application and DB.
 // Only the empty company and fictional cash account are setup via API. Supplier,
 // warehouse, stock item, receipt, settlements and adjustments are created in UI.
-// Never reuse the manual-review company or mock financial responses. Receipt
+// Never reuse the manual-review company or fake successful financial responses.
+// The settlement boundary rejects one request BEFORE forwarding, then explicitly
+// retries the same keyed body once; original real settlement assertions remain. Receipt
 // instrumentation forwards once and releases the unchanged upstream response.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
 const password = process.env.E2E_PASSWORD;
@@ -212,7 +215,11 @@ test("fresh owner: inventory receipt → partial/final payable settlement → st
       await reconcile("review cancelled without posting", { due: 60, cash: 1000, quantity: 10, journals: 2, movements: 1 });
       await page.getByRole("button", { name: "Review settlement", exact: true }).click();
     }
+    if (checkControls) {
+      await verifyPayableRetainedRetry(page, testInfo, `/api/accounting/payables/${bill.id}/payments`, button => postUi(page, `/api/accounting/payables/${bill.id}/payments`, button));
+    } else {
     await postUi(page, `/api/accounting/payables/${bill.id}/payments`, confirmation.getByRole("button", { name: "Confirm & settle bill", exact: true }));
+    }
     await expect(page.getByRole("heading", { name: "Settlement request acknowledged", exact: true })).toBeVisible();
     // Acknowledgment retains identity; current status requires an explicit read.
     await page.getByRole("button", { name: "Read current bill & history", exact: true }).click();

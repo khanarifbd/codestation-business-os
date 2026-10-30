@@ -1,0 +1,10 @@
+{
+  "qc-owner-inventory.spec.mjs": {
+    "count": 117,
+    "sha256": "db07d56f5a727275ef652a9bd628c9faa4c82b5787ec73ee68ba6b9559e9f49f"
+  },
+  "qc-owner-ledger-statements.spec.mjs": {
+    "count": 47,
+    "sha256": "a2b6427d30ba3d3c05face69a985de2a059dee462be087ee723bc831678c4479"
+  }
+}
