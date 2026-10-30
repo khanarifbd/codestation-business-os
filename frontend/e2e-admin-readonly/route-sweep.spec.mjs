@@ -3,7 +3,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from '
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
 
-import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult } from './support/evidence.mjs';
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -22,6 +22,19 @@ const renderedRouteIds = [];
 const responses = [], errors = [], writes = [];
 const ownership = requestOwnership();
 const pendingResponses = new Set();
+const transportFailures = [];
+function reconcileTransportFailures() {
+  for (const failure of transportFailures) {
+    if (failure.settled) continue;
+    const { request, entry } = failure;
+    if (supersededOwnedRead(request, ownership, entry.transport_code)) {
+      const replacement = ownership.replacement(request);
+      const receipt = { ...entry, event: 'superseded_read', classification: 'explicit_abort_replaced_by_current_success', replacement_request_id: replacement.request_id, replacement_status: replacement.status, replacement_body_complete: replacement.body_complete };
+      if (reconciledReadFailure(entry, [receipt])) { errors.splice(errors.indexOf(entry), 1); emit(receipt); }
+    }
+    failure.settled = true;
+  }
+}
 
 test.beforeAll(async ({ browser }) => {
   const password = process.env.E2E_PASSWORD;
@@ -57,8 +70,10 @@ test.beforeAll(async ({ browser }) => {
   page.on('requestfailed', request => {
     const pathname = new URL(request.url()).pathname;
     if (!pathname.startsWith('/api/')) return;
-    const failure = { event: 'api_read_failure', route_id: ownership.owner(request), pathname, classification: 'request_transport_failure' };
-    errors.push(failure); emit(failure);
+    ownership.failed(request);
+    const failure = { event: 'api_read_failure', batch, method: request.method(), route_id: ownership.owner(request), request_id: ownership.sequence(request), pathname, classification: 'request_transport_failure', transport_code: safeTransportCode(request) };
+    errors.push(failure); transportFailures.push({ request, entry: failure, settled: false });
+    emit(failure);
   });
   page.on('response', response => {
     const pathname = new URL(response.url()).pathname;
@@ -68,6 +83,7 @@ test.beforeAll(async ({ browser }) => {
       try {
         const failed = await response.finished();
         if (failed) throw new Error('Response body incomplete');
+        ownership.completed(response.request(), entry.status);
         responses.push(entry); emit(entry);
         if (entry.status >= 400) errors.push(entry);
       } catch {
@@ -84,6 +100,7 @@ test.beforeAll(async ({ browser }) => {
 
 test.afterAll(async () => {
   await Promise.all(pendingResponses);
+  reconcileTransportFailures();
   emit({ event: 'batch_terminal', blocked_mutations: writes.length, errors: errors.length });
   if (context) {
     try {
@@ -101,7 +118,6 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
     }
     await test.step(route.pattern, async () => {
       routeId = route.id;
-      const startErrors = errors.length;
       const response = await page.goto(route.url, { timeout: 30_000 });
       expect(response?.status(), route.pattern).toBeLessThan(400);
       await expect(page).not.toHaveURL(/\/login(?:[/?]|$)/);
@@ -126,7 +142,9 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
           await page.screenshot({ path: info.outputPath(bottom), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(bottom);
         }
       }
-      expect(errors.slice(startErrors), route.pattern).toEqual([]);
+      await Promise.all(pendingResponses);
+      reconcileTransportFailures();
+      expect(errors.filter(entry => entry.route_id === route.id), route.pattern).toEqual([]);
       expect(writes).toEqual([]);
       renderedRouteIds.push(route.id);
       emit({ event: 'route_rendered', route_id: route.id, pattern: route.pattern, actual_url: new URL(page.url()).pathname + new URL(page.url()).search, expected_state: contract.expected_mode, heading: contract.heading, captures, visual_review: 'pending_actual_pixel_inspection', source: contract.source });
