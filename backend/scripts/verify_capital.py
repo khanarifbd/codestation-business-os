@@ -1,3 +1,7 @@
+from pathlib import Path
+import subprocess
+import sys
+
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -72,6 +76,7 @@ def ensure_request_transaction(db) -> None:
 
 
 def main() -> None:
+    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_capital_exact_response_unit.py", "-v"], cwd=Path(__file__).resolve().parents[1], check=True)
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.timezone,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
     db = SessionLocal(); marker = uuid4().hex[:8]
