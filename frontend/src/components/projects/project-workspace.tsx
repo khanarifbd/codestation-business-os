@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { PROJECT_WRITE_UNKNOWN } from "@/lib/project-request";
 import { useParams, usePathname } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Copy, Download, Eye, EyeOff, FileText, KeyRound, LockKeyhole, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, UsersRound } from "lucide-react";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -31,7 +32,7 @@ function ProjectWorkspaceContent() {
     <div className="project-breadcrumb"><button onClick={vm.isEditor ? vm.closeEditor : showRecord ? vm.backToRegister : vm.backToProjects} disabled={vm.saving} className="project-back"><ArrowLeft aria-hidden="true" />{vm.isEditor || showRecord ? "Back to project" : "Projects"}</button><span>{project.project_number}{vm.route.section ? ` / ${pretty(vm.route.section)}` : ""}</span></div>
     {vm.isEditor || showRecord ? <div className="project-editor-identity"><span>{project.name}</span><Badge value={project.status} /></div> : <ProjectHeader vm={vm} />}
     {vm.message ? <RelationshipNotice tone="success">{vm.message}</RelationshipNotice> : null}
-    {vm.error ? <RelationshipNotice tone="error">{vm.error}</RelationshipNotice> : null}
+    {vm.error && !(vm.unknownWrite && vm.error === PROJECT_WRITE_UNKNOWN) ? <RelationshipNotice tone="error">{vm.error}</RelationshipNotice> : null}
     {vm.credentialError && !vm.isEditor ? <RelationshipNotice tone="error">{vm.credentialError}</RelationshipNotice> : null}
     {vm.unknownWrite ? <RelationshipNotice tone="error">The save result is uncertain. Submitting again is blocked. Return to the project and review the latest records before starting another change.</RelationshipNotice> : null}
     {vm.saving ? <RelationshipNotice>Saving this change. Keep this page open; if the connection is interrupted, verify the saved result before retrying.</RelationshipNotice> : null}
