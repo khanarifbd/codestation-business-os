@@ -15,7 +15,7 @@ from app.schemas.finance import FinancialAccountCreate
 from app.schemas.payroll import (SalaryProfileCreate, PayrollPeriodCreate, PayrollRunCreate,
     PayrollEntryUpdate, PayrollWithholdingPaymentCreate)
 from app.services.accounting_integrity_audit import audit_organization_accounting
-from seed_admin_readonly_financial import assert_financial_fixture_target, _require
+from scripts.seed_admin_readonly_financial import assert_financial_fixture_target, _require
 
 
 class HRRegistry(TypedDict):
