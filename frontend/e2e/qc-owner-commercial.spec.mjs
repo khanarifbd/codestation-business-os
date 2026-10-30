@@ -3,10 +3,14 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 // Real application + PostgreSQL journey. No synthetic API responses or direct
-// database writes. Receipt instrumentation forwards once and releases real bytes. Only company isolation is API setup; business mutations below
+// database writes. Receipt instrumentation forwards once and releases real bytes. Company isolation and the explicit legacy-note regression fixture use API setup; normal business mutations below
 // are performed through the owner UI and checked through persisted API reads.
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
-const password = process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!";
+const password = process.env.E2E_PASSWORD;
+
+test.beforeEach(() => {
+  expect(password, 'E2E_PASSWORD must be configured for the disposable CI fixture').toBeTruthy();
+});
 const baseURL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:3000";
 
 async function readJson(request, path) {
@@ -134,10 +138,55 @@ test("fresh owner: client → quote → order → project → invoice → paymen
       evidence.uiActions.push("Created quotation: subtotal 370, discount 25, tax 22.50, total BDT 367.50");
     });
 
+    await test.step("Preserve legacy notes and terms during normal V2 edit/save", async () => {
+      // Explicit legacy fixture: these persisted API fields are not editable in V2.
+      const legacy = { notes: "Legacy note — বাংলা", terms_conditions: "Synthetic legacy terms; no external commitment" };
+      const seeded = await context.request.patch(`/api/sales/quotations/${quotation.id}`, {
+        headers: { Origin: baseURL }, data: legacy,
+      });
+      expect(seeded.status()).toBe(200);
+      await page.getByRole("link", { name: "Edit draft", exact: true }).click();
+      await page.getByLabel("Subject / project", { exact: true }).fill(`${marker} Implementation revised`);
+      await page.getByLabel("Unit price", { exact: true }).first().fill("125.0001");
+      await expect(page.getByLabel("Unit price", { exact: true }).first()).toHaveValue("125.0001");
+      await mutateViaUI(page, `/api/sales/quotations/${quotation.id}`, "PATCH", () =>
+        page.getByRole("button", { name: "Save draft", exact: true }).click());
+      await expect(page.getByRole("button", { name: "Mark sent", exact: true })).toBeVisible();
+      const persisted = await readJson(context.request, `/api/sales/quotations/${quotation.id}`);
+      expect(persisted).toMatchObject(legacy);
+      expect(persisted.items[0].unit_price).toBe("125.0001");
+      expectCommercialTotals(persisted);
+      evidence.uiActions.push("V2 edit/save preserved existing legacy notes and terms without rewriting them");
+    });
+
     await test.step("Mark quotation sent/accepted and convert it into an order", async () => {
       // Status actions only: these endpoints do not send email or invoke payment providers.
       await mutateViaUI(page, `/api/sales/quotations/${quotation.id}/status`, "PATCH", () =>
         page.getByRole("button", { name: "Mark sent", exact: true }).click());
+      const revisionOpener = page.getByRole("button", { name: "Create revision", exact: true });
+      await revisionOpener.click();
+      const revisionDialog = page.getByRole("dialog", { name: "Create quotation revision", exact: true });
+      const reason = revisionDialog.getByLabel("Revision reason", { exact: true });
+      await expect(reason).toBeFocused();
+      const revisionSubmit = revisionDialog.getByRole("button", { name: "Create draft revision", exact: true });
+      await revisionSubmit.focus();
+      await page.keyboard.press("Tab");
+      await expect(reason).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(revisionSubmit).toBeFocused();
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-quotation-revision-desktop.png"), fullPage: false });
+      await page.keyboard.press("Escape");
+      await expect(revisionDialog).not.toBeVisible();
+      await expect(revisionOpener).toBeFocused();
+      const originalViewport = page.viewportSize();
+      await page.setViewportSize({ width: 390, height: 844 });
+      await revisionOpener.click();
+      await expect(reason).toBeFocused();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("neutral-theme-quotation-revision-mobile.png"), fullPage: false });
+      await page.keyboard.press("Escape");
+      await expect(revisionDialog).not.toBeVisible();
+      if (originalViewport) await page.setViewportSize(originalViewport);
       await mutateViaUI(page, `/api/sales/quotations/${quotation.id}/status`, "PATCH", () =>
         page.getByRole("button", { name: "Accept", exact: true }).click());
       await expect(page.getByText("This revision is immutable.", { exact: false })).toBeVisible();

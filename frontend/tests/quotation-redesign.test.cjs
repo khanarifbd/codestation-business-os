@@ -1,3 +1,4 @@
+const { beforeReviewedQuotationDecimals } = require('./helpers/reviewed-quotation-decimals.cjs');
 const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /** Financial/API invariants survive the intentional route/controller correction. */
 const {test}=require('node:test');
@@ -8,7 +9,7 @@ const ts=require('typescript');
 const root=path.resolve(__dirname,'..');
 const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_FRONTEND):path.join(root,'../test-fixtures/frontend-original');
 const file='src/app/dashboard/quotations/quotation-v2-workspace.tsx';
-const read=(dir,rel=file)=>fs.readFileSync(path.join(dir,rel),'utf8');
+const read=(dir,rel=file)=>{const source=fs.readFileSync(path.join(dir,rel),'utf8');return dir===root?beforeReviewedQuotationDecimals(rel,source):source;};
 const parse=dir=>ts.createSourceFile(file,read(dir),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const printer=ts.createPrinter({removeComments:true});
 function find(dir,name){const ast=parse(dir);let node;function visit(n){if(ts.isFunctionDeclaration(n)&&n.name?.text===name)node=n;ts.forEachChild(n,visit);}visit(ast);assert.ok(node,name);return{ast,node};}
@@ -39,7 +40,13 @@ test('Commercial section types and standard contents are unchanged',()=>{
 // the old stacked-page implementation. Exact commercial payloads remain protected.
 for(const name of ['corePayload','commercialPayload'])test(`${name}: financial/API payload shape is unchanged`,()=>{
  function declaration(dir){const ast=parse(dir);let value;function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(ast)===name)value=printer.printNode(ts.EmitHint.Unspecified,n.initializer,ast);ts.forEachChild(n,visit);}visit(ast);assert.ok(value,name);return value;}
- assert.equal(declaration(root),declaration(baseline));
+ const expected = declaration(baseline);
+ const actual = declaration(root);
+ if (name === 'corePayload') {
+   const legacy = 'notes: null,\n    terms_conditions: null,';
+   assert.ok(expected.includes(legacy));
+   assert.equal(actual, expected.replace(legacy, '...(!existingCore ? { notes: null, terms_conditions: null } : {}),'));
+ } else assert.equal(actual, expected);
 });
 test('Sales proxy stays unchanged; saved-document print permits only reviewed canvas change',()=>{
  for(const rel of ['src/app/api/sales/[...segments]/route.ts','src/app/print/quotations/[quotationId]/page.tsx','src/app/print/quotations/[quotationId]/layout.tsx'])assert.equal(read(root,rel),withReviewedCanvas(rel,read(baseline,rel)),rel);
