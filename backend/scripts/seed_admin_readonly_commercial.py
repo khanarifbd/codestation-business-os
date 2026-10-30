@@ -245,11 +245,11 @@ def commercial_routes(ids, rows, labels):
     }
     for pattern, (label, expected) in fields.items():
         contracts[pattern]['ready_fields'] = [{'label': label, 'value': expected}]
-    # Empty create-form controls prove the actual form exists, not merely a static header.
+    # Exact initial create-form controls prove the actual form exists, not merely a static header.
     for section, label in [('items', 'Name'), ('suppliers', 'Supplier name'), ('warehouses', 'Warehouse name'), ('categories', 'Category name')]:
         contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': ''}]
-    for section, label in [('purchases', 'Supplier invoice / reference'), ('adjustments', 'Reason'), ('transfers', 'Reason')]:
-        contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': ''}]
+    for section, label, initial in [('purchases', 'Supplier invoice / reference', ''), ('adjustments', 'Reason', ''), ('transfers', 'Reason', 'Stock transfer')]:
+        contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': initial}]
     contracts[exp+'/[expenseId]/receipts/new']['ready_text'] = [value(rows['expense'], 'expense_number')]
     for pattern, contract in contracts.items():
         if pattern.startswith(inv+'/items'):

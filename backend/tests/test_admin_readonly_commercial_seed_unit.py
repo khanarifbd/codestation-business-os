@@ -152,6 +152,8 @@ class CommercialSeedTests(unittest.TestCase):
             fields = contracts[f'/dashboard/inventory/{kind}/[recordId]/edit']['ready_fields']
             self.assertEqual(len(fields), 1)
             self.assertTrue(fields[0]['value'].startswith('Read-only synthetic '))
+        self.assertEqual(contracts['/dashboard/inventory/transfers/new']['ready_fields'], [{'label':'Reason','value':'Stock transfer'}])
+        self.assertEqual(contracts['/dashboard/inventory/adjustments/new']['ready_fields'], [{'label':'Reason','value':''}])
         credential = contracts['/dashboard/projects/[projectId]/credentials/[recordId]/edit']
         self.assertEqual(credential['ready_fields'][0]['label'], 'Name')
         self.assertIn('The current secret is not loaded into this editor. Leave the new secret blank to keep it unchanged.', credential['ready_text'])
