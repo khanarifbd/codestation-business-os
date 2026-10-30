@@ -33,3 +33,13 @@ export async function persistSuccessfulBatch(context, authPath, { expected, rend
   chmodSync(authPath, 0o600);
   return true;
 }
+export function authResult(status, payload) {
+  const detail = payload && typeof payload === 'object' ? payload.detail : undefined;
+  const classification = status >= 200 && status < 300 ? 'accepted'
+    : status === 503 && detail === 'Browser mutation origin is not configured for this deployment.' ? 'canonical_origin_unconfigured'
+    : status === 403 && detail === 'A same-origin request is required for this action.' ? 'same_origin_rejected'
+    : status === 401 ? 'authentication_rejected'
+    : status === 429 ? 'rate_limited'
+    : status >= 500 ? 'server_error' : 'unexpected_auth_response';
+  return { event: 'authentication_result', status, classification };
+}

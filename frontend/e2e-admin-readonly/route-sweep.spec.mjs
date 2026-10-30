@@ -3,7 +3,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from '
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
 
-import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch } from './support/evidence.mjs';
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -34,7 +34,9 @@ test.beforeAll(async ({ browser }) => {
   page.on('request', request => ownership.started(request, routeId));
   if (!reuseAuth) {
     const login = await page.request.post('/api/auth/login', { data: { email: registry.owner_email, password } });
-    expect(login.ok(), 'Existing fixture owner authentication').toBeTruthy();
+    const result = authResult(login.status(), await login.json().catch(() => null));
+    emit(result);
+    expect(login.ok(), `Existing fixture owner authentication: ${result.status} ${result.classification}`).toBeTruthy();
   }
   await context.addCookies([{ name: 'organization_id', value: registry.organization_id, url: baseURL, httpOnly: true, sameSite: 'Lax' }]);
   const tenantResponse = await page.request.get('/api/tenant/context');

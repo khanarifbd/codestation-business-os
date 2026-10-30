@@ -386,29 +386,15 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
-          node --test tests/admin-readonly-registry.test.cjs
+          node --test tests/admin-readonly-registry.test.cjs tests/admin-readonly-process.test.cjs
           pnpm build
-          cp -r .next/static .next/standalone/.next/static
-          if [ -d public ]; then cp -r public .next/standalone/public; fi
-      - name: Start built standalone frontend (no development fallback)
+      - name: Run explicit development read-only batches (production build separately verified)
         working-directory: frontend
         env:
+          ADMIN_SWEEP_RUNTIME: development
           INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
           NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
-          HOSTNAME: 127.0.0.1
-          PORT: "3000"
-        run: nohup node .next/standalone/server.js >"$RUNNER_TEMP/admin-readonly-frontend.log" 2>&1 &
-      - name: Wait for built frontend
-        run: |
-          for i in {1..60}; do
-            if curl --fail --silent http://localhost:3000/login >/dev/null; then exit 0; fi
-            sleep 1
-          done
-          echo "Built frontend did not become ready; no dev fallback or raw log upload."
-          exit 1
-      - name: Run bounded read-only route groups with measured session budget
-        working-directory: frontend
         run: node scripts/run-admin-readonly-sweep.mjs
       - name: Preserve only sanitized route evidence and masked screenshots
         if: always()

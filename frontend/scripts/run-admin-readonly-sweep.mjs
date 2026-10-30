@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { startDevelopmentFrontend } from '../e2e-admin-readonly/support/frontend-process.mjs';
 import { localBaseURL, nextBatchDelay, ROUTES_PER_BATCH, resolveRoutes } from '../e2e-admin-readonly/support/registry.mjs';
 
 export function readEvents(directory) {
@@ -23,6 +24,7 @@ async function executeBatch(batch, directory, env) {
 }
 export async function runSweep(env = process.env) {
   if (env.CI !== 'true' || env.QC_BROWSER_FIXTURE !== '1') throw new Error('Explicit disposable read-only CI opt-in required');
+  if (env.ADMIN_SWEEP_RUNTIME !== 'development') throw new Error('Explicit documented development runtime required');
   localBaseURL(env.E2E_BASE_URL || 'http://localhost:3000');
   const directory = env.ADMIN_SWEEP_EVIDENCE;
   if (!directory || !env.ADMIN_SWEEP_FIXTURE) throw new Error('Explicit fixture/evidence paths required');
@@ -42,14 +44,21 @@ export async function runSweep(env = process.env) {
       console.log(`Read-only batch${batch}: waiting ${delay}ms for the existing session activity budget; no identity rotation or retry`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
-    let code;
-    try { code = await executeBatch(batch, directory, batchEnv); }
-    catch { batchFailure = { batch, classification: 'batch_process_failure' }; break; }
+    let code, frontend;
+    const emit = event => appendFileSync(path.join(directory, `batch-${batch}.ndjson`), `${JSON.stringify({ at: Date.now(), batch, ...event })}\n`);
+    try {
+      frontend = await startDevelopmentFrontend({ env: batchEnv, directory: privateAuth, batch, emit });
+      code = await executeBatch(batch, directory, batchEnv);
+    } catch { batchFailure = { batch, classification: 'batch_process_failure' }; }
+    finally {
+      if (frontend) { try { await frontend.stop(); } catch { batchFailure = { batch, classification: 'frontend_cleanup_failure' }; } }
+    }
+    if (batchFailure) break;
     if (code !== 0) { batchFailure = { batch, code }; break; }
     if (readEvents(directory).some(e => e.event === 'api_response' && e.status === 429)) { batchFailure = { batch, classification: 'rate_limit_failure' }; break; }
   }
   } finally { rmSync(privateAuth, { recursive: true, force: true }); }
-  const summary = { ...summarize(manifest, readEvents(directory)), batch_failure: batchFailure, head: env.GITHUB_SHA || null, no_live_verification: true };
+  const summary = { ...summarize(manifest, readEvents(directory)), batch_failure: batchFailure, head: env.GITHUB_SHA || null, runtime: 'development', production_runtime_equivalence: false, no_live_verification: true };
   writeFileSync(path.join(directory, 'route-evidence.json'), JSON.stringify(summary, null, 2));
   if (batchFailure || summary.blocked || summary.not_executed || summary.mutation_attempts || summary.rate_limit_responses || summary.unexpected_errors) throw new Error('Read-only sweep incomplete; consult exact route-evidence.json, no automatic retry');
   return summary;
