@@ -17,9 +17,17 @@ function beforeMoneyOutViewFit(file,css){
  ]){assert.equal(css.split(after).length-1,1,'exact reviewed MoneyOut row-fit delta');css=css.replace(after,before);}
  return css;
 }
+const hrSetupMobileFit='\n  .ht-setup > .ht-section-heading {\n    flex-direction:column;\n    align-items:flex-start\n  }';
+function beforeHRSetupMobileFit(file,css){
+ if(file!=='src/components/hr-time/hr-time.css')return css;
+ assert.equal(css.split(hrSetupMobileFit).length-1,1,'one scoped HR setup delta');
+ const anchor='  .ht-section-heading h2 {\n    font-size:1rem\n  }'+hrSetupMobileFit;
+ assert.equal(css.split(anchor).length-1,1,'exact reviewed mobile HR setup header delta');
+ return css.replace(hrSetupMobileFit,'');
+}
 const digest=s=>createHash('sha256').update(s.replace(/\s+/g,'')).digest('hex');
 for(const [file,sha] of Object.entries(baseline))test(`${file}: only palette references change; original dark fallback, selectors and geometry remain exact`,()=>{
- const css=beforeReviewedFinanceCompatibility(file,beforeMoneyOutViewFit(file,read(file)));assert.equal(digest(restore(css)),sha);
+ const css=beforeReviewedFinanceCompatibility(file,beforeMoneyOutViewFit(file,beforeHRSetupMobileFit(file,read(file))));assert.equal(digest(restore(css)),sha);
  assert.notEqual(digest(restore(css.replace(/padding:/,'padding-left:'))),sha);
 });
 test('neutral palette is scoped to light authenticated workspaces, not dark or public pages',()=>{
@@ -51,4 +59,10 @@ test('MoneyOut row-fit inverse rejects changed or duplicate geometry allowances'
  for(const changed of [css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 50px'),css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 60px'),css.replace('minmax(95px,.8fr) max-content','minmax(95px,.8fr) 40px'),css.replace('minmax(95px,.8fr) max-content','minmax(95px,.8fr) 50px'),css.replace('white-space:nowrap','white-space:normal'),css+'.mo-row .aa-row-link{justify-self:end;white-space:nowrap}'])assert.throws(()=>beforeMoneyOutViewFit(file,changed));
  const unrelated=css.replace('.mo-local-grid{display:grid;grid-template-columns:minmax(0,1.5fr)', '.mo-local-grid{display:grid;grid-template-columns:minmax(0,2fr)');
  assert.notEqual(digest(restore(beforeReviewedFinanceCompatibility(file,beforeMoneyOutViewFit(file,unrelated)))),baseline[file]);
+});
+
+test('HR setup header inverse rejects broadened or altered mobile layout',()=>{
+ const file='src/components/hr-time/hr-time.css',css=read(file);
+ for(const changed of [css.replace(hrSetupMobileFit,''),css+hrSetupMobileFit,css.replace(hrSetupMobileFit,hrSetupMobileFit.replace('column','row')),css.replace(hrSetupMobileFit,hrSetupMobileFit.replace('.ht-setup > ',''))])assert.throws(()=>beforeHRSetupMobileFit(file,changed));
+ const altered=css.replace('gap:18px','gap:19px');assert.notEqual(digest(restore(beforeHRSetupMobileFit(file,altered))),baseline[file]);
 });
