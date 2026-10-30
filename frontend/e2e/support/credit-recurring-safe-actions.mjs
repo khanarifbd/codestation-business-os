@@ -123,7 +123,7 @@ export async function verifyExistingEmployeeFinanceDenial(page, info) {
   expect(tenantResponse.ok()).toBeTruthy();
   const tenant = await tenantResponse.json();
   expect([...tenant.permissions].sort()).toEqual(['dashboard.view', 'hr.self', 'projects.work']);
-  for (const path of ['/api/finance-controls/recurring-expenses', '/api/finance/receivable-page?limit=50']) {
+  for (const path of ['/api/finance-controls/recurring-expenses', '/api/finance/receivable-page?limit=50', '/api/finance/accounts']) {
     const response = await page.request.get(path);
     expect(response.status()).toBe(403);
   }
@@ -139,5 +139,10 @@ export async function verifyExistingEmployeeFinanceDenial(page, info) {
     await expect(page.getByRole('button', { name: 'Review expense posting', exact: true })).toHaveCount(0);
     expect(mutations).toHaveLength(0);
     await captureSafeAction(page, info, 'employee-finance-restricted');
+    await page.goto('/dashboard/accounting/money-out/new?purpose=company');
+    await expect(page.getByRole('heading', { name: 'Money-out information is restricted', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Review paid expense', exact: true })).toHaveCount(0);
+    expect(mutations).toHaveLength(0);
+    await captureSafeAction(page, info, 'employee-money-out-restricted');
   } finally { page.off('request', observe); }
 }

@@ -1,3 +1,4 @@
+import { verifyFinancialReviewCancel } from "./support/financial-review-cancel.mjs";
 import { verifyMoneyOutUnknownAction } from "./support/money-out-safe-action.mjs";
 import { verifyReportsReadOnly } from './support/reports-readonly-browser.mjs';
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
@@ -515,6 +516,7 @@ async function verifyAccountingReadOnlyRegisters(page, testInfo) {
   await verifyTransferRetryBoundary(page, testInfo);
   await verifyAccountingReadOnlyRegisters(page, testInfo);
   await verifyMoneyOutUnknownAction(page, testInfo, api, account, category, today);
+  await verifyFinancialReviewCancel(page, testInfo, api, account, today);
 });
 
 test("owner source selectors omit billed work and overpayment is blocked before confirmation", async ({ page }, testInfo) => {
