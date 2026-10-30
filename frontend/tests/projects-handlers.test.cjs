@@ -258,3 +258,36 @@ check('actual unknown workspace preserves a distinct read error rather than hidi
 check('generic error remains visible if no unknown latch is present',h=>{const {PROJECT_WRITE_UNKNOWN}=h.load(path.join(root,'src/lib/project-request.ts'));readyDetail(h,'/tasks/new',{unknownWrite:false,error:PROJECT_WRITE_UNKNOWN});const tree=h.component(detailFile,'ProjectWorkspaceContent',{});assert.equal(nodes(tree,'RelationshipNotice').length,1);assert.equal(text(nodes(tree,'RelationshipNotice')[0]),PROJECT_WRITE_UNKNOWN);},'useProjectWorkspace');
 check('unknown credential editor retains safe specific detail inline and its locked boundary',h=>{const detail='Credentials Vault is temporarily unavailable. Please contact your administrator.';readyDetail(h,'/credentials/new',{unknownWrite:true,credentialError:detail});const tree=h.component(detailFile,'ProjectWorkspaceContent',{});assert.equal(nodes(tree,'RelationshipNotice').length,1);assert.equal(nodes(tree,'fieldset')[0].props.disabled,true);const editor=nodes(tree,'ProjectEditor')[0];const rendered=h.component('src/components/projects/project-editors.tsx','ProjectEditor',editor.props);assert.equal(nodes(rendered,'CredentialEditor')[0].props.error,detail);const child=harness();try{const credentialTree=child.component('src/components/projects/project-editors.tsx','CredentialEditor',nodes(rendered,'CredentialEditor')[0].props);assert.match(text(credentialTree),/Credentials Vault is temporarily unavailable/);}finally{child.cleanup();}},'useProjectWorkspace');
 check('unknown noneditor credential error remains a separate specific notice',h=>{readyDetail(h,'',{unknownWrite:true,credentialError:'Synthetic safe Vault detail'});const tree=h.component(detailFile,'ProjectWorkspaceContent',{});assert.equal(nodes(tree,'RelationshipNotice').length,2);assert.match(text(tree),/Synthetic safe Vault detail/);},'useProjectWorkspace');
+
+for(const [environment,credentialType] of [['test','custom_token'],['QA বাংলা','Custom API']])check(`saved custom credential values render selected and save unchanged: ${environment}`,h=>{
+ const saved=[],f=form(h,'CredentialEditor',{credential:{...credential,environment,credential_type:credentialType},onSave:value=>saved.push(value)});
+ const tree=f.render(),selects=nodes(tree,'select');
+ for(const [label,value] of [['Environment',environment],['Credential type',credentialType]]){
+  const select=selects.find(node=>node.props['aria-label']===label);assert.ok(select);assert.equal(select.props.value,value);
+  assert.equal(nodes(select,'option').filter(option=>option.props.value===value).length,1);
+  const html=require('react-dom/server').renderToStaticMarkup(select);
+  assert.ok(html.includes(`value="${value}" selected=""`),html);
+ }
+ tree.props.onSave();assert.equal(saved[0].environment,environment);assert.equal(saved[0].credential_type,credentialType);assert.equal(saved[0].secret,'');assert.equal(h.requests.length,0);
+ assert.deepEqual(selects.at(-1).props.children.map(node=>node.props.value),['manager_only','team']);
+});
+check('saved custom credential remains selectable after an explicit canonical choice',h=>{
+ const saved=[],f=form(h,'CredentialEditor',{credential:{...credential,environment:'test',credential_type:'custom_token'},onSave:value=>saved.push(value)});
+ let tree=f.render();nodes(tree,'select').find(node=>node.props['aria-label']==='Environment').props.onChange({target:{value:'staging'}});
+ nodes(tree,'select').find(node=>node.props['aria-label']==='Credential type').props.onChange({target:{value:'api_key'}});
+ tree=f.render();tree.props.onSave();assert.equal(saved[0].environment,'staging');assert.equal(saved[0].credential_type,'api_key');
+ const env=nodes(tree,'select').find(node=>node.props['aria-label']==='Environment');assert.ok(nodes(env,'option').some(node=>node.props.value==='test'));
+ env.props.onChange({target:{value:'test'}});tree=f.render();tree.props.onSave();assert.equal(saved[1].environment,'test');assert.equal(h.requests.length,0);
+});
+for(const existing of [null,credential])check(`canonical credential options and creation defaults are unchanged: ${existing?'edit':'new'}`,h=>{
+ const tree=form(h,'CredentialEditor',{credential:existing}).render(),selects=nodes(tree,'select');
+ const env=selects.find(node=>node.props['aria-label']==='Environment'),type=selects.find(node=>node.props['aria-label']==='Credential type');
+ assert.deepEqual(nodes(env,'option').map(node=>node.props.value),['production','staging','development','other']);
+ assert.deepEqual(nodes(type,'option').map(node=>node.props.value),['login','api_key','database','ssh','hosting','domain','other']);
+ assert.equal(env.props.value,existing?'development':'production');assert.equal(type.props.value,'login');assert.equal(h.requests.length,0);
+});
+for(const [field,label,values] of [['credential_type','Credential type',['login','api_key','database','ssh','hosting','domain','other']],['environment','Environment',['production','staging','development','other']]])for(const value of values)check(`each canonical ${field} has exactly one selected option: ${value}`,h=>{
+ const tree=form(h,'CredentialEditor',{credential:{...credential,[field]:value}}).render(),select=nodes(tree,'select').find(node=>node.props['aria-label']===label);
+ assert.equal(select.props.value,value);assert.equal(nodes(select,'option').length,values.length);assert.equal(nodes(select,'option').filter(node=>node.props.value===value).length,1);
+ assert.ok(require('react-dom/server').renderToStaticMarkup(select).includes(`value="${value}" selected=""`));assert.equal(h.requests.length,0);
+});

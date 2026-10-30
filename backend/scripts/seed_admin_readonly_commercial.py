@@ -250,6 +250,10 @@ def commercial_routes(ids, rows, labels):
         contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': ''}]
     for section, label, initial in [('purchases', 'Supplier invoice / reference', ''), ('adjustments', 'Reason', ''), ('transfers', 'Reason', 'Stock transfer')]:
         contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': initial}]
+    contracts[p+'/[projectId]/credentials/[recordId]/edit']['ready_fields'] += [
+        {'label': 'Environment', 'value': value(rows['credential'], 'environment')},
+        {'label': 'Credential type', 'value': value(rows['credential'], 'credential_type')},
+    ]
     contracts[exp+'/[expenseId]/receipts/new']['ready_text'] = [value(rows['expense'], 'expense_number')]
     for pattern, contract in contracts.items():
         if pattern.startswith(inv+'/items'):

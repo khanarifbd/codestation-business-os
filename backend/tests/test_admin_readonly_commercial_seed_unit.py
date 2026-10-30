@@ -66,7 +66,9 @@ class CommercialSeedTests(unittest.TestCase):
                 if _name in ['change_quotation_status', 'change_order_status']:
                     ident = args[0]
                 return NS(id=ident, quotation_number='Q-'+ident, order_number='O-'+ident,
-                          task_code='T-'+ident, receipt_number='R-'+ident, expense_number='E-'+ident)
+                          task_code='T-'+ident, receipt_number='R-'+ident, expense_number='E-'+ident,
+                          environment=args[1].environment if _name=='create_credential' else None,
+                          credential_type=args[1].credential_type if _name=='create_credential' else None)
             self.services[name] = self.stack.enter_context(patch.object(seed, name, side_effect=response))
 
     def run_seed(self, day=DAY, shared=None):
@@ -156,6 +158,8 @@ class CommercialSeedTests(unittest.TestCase):
         self.assertEqual(contracts['/dashboard/inventory/adjustments/new']['ready_fields'], [{'label':'Reason','value':''}])
         credential = contracts['/dashboard/projects/[projectId]/credentials/[recordId]/edit']
         self.assertEqual(credential['ready_fields'][0]['label'], 'Name')
+        self.assertIn({'label':'Environment','value':'test'},credential['ready_fields'])
+        self.assertIn({'label':'Credential type','value':'login'},credential['ready_fields'])
         self.assertIn('The current secret is not loaded into this editor. Leave the new secret blank to keep it unchanged.', credential['ready_text'])
         self.assertNotIn('secret', str(credential['ready_fields']).lower())
         for kind in ['milestones','tasks','documents','credentials']:
