@@ -48,3 +48,51 @@ test('native client type focus QA targets its unique form name rather than conca
   assert.ok(source.includes("await expect(clientType).toHaveValue('company');"));
   assert.doesNotMatch(source, /getByLabel\('Client type', \{ exact: true \}\)/);
 });
+
+test('contrast helper normalizes CSS color formats, rejects unsupported alpha/invalid colors and retains 4.5', async () => {
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(root, 'e2e/neutral-workspace-theme.spec.mjs'), 'utf8');
+  const helper = source.slice(source.indexOf('async function readable('), source.indexOf("test('neutral workspace:"));
+  const background = 'lab(96.52 -0.0000298023 0.0000119209)';
+  const foregrounds = ['rgb(82, 82, 82)', 'rgba(82, 82, 82, 1)', 'lab(34.924 0 0)', 'oklch(0.438 0 0)'];
+  const resolved = [];
+  // Contract fixture provides browser-resolved pixels, NOT a fake Lab formula.
+  // Actual CSS-to-sRGB rendering remains covered by the real browser HR journey.
+  const pixels = new Map(foregrounds.map(color => [color, [82, 82, 82, 255]]));
+  pixels.set(background, [245, 245, 245, 255]);
+  pixels.set('rgba(82, 82, 82, 0.5)', [82, 82, 82, 128]);
+  const canvasUnsupported = 'color(srgb 1 0 0)';
+  const runtime = {
+    CSS: { supports: (property, color) => property === 'color' && (pixels.has(color) || color === canvasUnsupported) },
+    getComputedStyle: element => element.style,
+    document: { createElement(tag) {
+      assert.equal(tag, 'canvas');
+      return { getContext(kind, options) {
+        assert.equal(kind, '2d'); assert.equal(options.colorSpace, 'srgb');
+        let fillStyle = '#000000';
+        return {
+          clearRect() {}, fillRect() {},
+          set fillStyle(value) { if (pixels.has(value) || ['#010203', '#040506'].includes(value)) fillStyle = value; },
+          get fillStyle() { return fillStyle; },
+          getImageData() { resolved.push(fillStyle); return { data: pixels.get(fillStyle) }; },
+        };
+      } };
+    } },
+    expect: (ratio, diagnostic) => ({ toBeGreaterThanOrEqual(threshold) {
+      assert.equal(threshold, 4.5);
+      assert.ok(diagnostic.includes('computed'));
+      assert.ok(diagnostic.includes('[82,82,82]'));
+      assert.ok(ratio >= threshold, `Contrast ${ratio} is below ${threshold}`);
+    } }),
+  };
+  const readable = vm.runInNewContext(`${helper}; readable`, runtime);
+  const locator = color => ({ evaluate: callback => callback({ style: { color, backgroundColor: background } }) });
+  for (const color of foregrounds) await readable(locator(color));
+  assert.deepEqual(resolved, foregrounds.flatMap(color => [color, background]));
+  await assert.rejects(readable(locator('not-a-color')), /Invalid computed CSS color/);
+  await assert.rejects(readable(locator(canvasUnsupported)), /Canvas cannot normalize CSS color/);
+  await assert.rejects(readable(locator('rgba(82, 82, 82, 0.5)')), /requires opaque resolved colors/);
+  pixels.set(background, [82, 82, 82, 255]);
+  await assert.rejects(readable(locator(foregrounds[0])), /Contrast 1 is below 4.5/);
+  assert.doesNotMatch(helper, /color\.match/);
+});

@@ -28,10 +28,34 @@ async function readable(locator) {
       ancestor = ancestor.parentElement;
       background = getComputedStyle(ancestor).backgroundColor;
     }
-    return { foreground: style.color, background };
+    // Computed Tailwind colors can be lab()/oklch(), not RGB tuples.
+    // Let the browser resolve CSS Color 4 into actual sRGB pixel channels.
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
+    if (!context) throw new Error('Canvas2D unavailable for contrast normalization');
+    const srgb = (color) => {
+      if (!CSS.supports('color', color)) throw new Error(`Invalid computed CSS color: ${color}`);
+      // Canvas silently retains its old fillStyle for unsupported values.
+      // Two distinct sentinels prove the assignment was actually accepted.
+      context.fillStyle = '#010203';
+      context.fillStyle = color;
+      const first = context.fillStyle;
+      context.fillStyle = '#040506';
+      context.fillStyle = color;
+      if (first !== context.fillStyle) throw new Error(`Canvas cannot normalize CSS color: ${color}`);
+      context.clearRect(0, 0, 1, 1);
+      context.fillRect(0, 0, 1, 1);
+      const pixel = Array.from(context.getImageData(0, 0, 1, 1).data);
+      // Transparent backgrounds are resolved by the ancestor walk above.
+      // Partial alpha requires compositing; fail rather than report false contrast.
+      if (pixel[3] !== 255) throw new Error(`Contrast requires opaque resolved colors: ${color}`);
+      return pixel.slice(0, 3);
+    };
+    return { foreground: srgb(style.color), background: srgb(background), computed: { foreground: style.color, background } };
   });
   const luminance = (color) => {
-    const rgb = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
+    const rgb = color.map(value => {
       const channel = value / 255;
       return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
     });
