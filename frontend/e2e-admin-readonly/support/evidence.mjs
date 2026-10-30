@@ -1,3 +1,4 @@
+import { chmodSync } from 'node:fs';
 // Evidence deliberately excludes arbitrary error strings, URLs, headers and bodies.
 export function safeError(event, routeId) {
   if (!['page_error', 'console_error'].includes(event)) throw new Error('Unsupported evidence class');
@@ -23,4 +24,12 @@ export async function verifyReadyFields(page, expect, fields = []) {
     await expect(control).toBeEnabled();
     await expect(control).toHaveValue(field.value);
   }
+}
+
+export async function persistSuccessfulBatch(context, authPath, { expected, rendered, errors, writes }) {
+  const completed = new Set(rendered);
+  if (!expected.length || expected.length !== completed.size || expected.some(id => !completed.has(id)) || errors || writes) return false;
+  await context.storageState({ path: authPath });
+  chmodSync(authPath, 0o600);
+  return true;
 }

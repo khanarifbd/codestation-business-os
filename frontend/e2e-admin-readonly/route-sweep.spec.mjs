@@ -3,7 +3,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from '
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
 
-import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields } from './support/evidence.mjs';
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -17,7 +17,8 @@ if (!evidenceDir) throw new Error('ADMIN_SWEEP_EVIDENCE directory is required');
 mkdirSync(evidenceDir, { recursive: true });
 const eventFile = path.join(evidenceDir, `batch-${batch}.ndjson`);
 const emit = event => appendFileSync(eventFile, `${JSON.stringify({ at: Date.now(), batch, ...event })}\n`);
-let context, page, routeId = 'setup';
+let context, page, authPath, routeId = 'setup';
+const renderedRouteIds = [];
 const responses = [], errors = [], writes = [];
 const ownership = requestOwnership();
 const pendingResponses = new Set();
@@ -25,7 +26,7 @@ const pendingResponses = new Set();
 test.beforeAll(async ({ browser }) => {
   const password = process.env.E2E_PASSWORD;
   if (!password || registry.owner_email !== process.env.E2E_EMAIL) throw new Error('Existing explicit disposable owner credentials required');
-  const authPath = process.env.ADMIN_SWEEP_AUTH_STATE;
+  authPath = process.env.ADMIN_SWEEP_AUTH_STATE;
   if (!authPath) throw new Error('Private temporary auth state path required');
   const reuseAuth = existsSync(authPath);
   context = await browser.newContext({ ...(reuseAuth ? { storageState: authPath } : {}), baseURL, extraHTTPHeaders: { Origin: baseURL, Connection: 'close' }, viewport: { width: 1440, height: 1000 } });
@@ -82,7 +83,11 @@ test.beforeAll(async ({ browser }) => {
 test.afterAll(async () => {
   await Promise.all(pendingResponses);
   emit({ event: 'batch_terminal', blocked_mutations: writes.length, errors: errors.length });
-  if (context) await context.close();
+  if (context) {
+    try {
+      await persistSuccessfulBatch(context, authPath, { expected: groups.flat().map(route => route.id), rendered: renderedRouteIds, errors: errors.length, writes: writes.length });
+    } finally { await context.close(); }
+  }
 });
 
 for (const [index, group] of groups.entries()) test(`readonly batch${batch} group${index}: ${group.map(r => r.id).join(',')}`, async ({}, info) => {
@@ -121,6 +126,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       }
       expect(errors.slice(startErrors), route.pattern).toEqual([]);
       expect(writes).toEqual([]);
+      renderedRouteIds.push(route.id);
       emit({ event: 'route_rendered', route_id: route.id, pattern: route.pattern, actual_url: new URL(page.url()).pathname + new URL(page.url()).search, expected_state: contract.expected_mode, heading: contract.heading, captures, visual_review: 'pending_actual_pixel_inspection', source: contract.source });
     });
   }
