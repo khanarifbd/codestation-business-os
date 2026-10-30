@@ -106,6 +106,8 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
     category = create_category(CategoryCreate(name=labels['category']), req('POST', '/inventory/categories'), db, tenant)
     warehouse = create_warehouse(WarehouseCreate(code=f'QA-{marker}', name=labels['warehouse'], is_default=True),
                                  req('POST', '/inventory/warehouses'), db, tenant)
+    secondary_warehouse = create_warehouse(WarehouseCreate(code=f'QA-TO-{marker}', name='Synthetic transfer destination '+marker,
+                                           is_default=False), req('POST', '/inventory/warehouses'), db, tenant)
     product = create_product(ProductCreate(sku=f'QA-{marker}', name=labels['item'], currency='USD',
                              category_id=value(category, 'id'), item_type='stock_item', selling_price=Decimal('2.00')),
                              req('POST', '/inventory/products'), db, tenant)
@@ -124,7 +126,7 @@ def seed_commercial(db, tenant, request_factory, fixture_date, shared_ids=None) 
     required(audit_organization_accounting(db, tenant.organization_id).ok, 'Commercial fixture accounting integrity failed')
     rows = dict(client=client, quotation=draft, accepted_quotation=accepted, order=manual, project_order=project_order,
                 settlement_order=settlement_order, project=project, milestone=milestone, task=task, document=document, credential=credential,
-                category=category, warehouse=warehouse, product=product, supplier=supplier, purchase=purchase,
+                category=category, warehouse=warehouse, secondary_warehouse=secondary_warehouse, product=product, supplier=supplier, purchase=purchase,
                 expense_category=expense_category, expense=expense)
     ids = {}
     for key, row in rows.items():
@@ -147,6 +149,13 @@ def commercial_routes(ids, rows, labels):
                               'source': source, 'expected_mode': 'ready'}
         if button:
             contracts[pattern]['ready_button'] = button
+    add('/dashboard/clients', '/dashboard/clients', 'Clients', ['/api/crm/clients'],
+        'frontend/src/app/dashboard/clients/page.tsx', texts=(labels['client'],))
+    add('/dashboard/clients/[clientId]', '/dashboard/clients/'+ids['client_id'], labels['client'],
+        [f"/api/crm/clients/{ids['client_id']}/workspace"], 'frontend/src/app/dashboard/clients/[clientId]/page.tsx',
+        texts=('Direct client record',))
+    add('/dashboard/crm', '/dashboard/crm', 'CRM & Leads', ['/api/crm/leads', '/api/crm/meta', '/api/crm/summary'],
+        'frontend/src/app/dashboard/crm/page.tsx')
     q, o, p = '/dashboard/quotations', '/dashboard/orders', '/dashboard/projects'
     qid, oid, pid = ids['quotation_id'], ids['order_id'], ids['project_id']
     qsrc = 'frontend/src/app/dashboard/quotations/quotation-v2-workspace.tsx'
@@ -217,6 +226,26 @@ def commercial_routes(ids, rows, labels):
     add(exp+'/[expenseId]', exp+'/'+eid, value(rows['expense'], 'expense_number'), [f'/api/finance/expenses/{eid}'], esrc)
     add(exp+'/[expenseId]/receipts/new', exp+'/'+eid+'/receipts/new', 'Keep the evidence with the expense.',
         [f'/api/finance/expenses/{eid}'], esrc)
+    # Input values are inside the selected-record/form-ready branch, unlike some page headers.
+    fields = {
+        inv+'/items/[recordId]/edit': ('Name', labels['item']),
+        inv+'/suppliers/[recordId]/edit': ('Supplier name', labels['supplier']),
+        inv+'/warehouses/[recordId]/edit': ('Warehouse name', labels['warehouse']),
+        inv+'/categories/[recordId]/edit': ('Category name', labels['category']),
+        p+'/[projectId]/edit': ('Project name', labels['project']),
+        p+'/[projectId]/milestones/[recordId]/edit': ('Milestone title', labels['milestone']),
+        p+'/[projectId]/tasks/[recordId]/edit': ('Task title', labels['task']),
+        p+'/[projectId]/documents/[recordId]/edit': ('Title', labels['document']),
+        p+'/[projectId]/credentials/[recordId]/edit': ('Name', labels['credential']),
+    }
+    for pattern, (label, expected) in fields.items():
+        contracts[pattern]['ready_fields'] = [{'label': label, 'value': expected}]
+    # Empty create-form controls prove the actual form exists, not merely a static header.
+    for section, label in [('items', 'Name'), ('suppliers', 'Supplier name'), ('warehouses', 'Warehouse name'), ('categories', 'Category name')]:
+        contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': ''}]
+    for section, label in [('purchases', 'Supplier invoice / reference'), ('adjustments', 'Reason'), ('transfers', 'Reason')]:
+        contracts[inv+'/'+section+'/new']['ready_fields'] = [{'label': label, 'value': ''}]
+    contracts[exp+'/[expenseId]/receipts/new']['ready_text'] = [value(rows['expense'], 'expense_number')]
     for pattern, contract in contracts.items():
         if pattern.startswith(inv+'/items'):
             contract['expected_get_paths'] = contract['expected_get_paths'] + ['/api/services/catalog']

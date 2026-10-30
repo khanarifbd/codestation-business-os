@@ -72,6 +72,8 @@ class CommercialSeedTests(unittest.TestCase):
         self.assertNotEqual(ids['quotation_id'], ids['accepted_quotation_id'])
         self.assertNotEqual(ids['project_order_id'], ids['order_id'])
         self.assertTrue(result['accounting_integrity'])
+        self.assertNotEqual(ids['warehouse_id'], ids['secondary_warehouse_id'])
+        self.assertEqual(self.services['create_warehouse'].call_count, 2)
         self.audit.assert_called_once_with(self.db, 'org')
         self.assertEqual(result['route_overrides']['/dashboard/orders/[orderId]/settlement'], '/dashboard/orders/'+ids['settlement_order_id']+'/settlement')
         self.assertEqual(result['route_overrides']['/dashboard/projects/new'], '/dashboard/projects/new?order_id='+ids['order_id'])
@@ -106,7 +108,7 @@ class CommercialSeedTests(unittest.TestCase):
         result = self.run_seed()
         route_file = Path(__file__).parents[2]/'frontend/e2e-admin-readonly/routes.json'
         routes = json.loads(route_file.read_text())['routes']
-        expected = {r['pattern'] for r in routes if r['module'] in ['quotations','orders','projects','inventory','expenses']}
+        expected = {r['pattern'] for r in routes if r['module'] in ['quotations','orders','projects','inventory','expenses','clients','crm']}
         self.assertEqual(set(result['route_overrides']), expected)
         self.assertEqual(set(result['route_contracts']), expected)
         for pattern, actual in result['route_overrides'].items():
@@ -115,6 +117,19 @@ class CommercialSeedTests(unittest.TestCase):
             self.assertTrue(contract['heading'])
             self.assertEqual(contract['expected_mode'], 'ready')
             self.assertTrue(all(path.startswith('/api/') and '?' not in path for path in contract['expected_get_paths']))
+
+    def test_loaded_record_fields_not_static_editor_shells_are_required(self):
+        contracts = self.run_seed()['route_contracts']
+        for kind in ['items','suppliers','warehouses','categories']:
+            fields = contracts[f'/dashboard/inventory/{kind}/[recordId]/edit']['ready_fields']
+            self.assertEqual(len(fields), 1)
+            self.assertTrue(fields[0]['value'].startswith('Read-only synthetic '))
+        credential = contracts['/dashboard/projects/[projectId]/credentials/[recordId]/edit']
+        self.assertEqual(credential['ready_fields'][0]['label'], 'Name')
+        self.assertIn('The current secret is not loaded into this editor. Leave the new secret blank to keep it unchanged.', credential['ready_text'])
+        self.assertNotIn('secret', str(credential['ready_fields']).lower())
+        for kind in ['milestones','tasks','documents','credentials']:
+            self.assertTrue(contracts[f'/dashboard/projects/[projectId]/{kind}/[recordId]/edit']['ready_fields'][0]['value'])
 
     def test_partial_service_failure_is_fatal_without_repeat_or_fake_registry(self):
         self.services['receive_purchase'].side_effect = RuntimeError('failed receipt')
