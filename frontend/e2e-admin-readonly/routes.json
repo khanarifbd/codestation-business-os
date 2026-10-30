@@ -1,0 +1,1810 @@
+{
+  "schema_version": 1,
+  "scope": "primary tenant admin and admin-used shared only",
+  "routes": [
+    {
+      "id": "route-001",
+      "pattern": "/dashboard",
+      "module": "dashboard",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-002",
+      "pattern": "/dashboard/clients",
+      "module": "clients",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/clients/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-003",
+      "pattern": "/dashboard/clients/[clientId]",
+      "module": "clients",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/clients/[clientId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-004",
+      "pattern": "/dashboard/crm",
+      "module": "crm",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/crm/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-005",
+      "pattern": "/dashboard/quotations",
+      "module": "quotations",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/quotations/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-006",
+      "pattern": "/dashboard/quotations/[quotationId]",
+      "module": "quotations",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/quotations/[quotationId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-007",
+      "pattern": "/dashboard/quotations/[quotationId]/edit",
+      "module": "quotations",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/quotations/[quotationId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-008",
+      "pattern": "/dashboard/quotations/new",
+      "module": "quotations",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/quotations/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-009",
+      "pattern": "/dashboard/orders",
+      "module": "orders",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/orders/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-010",
+      "pattern": "/dashboard/orders/[orderId]",
+      "module": "orders",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/orders/[orderId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-011",
+      "pattern": "/dashboard/orders/[orderId]/commercial",
+      "module": "orders",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/orders/[orderId]/commercial/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-012",
+      "pattern": "/dashboard/orders/[orderId]/edit",
+      "module": "orders",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/orders/[orderId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-013",
+      "pattern": "/dashboard/orders/[orderId]/settlement",
+      "module": "orders",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/orders/[orderId]/settlement/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-014",
+      "pattern": "/dashboard/orders/new",
+      "module": "orders",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/orders/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-015",
+      "pattern": "/dashboard/projects",
+      "module": "projects",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/projects/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-016",
+      "pattern": "/dashboard/projects/[projectId]",
+      "module": "projects",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/projects/[projectId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-017",
+      "pattern": "/dashboard/projects/new",
+      "module": "projects",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/projects/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-018",
+      "pattern": "/dashboard/inventory",
+      "module": "inventory",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/inventory/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-019",
+      "pattern": "/dashboard/accounting",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-020",
+      "pattern": "/dashboard/accounting/accounts",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/accounts/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-021",
+      "pattern": "/dashboard/accounting/accounts/[accountId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/accounts/[accountId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-022",
+      "pattern": "/dashboard/accounting/accounts/[accountId]/edit",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/accounts/[accountId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-023",
+      "pattern": "/dashboard/accounting/accounts/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/accounts/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-024",
+      "pattern": "/dashboard/accounting/advanced",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/advanced/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-025",
+      "pattern": "/dashboard/accounting/advanced/adjustment",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/advanced/adjustment/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-026",
+      "pattern": "/dashboard/accounting/advanced/corrections",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/advanced/corrections/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-027",
+      "pattern": "/dashboard/accounting/advanced/corrections/[sourceType]/[sourceId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/advanced/corrections/[sourceType]/[sourceId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-028",
+      "pattern": "/dashboard/accounting/advanced/journals/[journalId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/advanced/journals/[journalId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-029",
+      "pattern": "/dashboard/accounting/advanced/journals/[journalId]/reverse",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/advanced/journals/[journalId]/reverse/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-030",
+      "pattern": "/dashboard/accounting/advanced/ledgers/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/advanced/ledgers/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-031",
+      "pattern": "/dashboard/accounting/assets",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/assets/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-032",
+      "pattern": "/dashboard/accounting/assets/[assetId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/assets/[assetId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-033",
+      "pattern": "/dashboard/accounting/assets/depreciation",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/assets/depreciation/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-034",
+      "pattern": "/dashboard/accounting/assets/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/assets/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-035",
+      "pattern": "/dashboard/accounting/controls",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/controls/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-036",
+      "pattern": "/dashboard/accounting/controls/automation/[recurringId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/automation/[recurringId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-037",
+      "pattern": "/dashboard/accounting/controls/automation/[recurringId]/configure",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/automation/[recurringId]/configure/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-038",
+      "pattern": "/dashboard/accounting/controls/automation/[recurringId]/retry",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/automation/[recurringId]/retry/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-039",
+      "pattern": "/dashboard/accounting/controls/periods/[periodId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/periods/[periodId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-040",
+      "pattern": "/dashboard/accounting/controls/periods/[periodId]/close",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/periods/[periodId]/close/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-041",
+      "pattern": "/dashboard/accounting/controls/periods/[periodId]/reopen",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/periods/[periodId]/reopen/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-042",
+      "pattern": "/dashboard/accounting/controls/periods/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/controls/periods/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-043",
+      "pattern": "/dashboard/accounting/controls/recurring/[recurringId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/recurring/[recurringId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-044",
+      "pattern": "/dashboard/accounting/controls/recurring/[recurringId]/post",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/recurring/[recurringId]/post/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-045",
+      "pattern": "/dashboard/accounting/controls/recurring/[recurringId]/status",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/controls/recurring/[recurringId]/status/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-046",
+      "pattern": "/dashboard/accounting/controls/recurring/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/controls/recurring/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-047",
+      "pattern": "/dashboard/accounting/invoices",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/invoices/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-048",
+      "pattern": "/dashboard/accounting/invoices/[invoiceId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/invoices/[invoiceId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-049",
+      "pattern": "/dashboard/accounting/loans",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/loans/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-050",
+      "pattern": "/dashboard/accounting/loans/[loanId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/loans/[loanId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-051",
+      "pattern": "/dashboard/accounting/loans/[loanId]/approve",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/loans/[loanId]/approve/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-052",
+      "pattern": "/dashboard/accounting/loans/[loanId]/close",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/loans/[loanId]/close/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-053",
+      "pattern": "/dashboard/accounting/loans/[loanId]/receive",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/loans/[loanId]/receive/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-054",
+      "pattern": "/dashboard/accounting/loans/[loanId]/repay",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/loans/[loanId]/repay/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-055",
+      "pattern": "/dashboard/accounting/loans/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/loans/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-056",
+      "pattern": "/dashboard/accounting/money-in",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/money-in/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-057",
+      "pattern": "/dashboard/accounting/money-in/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/money-in/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-058",
+      "pattern": "/dashboard/accounting/money-in/receipts/[kind]/[receiptId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/money-in/receipts/[kind]/[receiptId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-059",
+      "pattern": "/dashboard/accounting/money-out",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/money-out/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-060",
+      "pattern": "/dashboard/accounting/money-out/[expenseId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/money-out/[expenseId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-061",
+      "pattern": "/dashboard/accounting/money-out/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/money-out/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-062",
+      "pattern": "/dashboard/accounting/payables",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/payables/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-063",
+      "pattern": "/dashboard/accounting/payables/[billId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/payables/[billId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-064",
+      "pattern": "/dashboard/accounting/payables/[billId]/pay",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/payables/[billId]/pay/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-065",
+      "pattern": "/dashboard/accounting/payables/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/payables/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-066",
+      "pattern": "/dashboard/accounting/receivables",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/receivables/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-067",
+      "pattern": "/dashboard/accounting/receivables/[invoiceId]/apply-credit",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/receivables/[invoiceId]/apply-credit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-068",
+      "pattern": "/dashboard/accounting/reconciliation",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/reconciliation/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-069",
+      "pattern": "/dashboard/accounting/reconciliation/[reconciliationId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/reconciliation/[reconciliationId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-070",
+      "pattern": "/dashboard/accounting/reconciliation/[reconciliationId]/match",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/reconciliation/[reconciliationId]/match/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-071",
+      "pattern": "/dashboard/accounting/reconciliation/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/reconciliation/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-072",
+      "pattern": "/dashboard/accounting/reports",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/reports/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-073",
+      "pattern": "/dashboard/accounting/reports/account-statement",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/reports/account-statement/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-074",
+      "pattern": "/dashboard/accounting/tax",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/tax/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-075",
+      "pattern": "/dashboard/accounting/tax/codes",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/tax/codes/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-076",
+      "pattern": "/dashboard/accounting/tax/codes/[taxCodeId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/tax/codes/[taxCodeId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-077",
+      "pattern": "/dashboard/accounting/tax/codes/[taxCodeId]/edit",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/tax/codes/[taxCodeId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-078",
+      "pattern": "/dashboard/accounting/tax/codes/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/tax/codes/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-079",
+      "pattern": "/dashboard/accounting/tax/settlements",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/tax/settlements/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-080",
+      "pattern": "/dashboard/accounting/tax/settlements/[settlementId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/tax/settlements/[settlementId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-081",
+      "pattern": "/dashboard/accounting/tax/settlements/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/tax/settlements/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-082",
+      "pattern": "/dashboard/accounting/transfers",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/transfers/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-083",
+      "pattern": "/dashboard/accounting/transfers/[transferId]",
+      "module": "accounting",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/accounting/transfers/[transferId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-084",
+      "pattern": "/dashboard/accounting/transfers/new",
+      "module": "accounting",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/accounting/transfers/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-085",
+      "pattern": "/dashboard/expenses",
+      "module": "expenses",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/expenses/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-086",
+      "pattern": "/dashboard/expenses/[expenseId]",
+      "module": "expenses",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/expenses/[expenseId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-087",
+      "pattern": "/dashboard/expenses/[expenseId]/receipts/new",
+      "module": "expenses",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/expenses/[expenseId]/receipts/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-088",
+      "pattern": "/dashboard/expenses/categories/new",
+      "module": "expenses",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/expenses/categories/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-089",
+      "pattern": "/dashboard/expenses/new",
+      "module": "expenses",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/expenses/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-090",
+      "pattern": "/dashboard/expenses/vendors/new",
+      "module": "expenses",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/expenses/vendors/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-091",
+      "pattern": "/dashboard/finance",
+      "module": "finance",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/finance/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-092",
+      "pattern": "/dashboard/finance/auto-post",
+      "module": "finance",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/finance/auto-post/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-093",
+      "pattern": "/dashboard/finance/controls",
+      "module": "finance",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/finance/controls/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-094",
+      "pattern": "/dashboard/finance/transfers",
+      "module": "finance",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/finance/transfers/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-095",
+      "pattern": "/dashboard/finance/transfers/[transferId]",
+      "module": "finance",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/finance/transfers/[transferId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-096",
+      "pattern": "/dashboard/finance/transfers/new",
+      "module": "finance",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/finance/transfers/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-097",
+      "pattern": "/dashboard/capital",
+      "module": "capital",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/capital/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-098",
+      "pattern": "/dashboard/capital/insights",
+      "module": "capital",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/capital/insights/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-099",
+      "pattern": "/dashboard/reports",
+      "module": "reports",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/reports/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-100",
+      "pattern": "/dashboard/hr",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-101",
+      "pattern": "/dashboard/hr/people",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/people/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-102",
+      "pattern": "/dashboard/hr/people/[personId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/people/[personId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-103",
+      "pattern": "/dashboard/hr/people/[personId]/edit",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/people/[personId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-104",
+      "pattern": "/dashboard/hr/people/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/people/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-105",
+      "pattern": "/dashboard/hr/people/structure/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/people/structure/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-106",
+      "pattern": "/dashboard/hr/records",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/records/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-107",
+      "pattern": "/dashboard/hr/records/documents/[recordId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/records/documents/[recordId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-108",
+      "pattern": "/dashboard/hr/records/history/[recordId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/records/history/[recordId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-109",
+      "pattern": "/dashboard/hr/records/history/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/records/history/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-110",
+      "pattern": "/dashboard/hr/settings",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/settings/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-111",
+      "pattern": "/dashboard/hr/settings/assignments/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/settings/assignments/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-112",
+      "pattern": "/dashboard/hr/settings/attendance",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-113",
+      "pattern": "/dashboard/hr/settings/attendance/offices/[officeId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/offices/[officeId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-114",
+      "pattern": "/dashboard/hr/settings/attendance/offices/[officeId]/edit",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/offices/[officeId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-115",
+      "pattern": "/dashboard/hr/settings/attendance/offices/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/offices/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-116",
+      "pattern": "/dashboard/hr/settings/attendance/policies/[employeeId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/policies/[employeeId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-117",
+      "pattern": "/dashboard/hr/settings/attendance/policies/[employeeId]/edit",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/policies/[employeeId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-118",
+      "pattern": "/dashboard/hr/settings/attendance/policies/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/policies/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-119",
+      "pattern": "/dashboard/hr/settings/attendance/requests/[requestId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/requests/[requestId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-120",
+      "pattern": "/dashboard/hr/settings/attendance/requests/[requestId]/review",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/attendance/requests/[requestId]/review/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-121",
+      "pattern": "/dashboard/hr/settings/catalog/[kind]/new",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/settings/catalog/[kind]/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-122",
+      "pattern": "/dashboard/hr/talent",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/talent/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-123",
+      "pattern": "/dashboard/hr/talent/hiring",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/talent/hiring/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-124",
+      "pattern": "/dashboard/hr/talent/hiring/candidates/[candidateId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/talent/hiring/candidates/[candidateId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-125",
+      "pattern": "/dashboard/hr/talent/hiring/jobs/[jobId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/talent/hiring/jobs/[jobId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-126",
+      "pattern": "/dashboard/hr/time",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/time/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-127",
+      "pattern": "/dashboard/hr/time/attendance/[attendanceId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/time/attendance/[attendanceId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-128",
+      "pattern": "/dashboard/hr/time/attendance/new",
+      "module": "hr",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/hr/time/attendance/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-129",
+      "pattern": "/dashboard/hr/time/leave/[leaveId]",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/time/leave/[leaveId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-130",
+      "pattern": "/dashboard/hr/time/leave/[leaveId]/review",
+      "module": "hr",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/hr/time/leave/[leaveId]/review/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-131",
+      "pattern": "/dashboard/payroll",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-132",
+      "pattern": "/dashboard/payroll/periods/[periodId]",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/periods/[periodId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-133",
+      "pattern": "/dashboard/payroll/periods/new",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/periods/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-134",
+      "pattern": "/dashboard/payroll/policy",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/policy/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-135",
+      "pattern": "/dashboard/payroll/policy/new",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/policy/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-136",
+      "pattern": "/dashboard/payroll/profiles/[profileId]",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/profiles/[profileId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-137",
+      "pattern": "/dashboard/payroll/profiles/[profileId]/edit",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/profiles/[profileId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-138",
+      "pattern": "/dashboard/payroll/profiles/new",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/profiles/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-139",
+      "pattern": "/dashboard/payroll/runs/[runId]",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/runs/[runId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-140",
+      "pattern": "/dashboard/payroll/runs/[runId]/approve",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/runs/[runId]/approve/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-141",
+      "pattern": "/dashboard/payroll/runs/[runId]/entries/[entryId]",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/runs/[runId]/entries/[entryId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-142",
+      "pattern": "/dashboard/payroll/runs/[runId]/entries/[entryId]/edit",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/runs/[runId]/entries/[entryId]/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-143",
+      "pattern": "/dashboard/payroll/runs/[runId]/pay",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/runs/[runId]/pay/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-144",
+      "pattern": "/dashboard/payroll/runs/[runId]/payslip/[entryId]",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/runs/[runId]/payslip/[entryId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-145",
+      "pattern": "/dashboard/payroll/runs/new",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/runs/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-146",
+      "pattern": "/dashboard/payroll/withholdings/[paymentId]",
+      "module": "payroll",
+      "kind": "dynamic",
+      "source": "frontend/src/app/dashboard/payroll/withholdings/[paymentId]/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-147",
+      "pattern": "/dashboard/payroll/withholdings/new",
+      "module": "payroll",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/payroll/withholdings/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-148",
+      "pattern": "/dashboard/company",
+      "module": "company",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/company/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-149",
+      "pattern": "/dashboard/company/defaults",
+      "module": "company",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/company/defaults/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-150",
+      "pattern": "/dashboard/activity-logs",
+      "module": "activity-logs",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/activity-logs/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-151",
+      "pattern": "/dashboard/profile",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-152",
+      "pattern": "/dashboard/profile/edit",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/edit/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-153",
+      "pattern": "/dashboard/profile/photo",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/photo/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-154",
+      "pattern": "/dashboard/profile/security",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-155",
+      "pattern": "/dashboard/profile/security/google",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/google/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-156",
+      "pattern": "/dashboard/profile/security/passkeys",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/passkeys/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-157",
+      "pattern": "/dashboard/profile/security/passkeys/new",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/passkeys/new/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-158",
+      "pattern": "/dashboard/profile/security/password",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/password/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-159",
+      "pattern": "/dashboard/profile/security/sessions",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/sessions/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-160",
+      "pattern": "/dashboard/profile/security/username",
+      "module": "profile",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/profile/security/username/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-161",
+      "pattern": "/dashboard/notifications",
+      "module": "notifications",
+      "kind": "static",
+      "source": "frontend/src/app/dashboard/notifications/page.tsx",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-162",
+      "pattern": "/dashboard/inventory/items",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-163",
+      "pattern": "/dashboard/inventory/suppliers",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-164",
+      "pattern": "/dashboard/inventory/warehouses",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-165",
+      "pattern": "/dashboard/inventory/categories",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-166",
+      "pattern": "/dashboard/inventory/purchases",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-167",
+      "pattern": "/dashboard/inventory/items/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-168",
+      "pattern": "/dashboard/inventory/suppliers/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-169",
+      "pattern": "/dashboard/inventory/warehouses/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-170",
+      "pattern": "/dashboard/inventory/categories/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-171",
+      "pattern": "/dashboard/inventory/purchases/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-172",
+      "pattern": "/dashboard/inventory/adjustments/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-173",
+      "pattern": "/dashboard/inventory/transfers/new",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": false
+    },
+    {
+      "id": "route-174",
+      "pattern": "/dashboard/inventory/items/[recordId]/edit",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-175",
+      "pattern": "/dashboard/inventory/suppliers/[recordId]/edit",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-176",
+      "pattern": "/dashboard/inventory/warehouses/[recordId]/edit",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-177",
+      "pattern": "/dashboard/inventory/categories/[recordId]/edit",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-178",
+      "pattern": "/dashboard/inventory/items/[recordId]",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-179",
+      "pattern": "/dashboard/inventory/suppliers/[recordId]",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-180",
+      "pattern": "/dashboard/inventory/warehouses/[recordId]",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-181",
+      "pattern": "/dashboard/inventory/purchases/[recordId]",
+      "module": "inventory",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/lib/inventory-navigation.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-182",
+      "pattern": "/dashboard/projects/[projectId]/team/edit",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-183",
+      "pattern": "/dashboard/projects/[projectId]/milestones/new",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-184",
+      "pattern": "/dashboard/projects/[projectId]/milestones/[recordId]/edit",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-185",
+      "pattern": "/dashboard/projects/[projectId]/tasks/new",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-186",
+      "pattern": "/dashboard/projects/[projectId]/tasks/[recordId]/edit",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-187",
+      "pattern": "/dashboard/projects/[projectId]/documents/new",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-188",
+      "pattern": "/dashboard/projects/[projectId]/documents/[recordId]/edit",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-189",
+      "pattern": "/dashboard/projects/[projectId]/credentials/new",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-190",
+      "pattern": "/dashboard/projects/[projectId]/credentials/[recordId]/edit",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-191",
+      "pattern": "/dashboard/projects/[projectId]/tasks/[recordId]",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-192",
+      "pattern": "/dashboard/projects/[projectId]/milestones/[recordId]",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-193",
+      "pattern": "/dashboard/projects/[projectId]/tasks/[recordId]/progress",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    },
+    {
+      "id": "route-194",
+      "pattern": "/dashboard/projects/[projectId]/edit",
+      "module": "projects",
+      "kind": "catchall_declared_mode",
+      "source": "frontend/src/components/projects/project-model.ts",
+      "expected_mode": "source-specific contract pending author review",
+      "fixture_required": true
+    }
+  ],
+  "aliases": [
+    {
+      "route": "/dashboard/finance/invoices/[invoiceId]/print",
+      "source": "frontend/src/app/dashboard/finance/invoices/[invoiceId]/print/page.tsx",
+      "redirect_expression": [
+        "`/print/invoices/${encodeURIComponent(invoiceId)}`"
+      ]
+    },
+    {
+      "route": "/dashboard/hr/operations",
+      "source": "frontend/src/app/dashboard/hr/operations/page.tsx",
+      "redirect_expression": [
+        "\"/dashboard/hr\""
+      ]
+    },
+    {
+      "route": "/dashboard/hr/setup",
+      "source": "frontend/src/app/dashboard/hr/setup/page.tsx",
+      "redirect_expression": [
+        "\"/dashboard/hr/settings\""
+      ]
+    },
+    {
+      "route": "/dashboard/client-access",
+      "source": "frontend/src/app/dashboard/client-access/page.tsx",
+      "redirect_expression": [
+        "\"/dashboard/clients\""
+      ]
+    },
+    {
+      "route": "/dashboard/employees",
+      "source": "frontend/src/app/dashboard/employees/page.tsx",
+      "redirect_expression": [
+        "\"/dashboard/hr/people\""
+      ]
+    },
+    {
+      "route": "/dashboard/my-hr",
+      "source": "frontend/src/app/dashboard/my-hr/page.tsx",
+      "redirect_expression": [
+        "\"/dashboard/hr/me\""
+      ]
+    },
+    {
+      "route": "/dashboard/settings",
+      "source": "frontend/src/app/dashboard/settings/page.tsx",
+      "redirect_expression": [
+        "\"/dashboard/company?tab=defaults\""
+      ]
+    },
+    {
+      "route": "/dashboard/finance/invoices/[invoiceId]",
+      "source": "frontend/src/app/dashboard/finance/invoices/[invoiceId]/page.tsx",
+      "redirect_expression": [
+        "`/print/invoices/${encodeURIComponent(invoiceId)}`"
+      ]
+    }
+  ]
+}
