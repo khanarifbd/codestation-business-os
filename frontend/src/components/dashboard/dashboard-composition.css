@@ -106,6 +106,6 @@
 .dashboard-composed .dashboard-operation-link>div:last-child p,
 .dashboard-composed .financial-ledger-currency p,
 .dashboard-composed .financial-ledger-figure dt,
-.dashboard-composed .financial-ledger-fees dt { color:#596b53; }
+.dashboard-composed .financial-ledger-fees dt { color:var(--workspace-neutral-muted, #596b53); }
 @media(max-width:1199px) and (min-width:640px) { .dashboard-composed .collections-trend+.collections-trend { border-left:0; border-top:1px solid var(--workspace-neutral-border, #e4ebdc); padding-left:0; padding-top:17px; }.dashboard-composed .collections-plot { height:95px; } }
 @media(max-width:639px) { .dashboard-composed .collections-trend+.collections-trend { border-left:0; border-top:1px solid var(--workspace-neutral-border, #e4ebdc); padding-left:0; padding-top:18px; }.dashboard-composed .collections-trend-heading { min-height:38px; }.collections-latest { margin-top:8px; }.collections-latest>strong { font-size:23px; }.dashboard-composed .collections-plot { height:115px; }.dashboard-composed .financial-ledger-row { grid-template-columns:minmax(0,1fr); padding:17px 0; }.dashboard-composed .financial-ledger-values { gap:17px 12px; }.dashboard-composed .financial-ledger-fees { grid-column:1; }.dashboard-composed .financial-ledger-currency { padding-bottom:0; border-bottom:0; } }

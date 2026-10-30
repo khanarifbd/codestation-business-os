@@ -7,6 +7,7 @@ const globals = fs.readFileSync(path.join(__dirname, '../src/app/globals.css'), 
 function verify(source) {
   assert.match(source, /\.dashboard-current-overdue \{[^}]*border-bottom:1px solid var\(--workspace-neutral-border, #dce5d4\);/);
   assert.match(source, /\.dashboard-current-overdue>span:first-child \{[^}]*color:var\(--workspace-neutral-muted, #8b8d73\);/);
+  assert.match(source, /\.dashboard-composed \.collections-latest>span,\s*\.dashboard-composed \.dashboard-current-overdue>span:first-child,\s*\.dashboard-composed \.dashboard-operation-link>div:last-child p,\s*\.dashboard-composed \.financial-ledger-currency p,\s*\.dashboard-composed \.financial-ledger-figure dt,\s*\.dashboard-composed \.financial-ledger-fees dt \{ color:var\(--workspace-neutral-muted, #596b53\); \}/);
 }
 test('overdue section decorative divider and label use the shared neutral palette', () => {
   verify(css);
@@ -16,6 +17,7 @@ test('overdue section decorative divider and label use the shared neutral palett
 test('both previous decorative literal regressions are rejected', () => {
   assert.throws(() => verify(css.replace(/\.dashboard-current-overdue \{[^}]+\}/, rule => rule.replace('var(--workspace-neutral-border, #dce5d4)', '#dce5d4'))));
   assert.throws(() => verify(css.replace(/\.dashboard-current-overdue>span:first-child \{[^}]+\}/, rule => rule.replace('var(--workspace-neutral-muted, #8b8d73)', '#8b8d73'))));
+  assert.throws(() => verify(css.replace('.financial-ledger-fees dt { color:var(--workspace-neutral-muted, #596b53); }', '.financial-ledger-fees dt { color:#596b53; }')));
 });
 test('overdue semantic amount badges and geometry remain unchanged', () => {
   assert.match(css, /\.dashboard-current-overdue \{ display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:0 0 13px 23px;/);
