@@ -1,6 +1,9 @@
 const assert=require('node:assert/strict'),crypto=require('node:crypto'),ts=require('typescript');
 const hashes=require('./reviewed-payroll-browser.json');
 function beforePayrollBrowser(source){
+ const reviewed="await expect(p.locator('form.pr-editor fieldset')).toHaveJSProperty('disabled',true);await expect(p.locator('form.pr-editor fieldset').getByRole('button',{name:'Cancel',exact:true})).toBeDisabled();";
+ assert.equal(source.split(reviewed).length,2,'exact reviewed Payroll fieldset semantic assertion');
+ source=source.replace(reviewed,"await expect(p.locator('form.pr-editor fieldset')).toBeDisabled();");
  const tree=ts.createSourceFile('browser.mjs',source,ts.ScriptTarget.Latest,true),ranges=[];
  for(const [name,hash]of Object.entries(hashes)){
   const matches=tree.statements.filter(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);

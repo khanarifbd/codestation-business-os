@@ -1,11 +1,13 @@
 import { invoiceDetailHref } from "@/lib/finance-compatibility-navigation";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, useId, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowUpRight, FileText, Trash2 } from "lucide-react";
 import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
 
 export function InvoiceField({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="invoice-field"><span>{label}</span>{children}</label>;
+  const labelId = useId();
+  // A populated textarea has text content; bind its name to the label text only.
+  return <label className="invoice-field"><span id={labelId}>{label}</span>{isValidElement<{ "aria-labelledby"?: string }>(children) ? cloneElement(children, { "aria-labelledby": children.props["aria-labelledby"] ?? labelId }) : children}</label>;
 }
 
 export function InvoiceStatus({ status }: { status: string }) {

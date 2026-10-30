@@ -490,7 +490,7 @@ async function verifyPayrollUnknownApproval(p,info,run,acceptDialogs){
   const save=p.getByRole('button',{name:'Confirm & approve payroll',exact:true});await expect(save).toBeEnabled();
   const observed=p.waitForResponse(r=>new URL(r.url()).pathname===path&&r.request().method()==='POST').then(response=>({response}),error=>({error}));
   await save.click();const result=await observed;if(result.error)throw result.error;expect(result.response.status()).toBe(422);
-  await expect(p.getByText('The write outcome is uncertain.',{exact:true})).toBeVisible();await expect(save).toBeDisabled();await expect(p.locator('form.pr-editor fieldset')).toBeDisabled();
+  await expect(p.getByText('The write outcome is uncertain.',{exact:true})).toBeVisible();await expect(save).toBeDisabled();await expect(p.locator('form.pr-editor fieldset')).toHaveJSProperty('disabled',true);await expect(p.locator('form.pr-editor fieldset').getByRole('button',{name:'Cancel',exact:true})).toBeDisabled();
   await p.getByRole('button',{name:'Back to payroll',exact:true}).click();
   await expect(p).toHaveURL(new RegExp(`/dashboard/payroll/runs/${run.id}/approve$`));
   expect(approvedPrompt).toBe(1);expect(cancelledExit).toBe(1);if(dialogFailure)throw dialogFailure;
