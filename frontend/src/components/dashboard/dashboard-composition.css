@@ -35,8 +35,8 @@
 .dashboard-priority-row>div:last-child>svg { color:var(--workspace-neutral-muted, #7c9168); }
 .dashboard-priority-row>div:first-child>svg { width:14px; color:var(--workspace-neutral-muted, #ac8033); }
 .dashboard-overdue-collection .dashboard-priority-row { border-bottom:0; padding-bottom:8px; }
-.dashboard-current-overdue { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:0 0 13px 23px; border-bottom:1px solid #dce5d4; }
-.dashboard-current-overdue>span:first-child { width:100%; font-size:9px; color:#8b8d73; margin-bottom:2px; }
+.dashboard-current-overdue { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:0 0 13px 23px; border-bottom:1px solid var(--workspace-neutral-border, #dce5d4); }
+.dashboard-current-overdue>span:first-child { width:100%; font-size:9px; color:var(--workspace-neutral-muted, #8b8d73); margin-bottom:2px; }
 .dashboard-current-overdue>span:not(:first-child) { padding:3px 6px; font-size:9px; border:0; border-radius:4px; background:#f3ead7; color:#7e652b; }
 .dashboard-composed .dashboard-context-actions { border:0; border-top:1px solid var(--workspace-neutral-border, #dce4d2); border-radius:0; padding:14px 0 0; background:transparent; }
 .dashboard-composed .dashboard-context-actions h2 { font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--workspace-neutral-muted, #6d7c60); }
