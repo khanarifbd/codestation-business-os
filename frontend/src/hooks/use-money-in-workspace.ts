@@ -1,4 +1,5 @@
 "use client";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 import { FINANCE_PATH, financeBrowse, financeHref, financePaymentQuery } from "@/lib/finance-compatibility-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -29,6 +30,8 @@ class ReadError extends Error {
 async function read(path: string): Promise<unknown> { const r = await fetch(path, { cache: "no-store" }), b: unknown = await r.json().catch(() => null); if (!r.ok)
     throw new ReadError(getApiErrorMessage(b, "Information could not be loaded."), r.status); return b; }
 const record = (x: unknown): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x));
+const knownMoneyRejection = (status: number, body: unknown) => [400, 401, 403, 404, 422].includes(status) && hasAccountingRejectionDetail(body);
+
 export function useMoneyInWorkspace() {
     const { tenant } = useDashboardSession(), router = useRouter(), pathname = usePathname(), query = useSearchParams(), route = useParams<{
         kind?: string;
@@ -324,7 +327,7 @@ export function useMoneyInWorkspace() {
                     if (!mounted.current)
                         return;
                     if (!r.ok) {
-                        if (r.status >= 500 || r.status === 409)
+                        if (!knownMoneyRejection(r.status, b))
                             setStage({ status: "create-uncertain", invoiceId: "", note: "Invoice creation may have completed. Read the source status; do not repeat creation." });
                         throw new Error(getApiErrorMessage(b, "Invoice creation was not confirmed."));
                     }
@@ -346,7 +349,7 @@ export function useMoneyInWorkspace() {
                     if (!mounted.current)
                         return;
                     if (!r.ok) {
-                        if (r.status >= 500 || r.status === 409)
+                        if (!knownMoneyRejection(r.status, b))
                             setStage({ status: "issue-uncertain", invoiceId: id, note: "Invoice issue may have completed. Verify status before continuing; do not issue again." });
                         throw new Error(getApiErrorMessage(b, "The invoice could not be issued. The saved draft is retained."));
                     }
@@ -375,7 +378,7 @@ export function useMoneyInWorkspace() {
             if (!mounted.current)
                 return;
             if (!r.ok) {
-                if (everUncertain.current || r.status >= 500 || r.status === 409) {
+                if (everUncertain.current || !knownMoneyRejection(r.status, b)) {
                     everUncertain.current = true;
                     setStage({ status: "payment-uncertain", invoiceId: stageRef.current.invoiceId, note: "The receipt may already be recorded. The original payload and retry key are retained; a later rejection does not prove the earlier request failed." });
                 }

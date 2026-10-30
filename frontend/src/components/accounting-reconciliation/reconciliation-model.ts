@@ -1,3 +1,4 @@
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 import { transferCents } from "@/components/accounting-transfers/transfer-model";
 import { centsText, decimalInput } from "@/components/accounting-money-out/money-out-model";
 import { formatMoneyExact } from "@/lib/sales-money-preview";
@@ -107,4 +108,4 @@ export function reconciliationPage<T>(rows: T[], page: number) {
 export const reconciliationZero = (value: string | number) => transferCents(value) === BigInt(0);
 /** Only explicit application rejections release an unkeyed request. Timeouts,
  * rate-limit intermediaries and unknown statuses are not proof of no commit. */
-export const reconciliationWriteRejected = (status: number) => [400, 401, 403, 404, 409, 422].includes(status);
+export const reconciliationWriteRejected = (status: number, payload: unknown) => [400, 401, 403, 404, 409, 422].includes(status) && hasAccountingRejectionDetail(payload);

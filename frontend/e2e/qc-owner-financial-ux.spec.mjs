@@ -214,6 +214,94 @@ async function rejectedAPI(page, method, path, data, field) {
   expect(JSON.stringify(body.detail)).toMatch(field);
 }
 
+// Synthetic negative boundary only: no intercepted financial write is forwarded.
+async function withAccountingUnknownBoundary(page, target, action) {
+  let count = 0;
+  const reject = route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    ++count;
+    return route.fulfill({ status: 422, json: { detail: "Unexpected upstream response" } });
+  };
+  await page.route(target, reject);
+  try { await action(() => count); }
+  finally { await page.unroute(target, reject); }
+}
+async function captureAccountingUnknown(page, testInfo, name) {
+  const viewport = page.viewportSize();
+  try {
+    for (const [size, width, height] of [["desktop", 1440, 1000], ["mobile", 390, 844]]) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({ path: testInfo.outputPath(`neutral-theme-accounting-${name}-${size}.png`), fullPage: false });
+    }
+  } finally { if (viewport) await page.setViewportSize(viewport); }
+}
+async function leaveKnownUnforwardedFixture(page, button, warning) {
+  let seen = 0, observed;
+  const handle = dialog => {
+    ++seen;
+    observed = (async () => {
+      try { expect(dialog.message()).toContain(warning); await dialog.accept(); }
+      catch (error) { await dialog.dismiss().catch(() => {}); throw error; }
+    })().then(() => ({}), error => ({ error }));
+  };
+  page.on("dialog", handle);
+  try {
+    await button.click();
+    expect(seen).toBe(1);
+    const outcome = await observed;
+    if (outcome.error) throw outcome.error;
+  } finally { page.off("dialog", handle); }
+}
+async function verifyAssetUnknownBoundary(page, testInfo) {
+  await page.getByLabel(/^Salvage value/).fill("0");
+  await withAccountingUnknownBoundary(page, "**/api/accounting/assets", async count => {
+    await page.getByRole("button", { name: "Review asset recording", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Record opening asset", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Do not submit this operation again.", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Review asset recording", exact: true })).toBeDisabled();
+    await expect(page.getByLabel(/^Acquisition cost/)).toBeDisabled();
+    await expect(page.getByLabel(/^Acquisition cost/)).toHaveValue("100");
+    expect(count()).toBe(1);
+    expect(await api(page, "GET", "/accounting/assets")).toEqual([]);
+    await captureAccountingUnknown(page, testInfo, "asset-unknown");
+    expect(count()).toBe(1);
+    // Only this fixture knows that the request was not delivered. No generic recovery claim.
+    await leaveKnownUnforwardedFixture(page, page.getByRole("button", { name: "Back to asset register", exact: true }), "uncertain outcome");
+    await expect(page).toHaveURL(/\/dashboard\/accounting\/assets(?:\?|$)/);
+  });
+}
+async function verifyMoneyInUnknownBoundary(page, testInfo, invoiceId) {
+  await page.getByLabel(/Amount received/).fill("1.00");
+  await withAccountingUnknownBoundary(page, "**/api/finance/payments", async count => {
+    await page.getByRole("button", { name: "Review money received", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Confirm & record", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "The receipt may already be recorded", exact: true })).toBeVisible();
+    await expect(page.getByLabel(/Amount received/)).toHaveCount(0);
+    await expect(page.locator("section.aa-register").filter({ has: page.getByRole("heading", { name: "Retained receipt instructions", exact: true }) })).toContainText("USD 1.00");
+    await expect(page.getByRole("button", { name: "Review same-operation retry", exact: true })).toBeVisible();
+    expect(count()).toBe(1);
+    const unchanged = await api(page, "GET", `/finance/invoices/${invoiceId}`);
+    expect([Number(unchanged.amount_paid), Number(unchanged.balance_due)]).toEqual([80, 120]);
+    await captureAccountingUnknown(page, testInfo, "money-in-unknown");
+    expect(count()).toBe(1);
+    await leaveKnownUnforwardedFixture(page, page.getByRole("button", { name: "Leave recovery workspace", exact: true }), "may already be saved");
+    await expect(page).toHaveURL(/\/dashboard\/accounting\/money-in(?:\?|$)/);
+  });
+}
+async function verifyAccountingReadOnlyRegisters(page, testInfo) {
+  for (const [path, heading, loaded] of [
+    ["loans", "Know what is owed. Keep the detail.", "No agreements recorded"],
+    ["tax/codes", "A clear register of tax rules.", "No configured tax codes returned"],
+    ["reconciliation", "Bring each statement into focus.", "No statements returned"],
+  ]) {
+    await page.goto(`/dashboard/accounting/${path}`);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: loaded, exact: true })).toBeVisible();
+    await captureAccountingUnknown(page, testInfo, path.replaceAll("/", "-") + "-readonly");
+  }
+}
+
  test("real invoice edits, issuance, reversal and cancellation keep preview and collection metrics coherent", async ({ page }, testInfo) => {
   test.setTimeout(180_000);
   const { client } = await setup(page, "invoice-lifecycle");
@@ -310,6 +398,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await rejectedAPI(page, "POST", "/accounting/assets", { asset_code: "QC-INVALID", name: "Synthetic invalid asset", category: "equipment", currency: "USD", acquisition_cost: "100", salvage_value: "101", acquisition_date: today, in_service_date: today, useful_life_months: 36, record_mode: "opening", opening_balance_date: today }, /salvage/i);
   expect(await api(page, "GET", "/accounting/assets")).toEqual([]);
+  await verifyAssetUnknownBoundary(page, testInfo);
 
   await page.goto("/dashboard/payroll/periods/new");
   await page.getByLabel("Period name", { exact: true }).fill("Synthetic invalid reverse period");
@@ -421,6 +510,7 @@ async function rejectedAPI(page, method, path, data, field) {
   await expect(page.locator(`a[href="/dashboard/clients/${costClient.id}"]`)).toContainText("USD -6.00");
   await testInfo.attach("rendered-report-reconciliation", { body: JSON.stringify({ issued: 200, collected: 200, projectCost: 25, costOnlyClient: 6, operationalMargin: 169, unpaidAP: 10, accrualProfit: 159, projectProfit: 175, cash: 169 }), contentType: "application/json" });
   await verifyTransferRetryBoundary(page, testInfo);
+  await verifyAccountingReadOnlyRegisters(page, testInfo);
 });
 
 test("owner source selectors omit billed work and overpayment is blocked before confirmation", async ({ page }, testInfo) => {
@@ -461,6 +551,7 @@ test("owner source selectors omit billed work and overpayment is blocked before 
   await expect(amount).toHaveValue("121");
   const unchanged = await api(page, "GET", `/finance/invoices/${billed.id}`);
   expect([Number(unchanged.amount_paid), Number(unchanged.balance_due)]).toEqual([80, 120]);
+  await verifyMoneyInUnknownBoundary(page, testInfo, billed.id);
   await payment(page, billed, account, 120);
   await page.goto(`/dashboard/accounting/invoices/${billed.id}`);
   await expect(page.getByRole("link", { name: "Collect payment", exact: true })).toHaveCount(0);

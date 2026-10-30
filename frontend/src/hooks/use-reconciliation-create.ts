@@ -73,7 +73,7 @@ export function useReconciliationCreate(returnHref: string) {
       if (response.status === 401) router.replace("/login");
       if (!response.ok) {
         classified = true;
-        if (!reconciliationWriteRejected(response.status)) { uncertain.current = true; setPhase("uncertain"); }
+        if (!reconciliationWriteRejected(response.status, body)) { uncertain.current = true; setPhase("uncertain"); }
         else { operation.current = null; setPhase("idle"); }
         throw new Error(getApiErrorMessage(body, "The reconciliation draft could not be confirmed."));
       }

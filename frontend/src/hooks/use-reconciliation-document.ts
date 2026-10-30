@@ -82,7 +82,7 @@ export function useReconciliationDocument(id: string, matching: boolean, returnH
       if (response.status === 401) router.replace("/login");
       if (!response.ok) {
         classified = true;
-        if (reconciliationWriteRejected(response.status)) {
+        if (reconciliationWriteRejected(response.status, body)) {
           pending.current = null; setOperation(null); updatePhase("idle");
           setError(getApiErrorMessage(body, "The reconciliation action was rejected. Current statement state must be read before another action."));
           await resource.refresh();
