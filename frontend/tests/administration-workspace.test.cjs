@@ -2,10 +2,10 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const baseline={"company": "9bd05b6f175c16238f1d6c693ec4ae8e1652c42eb37dbaef04c0fc1cba7ed08b", "activity-logs": "9987b9f3a4f2976a9bec7038bc0cbe10d8ccc27ac917589e7e7c540143d2cc05"};
-for(const route of ['company','activity-logs'])test(`${route}: data permissions and save/filter controller remain unchanged`,()=>{
+const baseline={"company": "d7c31419027299f002e60eafa134662e2017116932829df63bb99eba97247531", "activity-logs": "9987b9f3a4f2976a9bec7038bc0cbe10d8ccc27ac917589e7e7c540143d2cc05"};
+for(const route of ['company','activity-logs'])test(`${route}: reviewed owned controller remains exact`,()=>{
  const s=read(`src/app/dashboard/${route}/page.tsx`),start=s.indexOf('export default function'),end=route==='company'?s.indexOf('  if(loading)return'):s.indexOf('  return (\n    <main');
- assert.equal(crypto.createHash('sha256').update(s.slice(start,end)).digest('hex'),baseline[route]);
+ if(route==='company')assert.equal(crypto.createHash('sha256').update(s.slice(start,end)).digest('hex'),baseline[route]);else assertReviewedActivity(s.slice(start,end));
 });
 test('company preserves approved text field focus and all thirteen sections',()=>{
  const s=read('src/app/dashboard/company/page.tsx');
@@ -26,7 +26,16 @@ test('modern administration surfaces are scoped, responsive and do not add field
 });
 test('activity controls have accessible labels and keyboard detail action',()=>{
  const s=read('src/app/dashboard/activity-logs/page.tsx');
- for(const label of ['Action contains','Entity type','Outcome','From date','To date','Close activity detail'])assert.ok(s.includes(`aria-label="${label}"`));
+ for(const label of ['Action contains','Entity type','Outcome','From date','To date'])assert.ok(s.includes(`aria-label="${label}"`));
  assert.ok(s.includes('aria-label={`View activity ${item.action}`}'));
- assert.ok(s.includes('role="dialog" aria-label="Activity detail"'));
+ const drawer=read('src/components/company/activity-read-drawer.tsx');
+ assert.ok(drawer.includes('aria-label="Close activity detail"'));
+ assert.ok(drawer.includes('role="dialog" aria-modal="true" aria-label="Activity detail"'));
+ assert.ok(s.includes('ActivityReadDrawer key={detailVersion} onClose={closeDetail}'));
 });
+
+const reviewedActivityHashes={"src/hooks/use-activity-log-read.ts": "05a95f3bc7395fb4ad73384edcd834e332762446241d498daa11261d2173904d", "src/hooks/use-administration-read-owner.ts": "ca98e3375cf999505e1f613d8399972ee12c05bb3b5a5a8b0f2a6e6d4fa02150"};
+function assertReviewedActivity(controller, override={}) { assert.equal(crypto.createHash("sha256").update(controller).digest("hex"),"218ee9b0f6f19b934f6e48aaf75c629c8997ac9bedd3ac7da44a02df6ab57796"); for(const [file,expected] of Object.entries(reviewedActivityHashes))assert.equal(crypto.createHash("sha256").update(override[file]??read(file)).digest("hex"),expected); }
+test('reviewed Activity extraction rejects mutation of ownership gate',()=>{const s=read('src/app/dashboard/activity-logs/page.tsx'),controller=s.slice(s.indexOf('export default function'),s.indexOf('  return (\n    <main'));const file='src/hooks/use-activity-log-read.ts',before=read(file),after=before.replace('if(!owns()||append','if(append');assert.notEqual(after,before);assert.throws(()=>assertReviewedActivity(controller,{[file]:after}));});
+
+test('reviewed Company controller rejects removing admission ownership',()=>{const s=read('src/app/dashboard/company/page.tsx'),controller=s.slice(s.indexOf('export default function'),s.indexOf('  if(loading)return')),changed=controller.replace('if(!owns()||readPending.current||inFlight.current','if(readPending.current||inFlight.current');assert.notEqual(changed,controller);assert.notEqual(crypto.createHash('sha256').update(changed).digest('hex'),baseline.company);});

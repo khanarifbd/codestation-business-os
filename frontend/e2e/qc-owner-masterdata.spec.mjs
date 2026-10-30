@@ -1,3 +1,4 @@
+import { companyWrite, verifyCompanyUnknownBoundaries } from "./support/company-settings-boundaries.mjs";
 import { captureJsonResponse } from "./support/capture-json-response.mjs";
 import { expect, test } from '@playwright/test';
 const email = process.env.E2E_QC_MASTERDATA_EMAIL ?? 'qc-masterdata@example.com';
@@ -829,18 +830,19 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
 }, testInfo) => {
   test.setTimeout(240000);
   const e = await setup(page, context, 'SETTINGS');
+  const companyUi = (page, path, method, action, message) => companyWrite({ page, expect, ui, path, method, action, message });
   try {
     const original = await api(context.request, '/api/company-settings', undefined, 'get');
     await page.goto('/dashboard/company');
     await page.locator('textarea[name="internal_notes"]').fill('Synthetic internal gap note');
-    await ui(page, '/api/company-settings/profile', 'PATCH', () => page.getByRole('button', {
+    await companyUi(page, '/api/company-settings/profile', 'PATCH', () => page.getByRole('button', {
       name: 'Save changes',
       exact: true
     }).click());
     await page.reload();
     await expect(page.locator('textarea[name="internal_notes"]')).toHaveValue('Synthetic internal gap note');
     await page.locator('textarea[name="internal_notes"]').fill(original.profile.internal_notes ?? '');
-    await ui(page, '/api/company-settings/profile', 'PATCH', () => page.getByRole('button', {
+    await companyUi(page, '/api/company-settings/profile', 'PATCH', () => page.getByRole('button', {
       name: 'Save changes',
       exact: true
     }).click());
@@ -849,7 +851,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
       exact: true
     }).click();
     await page.locator('select[name="date_format"]').selectOption('DD/MM/YYYY');
-    await ui(page, '/api/company-settings/localization', 'PATCH', () => page.getByRole('button', {
+    await companyUi(page, '/api/company-settings/localization', 'PATCH', () => page.getByRole('button', {
       name: 'Save changes',
       exact: true
     }).click());
@@ -860,7 +862,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     }).click();
     await expect(page.locator('select[name="date_format"]')).toHaveValue('DD/MM/YYYY');
     await page.locator('select[name="date_format"]').selectOption(original.localization.date_format);
-    await ui(page, '/api/company-settings/localization', 'PATCH', () => page.getByRole('button', {
+    await companyUi(page, '/api/company-settings/localization', 'PATCH', () => page.getByRole('button', {
       name: 'Save changes',
       exact: true
     }).click());
@@ -886,7 +888,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
       exact: true
     }).fill(original.branding.logo_url ?? '');
     await page.locator('textarea[name="document_footer"]').fill('Synthetic reversible footer');
-    await ui(page, '/api/company-settings/branding', 'PATCH', () => page.getByRole('button', {
+    await companyUi(page, '/api/company-settings/branding', 'PATCH', () => page.getByRole('button', {
       name: 'Save changes',
       exact: true
     }).click());
@@ -897,7 +899,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     }).click();
     await expect(page.locator('textarea[name="document_footer"]')).toHaveValue('Synthetic reversible footer');
     await page.locator('textarea[name="document_footer"]').fill(original.branding.document_footer ?? '');
-    await ui(page, '/api/company-settings/branding', 'PATCH', () => page.getByRole('button', {
+    await companyUi(page, '/api/company-settings/branding', 'PATCH', () => page.getByRole('button', {
       name: 'Save changes',
       exact: true
     }).click());
@@ -922,10 +924,10 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     await page.getByLabel('Value', {
       exact: true
     }).fill('SYNTHETIC-NOT-A-REAL-ID');
-    const ident = await ui(page, '/api/company-settings/identifiers', 'POST', () => page.getByRole('button', {
+    const ident = await companyUi(page, '/api/company-settings/identifiers', 'POST', () => page.getByRole('button', {
       name: 'Add identifier',
       exact: true
-    }).click());
+    }).click(), 'Identifier added');
     expect(ident.is_primary).toBe(false);
     expect(ident.country_code).toBe('BD');
     await page.reload();
@@ -938,11 +940,11 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     })).toBeVisible();
     let bundle = await api(context.request, '/api/company-settings', undefined, 'get');
     expect(bundle.identifiers.find(i => i.id === ident.id).value).toBe('SYNTHETIC-NOT-A-REAL-ID');
-    await ui(page, `/api/company-settings/identifiers/${ident.id}`, 'DELETE', () => page.locator('div.p-4').filter({
+    await companyUi(page, `/api/company-settings/identifiers/${ident.id}`, 'DELETE', () => page.locator('div.p-4').filter({
       has: page.getByText('Synthetic reference', {
         exact: true
       })
-    }).getByRole('button').click());
+    }).getByRole('button').click(), 'Identifier removed');
     expect((await api(context.request, '/api/company-settings', undefined, 'get')).identifiers.some(i => i.id === ident.id)).toBe(false);
     e.cases.push({
       id: 'SET07',
@@ -966,18 +968,18 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     await mailing.getByLabel('Address line 2', {
       exact: true
     }).fill('Initial line two');
-    await ui(page, '/api/company-settings/addresses/mailing', 'PUT', () => mailing.getByRole('button', {
+    await companyUi(page, '/api/company-settings/addresses/mailing', 'PUT', () => mailing.getByRole('button', {
       name: 'Save address',
       exact: true
-    }).click());
+    }).click(), 'Mailing address saved');
     await expect(mailing.getByRole('button', { name: 'Save address', exact: true })).toBeEnabled();
     await mailing.getByLabel('Address line 2', {
       exact: true
     }).fill('Revised line two');
-    await ui(page, '/api/company-settings/addresses/mailing', 'PUT', () => mailing.getByRole('button', {
+    await companyUi(page, '/api/company-settings/addresses/mailing', 'PUT', () => mailing.getByRole('button', {
       name: 'Save address',
       exact: true
-    }).click());
+    }).click(), 'Mailing address saved');
     await page.reload();
     await page.getByRole('button', {
       name: 'Addresses',
@@ -1005,7 +1007,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     await page.getByRole('listbox').getByRole('button', { name: 'Other / Custom' }).click();
     await page.getByLabel('Title', { exact: true }).fill('Synthetic persisted company PDF');
     await page.locator('input[name="file"]').setInputFiles({ name: 'synthetic-persistence.pdf', mimeType: 'application/pdf', buffer: syntheticPdf('navigation persistence') });
-    const companyDoc = await ui(page, '/api/company-settings/documents/upload', 'POST', () => page.getByRole('button', { name: 'Upload document', exact: true }).click());
+    const companyDoc = await companyUi(page, '/api/company-settings/documents/upload', 'POST', () => page.getByRole('button', { name: 'Upload document', exact: true }).click(), 'Document uploaded');
     await expect(page.getByText('Document uploaded', { exact: true })).toBeVisible();
     await page.goto('/dashboard');
     await page.goto('/dashboard/company');
@@ -1086,6 +1088,7 @@ test('owner company reversible defaults, branding, identifiers, addresses and au
     await expect(dates.nth(1)).toHaveValue(auditToday);
     e.cases.push({ id: 'AUD03', actual: `Synthetic run date ${auditToday} returns50; next day ${auditTomorrow} empty; date selections retained on Apply` });
 
+    await verifyCompanyUnknownBoundaries({ page, context, expect, api, info: testInfo });
   } finally {
     await record(testInfo, e);
   }

@@ -1,4 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { verifyActivityReadOwnership, verifyPersonalUnknown } from './support/shared-admin-browser.mjs';
+
+const password = process.env.E2E_PASSWORD;
+if (!password?.trim()) throw new Error('E2E_PASSWORD must be configured for the disposable CI fixture');
 
 test('administration workspace: company save and audit filters work across desktop and mobile', async ({ page, context }, info) => {
   // Two cold routes, a real settings save/readback and responsive checks in one isolated workspace.
@@ -6,7 +10,7 @@ test('administration workspace: company save and audit filters work across deskt
   const baseURL = info.project.use.baseURL;
   expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(baseURL).hostname);
   const login = await page.request.post('/api/auth/login', { data: {
-    email: 'neutral-theme@example.com', password: process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!',
+    email: 'neutral-theme@example.com', password,
   } });
   expect(login.status()).toBe(200);
   const created = await page.request.post('/api/organizations', { data: {
@@ -68,4 +72,6 @@ test('administration workspace: company save and audit filters work across deskt
   await page.getByRole('button', { name: 'Close activity detail', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Activity detail', exact: true })).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('neutral-theme-admin-activity-desktop.png'), fullPage: true });
+  await verifyActivityReadOwnership(page, info);
+  await verifyPersonalUnknown(page, info);
 });

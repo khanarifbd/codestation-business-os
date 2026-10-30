@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
 import { captureJsonResponse } from './support/capture-json-response.mjs';
+import { openNotificationsAfterOutage, captureSharedAdmin } from './support/shared-admin-browser.mjs';
 
 // Fresh owner-only local fixtures. No My Work, employee/client portals, invites,
 // external SMTP, payment rails or auth bypasses are used. Mutation receipt
@@ -84,7 +85,7 @@ test('NT01 NT02 NT04 owner task deadlines generate, filter and clear after owner
   expect(before.attention_count).toBe(1);
   expect(before.items).toHaveLength(1);
   expect(before.items[0]).toMatchObject({ kind: 'task_overdue', severity: 'critical', title: `${overdue.task_code} · ${overdue.title}`, due_date: dateOffset(-1) });
-  await page.goto('/dashboard/notifications');
+  await openNotificationsAfterOutage(page);
   await metric(page, 'Needs attention', 1);
   await metric(page, 'Overdue', 1);
   await metric(page, 'Due soon', 0);
@@ -101,6 +102,7 @@ test('NT01 NT02 NT04 owner task deadlines generate, filter and clear after owner
   await expect(title).toBeVisible();
   expect((await get(page, '/workspace/notifications')).unread_count).toBe(1);
   await page.screenshot({ path: info.outputPath('owner-overdue-notification.png'), fullPage: true });
+  await captureSharedAdmin(page, info, 'notifications-loaded');
 
   // The app's alert links point to excluded My Work. Do not click or substitute
   // another href; complete through the actual owner project-administration UI.

@@ -3,6 +3,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { createPasskeyCredential, passkeysSupported } from "@/lib/passkeys";
 import { avatarError, isIdentities, isPasskey, isPasskeyOptions, isProfile, isRevocation, knownProfileRejection, normalizedUsername, passwordError, personalError, profileError, profilePayload, sameAccount, usernameError, type PersonalFields } from "@/components/profile/profile-model";
+import { verifiedProfileInputRejection } from "@/components/profile/profile-input-rejection";
 import { profileBack } from "@/lib/profile-navigation";
 import type { ProfileAccountState, ProfileReadReceipt } from "@/hooks/use-profile-account";
 export type ProfileAction = "profile" | "username" | "photo" | "photo-remove" | "password" | "google-password" | "google-link" | "passkey-enroll" | "passkey-remove" | "session-revoke" | "sessions-revoke";
@@ -55,7 +56,9 @@ export function useProfileOperation(account: ProfileAccountState) {
       }
       // Step-up401 is a domain rejection; only an authoritative current GET401
       // forces auth teardown. Existing BFF refresh/retry is not changed here.
-      if (knownProfileRejection(response.status)) settle(token, "rejected", profileError(body, "The operation was rejected. Review the input before trying again."));
+      const personalInput = ["profile", "photo", "photo-remove"].includes(token.action);
+      if (knownProfileRejection(response.status) && (!personalInput || verifiedProfileInputRejection(body))) settle(token, "rejected", profileError(body, "The operation was rejected. Review the input before trying again."));
+      else if (personalInput && knownProfileRejection(response.status)) unknown(token, spec.clear);
       return false;
     } catch { unknown(token, spec.clear); return false; }
     finally { release(token); }
