@@ -8,6 +8,7 @@ const { errorMonitor } = require('node:events');
 const { performance } = require('node:perf_hooks');
 const MAX_BYTES = 256 * 1024;
 const MAX_FILES = 32;
+const CHECKPOINT_BYTES = 4 * 1024;
 const DIRECTORY = '/tmp/business-os-transport';
 const SEGMENTS = new Set(('api v1 auth login logout refresh session activity tenant context switch dashboard-bootstrap dashboard-pulse overview reports dashboard dashboard-details accounting tax codes finance invoices invoice-page payment-instructions company-settings organizations inventory products dashboard-summary clients client-portal quotations orders projects hr me people employees attendance records capital insights payments expenses sources meta settings summary').split(' '));
 function safePath(value) {
@@ -26,26 +27,41 @@ function install({ directory = DIRECTORY, ports = [3000, 8000] } = {}) {
   const subscriptions = [], requests = new WeakMap(), sockets = new WeakMap();
   let sequence = 0, socketSequence = 0, bytes = 0, rows = [], important = [], importantBytes = 0, enabled = true;
   const allowed = new Set(ports);
+  // First target only: retain existing sanitized start/completion fields through ring eviction.
+  // The reserve is deducted from the normal ring, never added to the file budget.
+  let checkpointId = null, checkpointFinished = false, checkpointBytes = 0;
+  const checkpoint = [];
   const file = path.join(directory, `node-${process.pid}.ndjson`);
   try {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     if (fs.readdirSync(directory).filter(n => /^(node|pid)-\d+\.ndjson$/.test(n)).length >= MAX_FILES && !fs.existsSync(file)) enabled = false;
   } catch { enabled = false; }
   const started = performance.now();
-  function flush() { if (enabled) { try { fs.writeFileSync(file, important.concat(rows).join(''), { mode: 0o600 }); } catch { enabled = false; } } }
+  function flush() { if (enabled) { try { fs.writeFileSync(file, checkpoint.concat(important, rows).join(''), { mode: 0o600 }); } catch { enabled = false; } } }
   function record(event, fields = {}) {
     if (!enabled) return;
     // fields are constructed below from allowlisted primitives, never arbitrary event objects.
     const row = JSON.stringify({ at: new Date().toISOString(), pid: process.pid, uptime_ms: Math.round(performance.now() - started), event, ...fields }) + '\n';
+    let pinned = false;
+    if (checkpointId === null && event === 'http_client_start' && fields.kind === 'node_http' && fields.method === 'GET' && fields.pathname === '/api/finance/invoices' && fields.remote_port === 3000) {
+      checkpointId = fields.request_id;
+      pinned = true;
+    } else if (checkpointId !== null && !checkpointFinished && fields.request_id === checkpointId && (event === 'http_client_response' || event === 'http_client_error')) {
+      checkpointFinished = true;
+      pinned = true;
+    }
+    if (pinned && checkpointBytes + Buffer.byteLength(row) <= CHECKPOINT_BYTES) {
+      checkpoint.push(row); checkpointBytes += Buffer.byteLength(row);
+    }
     const critical = event.includes('error') || event === 'process_start' || event === 'process_exit';
     if (critical) {
       important.push(row); importantBytes += Buffer.byteLength(row);
       while (importantBytes > MAX_BYTES / 4 && important.length) importantBytes -= Buffer.byteLength(important.shift());
-    } else {
+    } else if (!pinned) {
       rows.push(row); bytes += Buffer.byteLength(row);
-      while (bytes > MAX_BYTES * 3 / 4 && rows.length) bytes -= Buffer.byteLength(rows.shift());
+      while (bytes > MAX_BYTES * 3 / 4 - CHECKPOINT_BYTES && rows.length) bytes -= Buffer.byteLength(rows.shift());
     }
-    if (critical) flush();
+    if (critical || pinned) flush();
   }
   function observeSocket(socket) {
     if (!socket) return null;

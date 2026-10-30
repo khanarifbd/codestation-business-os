@@ -90,3 +90,41 @@ test('reused socket error identifies last observed second request, never prior c
 test('post-response socket error labels completed context as last observed, not an active or causal request',()=>{
  const dir=directory(),obs=observer.install({directory:dir,ports:[3000]});try{const socket=new(require('node:events').EventEmitter)();Object.assign(socket,{remoteAddress:'127.0.0.1',remotePort:3000,localPort:40001});const request={socket,method:'GET',path:'/api/tenant'};dc.channel('http.client.request.start').publish({request});dc.channel('http.client.response.finish').publish({request,response:{statusCode:200}});socket.emit(require('node:events').errorMonitor,{code:'ECONNRESET',message:'SECRET'});obs.flush();const row=fs.readFileSync(obs.file,'utf8').trim().split('\n').map(JSON.parse).find(r=>r.event==='socket_error');assert.equal(row.last_request_stage,'response_event');assert.equal(row.request_context,'LAST_OBSERVED_REQUEST');assert.equal(row.causal_request_known,false);assert.equal(row.last_pathname,'/api/tenant');assert.equal(row.remote_port,3000);assert.equal(typeof row.last_request_observed_at,'string');}finally{obs.stop();fs.rmSync(dir,{recursive:true,force:true});}
 });
+test('first finance GET start and matching completion survive both ring evictions within unchanged cap',()=>{
+ const dir=directory(),obs=observer.install({directory:dir,ports:[3000,8000]});
+ const {EventEmitter}=require('node:events');
+ const socket=()=>Object.assign(new EventEmitter(),{remoteAddress:'127.0.0.1',remotePort:3000,localPort:41000});
+ const start=request=>dc.channel('http.client.request.start').publish({request});
+ const finish=(request,status=200)=>dc.channel('http.client.response.finish').publish({request,response:{statusCode:status}});
+ try{
+  const unrelated={socket:socket(),method:'POST',path:'/api/finance/invoices?token=PRIVATE',reusedSocket:true};start(unrelated);finish(unrelated,201);
+  const wrongHop={socket:Object.assign(socket(),{remotePort:8000}),method:'GET',path:'/api/finance/invoices'};start(wrongHop);finish(wrongHop);
+  const target={socket:socket(),method:'GET',path:'/api/finance/invoices?token=PRIVATE',reusedSocket:false};start(target);
+  // A later request may finish first; only the first target's own completion is pinned.
+  const later={socket:socket(),method:'GET',path:'/api/finance/invoices',reusedSocket:true};start(later);finish(later,201);finish(target,200);
+  for(let i=0;i<4000;i++)start(unrelated);
+  for(let i=0;i<500;i++)dc.channel('http.client.request.error').publish({request:unrelated,error:{code:'ECONNRESET',message:'PRIVATE'}});
+  obs.flush();const raw=fs.readFileSync(obs.file,'utf8'),rows=raw.trim().split('\n').map(JSON.parse);
+  assert(fs.statSync(obs.file).size<=observer.MAX_BYTES);assert(!raw.includes('PRIVATE'));
+  const pinned=rows.filter(r=>r.pathname==='/api/finance/invoices'&&r.method==='GET');
+  assert.equal(pinned.length,2);assert.equal(pinned[0].event,'http_client_start');assert.equal(pinned[0].reused_socket,false);assert.equal(pinned[0].remote_port,3000);
+  assert.equal(pinned[1].event,'http_client_response');assert.equal(pinned[1].request_id,pinned[0].request_id);assert.equal(pinned[1].status,200);
+ }finally{obs.stop();fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('first target failure is retained honestly and never replaced by later success',()=>{
+ const dir=directory(),obs=observer.install({directory:dir,ports:[3000]});
+ try{
+  const socket=Object.assign(new(require('node:events').EventEmitter)(),{remoteAddress:'127.0.0.1',remotePort:3000,localPort:41000});
+  const first={socket,method:'GET',path:'/api/finance/invoices',reusedSocket:true};
+  dc.channel('http.client.request.start').publish({request:first});
+  dc.channel('http.client.request.error').publish({request:first,error:{code:'ECONNRESET'}});
+  const later={socket,method:'GET',path:'/api/finance/invoices',reusedSocket:false};
+  dc.channel('http.client.request.start').publish({request:later});dc.channel('http.client.response.finish').publish({request:later,response:{statusCode:200}});
+  const unrelated={socket,method:'GET',path:'/api/tenant'};
+  for(let i=0;i<4000;i++)dc.channel('http.client.request.start').publish({request:unrelated});
+  for(let i=0;i<500;i++)dc.channel('http.client.request.error').publish({request:unrelated,error:{code:'ECONNRESET'}});
+  obs.flush();const rows=fs.readFileSync(obs.file,'utf8').trim().split('\n').map(JSON.parse).filter(r=>r.pathname==='/api/finance/invoices');
+  assert.equal(rows.length,2);assert.equal(rows[0].reused_socket,true);assert.equal(rows[1].event,'http_client_error');assert.equal(rows[1].code,'ECONNRESET');assert.equal(rows[1].request_id,rows[0].request_id);
+  assert(fs.statSync(obs.file).size<=observer.MAX_BYTES);
+ }finally{obs.stop();fs.rmSync(dir,{recursive:true,force:true});}
+});
