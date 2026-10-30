@@ -7,3 +7,14 @@ test('all original Capital endpoint paths and payload keys preserved exactly',()
 test('all original Capital named fields/types/required controls remain',()=>{const result=extract(source);assert.equal(result.fields.length,baseline.fieldsCount);assert.equal(digest(result.fields),baseline.fieldsHash);assert.notEqual(digest(extract(source.replace('label="Principal return"','label="Discarded"')).fields),baseline.fieldsHash);});
 test('permission and outcome presentation is explicit, does not impersonate empty success',()=>{assert.ok(source.includes('Capital viewing permission is required.'));assert.ok(source.includes('vm.rows!==null'));assert.ok(source.includes('tab==="overview"&&dashboard'));assert.ok(source.includes('disabled={busy}'));assert.ok(source.includes('Review current records (read only)'));assert.ok(source.includes('Reloading or leaving loses it.'));assert.doesNotMatch(source,/Number\(d\.get|defaultValue="BDT"/);});
 module.exports={extract,digest};
+
+test('Capital scroll strip has real logical end inset for fractional final-tab widths',()=>{
+ assert.equal((source.match(/className="flex gap-2 overflow-x-auto pb-1 pe-1"/g)||[]).length,1);
+ // CI2361 measured last tab right374.15625 at max scroll326, viewport390.
+ // A real4px scrollable end inset moves max scroll by4, not a visibility tolerance.
+ for(const width of [390,360]){
+  const edge=width-16,oldRight=edge+0.15625,newRight=oldRight-4;
+  assert.ok(oldRight>edge);assert.ok(newRight<edge);
+ }
+ assert.doesNotMatch(source,/overflow-x-hidden/);
+});

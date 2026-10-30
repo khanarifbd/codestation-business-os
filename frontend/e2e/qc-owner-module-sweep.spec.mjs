@@ -24,16 +24,16 @@ async function observedCapitalRead(page,path,action){
 }
 async function captureCapitalViewport(page,info,label,heading){
  const original=page.viewportSize();
- try{for(const [size,width,height]of [['desktop',1440,1000],['mobile',390,844]]){
+ try{for(const [size,width,height]of [['desktop',1440,1000],['mobile',390,844],...(label==='investments'?[['narrow',360,800]]:[])]){
   await page.setViewportSize({width,height});await expect(page.getByRole('heading',{name:heading,exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
   await page.evaluate(()=>window.scrollTo(0,0));expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-${size}.png`),fullPage:false});
-  if(size==='mobile'&&['owner','company','project','investments'].includes(label)){
+  if(size!=='desktop'&&['owner','company','project','investments'].includes(label)){
    const tabName={owner:'Owner Equity',company:'Company Funding',project:'Project Funding',investments:'Our Investments'}[label];
    const selected=page.getByRole('button',{name:tabName,exact:true});
    await selected.evaluate(node=>node.scrollIntoView({block:'center',inline:'center',behavior:'instant'}));
-   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-mobile-selected-tab.png`),fullPage:false});
+   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-${size}-selected-tab.png`),fullPage:false});
    const geometry=await selected.evaluate(node=>{
     const rect=node.getBoundingClientRect(),strip=node.parentElement,clip=strip.getBoundingClientRect(),style=getComputedStyle(strip);
     const bounds={left:Math.max(0,clip.left+parseFloat(style.borderLeftWidth)),right:Math.min(window.innerWidth,clip.right-parseFloat(style.borderRightWidth)),top:80,bottom:window.innerHeight-80};
