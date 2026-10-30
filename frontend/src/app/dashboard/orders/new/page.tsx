@@ -1,5 +1,11 @@
 "use client";
 
+import { useDashboardSession } from "@/components/dashboard-session-context";
+
+import { exactSalesPayload, exactSalesLinePreview } from "@/lib/exact-sales-decimal";
+import { formatMoneyExact, salesTotalsPreview } from "@/lib/sales-money-preview";
+import "@/components/commercial/order-field-focus.css";
+
 /* Native exits intentionally preserve the full-document boundary used by the unsaved-changes guard. */
 
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
@@ -43,17 +49,12 @@ const today = () => new Date().toISOString().slice(0, 10);
 const blankItem = (taxRate = 0): DraftItem => ({ product_id: null, item_name: "", item_type: "service", unit: "unit", description: "", quantity: "1", unit_price: "0", discount_percent: "0", tax_rate: String(taxRate) });
 
 function lineTotal(item: DraftItem, taxMode: string) {
-  const quantity = Number(item.quantity || 0);
-  const price = Number(item.unit_price || 0);
-  const discountRate = Number(item.discount_percent || 0) / 100;
-  const taxRate = Number(item.tax_rate || 0) / 100;
-  const subtotal = quantity * price;
-  const afterDiscount = Math.max(0, subtotal - subtotal * discountRate);
-  if (taxMode === "inclusive") return afterDiscount;
-  return afterDiscount + afterDiscount * taxRate;
+  return exactSalesLinePreview(item, taxMode)?.total ?? "invalid";
 }
 
 export default function NewManualOrderPage() {
+  const { tenant } = useDashboardSession();
+  const canManageOrders = Boolean(tenant?.is_owner || tenant?.permissions.some(p => p === "*" || p === "orders.manage"));
   // Keep the initial date and defaults stable while asynchronous setup is loading.
   const [initialDraft] = useState(() => ({
     clientId: "", subject: "", orderDate: today(), currency: "", taxMode: "exclusive",
@@ -153,7 +154,8 @@ export default function NewManualOrderPage() {
   const clientOptions = useMemo(() => clients.map(client => ({ value: client.id, label: `${client.client_code} · ${client.display_name}`, keywords: `${client.display_name} ${client.contact_name ?? ""} ${client.client_code}` })), [clients]);
   const employeeOptions = useMemo(() => (meta?.employees ?? []).map(employee => ({ value: employee.id, label: `${employee.full_name} · ${employee.employee_code}` })), [meta]);
   const lineSourceOptions = useMemo(() => [{ value: "custom:service", label: "+ Custom service" }, { value: "custom:non_stock_item", label: "+ Custom non-stock item" }, ...catalog.map(item => ({ value: `catalog:${item.id}`, label: `${item.sku} · ${item.name}`, keywords: `${item.item_type} ${item.unit} ${item.currency}` }))], [catalog]);
-  const total = useMemo(() => items.reduce((sum, item) => sum + lineTotal(item, taxMode), 0), [items, taxMode]);
+  const totals = useMemo(() => salesTotalsPreview(items.map(item => exactSalesLinePreview(item, taxMode))), [items, taxMode]);
+  const total = totals.total;
 
   function updateItem(index: number, patch: Partial<DraftItem>) {
     setItems(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
@@ -186,14 +188,15 @@ export default function NewManualOrderPage() {
   }
 
   async function submit() {
-    if (saveInFlightRef.current || loading || !meta) return;
+    if (!canManageOrders || saveInFlightRef.current || loading || !meta) return;
     setError(null);
     if (!clientId) { setError("Select a client."); return; }
     if (!orderDate) { setError("Order date is required."); return; }
-    if (items.some(item => !(item.item_name || item.description).trim() || !item.description.trim() || Number(item.quantity) <= 0 || Number(item.unit_price) < 0)) {
-      setError("Complete all order items.");
+    if (items.some(item => !(item.item_name || item.description).trim() || !item.description.trim() || !exactSalesPayload(item) || !exactSalesLinePreview(item, taxMode))) {
+      setError("Complete all order items with valid quantities, prices and percentages (up to four decimal places).");
       return;
     }
+    if (Object.values(totals).some(value => value === "")) { setError("Order totals exceed the supported accounting range. Review the line amounts."); return; }
     saveInFlightRef.current = true;
     setSaving(true);
     try {
@@ -218,10 +221,7 @@ export default function NewManualOrderPage() {
             item_type: item.item_type,
             unit: item.unit || "unit",
             description: item.description.trim(),
-            quantity: Number(item.quantity),
-            unit_price: Number(item.unit_price),
-            discount_percent: Number(item.discount_percent || 0),
-            tax_rate: Number(item.tax_rate || 0),
+            ...exactSalesPayload(item)!,
           })),
         }),
       });
@@ -240,6 +240,7 @@ export default function NewManualOrderPage() {
     }
   }
 
+  if (!canManageOrders) return <main className="order-editor-page"><p role="status">Creating orders requires order management permission.</p><a href={returnHref}>Back to orders</a></main>;
   if (loading) return <main className="order-editor-page"><div className="order-editor-loading" role="status" aria-label="Loading order editor"><div className="h-96 animate-pulse rounded-2xl border bg-white" /></div></main>;
 
   if (!meta) return <main className="order-editor-page"><div className="order-editor-unavailable" role="alert"><h1>Order setup unavailable</h1><p>{error || "Could not load order setup."}</p><a href={returnHref}>Back to orders</a></div></main>;
@@ -251,7 +252,7 @@ export default function NewManualOrderPage() {
 
     {saving ? <div className="order-editor-notice order-editor-notice-info" role="status">Saving… If you leave now, check the order before retrying because the result may be uncertain.</div> : null}
     <div className="order-editor-composition">
-      <OrderEditorSummary amount={<>{currency || "—"} {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>} currency={currency} date={orderDate} taxMode={taxMode} />
+      <OrderEditorSummary amount={<>{formatMoneyExact(total || "invalid", currency || "—")}</>} currency={currency} date={orderDate} taxMode={taxMode} />
       <div className="order-editor-main">
       <section className="order-editor-section order-editor-setup"><OrderEditorSectionHeading number="01" title="Client & order details" description="Set the client, source, currency and ownership for this order." /><div className="order-editor-fields">
       <SearchableSelect disabled={saving} label="Client" required clearable={false} value={clientId} onValueChange={value => { setClientId(value); const client = clients.find(item => item.id === value); if (client?.currency && client.currency !== currency) changeCurrency(client.currency); }} options={clientOptions} placeholder="Select client" searchPlaceholder="Search client..." />
@@ -265,7 +266,7 @@ export default function NewManualOrderPage() {
     </div></section>
 
     <section className="order-editor-section order-editor-lines"><OrderEditorSectionHeading number="02" title="Order lines" description="Catalog is optional. Custom projects and services can be entered directly." actions={<button disabled={saving} type="button" onClick={() => setItems(current => [...current, blankItem(Number(meta?.default_tax_rate || 0))])} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium"><Plus className="size-4" />Add line</button>} />
-        <div className="order-editor-lines-content">{items.map((item, index) => { const sourceValue = item.product_id ? `catalog:${item.product_id}` : item.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="order-editor-line"><header className="order-editor-line-header"><span>Line {index + 1}</span><span>{item.product_id ? "Catalog item" : "Custom item"}</span></header><div className="order-editor-line-identity"><SearchableSelect disabled={saving} label="Item source" value={sourceValue} onValueChange={value => selectSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input disabled={saving || Boolean(item.product_id)} value={item.item_name} onChange={event => updateItem(index, { item_name: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input disabled={saving} type="number" min="0.0001" step="any" value={item.quantity} onChange={event => updateItem(index, { quantity: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={saving || Boolean(item.product_id)} value={item.unit} onChange={event => updateItem(index, { unit: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="order-editor-line-pricing"><Field label="Description"><input disabled={saving} value={item.description} onChange={event => updateItem(index, { description: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><MoneyInput disabled={saving} value={item.unit_price} onChange={value => updateItem(index, { unit_price: value })} currency={currency} /></Field><Field label="Discount %"><input disabled={saving} type="number" min="0" max="100" step="0.01" value={item.discount_percent} onChange={event => updateItem(index, { discount_percent: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input disabled={saving} type="number" min="0" max="100" step="0.01" value={item.tax_rate} onChange={event => updateItem(index, { tax_rate: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="order-editor-line-total"><div><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{currency} {lineTotal(item, taxMode).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div><button type="button" disabled={saving || items.length === 1} onClick={() => setItems(current => current.filter((_, itemIndex) => itemIndex !== index))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" aria-hidden="true" /><span className="sr-only">Remove line {index + 1}</span></button></div></div></div>; })}</div>
+        <div className="order-editor-lines-content">{items.map((item, index) => { const sourceValue = item.product_id ? `catalog:${item.product_id}` : item.item_type === "non_stock_item" ? "custom:non_stock_item" : "custom:service"; return <div key={index} className="order-editor-line"><header className="order-editor-line-header"><span>Line {index + 1}</span><span>{item.product_id ? "Catalog item" : "Custom item"}</span></header><div className="order-editor-line-identity"><SearchableSelect disabled={saving} label="Item source" value={sourceValue} onValueChange={value => selectSource(index, value)} options={lineSourceOptions} searchPlaceholder="Search products and services..." /><Field label="Item / service name"><input disabled={saving || Boolean(item.product_id)} value={item.item_name} onChange={event => updateItem(index, { item_name: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field><Field label="Quantity"><input disabled={saving} type="number" min="0.0001" step="any" value={item.quantity} onChange={event => updateItem(index, { quantity: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit"><input disabled={saving || Boolean(item.product_id)} value={item.unit} onChange={event => updateItem(index, { unit: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm disabled:bg-neutral-50 disabled:text-neutral-500" /></Field></div><div className="order-editor-line-pricing"><Field label="Description"><input disabled={saving} value={item.description} onChange={event => updateItem(index, { description: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Unit price"><MoneyInput step={0.0001} disabled={saving} value={item.unit_price} onChange={value => updateItem(index, { unit_price: value })} currency={currency} /></Field><Field label="Discount %"><input disabled={saving} type="number" min="0" max="100" step="0.01" value={item.discount_percent} onChange={event => updateItem(index, { discount_percent: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><Field label="Tax %"><input disabled={saving} type="number" min="0" max="100" step="0.01" value={item.tax_rate} onChange={event => updateItem(index, { tax_rate: event.target.value })} className="h-11 w-full rounded-xl border px-3 text-sm" /></Field><div className="order-editor-line-total"><div><p className="text-xs text-neutral-400">Line total</p><p className="mt-1 whitespace-nowrap font-semibold">{formatMoneyExact(lineTotal(item, taxMode), currency)}</p></div><button type="button" disabled={saving || items.length === 1} onClick={() => setItems(current => current.filter((_, itemIndex) => itemIndex !== index))} className="flex size-10 items-center justify-center rounded-lg border disabled:opacity-30"><Trash2 className="size-4" aria-hidden="true" /><span className="sr-only">Remove line {index + 1}</span></button></div></div></div>; })}</div>
     </section>
 
     <section className="order-editor-section order-editor-notes"><OrderEditorSectionHeading number="03" title="Notes & terms" description="Keep client-facing notes, commercial terms and internal context distinct." /><div className="order-editor-notes-fields"><Field label="Client notes"><textarea disabled={saving} value={notes} onChange={event => setNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm" /></Field><Field label="Terms & conditions"><textarea disabled={saving} value={terms} onChange={event => setTerms(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm" /></Field><Field label="Internal notes"><textarea disabled={saving} value={internalNotes} onChange={event => setInternalNotes(event.target.value)} className="min-h-28 w-full rounded-xl border p-3 text-sm" /></Field></div></section>

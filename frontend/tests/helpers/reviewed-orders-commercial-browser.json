@@ -1,0 +1,15 @@
+{
+  "baselineCount": 71,
+  "baselineHash": "0d01b1d93471b45af679363ca5cb8efcd0f2a52b40dbb940a8dd0278f798b8ba",
+  "added": [
+    "expect(observed.response.status()).toBe(200)",
+    "expect(commercial.order_id).toBe(order.id)",
+    "expect(commercial.original_value).toBe(\"367.50\")",
+    "expect(page.getByRole(\"heading\", { name: \"Contract, billing & collection\", exact: true })).toBeVisible()",
+    "expect(summary.getByText(\"Original contract\", { exact: true }).locator(\"..\").locator(\"dd\")).toHaveText(\"BDT 367.50\")",
+    "expect(page.getByRole(\"button\", { name: \"Add billing milestone\", exact: true })).toBeVisible()",
+    "expect(page.getByRole(\"button\", { name: \"Add change\", exact: true })).toBeVisible()",
+    "expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)",
+    "expect(page.getByRole(\"link\", { name: \"Project workspace\", exact: true })).toBeVisible()"
+  ]
+}
