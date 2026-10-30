@@ -137,8 +137,10 @@ test('owner CRM missing activities, follow-up, lost, custom stages and sources',
     } });
     expect(invalid.status()).toBe(422);
     const invalidBody = await invalid.json();
-    expect(Array.isArray(invalidBody.detail)).toBe(true);
-    expect(invalidBody.detail.some(issue => issue.loc.includes('probability_percent') && issue.type === 'less_than_equal' && issue.ctx?.le === 100)).toBe(true);
+    expect(typeof invalidBody.detail).toBe('string');
+    expect(invalidBody.detail).toMatch(/Probability Percent:.*less than or equal to 100\b/i);
+    expect(Array.isArray(invalidBody.validation_errors)).toBe(true);
+    expect(invalidBody.validation_errors.some(issue => issue.loc.includes('probability_percent') && issue.type === 'less_than_equal' && issue.ctx?.le === 100)).toBe(true);
     expect((await api(context.request, '/api/crm/leads', undefined, 'get')).items).toHaveLength(0);
     e.cases.push({ id: 'CRM02', actual: 'Native101 rangeOverflow focuses field with no UI POST; independent backend422 probability<=100; no lead persisted' });
     await page.getByLabel('Probability %', {
