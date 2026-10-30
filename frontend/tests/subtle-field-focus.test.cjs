@@ -8,7 +8,7 @@ const focus = css.slice(css.indexOf('/* Match Company Settings'));
 const scope = ':root:not(.dark) .workspace-shell:not(.dark):not(.dark *)';
 test('field focus is centralized, light-workspace scoped and leaves non-field focus alone', () => {
   const rules = [...focus.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, selector]) => !selector.includes('@media'));
-  assert.equal(rules.length, 4);
+  assert.equal(rules.length, 5);
   for (const [, selector] of rules) {
     assert.ok(selector.trim().startsWith(scope));
     assert.ok(selector.includes(':focus'));
@@ -30,4 +30,13 @@ test('focus matches Company Settings border, preserves validation and forced-col
   assert.doesNotMatch(invalid, /border/);
   assert.match(focus, /@media \(forced-colors: active\)/);
   assert.match(focus, /outline: 1px solid Highlight;\s*outline-offset: -1px;/);
+});
+
+test('borderless field controls retain an inset focus indicator without changing normal fields', () => {
+  const nav = fs.readFileSync(path.join(root, 'src/components/hr-module-nav.tsx'), 'utf8');
+  assert.match(nav, /aria-label="More People and HR pages"/);
+  assert.match(nav, /rounded-lg border-0/);
+  const rule = focus.match(/:is\(\.border-0, \.border-none\):focus\s*\{([^}]+)\}/)[1];
+  assert.match(rule, /box-shadow: inset 0 -2px 0 currentColor;/);
+  assert.doesNotMatch(rule, /outline|border-width|padding|background/);
 });

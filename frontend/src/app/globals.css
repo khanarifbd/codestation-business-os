@@ -196,6 +196,12 @@
   box-shadow: inset 0 -1px 0 var(--color-neutral-500, #737373);
 }
 
+/* Borderless field controls cannot signal focus by changing border color.
+   An inset underline stays visible without adding a surrounding box. */
+:root:not(.dark) .workspace-shell:not(.dark):not(.dark *) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select):is(.border-0, .border-none):focus {
+  box-shadow: inset 0 -2px 0 currentColor;
+}
+
 @media (forced-colors: active) {
   :root:not(.dark) .workspace-shell:not(.dark):not(.dark *) :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"], [type="button"], [type="submit"], [type="reset"], [type="image"]), textarea, select):focus {
     outline: 1px solid Highlight;

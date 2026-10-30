@@ -202,3 +202,27 @@ test('neutral workspace: text field focus matches Company Settings without an ou
   await expect(dialog).toHaveCount(0);
   await expect(page).toHaveURL(/\/dashboard\/clients$/);
 });
+
+test('neutral workspace: borderless HR navigation field keeps a visible inset focus cue', async ({ page, context }, info) => {
+  // One cold route, normal 45s budget; its own disposable organization and one login.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await isolatedWorkspace(page, context, info);
+  await page.goto('/dashboard/hr');
+  const more = page.getByRole('combobox', { name: 'More People and HR pages', exact: true });
+  await expect(more).toBeVisible();
+  await expect(more).toHaveCSS('border-top-width', '0px');
+  await more.focus();
+  await expect(more).toBeFocused();
+  await expect(more).toHaveCSS('outline-style', 'none');
+  await expect(more).toHaveCSS('box-shadow', /inset/);
+  await expect.poll(() => more.evaluate(element => {
+    const style = getComputedStyle(element);
+    return style.boxShadow.includes(style.color) && style.boxShadow.includes('-2px');
+  })).toBe(true);
+  await readable(more);
+  await page.screenshot({ path: info.outputPath('neutral-theme-hr-borderless-field-focus.png'), fullPage: true });
+  await page.keyboard.press('Tab');
+  await expect(more).not.toBeFocused();
+  await expect(more).toHaveCSS('box-shadow', 'none');
+  await expect(page).toHaveURL(/\/dashboard\/hr$/);
+});
