@@ -9,6 +9,20 @@ export async function captureReportsPage(page, info, name) {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await expect(page.locator('#report-results')).toHaveAttribute('aria-busy', 'false');
       await page.screenshot({ path: info.outputPath(`neutral-theme-reports-${name}-${size}.png`), fullPage: false });
+      if (size === 'mobile' && ['clients', 'performance', 'position', 'projects'].includes(name)) {
+        const disclosure = page.locator('.or-data-details > summary');
+        let opened = false;
+        try {
+          if (name === 'performance') { await disclosure.click(); opened = true; }
+          const target = name === 'position'
+            ? page.getByRole('heading', { name: 'Active account balances', exact: true })
+            : page.getByRole('region', { name: { clients: 'Client performance table', projects: 'Project performance table', performance: 'USD monthly values table' }[name], exact: true }).getByRole('row').nth(1);
+          await target.scrollIntoViewIfNeeded();
+          await expect(target).toBeVisible();
+          await expect(target).toBeInViewport();
+          await page.screenshot({ path: info.outputPath(`neutral-theme-reports-${name}-mobile-results.png`), fullPage: false });
+        } finally { if (opened) await disclosure.click(); }
+      }
     }
   } finally { if (previous) await page.setViewportSize(previous); }
 }

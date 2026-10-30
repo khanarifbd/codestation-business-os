@@ -29,6 +29,15 @@ async function captureCapitalViewport(page,info,label,heading){
   await expect(page.getByRole('button',{name:'Refresh',exact:true})).toBeEnabled();
   await page.evaluate(()=>window.scrollTo(0,0));expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);
   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-${size}.png`),fullPage:false});
+  if(size==='mobile'&&['owner','company','project','investments'].includes(label)){
+   const tabName={owner:'Owner Equity',company:'Company Funding',project:'Project Funding',investments:'Our Investments'}[label];
+   const selected=page.getByRole('button',{name:tabName,exact:true});
+   await selected.scrollIntoViewIfNeeded();
+   await expect(selected).toBeInViewport({ratio:1});
+   await expect(selected).toHaveClass(/bg-neutral-950/);
+   await expect(page.getByRole('heading',{name:heading,exact:true})).toBeVisible();
+   await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-mobile-selected-tab.png`),fullPage:false});
+  }
  }}finally{if(original)await page.setViewportSize(original);}
 }
 async function reviewCapitalReadOnly(page,info,route){
