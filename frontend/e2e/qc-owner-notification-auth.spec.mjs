@@ -9,7 +9,8 @@ import { captureJsonResponse } from './support/capture-json-response.mjs';
 // external SMTP, payment rails or auth bypasses are used. Mutation receipt
 // instrumentation forwards once and returns the unchanged upstream response.
 const email = process.env.E2E_QC_NOTIFICATION_EMAIL ?? 'qc-notification@example.com';
-const password = process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!';
+const password = process.env.E2E_PASSWORD;
+if (!password?.trim()) throw new Error("E2E_PASSWORD must be configured for the disposable CI fixture");
 const backend = fileURLToPath(new URL('../../backend/', import.meta.url));
 const python = process.env.E2E_BACKEND_PYTHON ?? (existsSync(`${backend}.venv/bin/python`) ? `${backend}.venv/bin/python` : 'python');
 const dateOffset = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
@@ -29,6 +30,20 @@ async function metric(page, label, count) {
 }
 
 // Empty HTML submission makes no server request, hence consumes no login quota.
+async function visitCapturedVerification(page, token) {
+  // Observe the actual UI verification request before navigation; no retry or mock.
+  const observed = page.waitForResponse(response => {
+    if (new URL(response.url()).pathname !== '/api/auth/verify-email' || response.request().method() !== 'POST') return false;
+    try { return response.request().postDataJSON()?.token === token; } catch { return false; }
+  }).then(response => ({ response }), error => ({ error }));
+  await page.goto(`/verify-email?token=${encodeURIComponent(token)}`);
+  const result = await observed;
+  if (result.error) throw result.error;
+  expect(result.response.status()).toBe(200);
+  const completionError = await result.response.finished();
+  if (completionError) throw completionError;
+}
+
 test('AUTH02 empty login stays on form and focuses each missing required field', async ({ page }, info) => {
   localOnly();
   const loginRequests = [];
@@ -142,7 +157,7 @@ test('AUTH01 local UI signup, captured verification, sign-in and isolated owner 
   const captured = JSON.parse(execFileSync(python, ['scripts/verify_qc_owner_auth_notifications.py', '--capture-verification', signupEmail], { cwd: backend, encoding: 'utf8', env: { ...process.env, PYTHONPATH: [backend, process.env.PYTHONPATH].filter(Boolean).join(':') } }));
   expect(captured.email).toBe(signupEmail);
   expect(captured.provider_delivered).toBe(false);
-  await page.goto(`/verify-email?token=${encodeURIComponent(captured.token)}`);
+  await visitCapturedVerification(page, captured.token);
   await expect(page.getByRole('heading', { name: "You're verified. You're ready.", exact: true })).toBeVisible();
   await expect(page.getByText('Email verified. You can now sign in.', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Continue to sign in', exact: true }).click();
