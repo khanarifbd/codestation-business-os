@@ -458,12 +458,68 @@ test('HR01 HR09 owner structure search and document expiry aggregation',async({p
  await verifyPeopleUnknownCreate(p,info);
 });
 
+async function verifyPayrollCivilDate(p){
+ const start=p.getByLabel('Start date',{exact:true}),end=p.getByLabel('End date',{exact:true}),pay=p.getByLabel(/^Pay date/),save=p.getByRole('button',{name:'Create period',exact:true});
+ const initial={type:await start.getAttribute('type'),start:await start.inputValue(),end:await end.inputValue(),pay:await pay.inputValue()};let requests=0;
+ const count=request=>{if(new URL(request.url()).pathname==='/api/payroll/periods'&&request.method()==='POST')requests++;};p.on('request',count);
+ try{
+  await expect(save).toBeEnabled();
+  // Native date inputs sanitize Feb30 before React sees it. This isolated probe
+  // changes only this synthetic input's type to test the civil-date controller.
+  await start.evaluate(node=>{node.type='text';});await start.fill('2026-02-30');
+  await expect(save).toBeDisabled();await save.evaluate(button=>button.closest('form').requestSubmit());
+  await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));expect(requests).toBe(0);
+ }finally{p.off('request',count);await start.evaluate((node,type)=>{node.type=type||'date';},initial.type);await start.fill(initial.start);await end.fill(initial.end);await pay.fill(initial.pay);}
+ await expect(save).toBeEnabled();
+}
+async function verifyPayrollPersistedApproval(p,run,approved){
+ expect(approved.id).toBe(run.id);expect(approved.status).toBe('approved');
+ expect((await get(p,`/payroll/runs/${run.id}`)).status).toBe('approved');
+}
+async function verifyPayrollUnknownApproval(p,info,run,acceptDialogs){
+ const path=`/api/payroll/runs/${run.id}/approve`,pattern='**'+path;let attempts=0,approvedPrompt=0,cancelledExit=0,dialogFailure=null;
+ const malformed=route=>{if(route.request().method()==='POST'){attempts++;return route.fulfill({status:422,contentType:'application/json',body:'{"detail":[]}'});}return route.fallback();};
+ const dialogs=dialog=>{void(async()=>{
+  if(dialog.message().startsWith('Approve ')){approvedPrompt++;await dialog.accept();}
+  else{cancelledExit++;try{expect(dialog.message()).toContain('may already have been recorded');}finally{await dialog.dismiss();}}
+ })().catch(error=>{dialogFailure=error;});};
+ p.off('dialog',acceptDialogs);p.on('dialog',dialogs);
+ try{
+  await p.route(pattern,malformed);
+  await p.goto(`/dashboard/payroll/runs/${run.id}/approve`);
+  const save=p.getByRole('button',{name:'Confirm & approve payroll',exact:true});await expect(save).toBeEnabled();
+  const observed=p.waitForResponse(r=>new URL(r.url()).pathname===path&&r.request().method()==='POST').then(response=>({response}),error=>({error}));
+  await save.click();const result=await observed;if(result.error)throw result.error;expect(result.response.status()).toBe(422);
+  await expect(p.getByText('The write outcome is uncertain.',{exact:true})).toBeVisible();await expect(save).toBeDisabled();await expect(p.locator('form.pr-editor fieldset')).toBeDisabled();
+  await p.getByRole('button',{name:'Back to payroll',exact:true}).click();
+  await expect(p).toHaveURL(new RegExp(`/dashboard/payroll/runs/${run.id}/approve$`));
+  expect(approvedPrompt).toBe(1);expect(cancelledExit).toBe(1);if(dialogFailure)throw dialogFailure;
+  await p.locator('form.pr-editor').evaluate(form=>form.requestSubmit());expect(attempts).toBe(1);
+  expect((await get(p,`/payroll/runs/${run.id}`)).status).toBe('draft');
+  await captureHRResponsive(p,info,'payroll-unknown-approval',p.getByText('The write outcome is uncertain.',{exact:true}));
+ }finally{try{await p.unroute(pattern,malformed);}finally{p.off('dialog',dialogs);p.on('dialog',acceptDialogs);}}
+ // Explicitly leave only this known-unforwarded synthetic outcome.
+ await p.goto(`/dashboard/payroll/runs/${run.id}`);
+ await expect(p.getByRole('link',{name:'Review approval',exact:true})).toBeVisible();
+}
+async function capturePayrollDocuments(p,info,run,period){
+ const profiles=await get(p,'/payroll/salary-profiles'),profile=profiles.find(x=>x.employee_id===run.entries[0].employee_id);
+ expect(profile).toBeTruthy();
+ for(const [path,label,ready]of [
+  [`/dashboard/payroll/runs/${run.id}`,'payroll-run',()=>p.getByRole('heading',{name:run.period_name,exact:true})],
+  [`/dashboard/payroll/runs/${run.id}/entries/${run.entries[0].id}`,'payroll-entry',()=>p.getByRole('heading',{name:run.entries[0].employee_name,exact:true})],
+  [`/dashboard/payroll/periods/${period.id}`,'payroll-period',()=>p.getByRole('heading',{name:period.name,exact:true})],
+  [`/dashboard/payroll/profiles/${profile.id}`,'payroll-profile',()=>p.getByRole('heading',{name:profile.employee_name,exact:true})],
+  ['/dashboard/payroll/policy','payroll-policy',()=>p.getByRole('heading',{name:'Legacy manual · version 0',exact:true})],
+ ]){await p.goto(path);await captureHRResponsive(p,info,label,ready());}
+}
+
 test('HR14 HR15 HR20 HR21 HR24 owner payroll guard UI, draft reload and withholding date preview',async({page:p},info)=>{
  test.setTimeout(150000);const employee=await setup(p,'payroll guards');
  await post(p,'/payroll/salary-profiles',{employee_id:employee.id,currency:'USD',base_salary:'1000',effective_from:'2026-10-01'});
  const sept=await post(p,'/payroll/periods',{name:'QC September',period_start:'2026-09-01',period_end:'2026-09-30',pay_date:'2026-09-30'});
  const oct=await post(p,'/payroll/periods',{name:'QC October',period_start:'2026-10-01',period_end:'2026-10-31',pay_date:'2026-10-31'});
- p.on('dialog',dialog=>dialog.accept());
+ const acceptPayrollDialogs=dialog=>dialog.accept();p.on('dialog',acceptPayrollDialogs);
  await p.goto('/dashboard/payroll/runs/new');await choose(p,'Open payroll period','QC September');await choose(p,'Currency','USD');
  const unavailable=await submit(p,'Request server preview','/payroll/runs/preview');expect(unavailable.ready).toBe(false);
  await expect(p.getByText('Setup needs attention. No partial payroll amounts are available.',{exact:true})).toBeVisible();await expect(p.getByRole('button',{name:'Confirm reviewed draft',exact:true})).toBeDisabled();
@@ -479,11 +535,15 @@ test('HR14 HR15 HR20 HR21 HR24 owner payroll guard UI, draft reload and withhold
  const negative=p.waitForResponse(r=>new URL(r.url()).pathname===`/api/payroll/runs/${run.id}/entries/${run.entries[0].id}`&&r.request().method()==='PATCH');await p.getByRole('button',{name:'Save draft adjustment',exact:true}).click();expect((await negative).status()).toBe(400);await expect(p.getByText('Net pay cannot be negative',{exact:true})).toBeVisible();expect(await get(p,`/payroll/runs/${run.id}`)).toEqual(run);
  await p.getByLabel(/^Tax \/ withholding/).fill('125.35');await submit(p,'Save draft adjustment',`/payroll/runs/${run.id}/entries/${run.entries[0].id}`,'PATCH');
  await p.goto('/dashboard/payroll/periods/new');await p.getByLabel('Period name',{exact:true}).fill('QC overlap');await p.getByLabel('Start date',{exact:true}).fill('2026-10-01');await p.getByLabel('End date',{exact:true}).fill('2026-10-15');await p.getByLabel(/^Pay date/).fill('2026-10-15');
+ await verifyPayrollCivilDate(p);
  const overlap=p.waitForResponse(r=>new URL(r.url()).pathname==='/api/payroll/periods'&&r.request().method()==='POST');await p.getByRole('button',{name:'Create period',exact:true}).click();expect((await overlap).status()).toBe(409);expect(await get(p,'/payroll/periods')).toHaveLength(2);await expect(p.locator('body')).not.toContainText('[object Object]');
- await post(p,`/payroll/runs/${run.id}/approve`,{});await p.goto('/dashboard/payroll/withholdings/new');
+ await capturePayrollDocuments(p,info,run,oct);
+ await verifyPayrollUnknownApproval(p,info,run,acceptPayrollDialogs);
+ const approved=await post(p,`/payroll/runs/${run.id}/approve`,{});await verifyPayrollPersistedApproval(p,run,approved);await p.goto('/dashboard/payroll/withholdings/new');
  for(const [date,amount] of [['2026-10-20','USD 0.00'],['2026-10-31','USD 125.35']]){
   const loaded=p.waitForResponse(r=>r.url().includes(`/api/payroll/withholdings/meta?payment_date=${date}`));await p.getByLabel(/^Payment date/).fill(date);await json(await loaded);await expect(p.getByText(`Liability available as of ${date}`,{exact:true}).locator('..')).toContainText(amount);
  }
+ await captureHRResponsive(p,info,'payroll-withholding',p.getByRole('heading',{name:'Pay payroll withholdings',exact:true}));
  expect(await get(p,'/payroll/withholdings/payments')).toEqual([]);await info.attach('owner-payroll-cutoff.json',{body:JSON.stringify({early:await get(p,'/payroll/withholdings/meta?payment_date=2026-10-20'),end:await get(p,'/payroll/withholdings/meta?payment_date=2026-10-31')},null,2),contentType:'application/json'});
 });
 
