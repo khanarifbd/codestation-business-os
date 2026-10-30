@@ -34,10 +34,13 @@ async function captureCapitalViewport(page,info,label,heading){
    const selected=page.getByRole('button',{name:tabName,exact:true});
    await selected.evaluate(node=>node.scrollIntoView({block:'center',inline:'center',behavior:'instant'}));
    await page.screenshot({path:info.outputPath(`neutral-theme-capital-${label}-mobile-selected-tab.png`),fullPage:false});
-   expect(await selected.evaluate(node=>{
-    const rect=node.getBoundingClientRect(),strip=node.parentElement,clip=strip.getBoundingClientRect();
-    return rect.left>=Math.max(0,clip.left+strip.clientLeft)&&rect.right<=Math.min(window.innerWidth,clip.left+strip.clientLeft+strip.clientWidth)&&rect.top>=80&&rect.bottom<=window.innerHeight-80;
-   })).toBe(true);
+   const geometry=await selected.evaluate(node=>{
+    const rect=node.getBoundingClientRect(),strip=node.parentElement,clip=strip.getBoundingClientRect(),style=getComputedStyle(strip);
+    const bounds={left:Math.max(0,clip.left+parseFloat(style.borderLeftWidth)),right:Math.min(window.innerWidth,clip.right-parseFloat(style.borderRightWidth)),top:80,bottom:window.innerHeight-80};
+    const target={left:rect.left,right:rect.right,top:rect.top,bottom:rect.bottom};
+    return {target,bounds,scrollLeft:strip.scrollLeft,clientWidth:strip.clientWidth,visible:target.left>=bounds.left&&target.right<=bounds.right&&target.top>=bounds.top&&target.bottom<=bounds.bottom};
+   });
+   expect(geometry.visible,`${tabName} full target bounds: ${JSON.stringify(geometry)}`).toBe(true);
    await expect(selected).toBeInViewport({ratio:1});
    await expect(selected).toHaveClass(/bg-neutral-950/);
    await expect(page.getByRole('heading',{name:heading,exact:true})).toBeVisible();
