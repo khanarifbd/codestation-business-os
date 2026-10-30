@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { formatMoneyExact } from "@/lib/sales-money-preview";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, FileText, Loader2, Plus, RefreshCw, Search } from "lucide-react";
+import { useDashboardSession } from "@/components/dashboard-session-context";
 import { RelationshipHeader } from "@/components/relationships/relationship-ui";
 import { QUOTATION_LIST_PATH, QUOTATION_STATUSES, quotationCreateHref, quotationDocumentHref, safeQuotationReturnHref } from "@/lib/quotation-navigation";
 import "@/components/commercial/quotation-workspace.css";
@@ -12,10 +14,12 @@ import "@/components/commercial/quotations-list.css";
 type QuotationRow = { id: string; quotation_number: string; client_name: string; subject: string | null; status: string; valid_until: string | null; currency: string; total: string | number; is_expired: boolean };
 type Summary = { total: number; draft: number; sent: number; accepted: number; rejected: number; cancelled: number };
 type Page = { items: QuotationRow[]; next_cursor: string | null };
-const formatMoney = (value: string | number, currency: string) => `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatMoney = formatMoneyExact;
 
 export default function QuotationsList() {
   const router = useRouter();
+  const { tenant } = useDashboardSession();
+  const canManage = Boolean(tenant?.is_owner || tenant?.permissions.includes("*") || tenant?.permissions.includes("quotations.manage"));
   const searchParams = useSearchParams();
   const canonical = safeQuotationReturnHref(`${QUOTATION_LIST_PATH}?${searchParams}`);
   const filters = new URLSearchParams(canonical.split("?")[1] || "");
@@ -115,7 +119,7 @@ export default function QuotationsList() {
     <RelationshipHeader eyebrow="SALES / QUOTATIONS" title="Quotations" description="Find the proposal. Open the document. Keep every revision in context." actions={<>
       <button type="button" className="quotation-browse-action" disabled={loading} onClick={() => setRefresh(value => value + 1)}><RefreshCw size={15} aria-hidden="true" /> Refresh</button>
       {/* Native document entry is intentional: it makes browser Back honor beforeunload in the editor. */}
-      <a className="quotation-browse-action is-primary" href={quotationCreateHref(canonical)}><Plus size={16} aria-hidden="true" /> New quotation</a>
+      {canManage ? <a className="quotation-browse-action is-primary" href={quotationCreateHref(canonical)}><Plus size={16} aria-hidden="true" /> New quotation</a> : null}
     </>} />
     <section className="quotation-browse-summary" aria-label="All quotation counts">
       {([['total','All quotations'],['draft','Drafts'],['sent','Awaiting decision'],['accepted','Accepted'],['rejected','Rejected'],['cancelled','Cancelled']] as const).map(([key,label]) => <div key={key}><span>{label}</span><strong>{summary ? summary[key] : "—"}</strong></div>)}

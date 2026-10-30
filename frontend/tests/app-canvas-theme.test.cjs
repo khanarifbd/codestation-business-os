@@ -1,3 +1,4 @@
+const { beforeReviewedQuotationDecimals } = require('./helpers/reviewed-quotation-decimals.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -83,6 +84,7 @@ for (const file of [
   test(`canvas snapshot allowance rejects unrelated source changes in ${file}`, () => {
     let expected = withReviewedCanvas(file, fs.readFileSync(path.join(baseline, file), 'utf8'));
     let actual = fs.readFileSync(path.join(src, '..', file), 'utf8');
+    if (file === 'src/app/print/quotations/[quotationId]/page.tsx') actual = beforeReviewedQuotationDecimals(file, actual);
     if (file === 'src/components/auth/auth-frame.tsx') {
       // Auth variants predate this canvas change; the existing snapshot protects its default render.
       expected = expected.slice(expected.indexOf('  return ('));

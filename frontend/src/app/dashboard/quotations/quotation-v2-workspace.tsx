@@ -1,6 +1,9 @@
 "use client";
 
-import { formatMoneyExact, salesLinePreview, salesTotalsPreview, type SalesMoneyTotals } from "@/lib/sales-money-preview";
+import { exactSalesPayload, exactSalesLinePreview } from "@/lib/exact-sales-decimal";
+import { quotationPaymentPreview } from "@/lib/quotation-payment-preview";
+
+import { formatMoneyExact, salesTotalsPreview, type SalesMoneyTotals } from "@/lib/sales-money-preview";
 
 import {
   ArrowLeft,
@@ -22,6 +25,8 @@ import {
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useDashboardSession } from "@/components/dashboard-session-context";
+import { ProjectDialogFocus } from "@/components/projects/project-dialog";
 import { SearchableSelect } from "@/components/searchable-select";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 import { useQuotationNavigationGuard } from "@/hooks/use-quotation-navigation-guard";
@@ -236,10 +241,10 @@ type DraftItem = {
   item_type: "service" | "non_stock_item";
   unit: string;
   description: string;
-  quantity: number;
-  unit_price: number;
-  discount_percent: number;
-  tax_rate: number;
+  quantity: string | number;
+  unit_price: string | number;
+  discount_percent: string | number;
+  tax_rate: string | number;
 };
 type DraftSection = {
   section_type: string;
@@ -260,8 +265,8 @@ type DraftPayment = {
   title: string;
   description: string;
   payment_type: "percentage" | "fixed";
-  percentage: number;
-  amount: number;
+  percentage: string | number;
+  amount: string | number;
   due_condition: string;
   due_date: string;
   milestone_index: number | null;
@@ -335,11 +340,11 @@ function errorMessage(payload: unknown, fallback: string) {
 }
 
 function previewLine(item: DraftItem, mode: string) {
-  const line = salesLinePreview(item, mode);
+  const line = exactSalesLinePreview(item, mode);
   return line ? { subtotal: line.subtotal, discount: line.discount, tax: line.tax, total: line.total } : { subtotal: "", discount: "", tax: "", total: "" };
 }
 
-function blankItem(taxRate = 0): DraftItem {
+function blankItem(taxRate: string | number = 0): DraftItem {
   return {
     product_id: null,
     lead_interest_id: null,
@@ -383,16 +388,41 @@ function blankPayment(): DraftPayment {
   };
 }
 
+function verifiedStatusSnapshot(value: unknown, requestedId: string): value is CoreDetail {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const decimal = (v: unknown) => (typeof v === "string" && v.length <= 100 && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(v) || typeof v === "number") && Number.isFinite(Number(v));
+  const optionalText = (v: unknown) => v == null || typeof v === "string";
+  return [row.subject, row.valid_until, row.assigned_employee_id, row.internal_notes, row.source_lead_id].every(optionalText) &&
+    row.id === requestedId && typeof row.quotation_number === "string" && typeof row.client_id === "string" &&
+    typeof row.issue_date === "string" && typeof row.currency === "string" &&
+    typeof row.status === "string" && ["draft", "sent", "accepted", "rejected", "cancelled"].includes(row.status) &&
+    typeof row.tax_calculation_mode === "string" && ["exclusive", "inclusive"].includes(row.tax_calculation_mode) && decimal(row.total) &&
+    Array.isArray(row.items) && row.items.every(item => item && typeof item === "object" &&
+      typeof item.description === "string" && typeof item.item_name_snapshot === "string" &&
+      [item.product_id, item.lead_interest_id, item.item_type_snapshot, item.unit_snapshot].every(optionalText) &&
+      [item.quantity, item.unit_price, item.discount_percent, item.tax_rate].every(decimal));
+}
+
 export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "edit" | "create"; quotationId?: string | number }) {
   const router = useRouter();
+  const { tenant } = useDashboardSession();
+  const canManage = Boolean(tenant?.is_owner || tenant?.permissions.includes("*") || tenant?.permissions.includes("quotations.manage"));
+  const canManageOrders = Boolean(tenant?.is_owner || tenant?.permissions.includes("*") || tenant?.permissions.includes("orders.manage"));
+  const canReadOrders = canManageOrders || Boolean(tenant?.permissions.includes("orders.view"));
+  const canManageRef = useRef(canManage);
+  canManageRef.current = canManage;
   const prefillHandled = useRef(false);
   const mountedRef = useRef(true);
   const loadRequestRef = useRef(0);
   const savingRef = useRef(false);
+  const statusReconciliationRef = useRef(false);
   const persistedCoreRef = useRef<CoreDetail | null>(null);
   const [cleanSnapshot, setCleanSnapshot] = useState<string | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [partialSave, setPartialSave] = useState(false);
+  const [refreshRequired, setRefreshRequired] = useState(false);
+  const [documentReadError, setDocumentReadError] = useState(false);
   const [returnHref, setReturnHref] = useState("/dashboard/quotations");
 
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -450,10 +480,11 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
   }, [cleanSnapshot, draftReady, draftSnapshot]);
 
   const api = useCallback(
-    async (path: string, init?: RequestInit) => {
+    async (path: string, init?: RequestInit, current = () => mountedRef.current, acknowledge?: () => void) => {
       const response = await fetch(`/api/sales${path}`, init);
+      if (response.ok) acknowledge?.();
       if (response.status === 401) {
-        router.replace("/login");
+        if (current()) router.replace("/login");
         throw new Error("Authentication required");
       }
       const payload = await response.json().catch(() => null);
@@ -485,10 +516,10 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
         item_type: item.item_type_snapshot === "non_stock_item" ? "non_stock_item" : "service",
         unit: item.unit_snapshot || "unit",
         description: item.description,
-        quantity: Number(item.quantity),
-        unit_price: Number(item.unit_price),
-        discount_percent: Number(item.discount_percent),
-        tax_rate: Number(item.tax_rate),
+        quantity: String(item.quantity),
+        unit_price: String(item.unit_price),
+        discount_percent: String(item.discount_percent),
+        tax_rate: String(item.tax_rate),
       })),
     );
   }, []);
@@ -525,8 +556,8 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
         title: item.title,
         description: item.description ?? "",
         payment_type: item.payment_type === "fixed" ? "fixed" : "percentage",
-        percentage: item.percentage == null ? 0 : Number(item.percentage),
-        amount: Number(item.amount || 0),
+        percentage: item.percentage == null ? 0 : String(item.percentage),
+        amount: String(item.amount || 0),
         due_condition: item.due_condition ?? "",
         due_date: item.due_date ?? "",
         milestone_index: item.quotation_milestone_id
@@ -539,17 +570,24 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
   }, []);
 
   const loadQuotation = useCallback(
-    async (requestedId: string) => {
+    async (requestedId: string, preserveSaved = false) => {
       const request = ++loadRequestRef.current;
+      const reconciling = preserveSaved || statusReconciliationRef.current;
+      const current = () => mountedRef.current && request === loadRequestRef.current;
       setLoadingQuotation(true);
+      setDocumentReadError(false);
       setError(null);
       try {
         const [coreDetail, commercialDetail, history] = await Promise.all([
-          api(`/quotations/${encodeURIComponent(requestedId)}`) as Promise<CoreDetail>,
-          api(`/quotations/${encodeURIComponent(requestedId)}/commercial`) as Promise<CommercialDetail>,
-          api(`/quotations/${encodeURIComponent(requestedId)}/revisions`) as Promise<RevisionRow[]>,
+          api(`/quotations/${encodeURIComponent(requestedId)}`, undefined, current) as Promise<CoreDetail>,
+          api(`/quotations/${encodeURIComponent(requestedId)}/commercial`, undefined, current) as Promise<CommercialDetail>,
+          api(`/quotations/${encodeURIComponent(requestedId)}/revisions`, undefined, current) as Promise<RevisionRow[]>,
         ]);
-        if (!mountedRef.current || request !== loadRequestRef.current) return;
+        if (!current()) return false;
+        if (reconciling && (!verifiedStatusSnapshot(coreDetail, requestedId) || !commercialDetail || commercialDetail.id !== requestedId ||
+          !Array.isArray(commercialDetail.sections) || !Array.isArray(commercialDetail.milestones) || !Array.isArray(commercialDetail.payment_milestones) || !Array.isArray(history))) {
+          throw new Error("Saved document response could not be verified.");
+        }
         applyCore(coreDetail);
         applyCommercial(commercialDetail);
         persistedCoreRef.current = coreDetail;
@@ -557,12 +595,22 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
         setCreating(false);
         setCleanSnapshot(null);
         setDraftReady(true);
+        statusReconciliationRef.current = false;
+        setRefreshRequired(false);
+        if (reconciling) setMessage(`Document refreshed. Current verified status: ${coreDetail.status}.`);
+        return coreDetail;
       } catch (reason) {
-        if (!mountedRef.current || request !== loadRequestRef.current) return;
-        setCore(null);
-        setProposal(null);
-        setRevisions([]);
-        setError(reason instanceof Error ? reason.message : "Unable to load quotation.");
+        if (!current()) return false;
+        if (!reconciling) {
+          setCore(null);
+          setProposal(null);
+          setRevisions([]);
+        }
+        setRefreshRequired(reconciling);
+        setDocumentReadError(true);
+        const detail = reason instanceof Error ? reason.message : "Unable to load quotation.";
+        setError(reconciling ? `The status request was acknowledged, but the document could not be refreshed. Retry the read before another action. ${detail}` : detail);
+        return false;
       } finally {
         if (mountedRef.current && request === loadRequestRef.current) setLoadingQuotation(false);
       }
@@ -656,12 +704,12 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
                   item_type: item.item_type === "non_stock_item" ? "non_stock_item" : "service",
                   unit: item.unit || "unit",
                   description: item.description || item.item_name,
-                  quantity: Number(item.quantity || 1),
-                  unit_price: Number(item.estimated_unit_price || 0),
+                  quantity: String(item.quantity || 1),
+                  unit_price: String(item.estimated_unit_price || 0),
                   discount_percent: 0,
-                  tax_rate: Number(meta.default_tax_rate),
+                  tax_rate: String(meta.default_tax_rate),
                 }))
-              : [blankItem(Number(meta.default_tax_rate))],
+              : [blankItem(String(meta.default_tax_rate))],
           );
           resetCommercialDraft(source.subject);
           setTab("pricing");
@@ -694,22 +742,13 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, meta, mode]);
 
-  const editable = mode !== "view" && (creating || core?.status === "draft");
-  const preview = useMemo(() => salesTotalsPreview(items.map(item => salesLinePreview(item, taxMode || "exclusive"))), [items, taxMode]);
+  const editable = canManage && mode !== "view" && (creating || core?.status === "draft");
+  const preview = useMemo(() => salesTotalsPreview(items.map(item => exactSalesLinePreview(item, taxMode || "exclusive"))), [items, taxMode]);
   const documentDisplayTotal = editable ? preview.total : core?.total ?? proposal?.total ?? "0.00";
-  // Existing payment-schedule validation remains unchanged; monetary preview/display stays exact.
-  const documentTotal = Number(documentDisplayTotal);
-  const scheduledTotal = useMemo(
-    () =>
-      payments.reduce((sum, item) => {
-        if (item.payment_type === "percentage") {
-          return sum + (documentTotal * Number(item.percentage || 0)) / 100;
-        }
-        return sum + Number(item.amount || 0);
-      }, 0),
-    [documentTotal, payments],
-  );
-  const scheduleDifference = documentTotal - scheduledTotal;
+  const documentTotal = documentDisplayTotal;
+  const schedule = useMemo(() => quotationPaymentPreview(documentTotal, payments), [documentTotal, payments]);
+  const scheduledTotal = schedule?.total ?? "";
+  const scheduleDifference = schedule?.difference ?? "";
 
   function resetCommercialDraft(defaultTitle = "") {
     setProjectTitle(defaultTitle);
@@ -740,7 +779,7 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
     setTaxMode(meta.default_tax_calculation_mode);
     setAssignedEmployeeId("");
     setInternalNotes("");
-    setItems([blankItem(Number(meta.default_tax_rate))]);
+    setItems([blankItem(String(meta.default_tax_rate))]);
     resetCommercialDraft("");
     setTab("pricing");
     setError(null);
@@ -803,20 +842,20 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
       item_type: product.item_type === "non_stock_item" ? "non_stock_item" : "service",
       unit: product.unit,
       description: product.description || product.name,
-      unit_price: Number(product.selling_price),
-      tax_rate: product.tax_rate == null ? 0 : Number(product.tax_rate),
+      unit_price: String(product.selling_price),
+      tax_rate: product.tax_rate == null ? 0 : String(product.tax_rate),
     });
   }
 
   function changeCurrency(next: string) {
     if (next === currency) return;
     const hasWork = items.some(
-      (item) => item.product_id || item.item_name.trim() || item.description.trim() || item.unit_price > 0,
+      (item) => item.product_id || item.item_name.trim() || item.description.trim() || Number(item.unit_price) > 0,
     );
     if (hasWork && !window.confirm("Changing currency will reset quotation line items. Continue?")) return;
     setCurrency(next);
     setSourceLeadId(null);
-    setItems([blankItem(Number(meta?.default_tax_rate || 0))]);
+    setItems([blankItem(String(meta?.default_tax_rate || 0))]);
   }
 
   function validateDraft() {
@@ -831,17 +870,12 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
       return false;
     }
     if (
-      items.length === 0 ||
+      items.length === 0 || [preview.subtotal, preview.discount, preview.tax, preview.total].some(value => !value) ||
       items.some(
         (item) =>
           !(item.item_name || item.description).trim() ||
           !item.description.trim() ||
-          item.quantity <= 0 ||
-          item.unit_price < 0 ||
-          item.discount_percent < 0 ||
-          item.discount_percent > 100 ||
-          item.tax_rate < 0 ||
-          item.tax_rate > 100,
+          !exactSalesPayload(item) || !exactSalesLinePreview(item, taxMode),
       )
     ) {
       setError("Complete every pricing line with valid quantity, price, discount, and tax values.");
@@ -875,15 +909,14 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
       payments.some(
         (item) =>
           !item.title.trim() ||
-          (item.payment_type === "percentage" && (item.percentage <= 0 || item.percentage > 100)) ||
-          (item.payment_type === "fixed" && item.amount < 0),
+          !quotationPaymentPreview(documentTotal, [item]),
       )
     ) {
       setError("Complete the payment schedule with valid percentage or fixed amounts.");
       setTab("payments");
       return false;
     }
-    if (payments.length && Math.abs(scheduleDifference) > 0.011) {
+    if (payments.length && !schedule?.reconciled) {
       setError(
         `Payment schedule must equal the quotation total. Difference: ${money(scheduleDifference, currency)}.`,
       );
@@ -894,13 +927,14 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
   }
 
   async function saveDraft() {
-    if (savingRef.current || !draftReady || !meta || !editable || !validateDraft()) return;
+    if (!canManageRef.current || savingRef.current || !draftReady || !meta || !editable || !validateDraft()) return;
     savingRef.current = true;
     setSaving(true);
     setError(null);
     setMessage(null);
     let coreSaved = false;
     try {
+      const existingCore = persistedCoreRef.current ?? core;
       const corePayload = {
         subject: subject.trim() || null,
         issue_date: issueDate,
@@ -908,8 +942,8 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
         currency,
         tax_calculation_mode: taxMode,
         assigned_employee_id: assignedEmployeeId || null,
-        notes: null,
-        terms_conditions: null,
+        // V2 does not edit legacy notes/terms: omit on PATCH so stored values survive.
+        ...(!existingCore ? { notes: null, terms_conditions: null } : {}),
         internal_notes: internalNotes.trim() || null,
         items: items.map((item) => ({
           product_id: item.product_id,
@@ -918,15 +952,11 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
           item_type: item.item_type,
           unit: item.unit.trim() || "unit",
           description: item.description.trim(),
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          discount_percent: item.discount_percent,
-          tax_rate: item.tax_rate,
+          ...exactSalesPayload(item),
         })),
       };
 
       let savedCore: CoreDetail;
-      const existingCore = persistedCoreRef.current ?? core;
       if (!existingCore && creating) {
         savedCore = (await api("/quotations", {
           method: "POST",
@@ -980,8 +1010,8 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
           title: item.title.trim(),
           description: item.description.trim() || null,
           payment_type: item.payment_type,
-          percentage: item.payment_type === "percentage" ? Number(item.percentage) : null,
-          amount: item.payment_type === "fixed" ? Number(item.amount) : null,
+          percentage: item.payment_type === "percentage" ? String(item.percentage) : null,
+          amount: item.payment_type === "fixed" ? String(item.amount) : null,
           due_condition: item.due_condition.trim() || null,
           due_date: item.due_date || null,
           sort_order: index,
@@ -1011,23 +1041,44 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
   }
 
   async function changeStatus(next: "sent" | "accepted" | "rejected" | "cancelled") {
-    if (mode !== "view" || !core || creating || savingRef.current) return;
+    if (!canManageRef.current || mode !== "view" || !core || creating || savingRef.current || refreshRequired || statusReconciliationRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setError(null);
     setMessage(null);
+    let acknowledged = false;
     try {
-      await api(`/quotations/${core.id}/status`, {
+      const updated = await api(`/quotations/${core.id}/status`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: next }),
+      }, () => mountedRef.current, () => {
+        // Lock as soon as HTTP acknowledges the write, before reading or trusting its body.
+        acknowledged = true;
+        statusReconciliationRef.current = true;
+        loadRequestRef.current += 1;
+        if (mountedRef.current) setRefreshRequired(true);
       });
       if (!mountedRef.current) return;
-      await loadQuotation(core.id);
+      const verified = verifiedStatusSnapshot(updated, core.id) && updated.status === next;
+      if (verified) {
+        applyCore(updated);
+        setProposal(value => value && value.id === updated.id ? { ...value, status: updated.status } : value);
+        persistedCoreRef.current = updated;
+      }
+      const refreshed = await loadQuotation(core.id, true);
       if (!mountedRef.current) return;
-      setMessage(`Quotation ${core.quotation_number} marked ${next}.`);
+      setMessage(refreshed
+        ? refreshed.status === next ? `Quotation ${core.quotation_number} marked ${next}.` : `Status request acknowledged. Current verified status: ${refreshed.status}.`
+        : verified ? `Quotation status was saved as ${updated.status}. Document refresh is pending.` : "Status request acknowledged; saved outcome is unverified. Refresh the document before another action.");
     } catch (reason) {
-      if (mountedRef.current) setError(reason instanceof Error ? reason.message : "Unable to update quotation status.");
+      if (mountedRef.current) {
+        const detail = reason instanceof Error ? reason.message : "Unable to update quotation status.";
+        if (acknowledged) {
+          setDocumentReadError(true);
+          setError(`Status request acknowledged; saved outcome is unverified. Retry the document read before another action. ${detail}`);
+        } else setError(detail);
+      }
     } finally {
       savingRef.current = false;
       if (mountedRef.current) setSaving(false);
@@ -1035,7 +1086,7 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
   }
 
   async function createRevision() {
-    if (mode !== "view" || !proposal || creating || savingRef.current) return;
+    if (!canManageRef.current || mode !== "view" || !proposal || creating || savingRef.current || refreshRequired || statusReconciliationRef.current) return;
     if (!revisionReason.trim()) {
       setError("Add a reason for this revision.");
       return;
@@ -1107,8 +1158,10 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
     <main className={`quotation-workspace quotation-document-page quotation-document-page--${mode}`}>
       <div className="quotation-page-content">
         <div className="quotation-document-route-bar"><button type="button" onClick={() => navigation.navigate(returnHref)}><ArrowLeft className="size-4" /> Back to quotations</button><span>{mode === "view" ? "SAVED DOCUMENT" : mode === "edit" ? core && core.status !== "draft" ? "EDIT UNAVAILABLE" : "EDIT DRAFT" : "NEW DOCUMENT"}</span></div>
+        {!canManage ? <p role="status" className="rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm text-neutral-600">Your role can view quotations. Creating, editing and changing status require quotation management permission.</p> : null}
         {message ? <div role="status" className="quotation-notice quotation-notice-success">{message}</div> : null}
         {error ? <div role="alert" className="quotation-notice quotation-notice-error">{error}</div> : null}
+        {mode !== "create" && documentReadError ? <button type="button" className="rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50" disabled={loadingQuotation || saving} onClick={() => void loadQuotation(String(quotationId), refreshRequired)}>Retry document refresh</button> : null}
           <section className="quotation-document" aria-label="Active quotation document">
             {loadingQuotation || (mode === "create" && !draftReady && !error) ? (
               <div className="quotation-document-loading" role="status" aria-label="Loading quotation">
@@ -1172,7 +1225,7 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
                         </button>
                       ) : null}
 
-                      {mode === "view" && core?.status === "draft" ? <a className="quotation-edit-draft-link" href={quotationDocumentHref(core.id, "edit", returnHref)}><Pencil className="size-4" /> Edit draft</a> : null}
+                      {mode === "view" && canManage && core?.status === "draft" && !refreshRequired ? <a className="quotation-edit-draft-link" href={quotationDocumentHref(core.id, "edit", returnHref)}><Pencil className="size-4" /> Edit draft</a> : null}
 
                       {editable ? (
                         <button
@@ -1190,59 +1243,59 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
                         <button
                           type="button"
                           onClick={cancelNew}
-                          disabled={saving}
+                          disabled={saving || refreshRequired}
                           className="h-10 rounded-xl border px-3 text-xs font-semibold disabled:opacity-50"
                         >
                           {mode === "edit" ? "Cancel edits" : "Cancel"}
                         </button>
                       ) : null}
 
-                      {mode === "view" && core?.status === "draft" ? (
+                      {mode === "view" && canManage && core?.status === "draft" ? (
                         <>
                           <Action
                             label="Mark sent"
                             icon={Send}
-                            disabled={saving}
+                            disabled={saving || refreshRequired}
                             onClick={() => void changeStatus("sent")}
                           />
                           <Action
                             label="Cancel quotation"
                             icon={Ban}
-                            disabled={saving}
+                            disabled={saving || refreshRequired}
                             onClick={() => void changeStatus("cancelled")}
                           />
                         </>
                       ) : null}
 
-                      {mode === "view" && core?.status === "sent" ? (
+                      {mode === "view" && canManage && core?.status === "sent" ? (
                         <>
                           <Action
                             label="Accept"
                             icon={CheckCircle2}
                             primary
-                            disabled={saving}
+                            disabled={saving || refreshRequired}
                             onClick={() => void changeStatus("accepted")}
                           />
                           <Action
                             label="Reject"
                             icon={XCircle}
-                            disabled={saving}
+                            disabled={saving || refreshRequired}
                             onClick={() => void changeStatus("rejected")}
                           />
                           <Action
                             label="Cancel quotation"
                             icon={Ban}
-                            disabled={saving}
+                            disabled={saving || refreshRequired}
                             onClick={() => void changeStatus("cancelled")}
                           />
                         </>
                       ) : null}
 
-                      {mode === "view" && core && ["sent", "rejected", "cancelled"].includes(core.status) ? (
+                      {mode === "view" && canManage && core && ["sent", "rejected", "cancelled"].includes(core.status) ? (
                         <Action
                           label="Create revision"
                           icon={History}
-                          disabled={saving}
+                          disabled={saving || refreshRequired}
                           onClick={() => {
                             setRevisionIssueDate(core.issue_date);
                             setRevisionValidUntil(core.valid_until ?? "");
@@ -1251,12 +1304,12 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
                         />
                       ) : null}
 
-                      {mode === "view" && core?.status === "accepted" ? (
+                      {mode === "view" && canReadOrders && core?.status === "accepted" ? (
                         <Action
-                          label="Create / view order"
+                          label={canManageOrders ? "Create / view order" : "View related orders"}
                           icon={ShoppingCart}
                           primary
-                          disabled={saving}
+                          disabled={saving || refreshRequired}
                           onClick={() => navigation.navigate(`/dashboard/orders?quotation_id=${encodeURIComponent(core.id)}`)}
                         />
                       ) : null}
@@ -1471,12 +1524,13 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
           </section>
       </div>
 
-      {revisionOpen && proposal && core ? (
+      {revisionOpen && canManage && proposal && core ? (
+        <ProjectDialogFocus busy={saving} onClose={() => { if (!savingRef.current) setRevisionOpen(false); }}>
         <div
           className="quotation-revision-modal fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-4"
           role="dialog" aria-modal="true" aria-label="Create quotation revision"
           onMouseDown={(event) => {
-            if (!saving && event.target === event.currentTarget) setRevisionOpen(false);
+            if (!savingRef.current && event.target === event.currentTarget) setRevisionOpen(false);
           }}
         >
           <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl">
@@ -1489,19 +1543,19 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
             <div className="space-y-4 p-6">
               <TextArea
                 label="Revision reason"
-                disabled={saving}
+                disabled={saving || refreshRequired}
                 value={revisionReason}
                 onChange={setRevisionReason}
                 placeholder="Example: Client requested revised scope, timeline, and payment terms."
               />
               <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="Issue date" type="date" disabled={saving} value={revisionIssueDate} onChange={setRevisionIssueDate} />
-                <Field label="Valid until" type="date" disabled={saving} value={revisionValidUntil} onChange={setRevisionValidUntil} />
+                <Field label="Issue date" type="date" disabled={saving || refreshRequired} value={revisionIssueDate} onChange={setRevisionIssueDate} />
+                <Field label="Valid until" type="date" disabled={saving || refreshRequired} value={revisionValidUntil} onChange={setRevisionValidUntil} />
               </div>
               <div className="flex justify-end gap-2 border-t pt-5">
                 <button
                   type="button"
-                  onClick={() => setRevisionOpen(false)}
+                  onClick={() => { if (!savingRef.current) setRevisionOpen(false); }}
                   disabled={saving}
                   className="h-11 rounded-xl border px-4 text-sm font-semibold"
                 >
@@ -1510,7 +1564,7 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
                 <button
                   type="button"
                   onClick={() => void createRevision()}
-                  disabled={saving}
+                  disabled={saving || refreshRequired}
                   className="h-11 rounded-xl bg-neutral-950 px-5 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {saving ? "Creating…" : "Create draft revision"}
@@ -1519,6 +1573,7 @@ export function QuotationV2Workspace({ mode, quotationId }: { mode: "view" | "ed
             </div>
           </div>
         </div>
+        </ProjectDialogFocus>
       ) : null}
     </main>
   );
@@ -1659,7 +1714,7 @@ function PricingTab({
           </div>
           <button
             type="button"
-            onClick={() => setItems((current) => [...current, blankItem(Number(meta?.default_tax_rate || 0))])}
+            onClick={() => setItems((current) => [...current, blankItem(String(meta?.default_tax_rate || 0))])}
             disabled={disabled}
             className="flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold disabled:opacity-40"
           >
@@ -2071,16 +2126,17 @@ function PaymentsTab({
 }: {
   disabled: boolean;
   currency: string;
-  total: number;
-  scheduledTotal: number;
-  difference: number;
+  total: string | number;
+  scheduledTotal: string;
+  difference: string;
   milestones: DraftMilestone[];
   payments: DraftPayment[];
   onPatch: (index: number, patch: Partial<DraftPayment>) => void;
   onAdd: () => void;
   onRemove: (index: number) => void;
 }) {
-  const reconciled = payments.length === 0 || Math.abs(difference) <= 0.011;
+  const paymentPreview = quotationPaymentPreview(total, payments);
+  const reconciled = paymentPreview?.reconciled ?? false;
   return (
     <div className="quotation-payments-tab quotation-editor-tab">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2115,10 +2171,7 @@ function PaymentsTab({
         />
       ) : (
         payments.map((payment, index) => {
-          const derivedAmount =
-            payment.payment_type === "percentage"
-              ? (total * Number(payment.percentage || 0)) / 100
-              : Number(payment.amount || 0);
+          const derivedAmount = paymentPreview?.amounts[index] ?? "";
           return (
             <article key={index} className="quotation-editor-card">
               <div className="flex items-center justify-between gap-3">
@@ -2377,10 +2430,7 @@ function ReviewTab({
           <h3 className="font-semibold">Payment schedule</h3>
           <div className="mt-3 overflow-hidden rounded-2xl border">
             {payments.map((payment, index) => {
-              const amount =
-                payment.payment_type === "percentage"
-                  ? (Number(preview.total || 0) * Number(payment.percentage || 0)) / 100
-                  : Number(payment.amount || 0);
+              const amount = quotationPaymentPreview(preview.total, payments)?.amounts[index] ?? "";
               return (
                 <div
                   key={index}
@@ -2445,16 +2495,16 @@ function NumberField({
   disabled = false,
 }: {
   label: string;
-  value: number;
-  onChange: (value: number) => void;
+  value: string | number;
+  onChange: (value: string) => void;
   disabled?: boolean;
 }) {
   return (
     <label className="block text-sm font-medium">
       {label}
       <input
-        value={Number.isFinite(value) ? value : 0}
-        onChange={(event) => onChange(Number(event.target.value))}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
         type="number"
         step="any"
         disabled={disabled}

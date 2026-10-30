@@ -1,4 +1,7 @@
 from decimal import Decimal
+from pathlib import Path
+import subprocess
+import sys
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -26,6 +29,7 @@ class _ScalarSession:
 
 
 def main() -> None:
+    subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-p", "test_quotation_legacy_sections_offline.py", "-v"], cwd=Path(__file__).resolve().parents[1], check=True)
     with engine.begin() as connection:
         tables = {
             name: connection.execute(text("SELECT to_regclass(:name)"), {"name": f"public.{name}"}).scalar_one()

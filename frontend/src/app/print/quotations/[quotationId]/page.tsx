@@ -1,5 +1,7 @@
 "use client";
 
+import { formatMoneyExact } from "@/lib/sales-money-preview";
+
 import { ArrowLeft, Loader2, Printer } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -121,11 +123,18 @@ const SECTION_FALLBACK_TITLES: Record<string, string> = {
 };
 
 function money(value: string | number | null | undefined, currency: string) {
-  const amount = Number(value || 0);
-  return `${currency} ${amount.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatMoneyExact(value, currency);
+}
+
+function quantityText(value: string | number) {
+  const match = /^(\d+)(?:\.(\d{1,4}))?$/.exec(String(value));
+  if (!match) return String(value);
+  const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(BigInt(match[1]));
+  const fraction = (match[2] || "").replace(/0+$/, "");
+  if (!fraction) return whole;
+  const separator = new Intl.NumberFormat(undefined).formatToParts(1.1).find(part => part.type === "decimal")?.value || ".";
+  const digits = new Intl.NumberFormat(undefined, { useGrouping: false, minimumIntegerDigits: fraction.length }).format(Number(fraction)); // At most four digits, exact.
+  return `${whole}${separator}${digits}`;
 }
 
 function formatDate(value: string | null | undefined) {
@@ -514,7 +523,7 @@ export default function QuotationPrintPage() {
                       {item.unit_snapshot ? <span>Unit: {item.unit_snapshot}</span> : null}
                     </div>
                   </td>
-                  <td className="px-2 py-3 text-right align-top">{Number(item.quantity).toLocaleString()}</td>
+                  <td className="px-2 py-3 text-right align-top">{quantityText(item.quantity)}</td>
                   <td className="px-2 py-3 text-right align-top">{money(item.unit_price, detail.currency)}</td>
                   <td className="px-2 py-3 text-right align-top">
                     {Number(item.discount_percent) > 0 ? `${Number(item.discount_percent)}%` : "-"}
