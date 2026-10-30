@@ -40,14 +40,15 @@ export async function runPhases(env = process.env, dependencies = {}) {
   if (!directory) throw new Error('Explicit fresh evidence directory required');
   mkdirSync(directory, { recursive: true });
   if (readdirSync(directory).length) throw new Error('Evidence exists; refusing implicit rerun');
-  const baseline = identities(JSON.parse(await run(['node_modules/@playwright/test/cli.js', 'test', '--list', '--reporter=json'], env, true)));
-  const plans = [];
-  for (const phase of [1, 2]) plans.push(identities(JSON.parse(await run(phaseArgs(phase, true), { ...env, BOS_FUNCTIONAL_PHASE: String(phase) }, true))));
-  verifyPartition(baseline, ...plans);
   const summary = { original_cases: 60, completed: 0, phases: [], runtime: 'development', root_cause_proven: false, diagnostic_caps_unchanged: true };
   const save = () => writeFileSync(path.join(directory, 'summary.json'), JSON.stringify(summary, null, 2));
   save();
   try {
+  const baseline = identities(JSON.parse(await run(['node_modules/@playwright/test/cli.js', 'test', '--list', '--reporter=json'], env, true)));
+  const plans = [];
+  for (const phase of [1, 2]) plans.push(identities(JSON.parse(await run(phaseArgs(phase, true), { ...env, BOS_FUNCTIONAL_PHASE: String(phase) }, true))));
+  verifyPartition(baseline, ...plans);
+    summary.preflight_verified = true; save();
     for (const phase of [1, 2]) {
       const phaseDirectory = path.join(directory, `phase-${phase}`); mkdirSync(phaseDirectory);
       const report = path.join(phaseDirectory, 'results.json');
