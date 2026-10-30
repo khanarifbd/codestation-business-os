@@ -176,7 +176,11 @@ test('neutral workspace: text field focus matches Company Settings without an ou
   await expect(contact).toHaveCSS('outline-style', 'none');
   await expect(contact).toHaveCSS('border-top-color', referenceBorder);
   await expect(legal).toHaveCSS('border-top-color', legalUnfocused);
-  for (const field of [dialog.getByLabel('Notes', { exact: true }), dialog.getByLabel('Client type', { exact: true })]) {
+  // The native select's wrapping label also contains its option text.
+  const clientType = dialog.locator('select[name="client_type"]');
+  await expect(clientType).toHaveCount(1);
+  await expect(clientType).toHaveValue('company');
+  for (const field of [dialog.getByLabel('Notes', { exact: true }), clientType]) {
     await field.focus();
     await expect(field).toHaveCSS('outline-style', 'none');
     await expect(field).toHaveCSS('box-shadow', 'none');

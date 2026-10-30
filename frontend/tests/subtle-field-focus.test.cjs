@@ -40,3 +40,11 @@ test('borderless field controls retain an inset focus indicator without changing
   assert.match(rule, /box-shadow: inset 0 -2px 0 currentColor;/);
   assert.doesNotMatch(rule, /outline|border-width|padding|background/);
 });
+
+test('native client type focus QA targets its unique form name rather than concatenated option labels', () => {
+  const source = fs.readFileSync(path.join(root, 'e2e/neutral-workspace-theme.spec.mjs'), 'utf8');
+  assert.ok(source.includes(`const clientType = dialog.locator('select[name="client_type"]');`));
+  assert.ok(source.includes('await expect(clientType).toHaveCount(1);'));
+  assert.ok(source.includes("await expect(clientType).toHaveValue('company');"));
+  assert.doesNotMatch(source, /getByLabel\('Client type', \{ exact: true \}\)/);
+});
