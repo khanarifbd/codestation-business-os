@@ -19,9 +19,14 @@ export function portIsFree() {
   });
 }
 
+function ownedGroupExists(pid) {
+  try { process.kill(-pid, 0); return true; }
+  catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+
 export async function startDevelopmentFrontend({ env, directory, batch, emit, spawnProcess = spawn,
   signalGroup = (pid, signal) => process.kill(-pid, signal), fetchPage = fetch,
-  wait = sleep, waitExit = boundedExit, freePort = portIsFree }) {
+  wait = sleep, waitExit = boundedExit, freePort = portIsFree, groupExists = ownedGroupExists }) {
   if (env.CI !== 'true' || env.ADMIN_SWEEP_RUNTIME !== 'development' || env.NODE_ENV === 'production') throw new Error('Explicit development fixture runtime required; no production spoofing');
   if (!await freePort()) throw new Error('Frontend port is already owned; refusing to replace another process');
   const fd = openSync(path.join(directory, `frontend-${batch}.log`), 'wx', 0o600);
@@ -40,20 +45,24 @@ export async function startDevelopmentFrontend({ env, directory, batch, emit, sp
   async function stop() {
     if (stopped) return;
     stopped = true;
-    if (!terminal && child.pid) {
+    // A Next worker can outlive its CLI leader. The owned process group, not
+    // only the leader's exit event, remains the cleanup boundary.
+    if (child.pid && groupExists(child.pid)) {
       try { signalGroup(child.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
       await waitExit(exited, 10_000);
-      if (!terminal) {
-        signalGroup(child.pid, 'SIGKILL');
+      for (let attempt = 0; attempt < 10 && groupExists(child.pid); attempt++) await wait(100);
+      if (groupExists(child.pid)) {
+        try { signalGroup(child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
         await waitExit(exited, 5_000);
-        if (!terminal) throw new Error('Owned frontend did not exit; no next batch');
       }
     }
     for (let attempt = 0; attempt < 100; attempt++) {
-      if (await freePort()) { emit({ event: 'frontend_stopped', runtime: 'development' }); return; }
+      if ((!child.pid || !groupExists(child.pid)) && await freePort()) {
+        emit({ event: 'frontend_stopped', runtime: 'development' }); return;
+      }
       await wait(100);
     }
-    throw new Error('Frontend port did not release; no next batch');
+    throw new Error('Owned frontend group or port did not release; no next batch');
   }
   try {
     const deadline = Date.now() + 60_000;
