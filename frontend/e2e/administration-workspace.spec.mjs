@@ -36,6 +36,10 @@ test('administration workspace: company save and audit filters work across deskt
   await expect(legalName).toHaveValue('Administration QA Company');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('neutral-theme-admin-company-mobile.png'), fullPage: true });
+  // Viewport evidence keeps fixed/sticky chrome in its real on-screen position.
+  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await page.screenshot({ path: info.outputPath('neutral-theme-admin-company-mobile-viewport.png'), fullPage: false });
   await page.goto('/dashboard/activity-logs');
   await expect(page.getByRole('heading', { name: 'Company Activity Logs', exact: true })).toBeVisible();
   await expect(page.getByText(/records loaded/)).toBeVisible();
@@ -47,6 +51,10 @@ test('administration workspace: company save and audit filters work across deskt
   await expect(page.getByText(/records loaded/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('neutral-theme-admin-activity-mobile.png'), fullPage: true });
+  // Viewport evidence keeps fixed/sticky chrome in its real on-screen position.
+  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  await page.screenshot({ path: info.outputPath('neutral-theme-admin-activity-mobile-viewport.png'), fullPage: false });
   await page.setViewportSize({ width: 1440, height: 1000 });
   const detailAction = page.getByRole('button', { name: /^View activity / }).first();
   await expect(detailAction).toBeVisible();
