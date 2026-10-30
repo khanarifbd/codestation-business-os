@@ -4,7 +4,7 @@ import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from '
 import path from 'node:path';
 import { localBaseURL, resolveRoutes, groupedRoutes, allowedReadOnlyRequest } from './support/registry.mjs';
 
-import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure, exactHeading, verifyResponseIdentities } from './support/evidence.mjs';
+import { safeError, requestOwnership, successfulRouteRead, sensitiveFields, verifyReadyFields, persistSuccessfulBatch, authResult, safeTransportCode, supersededOwnedRead, reconciledReadFailure, exactHeading, verifyResponseIdentities, captureViewports } from './support/evidence.mjs';
 
 const fixturePath = process.env.ADMIN_SWEEP_FIXTURE;
 if (!fixturePath) throw new Error('ADMIN_SWEEP_FIXTURE must identify verified disposable seed metadata');
@@ -142,7 +142,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       if (contract.ready_button) await expect(page.getByRole('button', { name: contract.ready_button, exact: true })).toBeEnabled();
       await verifyReadyFields(page, expect, contract.ready_fields);
       const captures = [];
-      for (const [size, width, height] of (route.desktop_only ? [['desktop', 1440, 1000]] : [['desktop', 1440, 1000], ['mobile', 390, 844]])) {
+      for (const [size, width, height] of captureViewports(route)) {
         await page.setViewportSize({ width, height });
         await page.evaluate(() => window.scrollTo(0, 0));
         await expect(heading).toBeVisible();

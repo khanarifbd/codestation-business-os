@@ -104,3 +104,8 @@ export function verifyResponseIdentities(payload, checks) {
     return payload[collection[0]].filter(row => row && typeof row === 'object' && !Array.isArray(row) && row.id === check.expected_value).length === 1;
   });
 }
+
+export function captureViewports(route) {
+  if (route.desktop_only) return [['desktop', 1440, 1000]];
+  return [['desktop', 1440, 1000], ...(route.pattern === '/dashboard/accounting/money-out' ? [['tablet', 1024, 900]] : []), ['mobile', 390, 844]];
+}
