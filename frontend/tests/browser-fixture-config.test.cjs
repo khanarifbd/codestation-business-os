@@ -49,10 +49,12 @@ test('client project navigation awaits the exact real detail GET before visibili
   assert.doesNotMatch(detail, /timeout:|waitForTimeout|route\(|fulfill\(/);
 });
 
-function readConfig() {
-  return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', "import config from './playwright.config.mjs'; console.log(JSON.stringify(config));"], { cwd: root, encoding: 'utf8' }));
+function readConfig(ci = false) {
+  const env = { ...process.env, CI: String(ci) };
+  delete env.E2E_BASE_URL;
+  return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', "import config from './playwright.config.mjs'; console.log(JSON.stringify(config));"], { cwd: root, env, encoding: 'utf8' }));
 }
-function assertSessionOrdering(value) {
+function assertSessionOrdering(value, ci = false) {
   assert.equal(value.workers, 1);
   assert.equal(value.fullyParallel, false);
   assert.equal(value.timeout, 45_000);
@@ -62,11 +64,12 @@ function assertSessionOrdering(value) {
     { name: 'session-contract', testMatch: '**/session-idle.spec.mjs' },
     { name: 'browser-journeys', testIgnore: '**/session-idle.spec.mjs', dependencies: ['session-contract'] },
   ]);
-  assert.deepEqual(Object.keys(value.use.extraHTTPHeaders), ['Origin']);
+  assert.deepEqual(value.use.extraHTTPHeaders, { Origin: 'http://127.0.0.1:3000', ...(ci ? { Connection: 'close' } : {}) });
 }
 test('session contract runs once before shared-IP bulk traffic without changing security or budgets', () => {
-  const value = readConfig();
-  assertSessionOrdering(value);
+  for (const ci of [false, true]) {
+  const value = readConfig(ci);
+  assertSessionOrdering(value, ci);
   for (const mutate of [
     c => { delete c.projects[1].dependencies; },
     c => { delete c.projects[1].testIgnore; },
@@ -74,9 +77,13 @@ test('session contract runs once before shared-IP bulk traffic without changing 
     c => { c.timeout = 90_000; },
     c => { c.projects[1].timeout = 90_000; },
     c => { c.use.extraHTTPHeaders['X-Forwarded-For'] = '8.8.8.8'; },
+    c => { c.use.extraHTTPHeaders.Connection = 'keep-alive'; },
+    c => { c.use.extraHTTPHeaders.Origin = 'http://other-origin.invalid'; },
+    c => { if (ci) delete c.use.extraHTTPHeaders.Connection; else c.use.extraHTTPHeaders.Connection = 'close'; },
   ]) {
     const changed = structuredClone(value); mutate(changed);
-    assert.throws(() => assertSessionOrdering(changed));
+    assert.throws(() => assertSessionOrdering(changed, ci));
+  }
   }
   const session = fs.readFileSync(path.join(root, 'e2e/session-idle.spec.mjs'), 'utf8');
   assert.match(session, /expect\(heartbeat.status\(\)\).toBe\(200\)/);
@@ -150,5 +157,5 @@ test('only the evidenced cold billing-decision journey receives a 90s total budg
     source.replace("test('Client portal real linked order visibility',async({page})=>{", "test('Client portal real linked order visibility',async({page})=>{ test.setTimeout(90_000);"),
     source.replace('test.setTimeout(90_000);', 'test.setTimeout(90_000); page.setDefaultTimeout(90_000);'),
   ]) assert.throws(() => assertDecisionBudget(altered));
-  assertSessionOrdering(readConfig()); // global test45s / expect10s / no retry unchanged
+  for (const ci of [false, true]) assertSessionOrdering(readConfig(ci), ci); // global test45s / expect10s / no retry unchanged
 });
