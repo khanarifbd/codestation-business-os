@@ -1,5 +1,7 @@
 "use client";
 
+import { useDashboardSession } from "@/components/dashboard-session-context";
+
 import { History, Loader2, PackageCheck, RotateCcw, Truck, Warehouse as WarehouseIcon } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -89,6 +91,8 @@ export function OrderFulfillmentPanel({
   disabled?: boolean;
   onFulfilled: (fulfillmentNumber: string) => Promise<void>;
 }) {
+  const { tenant } = useDashboardSession();
+  const canManageOrders = Boolean(tenant?.is_owner || tenant?.permissions.some(p => p === "*" || p === "orders.manage"));
   const stockItems = useMemo(
     () => items.filter((item) => item.item_type_snapshot === "stock_item" && item.product_id),
     [items],
@@ -206,7 +210,7 @@ export function OrderFulfillmentPanel({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (disabled || inFlight.current || refreshRequired) return;
+    if (!canManageOrders || disabled || inFlight.current || refreshRequired) return;
     if (!warehouseId) {
       setError("Choose a warehouse before fulfillment.");
       return;
@@ -234,7 +238,7 @@ export function OrderFulfillmentPanel({
   }
 
   function beginReverse(entry: Fulfillment) {
-    if (disabled || inFlight.current || refreshRequired) return;
+    if (!canManageOrders || disabled || inFlight.current || refreshRequired) return;
     setReverseId(entry.id);
     setReverseDate(today());
     setReverseReason("");
@@ -243,7 +247,7 @@ export function OrderFulfillmentPanel({
   }
 
   async function reverse(entry: Fulfillment) {
-    if (disabled || inFlight.current || refreshRequired) return;
+    if (!canManageOrders || disabled || inFlight.current || refreshRequired) return;
     const reason = reverseReason.trim();
     if (reason.length < 3) {
       setError("Enter a clear reversal reason (at least 3 characters).");
@@ -257,7 +261,7 @@ export function OrderFulfillmentPanel({
   }
 
   async function performOperation(pending: PendingOperation) {
-    if (disabled || inFlight.current || pending.confirmed || pending.orderId !== orderId) return;
+    if (!canManageOrders || disabled || inFlight.current || pending.confirmed || pending.orderId !== orderId) return;
     inFlight.current = true;
     if (pending.reversing) setReversing(true); else setSaving(true);
     setError(null); setMessage(null);
@@ -323,10 +327,10 @@ export function OrderFulfillmentPanel({
         {error ? <div role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {message ? <div role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
 
-        {uncertain ? <div role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><p>The last stock action may already have completed. An unchanged retry reuses the original request and operation key in this page, not any newly edited fields. Verify fulfillment history before reloading or starting a different action; no automatic retry is performed.</p><button type="button" disabled={disabled || saving || reversing || loading} onClick={() => void retryUnchanged()} className="mt-3 min-h-11 rounded-lg border bg-white px-4 font-semibold disabled:opacity-50">Retry unchanged stock action</button></div> : null}
+        {uncertain ? <div role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><p>The last stock action may already have completed. An unchanged retry reuses the original request and operation key in this page, not any newly edited fields. Verify fulfillment history before reloading or starting a different action; no automatic retry is performed.</p><button type="button" disabled={!canManageOrders || disabled || saving || reversing || loading} onClick={() => void retryUnchanged()} className="mt-3 min-h-11 rounded-lg border bg-white px-4 font-semibold disabled:opacity-50">Retry unchanged stock action</button></div> : null}
         {refreshRequired ? <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"><p>The stock action is saved. Further actions stay locked until fresh stock quantities and history are loaded.</p><button type="button" disabled={saving || reversing || loading} onClick={() => void refreshSavedStatus()} className="mt-3 min-h-11 rounded-lg border bg-white px-4 font-semibold disabled:opacity-50">Refresh saved status</button></div> : null}
 
-        {loading ? <div role="status" aria-label="Loading fulfillment" className="flex min-h-28 items-center justify-center"><Loader2 className="size-5 animate-spin text-neutral-400" /></div> : remainingItems.length > 0 && status !== "completed" && status !== "cancelled" ? (
+        {loading ? <div role="status" aria-label="Loading fulfillment" className="flex min-h-28 items-center justify-center"><Loader2 className="size-5 animate-spin text-neutral-400" /></div> : !canManageOrders ? <p role="status" className="mt-4 text-sm text-neutral-500">Read-only fulfillment history. Posting or reversing requires order management permission.</p> : remainingItems.length > 0 && status !== "completed" && status !== "cancelled" ? (
           <form onSubmit={submit} className="order-dispatch-form"><fieldset disabled={disabled || saving || reversing || refreshRequired} className="contents">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-sm font-medium">Warehouse<select value={warehouseId} onChange={(event) => setWarehouseId(event.target.value)} className="mt-2 h-11 w-full rounded-xl border bg-white px-3 text-sm outline-none focus:border-neutral-500"><option value="">Select warehouse</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.name} ({warehouse.code}){warehouse.is_default ? " · Default" : ""}</option>)}</select></label>
@@ -362,7 +366,7 @@ export function OrderFulfillmentPanel({
                   <div className="text-left sm:text-right"><p className="text-xs text-neutral-400">Inventory cost {reversed ? "restored" : "issued"}</p><p className="mt-1 text-sm font-semibold">{money(entry.total_cogs, entry.currency)}</p>{entry.base_currency !== entry.currency ? <p className="mt-0.5 text-xs text-neutral-500">Reporting: {money(entry.total_cogs_base, entry.base_currency)}</p> : null}</div>
                 </div>
                 <dl className="order-fulfillment-item-ledger">{entry.items.map((item) => <div key={item.id}><dt>{item.item_name}</dt><dd>{quantityText(item.quantity)}</dd></div>)}</dl>
-                {!reversed && status !== "cancelled" ? <div className="mt-4 border-t pt-3">
+                {canManageOrders && !reversed && status !== "cancelled" ? <div className="mt-4 border-t pt-3">
                   {!reversingThis ? <button disabled={disabled || saving || reversing || refreshRequired} type="button" onClick={() => beginReverse(entry)} className="flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold text-neutral-700 disabled:opacity-50"><RotateCcw className="size-3.5" />Reverse fulfillment</button> : <div className="space-y-3 rounded-xl bg-amber-50 p-3">
                     <p className="text-xs leading-5 text-amber-800">Reversal returns the exact dispatched quantity and historical carrying cost, and reverses the COGS journal. This action is auditable.</p>
                     <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">

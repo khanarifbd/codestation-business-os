@@ -1422,7 +1422,7 @@ test('owner stock threshold boundary and fixed service entitlement dates', async
     await page.getByRole('button', { name: 'Client', exact: true }).click();
     await page.getByRole('button', { name: /Synthetic entitlement client/ }).click();
     await page.getByRole('button', { name: 'Create order', exact: true }).click();
-    await expect(page.getByText('Complete all order items.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Complete all order items with valid quantities, prices and percentages (up to four decimal places).', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Item source', exact: true }).click();
     await page.getByRole('button', { name: /^GAP-TERM · Synthetic fixed service/ }).click();
     await page.getByLabel('Order date', { exact: true }).fill('2026-10-22');

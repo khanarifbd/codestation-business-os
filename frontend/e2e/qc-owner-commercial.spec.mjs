@@ -5,6 +5,15 @@ import { expect, test } from "@playwright/test";
 // Real application + PostgreSQL journey. No synthetic API responses or direct
 // database writes. Receipt instrumentation forwards once and releases real bytes. Company isolation and the explicit legacy-note regression fixture use API setup; normal business mutations below
 // are performed through the owner UI and checked through persisted API reads.
+async function withOrderCommercialReadReview(page, orderId, action) {
+  const viewport = page.viewportSize();
+  try { return await action(); }
+  finally {
+    try { if (viewport) await page.setViewportSize(viewport); }
+    finally { await page.goto(`/dashboard/orders/${orderId}`); }
+  }
+}
+
 const email = process.env.E2E_QC_EMAIL ?? "qc-owner@example.com";
 const password = process.env.E2E_PASSWORD;
 
@@ -202,6 +211,36 @@ test("fresh owner: client → quote → order → project → invoice → paymen
       expect(persisted.status).toBe("confirmed");
       evidence.records.orderId = order.id;
       evidence.uiActions.push("Accepted immutable quotation and converted it to a correctly linked order");
+    });
+
+    await test.step("Review real order commercial workspace without mutations", async () => {
+      await withOrderCommercialReadReview(page, order.id, async () => {
+        const endpoint = `/api/sales/orders/${order.id}/commercial`;
+        // Own rejection immediately, including navigation failure before awaiting it.
+        const observedRead = page.waitForResponse(response => new URL(response.url()).pathname === endpoint && response.request().method() === "GET")
+          .then(response => ({ response, error: null }), error => ({ response: null, error }));
+        await page.goto(`/dashboard/orders/${order.id}/commercial`);
+        const observed = await observedRead;
+        if (observed.error) throw observed.error;
+        expect(observed.response.status()).toBe(200);
+        const commercial = await observed.response.json();
+        expect(commercial.order_id).toBe(order.id);
+        expect(commercial.original_value).toBe("367.50");
+        await expect(page.getByRole("heading", { name: "Contract, billing & collection", exact: true })).toBeVisible();
+        const summary = page.getByRole("region", { name: "Commercial summary in BDT", exact: true });
+        await expect(summary.getByText("Original contract", { exact: true }).locator("..").locator("dd")).toHaveText("BDT 367.50");
+        await expect(page.getByRole("button", { name: "Add billing milestone", exact: true })).toBeVisible();
+        await expect(page.getByRole("button", { name: "Add change", exact: true })).toBeVisible();
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.screenshot({ path: testInfo.outputPath("neutral-theme-order-commercial-desktop.png"), fullPage: false });
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await page.screenshot({ path: testInfo.outputPath("neutral-theme-order-commercial-mobile.png"), fullPage: false });
+      });
+      await expect(page.getByRole("link", { name: "Project workspace", exact: true })).toBeVisible();
+      evidence.uiActions.push("Reviewed real commercial summary and owner controls on desktop/mobile without commercial mutations");
     });
 
     await test.step("Create a linked delivery project and complete order execution", async () => {

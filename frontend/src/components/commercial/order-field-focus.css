@@ -1,0 +1,7 @@
+
+/* MoneyInput owns its border on the wrapper, not the inner input. One subtle
+   focus border, matching Company fields; never restore the old outer box. */
+:root:not(.dark) .workspace-shell:not(.dark):not(.dark *) .order-editor-line-pricing>.order-editor-field>label>div:focus-within { border-color:#737373; }
+@media (forced-colors:active) {
+  :root:not(.dark) .workspace-shell:not(.dark):not(.dark *) .order-editor-line-pricing>.order-editor-field>label>div:focus-within { outline:1px solid Highlight; outline-offset:-1px; }
+}

@@ -148,6 +148,7 @@ function OrderDetailPage() {
   const router = useRouter();
   const orderId = params.orderId;
   const { tenant } = useDashboardSession();
+  const canManageOrders = Boolean(tenant?.is_owner || tenant?.permissions.some(p => p === "*" || p === "orders.manage"));
   const query = useSearchParams();
   const canManageFinance = Boolean(tenant?.permissions.some(p => p === "*" || p === "finance.manage"));
   const settlementRead = useOrderSettlementState(orderId);
@@ -262,7 +263,7 @@ function OrderDetailPage() {
   );
 
   async function changeStatus(next: "in_progress" | "completed" | "cancelled", reason?: string) {
-    if (!order) return false;
+    if (!canManageOrders || !order || savingStatus) return false;
     if (next === "completed" && !window.confirm("Complete this order? This marks execution as finished and may lock downstream actions until the order is reopened.")) return false;
     const reopening = order.status === "completed" && next === "in_progress";
     if (reopening && !window.confirm("Reopen this order? The order will return to In Progress so execution and project setup can continue.")) return false;
@@ -351,12 +352,12 @@ function OrderDetailPage() {
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="order-execution-label"><p className="relationship-eyebrow">Execution</p><h2><StatusBadge status={order.status} /></h2></div>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  {order.status === "confirmed" ? <><button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><PlayCircle className="size-4" />Start order</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
-                  {order.status === "in_progress" ? <><button disabled={savingStatus || stockRemaining} onClick={() => void changeStatus("completed")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><CheckCircle2 className="size-4" />{stockRemaining ? "Fulfill stock first" : "Complete order"}</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
-                  {order.status === "completed" ? <button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold disabled:opacity-50"><PlayCircle className="size-4" />Reopen order</button> : null}
+                  {canManageOrders && order.status === "confirmed" ? <><button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><PlayCircle className="size-4" />Start order</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
+                  {canManageOrders && order.status === "in_progress" ? <><button disabled={savingStatus || stockRemaining} onClick={() => void changeStatus("completed")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white disabled:opacity-50"><CheckCircle2 className="size-4" />{stockRemaining ? "Fulfill stock first" : "Complete order"}</button><button disabled={savingStatus || hasPostedFulfillment} onClick={() => setCancelOpen(true)} className="h-11 rounded-xl border px-4 text-sm font-semibold disabled:opacity-40">Cancel</button></> : null}
+                  {canManageOrders && order.status === "completed" ? <button disabled={savingStatus} onClick={() => void changeStatus("in_progress")} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold disabled:opacity-50"><PlayCircle className="size-4" />Reopen order</button> : null}
                 </div>
               </div>
-              {order.status === "completed" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>Order completed.</strong> Reopen it if execution or project setup needs to continue. {canSettle ? "You can also create the invoice and record settlement from this completed order." : null}</div> : null}
+              {order.status === "completed" ? <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800"><strong>Order completed.</strong> {canManageOrders ? "Reopen it if execution or project setup needs to continue." : "Execution is complete."} {canSettle ? "You can also create the invoice and record settlement from this completed order." : null}</div> : null}
               {order.status === "cancelled" ? <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><strong>Order cancelled.</strong><p className="mt-1 whitespace-pre-wrap">{order.cancellation_reason ? `Reason: ${order.cancellation_reason}` : "Cancellation reason is unavailable for this older record."}</p></div> : null}
               {hasPostedFulfillment && order.status !== "completed" ? <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">Posted stock fulfillment cannot be cancelled directly. A stock return/reversal is required first.</div> : null}
             </section>

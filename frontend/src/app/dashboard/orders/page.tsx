@@ -1,5 +1,7 @@
 "use client";
 
+import { useDashboardSession } from "@/components/dashboard-session-context";
+
 import Link from "next/link";
 import { ORDER_LIST_PATH, orderCreateHref, orderDocumentHref, safeOrderReturnHref } from "@/lib/order-navigation";
 import { CheckCircle2, ClipboardCheck, Loader2, PlayCircle, Plus, Search, ArrowUpRight, XCircle } from "lucide-react";
@@ -47,6 +49,8 @@ function compactMoney(value: string | number, currency: string) {
 }
 
 export default function OrdersPage() {
+  const { tenant } = useDashboardSession();
+  const canManageOrders = Boolean(tenant?.is_owner || tenant?.permissions.some(p => p === "*" || p === "orders.manage"));
   const router = useRouter();
   const searchParams = useSearchParams();
   const quotationId = searchParams.get("quotation_id");
@@ -199,7 +203,7 @@ export default function OrdersPage() {
   }, [requestedOrderId, router, cleanListHref]);
 
   async function convertQuotation() {
-    if (!quotationId || !quotation || quotation.id !== quotationId || conversionPending.current) return;
+    if (!canManageOrders || !quotationId || !quotation || quotation.id !== quotationId || conversionPending.current) return;
     if (quotation.status !== "accepted") {
       setError("Only accepted quotations can become orders.");
       return;
@@ -228,9 +232,9 @@ export default function OrdersPage() {
 
   return (
     <RelationshipPage className="orders-register-page">
-      <RelationshipHeader eyebrow="SALES / EXECUTION" title="Orders" description="From confirmed scope to completed work. Keep delivery and commercial context together." actions={<a href={orderCreateHref(cleanListHref)} className="relationship-primary"><Plus aria-hidden="true" />New order</a>} />
+      <RelationshipHeader eyebrow="SALES / EXECUTION" title="Orders" description="From confirmed scope to completed work. Keep delivery and commercial context together." actions={canManageOrders ? <a href={orderCreateHref(cleanListHref)} className="relationship-primary"><Plus aria-hidden="true" />New order</a> : undefined} />
 
-      {quotation && quotation.id === quotationId ? <section className="order-quotation-handoff" aria-label="Quotation handoff"><div><p>Quotation handoff</p><h2>{quotation.quotation_number} · {quotation.client_name_snapshot}</h2><span>{money(quotation.total, quotation.currency)} · Status: {quotation.status}</span></div>{quotationOrderLink ? <Link href={orderDocumentHref(quotationOrderLink.order_id, "view", cleanListHref)} className="relationship-secondary">Open {quotationOrderLink.order_number}</Link> : <button disabled={saving || quotation.status !== "accepted"} onClick={() => void convertQuotation()} className="relationship-primary">{saving ? "Creating..." : "Create Order"}</button>}</section> : null}
+      {quotation && quotation.id === quotationId ? <section className="order-quotation-handoff" aria-label="Quotation handoff"><div><p>Quotation handoff</p><h2>{quotation.quotation_number} · {quotation.client_name_snapshot}</h2><span>{money(quotation.total, quotation.currency)} · Status: {quotation.status}</span></div>{quotationOrderLink ? <Link href={orderDocumentHref(quotationOrderLink.order_id, "view", cleanListHref)} className="relationship-secondary">Open {quotationOrderLink.order_number}</Link> : canManageOrders ? <button disabled={saving || quotation.status !== "accepted"} onClick={() => void convertQuotation()} className="relationship-primary">{saving ? "Creating..." : "Create Order"}</button> : <span>Read-only order handoff</span>}</section> : null}
 
       <div className="orders-overview-desktop"><OrderSummary summary={summary} valueSummary={valueSummary} /></div>
       <details className="orders-overview-mobile"><summary><span>All orders <strong>{summary?.total ?? "—"}</strong></span><span>Counts & values by currency</span></summary><OrderSummary summary={summary} valueSummary={valueSummary} /></details>

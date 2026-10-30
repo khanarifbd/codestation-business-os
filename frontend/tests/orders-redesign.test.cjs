@@ -9,7 +9,8 @@ const baseline=process.env.BASELINE_FRONTEND?path.resolve(process.env.BASELINE_F
 const files={list:'src/app/dashboard/orders/page.tsx',new:'src/app/dashboard/orders/new/page.tsx',edit:'src/app/dashboard/orders/[orderId]/edit/page.tsx',detail:'src/app/dashboard/orders/[orderId]/page.tsx',commercial:'src/app/dashboard/orders/[orderId]/commercial/page.tsx',layout:'src/app/dashboard/orders/layout.tsx',workspace:'src/app/dashboard/orders/[orderId]/layout.tsx',fulfillment:'src/components/order-fulfillment-panel.tsx'};
 const mains={list:['OrdersPage'],new:['NewManualOrderPage','Field'],edit:['EditOrderPage','Field'],detail:['OrderDetailPage','BusinessFlow','SettlementCard'],commercial:['OrderCommercialPage','LineEditor'],layout:['OrdersLayout'],workspace:['OrderWorkspaceLayout'],fulfillment:['OrderFulfillmentPanel']};
 const printer=ts.createPrinter({removeComments:true});
-const read=(dir,file)=>fs.readFileSync(path.join(dir,file),'utf8');
+const {restoreOrdersFinal}=require('./helpers/reviewed-orders-final.cjs');
+const read=(dir,file)=>{const source=fs.readFileSync(path.join(dir,file),'utf8');return dir===root?restoreOrdersFinal(file,source):source;};
 const parse=(dir,kind)=>ts.createSourceFile(files[kind],read(dir,files[kind]),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 function find(dir,kind,name){const ast=parse(dir,kind);let node;function visit(n){if(ts.isFunctionDeclaration(n)&&n.name?.text===name)node=n;ts.forEachChild(n,visit);}visit(ast);assert.ok(node,`${kind}/${name}`);return{ast,node};}
 function isJsx(n){return ts.isJsxElement(n)||ts.isJsxSelfClosingElement(n)||ts.isJsxFragment(n);}
@@ -251,4 +252,14 @@ test('settlement extraction: original seven-field JSON object and fee.toFixed(2)
  assert.deepEqual(tokens(printed(actual,ast)),tokens(expected));
  assert.match(read(root,file),/const expense = Number\(values.expenseAmount \|\| 0\)/);
  for(const message of ['Select the account or wallet that received the order payment.','Enter a valid expense amount.','Settlement expense cannot exceed the order total.','Select an expense category when an expense amount is entered.'])assert.ok(read(root,file).includes(message));
+});
+
+test('Orders final adapter rejects changed exact hunks and preserves unrelated source',()=>{
+ const changes=require('./helpers/reviewed-orders-final.json');
+ for(const [file,hunks]of Object.entries(changes)){
+  const {restoreOrdersCommercialSafety,restoreOrdersBeforeSafety}=require('./helpers/reviewed-orders-final.cjs');
+  const source=restoreOrdersCommercialSafety(file,fs.readFileSync(path.join(root,file),'utf8'));
+  for(const [,after]of hunks){assert.ok(source.includes(after));assert.throws(()=>restoreOrdersBeforeSafety(file,source.replace(after,after.slice(0,Math.floor(after.length/2))+after.slice(Math.floor(after.length/2)+1))),/exact reviewed Orders hunk/);}
+  assert.ok(restoreOrdersBeforeSafety(file,source).includes('"use client"'));
+ }
 });
