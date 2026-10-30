@@ -80,7 +80,7 @@ def seed_hr(db, tenant, request_factory, fixture_date: date, shared_ids=None) ->
         weekly_modes=['office']*7), path=f'/hr/attendance/policies/{eid}', method='PUT')
     exception = call(hr_attendance.create_request, hr_attendance.AttendanceRequestCreate(request_type='mode',
         work_date=fixture_date+timedelta(days=1), reason='Synthetic remote request for read-only review'),
-        path='/hr/attendance/requests')
+        path='/hr/self/attendance-requests')
     job = call(hr.create_job, hr.JobCreate(title=names['job'], location='Synthetic office'), path='/hr/jobs')
     candidate = call(hr.create_candidate, hr.CandidateCreate(job_opening_id=_field(job, 'id'),
         full_name=names['candidate'], email=f'readonly-{marker}@example.invalid'), path='/hr/candidates')
