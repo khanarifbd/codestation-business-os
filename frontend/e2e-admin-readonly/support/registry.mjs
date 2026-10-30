@@ -3,7 +3,7 @@ export const ROUTES_PER_BATCH = 40;
 export const RATE_WINDOW_MS = 600_000;
 export function localBaseURL(raw) {
   const value = new URL(raw);
-  if (value.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(value.hostname) || value.username || value.password) throw new Error('Read-only sweep requires plain loopback HTTP');
+  if (value.protocol !== 'http:' || value.hostname !== 'localhost' || value.username || value.password) throw new Error('Read-only production sweep requires exact localhost HTTP for Secure-cookie compatibility');
   return value.origin;
 }
 function exactPath(raw) {

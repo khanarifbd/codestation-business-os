@@ -20,6 +20,7 @@ const emit = event => appendFileSync(eventFile, `${JSON.stringify({ at: Date.now
 let context, page, routeId = 'setup';
 const responses = [], errors = [], writes = [];
 const ownership = requestOwnership();
+const pendingResponses = new Set();
 
 test.beforeAll(async ({ browser }) => {
   const password = process.env.E2E_PASSWORD;
@@ -50,18 +51,36 @@ test.beforeAll(async ({ browser }) => {
     writes.push(attempted); emit(attempted);
     return route.abort('blockedbyclient');
   });
+  page.on('requestfailed', request => {
+    const pathname = new URL(request.url()).pathname;
+    if (!pathname.startsWith('/api/')) return;
+    const failure = { event: 'api_read_failure', route_id: ownership.owner(request), pathname, classification: 'request_transport_failure' };
+    errors.push(failure); emit(failure);
+  });
   page.on('response', response => {
     const pathname = new URL(response.url()).pathname;
     if (!pathname.startsWith('/api/')) return;
     const entry = { event: 'api_response', route_id: ownership.owner(response.request()), method: response.request().method(), pathname, status: response.status() };
-    responses.push(entry); emit(entry);
-    if (entry.status >= 400) errors.push(entry);
+    const completion = (async () => {
+      try {
+        const failed = await response.finished();
+        if (failed) throw new Error('Response body incomplete');
+        responses.push(entry); emit(entry);
+        if (entry.status >= 400) errors.push(entry);
+      } catch {
+        const failure = { event: 'api_read_failure', route_id: entry.route_id, pathname, classification: 'response_body_incomplete' };
+        errors.push(failure); emit(failure);
+      }
+    })();
+    pendingResponses.add(completion);
+    void completion.finally(() => pendingResponses.delete(completion));
   });
   page.on('pageerror', () => { const entry = safeError('page_error', routeId); errors.push(entry); emit(entry); });
   page.on('console', message => { if (message.type() === 'error') { const entry = safeError('console_error', routeId); errors.push(entry); emit(entry); } });
 });
 
 test.afterAll(async () => {
+  await Promise.all(pendingResponses);
   emit({ event: 'batch_terminal', blocked_mutations: writes.length, errors: errors.length });
   if (context) await context.close();
 });

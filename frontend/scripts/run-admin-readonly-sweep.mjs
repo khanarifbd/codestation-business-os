@@ -12,7 +12,7 @@ export function summarize(manifest, events) {
   const rendered = new Map(events.filter(e => e.event === 'route_rendered').map(e => [e.route_id, e]));
   const blocked = new Map(events.filter(e => e.event === 'blocked_route').map(e => [e.route_id, e]));
   const routes = manifest.routes.map(route => ({ id: route.id, pattern: route.pattern, ...(rendered.get(route.id) || blocked.get(route.id) || { event: 'not_executed' }), visual_review: 'pending_actual_pixel_inspection' }));
-  return { unexpected_errors: events.filter(e => e.event === 'page_error' || e.event === 'console_error' || e.event === 'api_response' && e.status >= 400).length, route_count: routes.length, rendered: routes.filter(r => r.event === 'route_rendered').length, blocked: routes.filter(r => r.event === 'blocked_route').length, not_executed: routes.filter(r => r.event === 'not_executed').length, mutation_attempts: events.filter(e => e.event === 'blocked_mutation').length, rate_limit_responses: events.filter(e => e.event === 'api_response' && e.status === 429).length, routes };
+  return { unexpected_errors: events.filter(e => e.event === 'api_read_failure' || e.event === 'page_error' || e.event === 'console_error' || e.event === 'api_response' && e.status >= 400).length, route_count: routes.length, rendered: routes.filter(r => r.event === 'route_rendered').length, blocked: routes.filter(r => r.event === 'blocked_route').length, not_executed: routes.filter(r => r.event === 'not_executed').length, mutation_attempts: events.filter(e => e.event === 'blocked_mutation').length, rate_limit_responses: events.filter(e => e.event === 'api_response' && e.status === 429).length, routes };
 }
 async function executeBatch(batch, directory, env) {
   return new Promise((resolve, reject) => {

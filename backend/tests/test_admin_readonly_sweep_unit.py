@@ -47,6 +47,19 @@ class SweepGateTests(TestCase):
                 self.assertTrue(contract['expected_get_paths'])
                 self.assertEqual(contract['expected_mode'],'ready')
                 self.assertNotIn('password',contract.keys())
+    def test_all_dynamic_routes_need_exact_typed_override(self):
+        route='/dashboard/accounts/[accountId]'
+        manifest={'routes':[{'pattern':route}]}
+        registry={'route_contracts':{route:{}},'route_overrides':{}}
+        with self.assertRaisesRegex(RuntimeError,'Missing typed'):seed.validate_registry(registry,manifest)
+        for bad in ['https://example.com/dashboard/accounts/a','/dashboard/invoices/a','/dashboard/accounts/a%2fb']:
+            registry['route_overrides'][route]=bad
+            with self.subTest(bad=bad),self.assertRaises(RuntimeError):seed.validate_registry(registry,manifest)
+        registry['route_overrides'][route]='/dashboard/accounts/synthetic-123'
+        seed.validate_registry(registry,manifest)
+    def test_missing_or_extra_contract_fails_before_browser(self):
+        for contracts in [{},{'/dashboard':{},'/other':{}}]:
+            with self.assertRaises(RuntimeError):seed.validate_registry({'route_contracts':contracts,'route_overrides':{}},{'routes':[{'pattern':'/dashboard'}]})
     def test_no_credential_creation_or_retry_and_remaining_stage_order(self):
         source=Path(seed.__file__).read_text()
         self.assertLess(source.index('assert_target_before_creation(db)',source.index('def main')),source.index('response = create_organization'))

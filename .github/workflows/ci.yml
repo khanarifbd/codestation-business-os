@@ -225,7 +225,7 @@ jobs:
 
   browser-smoke:
     runs-on: ubuntu-latest
-    services:
+    services: &browser-fixture-services
       postgres:
         image: postgres:17-alpine
         env:
@@ -239,7 +239,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
-    env:
+    env: &browser-fixture-env
       DATABASE_URL: postgresql+psycopg://business_os:business_os_e2e@127.0.0.1:5432/codestation_business_os
       JWT_SECRET_KEY: e2e-only-secret-change-me-32-bytes-minimum
       GOOGLE_OAUTH_CLIENT_ID: ""
@@ -337,3 +337,85 @@ jobs:
           cat /tmp/business-os-backend.log || true
           echo "--- frontend ---"
           cat /tmp/business-os-frontend.log || true
+
+  admin-readonly:
+    # Independent disposable DB/processes; never shares or modifies the60-case job.
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    services: *browser-fixture-services
+    env: *browser-fixture-env
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Configure private seed metadata and sanitized evidence paths
+        run: |
+          echo "ADMIN_SWEEP_FIXTURE=$RUNNER_TEMP/admin-readonly-fixture.json" >> "$GITHUB_ENV"
+          echo "ADMIN_SWEEP_EVIDENCE=$GITHUB_WORKSPACE/frontend/admin-readonly-evidence" >> "$GITHUB_ENV"
+      - name: Prepare isolated service-created read-only fixtures
+        working-directory: backend
+        run: |
+          uv sync --frozen
+          uv run alembic upgrade head
+          uv run python scripts/seed_browser_e2e.py
+          uv run python scripts/seed_admin_readonly_sweep.py
+          nohup .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 >"$RUNNER_TEMP/admin-readonly-backend.log" 2>&1 &
+      - name: Wait for isolated backend
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/api/v1/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "Isolated backend did not become ready; no retry or raw log upload."
+          exit 1
+      - run: corepack enable
+      - name: Build production frontend for read-only render verification
+        working-directory: frontend
+        env:
+          INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
+          pnpm build
+          cp -r .next/static .next/standalone/.next/static
+          if [ -d public ]; then cp -r public .next/standalone/public; fi
+      - name: Start built standalone frontend (no development fallback)
+        working-directory: frontend
+        env:
+          INTERNAL_API_URL: http://127.0.0.1:8000/api/v1
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+          NEXT_PUBLIC_GOOGLE_CLIENT_ID: ""
+          HOSTNAME: 127.0.0.1
+          PORT: "3000"
+        run: nohup node .next/standalone/server.js >"$RUNNER_TEMP/admin-readonly-frontend.log" 2>&1 &
+      - name: Wait for built frontend
+        run: |
+          for i in {1..60}; do
+            if curl --fail --silent http://localhost:3000/login >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "Built frontend did not become ready; no dev fallback or raw log upload."
+          exit 1
+      - name: Run bounded read-only route groups with measured session budget
+        working-directory: frontend
+        run: node scripts/run-admin-readonly-sweep.mjs
+      - name: Preserve only sanitized route evidence and masked screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-readonly-route-evidence
+          path: |
+            frontend/admin-readonly-evidence/batch-*.ndjson
+            frontend/admin-readonly-evidence/route-evidence.json
+            frontend/admin-readonly-evidence/captures-*/**/admin-readonly-*.png
+          if-no-files-found: warn
+          retention-days: 7

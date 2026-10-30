@@ -4,6 +4,8 @@ No credentials/roles are created here. Partial failures are fatal and never retr
 from datetime import date
 import json
 import os
+import re
+from urllib.parse import urlsplit
 from pathlib import Path
 from uuid import uuid4
 from sqlalchemy import select
@@ -17,6 +19,7 @@ from app.schemas.organization import OrganizationCreate
 from app.services.accounting_integrity_audit import audit_organization_accounting
 from scripts.seed_admin_readonly_financial import seed_financial, seed_remaining_financial
 from scripts.admin_readonly_shared_contracts import shared_route_contracts
+from scripts.admin_readonly_accounting_contracts import accounting_route_contracts
 
 
 def require(condition, message):
@@ -47,6 +50,23 @@ def merge_registry(registry, section):
     for name in ('route_overrides', 'route_contracts'):
         registry[name].update(section.get(name, {}))
     return {key: value for key, value in section.items() if key not in ('route_overrides', 'route_contracts')}
+
+
+def validate_registry(registry, manifest):
+    patterns = {row['pattern'] for row in manifest['routes']}
+    require(set(registry['route_contracts']) == patterns,
+            'Every exact route must have one reviewed readiness contract before browser execution')
+    require(set(registry['route_overrides']) <= patterns, 'Unknown route override')
+    for pattern in patterns:
+        actual = registry['route_overrides'].get(pattern)
+        require('[' not in pattern or actual is not None, 'Missing typed fixture route override: ' + pattern)
+        if actual is None: continue
+        parsed = urlsplit(actual)
+        require(not parsed.scheme and not parsed.netloc and not parsed.fragment, 'Only relative fixture routes allowed')
+        expected = pattern.split('/'); parts = parsed.path.split('/')
+        require(len(expected) == len(parts) and all(
+            bool(re.fullmatch(r'[A-Za-z0-9_-]+', value)) if token.startswith('[') else token == value
+            for token, value in zip(expected, parts)), 'Fixture route does not match declared record kind')
 
 
 def main():
@@ -84,9 +104,13 @@ def main():
         remaining = seed_remaining_financial(db, tenant, request_factory, today, shared_ids=shared)
         registry['sections']['remaining_financial'] = merge_registry(registry, remaining)
         shared.update(registry['sections']['remaining_financial'])
+        labels = {**financial.get('fixture_labels', {}), **commercial.get('fixture_labels', {}), **remaining.get('fixture_labels', {})}
+        merge_registry(registry, accounting_route_contracts(shared, labels, today))
         hr = seed_hr(db, tenant, request_factory, today, shared_ids=shared)
         registry['sections']['hr'] = merge_registry(registry, hr)
         merge_registry(registry, {'route_contracts': shared_route_contracts(name, owner.full_name)})
+        manifest = json.loads((Path(__file__).resolve().parents[2] / 'frontend/e2e-admin-readonly/routes.json').read_text())
+        validate_registry(registry, manifest)
         audit = audit_organization_accounting(db, tenant.organization_id)
         # Exact audit result contract is independently reviewed alongside fixture
         # helper; do not publish metadata for a failed accounting audit.
