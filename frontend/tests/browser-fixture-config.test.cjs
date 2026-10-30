@@ -119,10 +119,11 @@ test('portal split adds three independent cases, retaining each original privacy
   const files = fs.readdirSync(path.join(root, 'e2e')).filter(file => file.endsWith('.spec.mjs'));
   // 49 declarations plus the existing two-entry leads/clients parameterization = 50 executions.
   // Before this split there were 46 declarations / 47 executions; none are excluded.
-  const existingFiles = files.filter(file => file !== 'neutral-workspace-theme.spec.mjs');
+  const existingFiles = files.filter(file => !['neutral-workspace-theme.spec.mjs', 'administration-workspace.spec.mjs'].includes(file));
   assert.equal(existingFiles.reduce((count, file) => count + declarations(fs.readFileSync(path.join(root, 'e2e', file), 'utf8')).length, 0), 49);
-  assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/neutral-workspace-theme.spec.mjs'), 'utf8')).length, 3);
-  // Three added real rendered palette journeys: all 50 original executions remain.
+  assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/neutral-workspace-theme.spec.mjs'), 'utf8')).length, 5);
+  assert.equal(declarations(fs.readFileSync(path.join(root, 'e2e/administration-workspace.spec.mjs'), 'utf8')).length, 1);
+  // Three palette, two field-focus and one administration journey: all 50 original executions remain.
 });
 
 function assertDecisionBudget(source) {
