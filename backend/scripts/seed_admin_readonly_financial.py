@@ -142,6 +142,11 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
             f'{root}/[loanId]/receive': f"{root}/{active['id']}/receive",
             f'{root}/[loanId]/repay': f"{root}/{active['id']}/repay",
             f'{root}/[loanId]/close': f"{root}/{paid['id']}/close",
+            '/dashboard/accounting/tax/codes/[taxCodeId]': f"/dashboard/accounting/tax/codes/{code['id']}",
+            '/dashboard/accounting/tax/codes/[taxCodeId]/edit': f"/dashboard/accounting/tax/codes/{code['id']}/edit",
+            '/dashboard/accounting/tax/settlements/[settlementId]': f"/dashboard/accounting/tax/settlements/{settlement['id']}",
+            '/dashboard/accounting/reconciliation/[reconciliationId]': f"/dashboard/accounting/reconciliation/{reconciliation['id']}",
+            '/dashboard/accounting/reconciliation/[reconciliationId]/match': f"/dashboard/accounting/reconciliation/{reconciliation['id']}/match",
         },
     }
 

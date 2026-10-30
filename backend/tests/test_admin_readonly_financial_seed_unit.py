@@ -136,6 +136,18 @@ class SeedBoundaryTests(unittest.TestCase):
         self.assertEqual(result['payable_bill_id'], 'payable-bill')
         self.assertTrue(result['accounting_integrity'])
         contracts = result['route_contracts']
+        dynamic = {pattern for pattern in contracts if '[' in pattern}
+        self.assertTrue(dynamic.issubset(result['route_overrides']))
+        for pattern in dynamic:
+            self.assertNotIn('[', result['route_overrides'][pattern])
+        for pattern, identifier, suffix in [
+            ('/dashboard/accounting/tax/codes/[taxCodeId]', result['tax_code_id'], ''),
+            ('/dashboard/accounting/tax/codes/[taxCodeId]/edit', result['tax_code_id'], '/edit'),
+            ('/dashboard/accounting/tax/settlements/[settlementId]', result['tax_settlement_id'], ''),
+            ('/dashboard/accounting/reconciliation/[reconciliationId]', result['reconciliation_id'], ''),
+            ('/dashboard/accounting/reconciliation/[reconciliationId]/match', result['reconciliation_id'], '/match')]:
+            prefix = pattern.split('[')[0]
+            self.assertEqual(result['route_overrides'][pattern], prefix+identifier+suffix)
         routes = Path(__file__).parents[2] / 'frontend/src/app/dashboard/accounting'
         patterns = {'/dashboard/accounting/' + str(p.relative_to(routes).parent) for family in ('loans', 'tax', 'reconciliation') for p in (routes / family).rglob('page.tsx')}
         self.assertEqual(set(contracts), patterns)
