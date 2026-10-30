@@ -363,6 +363,7 @@ jobs:
         working-directory: backend
         run: |
           uv sync --frozen
+          uv run --offline --no-sync python -m unittest discover -s tests -p "test_admin_readonly_*unit.py" -v
           uv run alembic upgrade head
           uv run python scripts/seed_browser_e2e.py
           uv run python scripts/seed_admin_readonly_sweep.py
@@ -385,6 +386,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm add --save-dev --lockfile=false @playwright/test@1.55.0
+          node --test tests/admin-readonly-registry.test.cjs
           pnpm build
           cp -r .next/static .next/standalone/.next/static
           if [ -d public ]; then cp -r public .next/standalone/public; fi
