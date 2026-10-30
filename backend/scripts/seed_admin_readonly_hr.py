@@ -10,8 +10,7 @@ from sqlalchemy import select
 from app.models.team import Employee
 from app.models.user import User
 from app.api.v1 import hr, hr_attendance, payroll
-from app.api.v1.finance import create_account
-from app.schemas.finance import FinancialAccountCreate
+from app.models.finance import FinancialAccount
 from app.schemas.payroll import (SalaryProfileCreate, PayrollPeriodCreate, PayrollRunCreate,
     PayrollEntryUpdate, PayrollWithholdingPaymentCreate)
 from app.services.accounting_integrity_audit import audit_organization_accounting
@@ -41,6 +40,12 @@ def seed_hr(db, tenant, request_factory, fixture_date: date, shared_ids=None) ->
     _require(employee is not None and employee.employment_status == 'active', 'Existing active owner employee required')
     owner = db.get(User, tenant.user_id)
     _require(owner is not None and bool(owner.full_name), 'Fixture owner display name required')
+    account_id = (shared_ids or {}).get('account_id')
+    _require(bool(account_id), 'Previously service-funded fixture account required')
+    account = db.get(FinancialAccount, account_id)
+    _require(account is not None and account.organization_id == tenant.organization_id
+             and account.currency == 'USD' and account.is_active and account.account_type != 'credit_card',
+             'Matching active USD fixture account required')
     marker = uuid4().hex[:8]
     names = {'owner': owner.full_name, 'office': f'Synthetic sweep office {marker}',
              'document': f'Synthetic metadata-only document {marker}', 'event': f'Synthetic confirmation {marker}',
@@ -98,8 +103,6 @@ def seed_hr(db, tenant, request_factory, fixture_date: date, shared_ids=None) ->
         path=f'/payroll/runs/{approved_id}/entries/{_field(_field(approved, "entries")[0], "id")}', method='PATCH')
     approved = call(payroll.approve_run, approved_id, path=f'/payroll/runs/{approved_id}/approve')
     _require(_field(approved, 'status') == 'approved', 'Approved synthetic run required for read-only pay page')
-    account = call(create_account, FinancialAccountCreate(name=f'Synthetic payroll bank {marker}',
-        account_type='bank', currency='USD', opening_balance=Decimal('10')), path='/finance/accounts')
     payment = call(payroll.pay_payroll_withholding, PayrollWithholdingPaymentCreate(account_id=account.id,
         payment_date=following-timedelta(days=1), amount=Decimal('1'), reference=f'SYNTHETIC-RO-{marker}',
         notes='Disposable CI withholding fixture, no external payment'), path='/payroll/withholdings/payments')

@@ -20,7 +20,8 @@ class HRSeedTests(unittest.TestCase):
         self.gate=self.stack.enter_context(patch.object(seed,'assert_financial_fixture_target'))
         self.db=Mock();self.db.in_transaction.return_value=False
         self.db.scalar.return_value=NS(id='employee',employment_status='active')
-        self.db.get.return_value=NS(full_name='Synthetic Owner')
+        self.account=NS(id='funded-account',organization_id='org',currency='USD',is_active=True,account_type='bank')
+        self.db.get.side_effect=lambda model,_id: self.account if model is seed.FinancialAccount else NS(full_name='Synthetic Owner')
         self.tenant=NS(organization_id='org',membership_id='member',user_id='owner',organization=NS(name='Read-only admin sweep synthetic',timezone='UTC'))
         self.calls=[];self.period_count=0;self.run_count=0
         def service(name):
@@ -39,11 +40,10 @@ class HRSeedTests(unittest.TestCase):
             (seed.hr_attendance,['create_office','upsert_policy','create_request']),
             (seed.payroll,['create_salary_profile','create_period','create_run','update_entry','approve_run','pay_payroll_withholding'])]:
             for name in names:self.stack.enter_context(patch.object(module,name,side_effect=service(name)))
-        self.stack.enter_context(patch.object(seed,'create_account',side_effect=service('create_account')))
         self.audit=self.stack.enter_context(patch.object(seed,'audit_organization_accounting',return_value=NS(ok=True)))
         self.request=lambda method,path:NS(method=method,path=path)
 
-    def run_seed(self):return seed.seed_hr(self.db,self.tenant,self.request,date.today())
+    def run_seed(self):return seed.seed_hr(self.db,self.tenant,self.request,date.today(),shared_ids={'account_id':'funded-account'})
 
     def test_gate_runs_before_any_mutation_and_failure_never_retries(self):
         self.gate.side_effect=RuntimeError('wrong target')
@@ -59,6 +59,15 @@ class HRSeedTests(unittest.TestCase):
         seed.hr.create_attendance.side_effect=RuntimeError('service failed')
         with self.assertRaisesRegex(RuntimeError,'service failed'):self.run_seed()
         seed.hr.create_attendance.assert_called_once();seed.payroll.create_run.assert_not_called()
+
+    def test_service_funded_account_required_before_mutation(self):
+        with self.assertRaisesRegex(RuntimeError,'service-funded'):
+            seed.seed_hr(self.db,self.tenant,self.request,date.today())
+        for field,value in [('organization_id','other'),('currency','GBP'),('is_active',False),('account_type','credit_card')]:
+            old=getattr(self.account,field);setattr(self.account,field,value)
+            with self.assertRaisesRegex(RuntimeError,'active USD'):self.run_seed()
+            setattr(self.account,field,old)
+        self.assertEqual(self.calls,[])
 
     def test_normal_service_payloads_typed_registry_and_exact_routes(self):
         result=self.run_seed();self.gate.assert_called_once_with(self.db,self.tenant)
@@ -76,6 +85,7 @@ class HRSeedTests(unittest.TestCase):
         self.assertEqual(seed.hr.create_leave_type.call_args.args[0].annual_allowance_days,12)
         self.assertEqual(seed.payroll.update_entry.call_args.args[2].tax_amount,2)
         self.assertEqual(seed.payroll.pay_payroll_withholding.call_args.args[0].amount,1)
+        self.assertEqual(seed.payroll.pay_payroll_withholding.call_args.args[0].account_id,'funded-account')
         self.assertTrue(result['accounting_integrity']);self.audit.assert_called_once_with(self.db,'org')
         self.assertEqual(result['synthetic_seed_states']['approvedRunId'],'approved')
         self.assertEqual(len([n for n,_ in self.calls if n=='approve_run']),1)
