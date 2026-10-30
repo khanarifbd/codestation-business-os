@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+import unittest
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -46,6 +48,12 @@ def expect_http_error(expected_status: int, fn) -> None:
 
 
 def main() -> None:
+    # Run the client input boundary suite in this existing CI entrypoint too.
+    suite = unittest.defaultTestLoader.discover(
+        str(Path(__file__).resolve().parents[1] / "tests"), pattern="test_client_validation_contract.py"
+    )
+    if not unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful():
+        raise SystemExit(1)
     now = datetime.now(timezone.utc)
     lead_id = str(uuid4())
     unqualified_lead_id = str(uuid4())

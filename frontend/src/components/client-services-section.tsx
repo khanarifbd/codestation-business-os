@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { formatMoneyExact } from "@/lib/sales-money-preview";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarClock, RefreshCw } from "lucide-react";
 
@@ -23,7 +24,7 @@ type Service = {
   service_status: "one_time" | "upcoming" | "active" | "expired" | string;
 };
 
-function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+function money(value: string | number, currency: string) { return formatMoneyExact(value, currency); }
 function date(value: string | null) { return value ? new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(new Date(`${value}T00:00:00`)) : "—"; }
 function durationLabel(months: number | null) { return months == null ? "One-time" : `${months} month${months === 1 ? "" : "s"}`; }
 function statusClass(status: string) {

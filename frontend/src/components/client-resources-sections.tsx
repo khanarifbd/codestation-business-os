@@ -88,6 +88,7 @@ function dateTime(value: string | null) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZoneName: "short",
   }).format(new Date(value));
 }
 

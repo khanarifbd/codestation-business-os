@@ -9,7 +9,8 @@ const baseline=process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
   : path.join(root,'../test-fixtures/frontend-original');
 const files={crm:'src/app/dashboard/crm/page.tsx',clients:'src/app/dashboard/clients/page.tsx',detail:'src/app/dashboard/clients/[clientId]/page.tsx'};
-const read=(dir,file)=>fs.readFileSync(path.join(dir,file),'utf8');
+const {restoreReviewedClients}=require('./helpers/reviewed-clients-revision.cjs');
+const read=(dir,file)=>{const source=fs.readFileSync(path.join(dir,file),'utf8');return dir===root?restoreReviewedClients(file,source):source;};
 const ast=(dir,file)=>ts.createSourceFile(file,read(dir,file),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 const printer=ts.createPrinter({removeComments:true});
 function find(dir,file,name){const source=ast(dir,file);let node;function visit(n){if(ts.isFunctionDeclaration(n)&&n.name?.text===name)node=n;ts.forEachChild(n,visit);}visit(source);assert.ok(node,name);return {source,node};}
@@ -26,4 +27,12 @@ test('CRM and client-access API proxy files retain authenticated tenant contract
 });
 test('Underlying client access, resource, service and lead-requirements behavior is unchanged',()=>{
  for(const file of ['src/components/client-access-section.tsx','src/components/client-external-profiles-section.tsx','src/components/client-resources-sections.tsx','src/components/client-services-section.tsx','src/components/lead-requirements-card.tsx','src/lib/company-options.ts'])assert.equal(read(root,file),read(baseline,file),file);
+});
+
+test('Reviewed Clients allowance rejects tampered exact deltas rather than masking changes',()=>{
+ const changes=require('./helpers/reviewed-clients-revision.json');
+ for(const [file,hunks] of Object.entries(changes)){
+  const source=fs.readFileSync(path.join(root,file),'utf8');
+  for(const [,after] of hunks)assert.throws(()=>restoreReviewedClients(file,source.replace(after,after+'/* unauthorized */').replace(after,after.slice(0,-1))),/exact reviewed Clients hunk/);
+ }
 });

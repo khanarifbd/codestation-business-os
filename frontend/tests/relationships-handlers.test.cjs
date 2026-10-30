@@ -19,16 +19,16 @@ const leadDetail={lead,website:null,whatsapp:null,country_code:'BD',state_region
 const portal={client_id:client.id,enabled:false,active_access_count:0,pending_invitation_count:0,has_email:true};
 const access={clients_manage:true,quotations:true,quotations_manage:true,orders:true,projects:true,finance:true,finance_manage:true};
 const workspace={client,access,counts:{quotations:1,orders:2,projects:3,active_projects:2,invoices:4,overdue_invoices:1},business_value:[{currency:'USD',amount:'100'},{currency:'BDT',amount:'200'}],invoice_summary:[{currency:'USD',invoiced:'100',paid:'30',outstanding:'70'},{currency:'BDT',invoiced:'200',paid:'50',outstanding:'150'}],quotations:[],orders:[],projects:[],invoices:[],payments:[],timeline:[]};
-const config={crm:['src/app/dashboard/crm/page.tsx','CrmPage',['api','queryString','loadMeta','loadSummary','loadLeads','reloadDetail','applyRefresh','run','loadMore','openLead','activeStatuses','activeSources']],clients:['src/app/dashboard/clients/page.tsx','ClientsPage',['api','queryString','loadList','loadSummary','loadMore','loadPortalStatuses','refreshAfterMutation','refreshDetail','openClient','createClient','updateClient','changeStatus','togglePortalAccess','clientPayload']],detail:['src/app/dashboard/clients/[clientId]/page.tsx','ClientWorkspacePage',['load','tabs']]};
+const config={crm:['src/app/dashboard/crm/page.tsx','CrmPage',['api','queryString','loadMeta','loadSummary','loadLeads','reloadDetail','applyRefresh','run','loadMore','openLead','activeStatuses','activeSources']],clients:['src/app/dashboard/clients/page.tsx','ClientsPage',['api','queryString','loadList','loadSummary','loadMore','loadPortalStatuses','refreshAfterMutation','refreshDetail','openClient','closeClient','createClient','updateClient','changeStatus','togglePortalAccess','clientPayload']],detail:['src/app/dashboard/clients/[clientId]/page.tsx','ClientWorkspacePage',['load','tabs']]};
 function all(node,type,out=[]){if(Array.isArray(node))node.forEach(n=>all(n,type,out));else if(node?.props){if(node.type===type||node.type?.name===type)out.push(node);for(const value of Object.values(node.props))if(Array.isArray(value)||value?.props)all(value,type,out);}return out;}
 function label(node){if(node==null||typeof node==='boolean')return '';if(typeof node==='string'||typeof node==='number')return String(node);if(Array.isArray(node))return node.map(label).join(' ');return label(node.props?.children);}
 function hasJsx(node){let found=false;function visit(n){if(ts.isJsxElement(n)||ts.isJsxSelfClosingElement(n)||ts.isJsxFragment(n))found=true;ts.forEachChild(n,visit);}visit(node);return found;}
 function harness(kind,name){const [file,main,exposed]=config[kind];name??=main;const filename=path.join(root,file);let sourceCode=fs.readFileSync(filename,'utf8');const ast=ts.createSourceFile(file,sourceCode,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);const functions=ast.statements.filter(ts.isFunctionDeclaration);const target=functions.find(n=>n.name?.text===name);assert.ok(target,name);const names=target.body.statements.filter(ts.isVariableStatement).flatMap(n=>n.declarationList.declarations).filter(n=>ts.isArrayBindingPattern(n.name)&&n.initializer?.getText(ast).startsWith('useState')).map(n=>n.name.elements[0].name.text);const renderStart=target.body.statements.find(hasJsx).getStart(ast);sourceCode=sourceCode.slice(0,renderStart)+'__handlers={'+(name===main?exposed.join(','):'')+'};\n'+sourceCode.slice(renderStart);sourceCode+='\nlet __handlers; export const __test={'+functions.map(n=>n.name.text).join(',')+'}; export const getHandlers=()=>__handlers;';
- const states=[],refs=[],effects=[],requests=[],navigation=[],timers=[];let cursor=0,refCursor=0,params={clientId:client.id};
+ const states=[],refs=[],effects=[],requests=[],navigation=[],timers=[];let cursor=0,refCursor=0,tenant={is_owner:true,permissions:['clients.manage']},params={clientId:client.id};
  let respond=(url)=>success(url.startsWith('/api/client-access')?{can_manage:true,items:[portal]}:url.endsWith('/meta')?meta:url.includes('/workspace?')?workspace:url.endsWith('/detail')?client:url.includes('/clients?')?{items:[client],next_cursor:null}:url.endsWith('/clients/summary')?{total:1,active:1,inactive:0}:url.includes('/leads?')?{items:[lead],next_cursor:null}:url.endsWith('/summary')?{total_leads:1,open_leads:1,won_leads:0,due_followups:0,converted_leads:0}:url.includes('/leads/')?leadDetail:{});
- const mod=new Module(filename,module);mod.filename=filename;mod.paths=module.paths;mod.require=id=>{if(id==='react')return {useState:initial=>{const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:initial=>{const i=refCursor++;return refs[i]??=( {current:initial});},useEffect:effect=>effects.push(effect),useMemo:fn=>fn(),useCallback:fn=>fn};if(id==='next/navigation')return{useRouter:()=>({replace:value=>navigation.push(['replace',value]),push:value=>navigation.push(['push',value])}),useParams:()=>params};if(id==='next/link')return{default:'a'};if(id.endsWith('.css'))return{};if(id.startsWith('@/components/'))return new Proxy({},{get:(_t,key)=>String(key)});if(id==='@/lib/company-options'){const local=path.join(root,'src/lib/company-options.ts');const library=new Module(local,module);library.filename=local;library.paths=module.paths;library._compile(ts.transpileModule(fs.readFileSync(local,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,local);return library.exports;}return require(id);};mod._compile(ts.transpileModule(sourceCode,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText,filename);
+ const mod=new Module(filename,module);mod.filename=filename;mod.paths=module.paths;mod.require=id=>{if(id==='react')return {useState:initial=>{const i=cursor++;if(!(i in states))states[i]=typeof initial==='function'?initial():initial;return[states[i],value=>{states[i]=typeof value==='function'?value(states[i]):value;}];},useRef:initial=>{const i=refCursor++;return refs[i]??=( {current:initial});},useEffect:effect=>effects.push(effect),useMemo:fn=>fn(),useCallback:fn=>fn};if(id==='next/navigation')return{useRouter:()=>({replace:value=>navigation.push(['replace',value]),push:value=>navigation.push(['push',value])}),useParams:()=>params};if(id==='next/link')return{default:'a'};if(id.endsWith('.css'))return{};if(id==='@/components/dashboard-session-context')return {useDashboardSession:()=>({tenant})};if(id.startsWith('@/components/'))return new Proxy({},{get:(_t,key)=>String(key)});if(['@/lib/company-options','@/lib/sales-money-preview','@/lib/api-error'].includes(id)){const local=path.join(root,id.replace('@/','src/')+'.ts');const library=new Module(local,module);library.filename=local;library.paths=module.paths;library._compile(ts.transpileModule(fs.readFileSync(local,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,local);return library.exports;}return require(id);};mod._compile(ts.transpileModule(sourceCode,{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText,filename);
  const original={fetch:global.fetch,window:global.window,FormData:global.FormData,Date:global.Date};global.fetch=async(url,options)=>{requests.push({url,options});return respond(url,options);};global.window={location:{search:''},setTimeout:(callback,delay)=>{const timer={callback,delay,cancelled:false};timers.push(timer);return timer;},clearTimeout:timer=>{timer.cancelled=true;}};global.FormData=class{constructor(form){this.fields=form?.fields??{};}get(key){return this.fields[key]??null;}};global.Date=class extends original.Date{constructor(...args){super(...(args.length?args:['2026-10-24T12:00:00Z']));}static now(){return new original.Date('2026-10-24T12:00:00Z').getTime();}};
- return {all,requests,navigation,effects,timers,helpers:mod.exports.__test,handlers:()=>mod.exports.getHandlers(),render:props=>{cursor=0;refCursor=0;effects.length=0;return mod.exports.__test[name](props??{});},state:key=>states[names.indexOf(key)],setState:(key,value)=>{const i=names.indexOf(key);assert.ok(i>=0,key);states[i]=value;},setResponse:fn=>{respond=fn;},setParams:value=>{params=value;},cleanup:()=>Object.assign(global,original)};
+ return {all,requests,navigation,effects,timers,helpers:mod.exports.__test,handlers:()=>mod.exports.getHandlers(),render:props=>{cursor=0;refCursor=0;effects.length=0;return mod.exports.__test[name](props??{});},state:key=>states[names.indexOf(key)],setState:(key,value)=>{const i=names.indexOf(key);assert.ok(i>=0,key);states[i]=value;},setResponse:fn=>{respond=fn;},setParams:value=>{params=value;},setTenant:value=>{tenant=value;},cleanup:()=>Object.assign(global,original)};
 }
 function withCase(kind,title,check,name){test(title,async()=>{const h=harness(kind,name);try{await check(h);}finally{h.cleanup();}});}
 const button=(tree,text)=>all(tree,'button').find(n=>label(n).replace(/\s+/g,' ').trim()===text);
@@ -209,7 +209,7 @@ withCase('clients','Cancelled metadata load cannot populate a dismissed client l
 withCase('clients','Extracted directory retains client/contact/ownership/status/portal data and View/Edit callbacks',h=>{
  const viewed=[],edited=[];
  const record={...client,assigned_employee_name:'Synthetic owner'};
- const tree=h.render({clients:[record],portalAccess:{[client.id]:portal},canManage:false,workingId:null,onToggle:async()=>{},onView:value=>viewed.push(value.id),onEdit:value=>edited.push(value.id)});
+ const tree=h.render({canEdit:true,clients:[record],portalAccess:{[client.id]:portal},canManage:false,workingId:null,onToggle:async()=>{},onView:value=>viewed.push(value.id),onEdit:value=>edited.push(value.id)});
  for(const value of [client.display_name,client.client_code,client.contact_name,client.email,'Synthetic owner','BD','BDT'])assert.ok(label(tree).includes(value),value);
  assert.equal(all(tree,'Status')[0].props.status,'active');
  const portalWidget=all(tree,'PortalAccessToggle')[0];assert.deepEqual(portalWidget.props.status,portal);assert.equal(portalWidget.props.canManage,false);
@@ -230,7 +230,7 @@ for(const [kind,name] of [['crm','Modal'],['clients','Modal']])withCase(kind,`${
 },name);
 
 withCase('detail','Client workspace request preserves encoded ID, limit 50 and no-store',async h=>{
- h.setParams({clientId:'synthetic/id'});h.render();await h.handlers().load();assert.equal(h.requests[0].url,'/api/crm/clients/synthetic%2Fid/workspace?limit=50');assert.deepEqual(h.requests[0].options,{cache:'no-store'});assert.equal(h.state('loading'),false);assert.equal(h.state('workspace').client.id,client.id);
+ h.setParams({clientId:'synthetic/id'});h.setResponse(()=>success({...workspace,client:{...client,id:'synthetic/id'}}));h.render();await h.handlers().load();assert.equal(h.requests[0].url,'/api/crm/clients/synthetic%2Fid/workspace?limit=50');assert.deepEqual(h.requests[0].options,{cache:'no-store'});assert.equal(h.state('loading'),false);assert.equal(h.state('workspace').client.id,'synthetic/id');
 });
 for(const code of [401,403])withCase('detail',`Client detail ${code} retains login/error behavior and back route`,async h=>{
  h.render();h.setResponse(()=>failure(code));await h.handlers().load();const tree=h.render();assert.equal(h.state('loading'),false);assert.deepEqual(h.navigation,code===401?[['replace','/login']]:[]);if(code===403)assert.equal(h.state('error'),'Synthetic denial');assert.ok(all(tree,'a').some(n=>n.props.href==='/dashboard/clients'));
@@ -240,9 +240,9 @@ withCase('detail','Default tab is Overview and access masks Sales/Projects/Finan
  h.setState('workspace',{...workspace,access:Object.fromEntries(Object.keys(access).map(key=>[key,false]))});h.render();assert.deepEqual(h.handlers().tabs.map(n=>n.value),['overview','activity','access','services','notes','documents','credentials']);
 });
 withCase('detail','Client actions retain management masks, active-state guard and encoded existing destinations',h=>{
- ready(h,'detail');h.setState('workspace',{...workspace,client:{...client,id:'synthetic/id'}});let links=all(h.render(),'a').map(n=>n.props.href);
+ ready(h,'detail');h.setParams({clientId:'synthetic/id'});h.setState('workspace',{...workspace,client:{...client,id:'synthetic/id'}});let links=all(h.render(),'a').map(n=>n.props.href);
  for(const route of ['/dashboard/clients?edit=synthetic%2Fid','/dashboard/quotations?client_id=synthetic%2Fid','/dashboard/finance?client_id=synthetic%2Fid'])assert.ok(links.includes(route));
- h.setState('workspace',{...workspace,client:{...client,status:'inactive'}});links=all(h.render(),'a').map(n=>n.props.href);assert.ok(links.some(n=>n.includes('?edit=')));assert.equal(links.some(n=>n.includes('?client_id=')),false);
+ h.setParams({clientId:client.id});h.setState('workspace',{...workspace,client:{...client,status:'inactive'}});links=all(h.render(),'a').map(n=>n.props.href);assert.ok(links.some(n=>n.includes('?edit=')));assert.equal(links.some(n=>n.includes('?client_id=')),false);
  h.setState('workspace',{...workspace,access:Object.fromEntries(Object.keys(access).map(key=>[key,false]))});links=all(h.render(),'a').map(n=>n.props.href);assert.equal(links.some(n=>n.includes('?edit=')||n.includes('?client_id=')),false);
 });
 withCase('detail','Counts and financial rows receive existing access restrictions without combining currencies',h=>{
@@ -265,4 +265,69 @@ withCase('detail','Empty project/finance/activity panels retain explicit empty-s
  assert.ok(all(h.helpers.ProjectsTab({projects:[]}),'Empty').some(n=>/No projects/.test(n.props.text)));
  assert.equal(all(h.helpers.FinanceTab({invoices:[],payments:[]}),'Empty').length,2);
  assert.ok(all(h.helpers.ActivityTab({events:[]}),'Empty').some(n=>/No activity/.test(n.props.text)));
+});
+
+withCase('detail','Client workspace ignores older success and old authentication failure after route switch',async h=>{
+ h.render();const pending=[];h.setResponse(()=>new Promise(resolve=>pending.push(resolve)));
+ const old=h.handlers().load();h.setParams({clientId:'new-client'});h.render();const current=h.handlers().load();
+ pending[1](success({...workspace,client:{...client,id:'new-client'}}));await current;
+ pending[0](failure(401));await old;assert.equal(h.state('workspace').client.id,'new-client');assert.deepEqual(h.navigation,[]);assert.equal(h.state('error'),null);
+});
+withCase('detail','Client workspace suppresses prior route data and rejects a mismatched response',async h=>{
+ ready(h,'detail');h.setParams({clientId:'other-client'});assert.doesNotMatch(label(h.render()),/Synthetic client/);
+ await h.handlers().load();assert.equal(h.state('workspace'),null);assert.match(h.state('error'),/does not match/);assert.ok(button(h.render(),'Retry client workspace'));
+});
+withCase('detail','Client workspace cleanup invalidates pending reads',async h=>{
+ h.render();let resolve;h.setResponse(()=>new Promise(r=>resolve=r));const cleanup=h.effects[0]();cleanup();resolve(success(workspace));await settle();assert.equal(h.state('workspace'),null);
+});
+withCase('clients','Client editor latest selection wins and dismiss invalidates late success or auth errors',async h=>{
+ h.render();const pending=[];h.setResponse(()=>new Promise(resolve=>pending.push(resolve)));
+ const old=h.handlers().openClient('old'),current=h.handlers().openClient('new');
+ pending[1](success({...client,id:'new'}));await current;pending[0](success({...client,id:'old'}));await old;assert.equal(h.state('detail').id,'new');
+ const late=h.handlers().openClient('late');h.handlers().closeClient();pending[2](failure(401));await late;
+ assert.equal(h.state('detail'),null);assert.equal(h.state('detailLoading'),false);assert.deepEqual(h.navigation,[]);assert.equal(h.state('error'),null);
+});
+withCase('clients','Client validation arrays are readable and form retains values for retry',async h=>{
+ h.render();h.setResponse(()=>failure(422,[{loc:['body','display_name'],msg:'Value error, display_name cannot be null',type:'value_error'}]));
+ await h.handlers().createClient(event({display_name:'   ',client_type:'company'}));assert.match(h.state('error'),/display_name cannot be null/);assert.doesNotMatch(h.state('error'),/object Object/);assert.equal(h.state('saving'),false);
+});
+withCase('clients','Client form exposes inline validation and internationally usable phone limits',h=>{
+ const tree=h.render({meta,detail:client,saving:false,error:'Display name is required',onSubmit(){}});
+ assert.equal(label(all(tree,'p').find(n=>n.props.role==='alert')),'Display name is required');
+ const fields=all(tree,'Field');for(const name of ['phone','whatsapp']){const field=fields.find(n=>n.props.name===name);assert.equal(field.props.type,'tel');}
+},'ClientForm');
+withCase('clients','International phone field keeps stable accessible name and backend-aligned limit',h=>{
+ const tree=h.render({label:'Phone',name:'phone',type:'tel'}),input=all(tree,'input')[0];assert.equal(input.props['aria-label'],'Phone');assert.equal(input.props.maxLength,64);assert.equal(input.props.type,'tel');assert.match(label(tree),/country code/);
+},'Field');
+withCase('detail','Client exact financial formatter preserves large cents and viewer timezone is explicit',h=>{
+ assert.equal(h.helpers.money('99999999999999.99','GBP'),'GBP 99,999,999,999,999.99');assert.match(h.helpers.dateTime('2026-10-24T12:00:00Z'),/UTC|GMT|[A-Z]{2,5}$/);
+});
+withCase('clients','Client viewer sees read-only guidance and cannot invoke manage handlers',async h=>{
+ h.setTenant({is_owner:false,permissions:['clients.view']});ready(h,'clients');h.setState('clients',[client]);h.setState('detail',client);const tree=h.render();
+ assert.equal(button(tree,'Add client'),undefined);assert.match(label(tree),/Read-only client directory/);assert.equal(all(tree,'ClientDrawer').length,0);
+ const directory=all(tree,'ClientDirectory')[0];assert.equal(directory.props.canEdit,false);assert.equal(button(directory.type(directory.props),'Edit'),undefined);
+ await h.handlers().openClient(client.id);await h.handlers().createClient(event({display_name:'No write'}));await h.handlers().updateClient(event({display_name:'No write'}));await h.handlers().changeStatus();assert.equal(h.requests.length,0);
+});
+withCase('clients','Client manager without owner status retains permitted editing',async h=>{
+ h.setTenant({is_owner:false,permissions:['clients.view','clients.manage']});ready(h,'clients');assert.ok(button(h.render(),'Add client'));await h.handlers().openClient(client.id);assert.equal(h.state('detail').id,client.id);
+});
+withCase('clients','Client localization defaults apply to create only and cleared edit values stay empty',h=>{
+ let tree=h.render({meta,saving:false,onSubmit(){}});let selects=all(tree,'SearchableSelect');assert.equal(selects.find(n=>n.props.name==='country_code').props.defaultValue,'BD');assert.equal(selects.find(n=>n.props.name==='currency').props.defaultValue,'BDT');
+ tree=h.render({meta,detail:{...client,country_code:null,currency:null},saving:false,onSubmit(){}});selects=all(tree,'SearchableSelect');assert.equal(selects.find(n=>n.props.name==='country_code').props.defaultValue,'');assert.equal(selects.find(n=>n.props.name==='currency').props.defaultValue,'');
+},'ClientForm');
+withCase('clients','Pending client save blocks duplicate mutation and close without automatic retries',async h=>{
+ h.render();await h.handlers().openClient(client.id);h.render();let release;h.setResponse(()=>new Promise(resolve=>release=resolve));
+ const write=h.handlers().updateClient(event({display_name:'Edited'}));const before=h.requests.length;h.handlers().closeClient();await h.handlers().updateClient(event({display_name:'Duplicate'}));await h.handlers().changeStatus();assert.equal(h.requests.length,before);assert.equal(h.state('detail').id,client.id);
+ release(failure(422,[{loc:['body','display_name'],msg:'Rejected synthetic change'}]));await write;assert.equal(h.state('saving'),false);assert.match(h.state('error'),/Rejected synthetic change/);h.handlers().closeClient();assert.equal(h.state('detail'),null);
+});
+withCase('clients','Client wildcard authorization matches existing tenant shell policy',h=>{
+ h.setTenant({is_owner:false,permissions:['*']});ready(h,'clients');assert.ok(button(h.render(),'Add client'));
+});
+for(const manage of [false,true])withCase('clients',`Client ${manage?'manager':'viewer'} initialization preserves existing metadata boundary and skips unused reads`,async h=>{
+ h.setTenant({is_owner:false,permissions:manage?['clients.view','clients.manage']:['clients.view']});h.render();const cleanup=h.effects[1]();await settle();
+ assert.deepEqual(h.requests.map(r=>r.url).sort(),manage?['/api/crm/clients/summary','/api/crm/meta']:['/api/crm/clients/summary']);assert.equal(h.state('error'),null);assert.equal(h.state('summary').total,1);if(!manage)assert.equal(h.state('meta'),null);cleanup();
+});
+withCase('clients','Older client-directory authentication failure cannot redirect newer results',async h=>{
+ h.render();const pending=[];h.setResponse(url=>url.startsWith('/api/client-access')?success({can_manage:false,items:[]}):new Promise(resolve=>pending.push(resolve)));
+ const old=h.handlers().loadList(),current=h.handlers().loadList();pending[1](success({items:[],next_cursor:null}));await current;pending[0](failure(401));await old;assert.deepEqual(h.navigation,[]);assert.equal(h.state('error'),null);
 });

@@ -39,7 +39,7 @@ type Overview = {
 };
 
 function dateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).format(new Date(value));
 }
 
 export function ClientAccessSection({ clientId }: { clientId: string }) {
