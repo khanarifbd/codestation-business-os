@@ -21,7 +21,7 @@ export function requestOwnership() {
       const old = owners.get(request);
       if (!old || old.method !== 'GET' || old.routeId === 'unattributed') return null;
       const latest = requests.findLast(entry => entry.routeId === old.routeId && entry.method === 'GET' && entry.url === old.url);
-      return old.failedAt !== null && latest.sequence > old.sequence && latest.completedAt > old.failedAt && latest.status >= 200 && latest.status < 300 ? { request_id: latest.sequence, status: latest.status, body_complete: true } : null;
+      return old.failedAt !== null && latest.sequence > old.sequence && latest.failedAt === null && latest.completedAt > old.failedAt && latest.status >= 200 && latest.status < 300 ? { request_id: latest.sequence, status: latest.status, body_complete: true } : null;
     },
   };
 }

@@ -136,7 +136,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${route.id} ${size} width`).toBe(true);
         const filename = `admin-readonly-${route.id}-${size}.png`;
         await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(filename);
-        if (size === 'mobile' && await page.evaluate(() => document.documentElement.scrollHeight > innerHeight * 1.25)) {
+        if (size === 'mobile' && await page.evaluate(() => document.documentElement.scrollHeight > innerHeight + 1)) {
           await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
           const bottom = `admin-readonly-${route.id}-mobile-bottom.png`;
           await page.screenshot({ path: info.outputPath(bottom), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(bottom);
