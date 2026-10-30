@@ -8,9 +8,17 @@ const baseline=require('./neutral-palette-baseline.json');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 const restore=s=>s.replace('font-family:var(--font-sans);','font-family:var(--font-inter),Arial,sans-serif;').replace(/var\(--workspace-(?:neutral-[\w-]+|surface(?:-[\w-]+)?),\s*(#[\da-fA-F]{3,8}|white)\)/g,'$1');
+function beforeMoneyOutViewFit(file,css){
+ if(file!=='src/components/accounting-money-out/money-out.css')return css;
+ for(const [after,before] of [
+ ['.mo-columns,.mo-row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(105px,1fr) minmax(105px,.8fr) max-content','.mo-columns,.mo-row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(105px,1fr) minmax(105px,.8fr) 50px'],
+ ['.mo-row .aa-row-link{justify-self:end;white-space:nowrap}', '.mo-row .aa-row-link{justify-self:end}'],
+ ]){assert.equal(css.split(after).length-1,1,'exact reviewed MoneyOut row-fit delta');css=css.replace(after,before);}
+ return css;
+}
 const digest=s=>createHash('sha256').update(s.replace(/\s+/g,'')).digest('hex');
 for(const [file,sha] of Object.entries(baseline))test(`${file}: only palette references change; original dark fallback, selectors and geometry remain exact`,()=>{
- const css=beforeReviewedFinanceCompatibility(file,read(file));assert.equal(digest(restore(css)),sha);
+ const css=beforeReviewedFinanceCompatibility(file,beforeMoneyOutViewFit(file,read(file)));assert.equal(digest(restore(css)),sha);
  assert.notEqual(digest(restore(css.replace(/padding:/,'padding-left:'))),sha);
 });
 test('neutral palette is scoped to light authenticated workspaces, not dark or public pages',()=>{
@@ -35,4 +43,11 @@ test('centralized shell font normalization rejects altered or duplicated overrid
  assert.equal((css.match(/font-family:var\(--font-sans\);/g)||[]).length,1);
  assert.notEqual(digest(restore(css.replace('font-family:var(--font-sans);','font-family:Arial,sans-serif;'))),baseline[file]);
  assert.notEqual(digest(restore(css.replace('font-family:var(--font-sans);','font-family:var(--font-sans);font-family:var(--font-sans);'))),baseline[file]);
+});
+
+test('MoneyOut row-fit inverse rejects changed or duplicate geometry allowances',()=>{
+ const file='src/components/accounting-money-out/money-out.css',css=read(file);
+ for(const changed of [css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 50px'),css.replace('minmax(105px,.8fr) max-content','minmax(105px,.8fr) 60px'),css.replace('white-space:nowrap','white-space:normal'),css+'.mo-row .aa-row-link{justify-self:end;white-space:nowrap}'])assert.throws(()=>beforeMoneyOutViewFit(file,changed));
+ const unrelated=css.replace('.mo-local-grid{display:grid;grid-template-columns:minmax(0,1.5fr)', '.mo-local-grid{display:grid;grid-template-columns:minmax(0,2fr)');
+ assert.notEqual(digest(restore(beforeReviewedFinanceCompatibility(file,beforeMoneyOutViewFit(file,unrelated)))),baseline[file]);
 });
