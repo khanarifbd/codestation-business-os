@@ -1,5 +1,6 @@
 """Portable boundary tests; no engine connection, provider, or database writes."""
 from contextlib import ExitStack
+from test_admin_readonly_registered_entrypoints_unit import assert_financial_request
 from datetime import date
 from decimal import Decimal
 import importlib.util
@@ -69,7 +70,7 @@ class SeedBoundaryTests(unittest.TestCase):
                 mutate()
                 with patch.object(seed, 'create_account') as create:
                     with self.assertRaises(RuntimeError):
-                        seed.seed_financial(self.db, self.tenant, Mock(), DAY)
+                        seed.seed_financial(self.db, self.tenant, lambda method, path: (method, path), DAY)
                     create.assert_not_called()
 
     def test_every_explicit_environment_optin_is_required(self):
@@ -83,6 +84,7 @@ class SeedBoundaryTests(unittest.TestCase):
         def service(name):
             def invoke(*args):
                 calls.append((name, args))
+                assert_financial_request(self, name, args)
                 self.assertIs(args[-2], self.db)
                 self.assertIs(args[-1], self.tenant)
                 if name == fail:
@@ -167,14 +169,14 @@ class SeedBoundaryTests(unittest.TestCase):
     def test_service_failure_is_not_retried_and_no_registry_is_returned(self):
         calls = self.services(fail='disburse_loan')
         with self.assertRaisesRegex(RuntimeError, 'Synthetic service failure'):
-            seed.seed_financial(self.db, self.tenant, Mock(), DAY)
+            seed.seed_financial(self.db, self.tenant, lambda method, path: (method, path), DAY)
         self.assertEqual(sum(name == 'disburse_loan' for name, _ in calls), 1)
         self.assertNotIn('create_settlement', [name for name, _ in calls])
 
     def test_integrity_failure_does_not_claim_ready(self):
         self.services(integrity=False)
         with self.assertRaisesRegex(RuntimeError, 'integrity'):
-            seed.seed_financial(self.db, self.tenant, Mock(), DAY)
+            seed.seed_financial(self.db, self.tenant, lambda method, path: (method, path), DAY)
 
     def test_invalid_date_prevents_first_mutation(self):
         with patch.object(seed, 'create_account') as create:
@@ -193,19 +195,22 @@ class RemainingSeedTests(unittest.TestCase):
         import app.api.v1.accounting_assets as assets
         import app.api.v1.finance_controls as controls
         import app.api.v1.finance as finance
-        import app.api.v1.customer_advances as advances
+        import app.api.v1.financial_safety as safety
         self.rows[FinancialAccount] = NS(id='account', name='Synthetic account', organization_id='org', currency='USD', is_active=True, opening_balance=Decimal('0'))
         self.rows[Client] = NS(id='client', display_name='Synthetic client', organization_id='org')
         calls = []
         def handler(name, result):
-            def run(*args):
+            def run(*args, name=name):
+                name = {'safe_record_transfer':'record_transfer','safe_change_invoice_status':'change_invoice_status',
+                        'safe_record_payment':'record_payment','safe_create_customer_advance':'create_advance'}.get(name, name)
                 calls.append((name, args))
+                assert_financial_request(self, name, args)
                 if name == 'create_ledger_account': return NS(id='ledger-'+args[0].normal_balance)
                 return result
             return run
         targets = [
             (seed, 'create_account', NS(id='destination', name='Synthetic destination')),
-            (transfers, 'record_transfer', NS(id='transfer', transfer_number='TR-SYNTHETIC')),
+            (safety, 'safe_record_transfer', NS(id='transfer', transfer_number='TR-SYNTHETIC')),
             (accounting, 'create_ledger_account', NS(id='ledger')),
             (accounting, 'create_manual_journal', NS(id='journal', entry_number='JE-SYNTHETIC')),
             (assets, 'create_asset', {'id': 'asset', 'asset_code': 'ASSET-SYNTHETIC'}),
@@ -213,9 +218,9 @@ class RemainingSeedTests(unittest.TestCase):
             (controls, 'create_accounting_period', NS(id='period', name='Synthetic period', status='open')),
             (controls, 'close_accounting_period', NS(id='closed-period', name='Synthetic closed period', status='closed')),
             (finance, 'create_invoice', NS(id='invoice')),
-            (finance, 'change_invoice_status', NS(id='invoice')),
-            (finance, 'record_payment', NS(id='payment', payment_number='PAY-SYNTHETIC')),
-            (advances, 'create_advance', NS(id='advance')),
+            (safety, 'safe_change_invoice_status', NS(id='invoice')),
+            (safety, 'safe_record_payment', NS(id='payment', payment_number='PAY-SYNTHETIC')),
+            (safety, 'safe_create_customer_advance', NS(id='advance')),
             (finance, 'get_invoice', NS(id='invoice', invoice_number='INV-SYNTHETIC', balance_due=Decimal('9'), amount_paid=Decimal('1'))),
         ]
         for module, name, result in targets:

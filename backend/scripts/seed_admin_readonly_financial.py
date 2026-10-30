@@ -11,10 +11,11 @@ from app.core.config import settings
 from app.models.organization import Organization
 from app.models.membership import Membership
 from app.models.user import User
-from app.api.v1.finance import create_account
+from app.api.v1.financial_safety import (safe_create_account as create_account,
+    safe_disburse_loan as disburse_loan, safe_repay_loan as repay_loan)
 from app.schemas.finance import FinancialAccountCreate
 from app.api.v1.accounting_loans import (AccountingLoanCreate, LoanDisbursementCreate,
-    LoanAccountingRepaymentCreate, create_accounting_loan, approve_loan, disburse_loan, repay_loan)
+    LoanAccountingRepaymentCreate, create_accounting_loan, approve_loan)
 from app.api.v1.tax import TaxCodeCreate, TaxSettlementCreate, create_code, create_settlement
 from app.api.v1.payables import create_payable_bill
 from app.schemas.payables import PayableBillCreate
@@ -75,11 +76,12 @@ def seed_financial(db, tenant, request: Callable[[str, str], Request], fixture_d
     marker = uuid4().hex[:8]
     currency = 'USD'
 
-    def call(fn, *args, path: str):
-        # Direct handlers lack the HTTP tenant dependency's request transaction.
+    def call(fn, *args, path: str, method: str = 'POST'):
+        # Direct registered endpoints still need the HTTP request's active transaction.
+        # Safety wrappers themselves own gate acquisition and atomic posting.
         if not db.in_transaction():
             db.begin()
-        return fn(*args, request('POST', path), db, tenant)
+        return fn(*args, request(method, path), db, tenant)
 
     account = call(create_account, FinancialAccountCreate(
         name=f'Read-only sweep bank {marker}', account_type='bank', currency=currency,
@@ -240,10 +242,12 @@ def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request],
     from datetime import timedelta
     from app.models.finance import FinancialAccount
     from app.models.crm import Client
-    from app.api.v1.finance_transfers import record_transfer
+    from app.api.v1.financial_safety import safe_record_transfer as record_transfer
     from app.schemas.finance import AccountTransferCreate, InvoiceCreate, InvoiceItemInput, InvoiceStatusAction, PaymentCreate
-    from app.api.v1.finance import create_invoice, change_invoice_status, record_payment, get_invoice
-    from app.api.v1.customer_advances import create_advance
+    from app.api.v1.finance import create_invoice, get_invoice
+    from app.api.v1.financial_safety import (safe_change_invoice_status as change_invoice_status,
+        safe_record_payment as record_payment)
+    from app.api.v1.financial_safety import safe_create_customer_advance as create_advance
     from app.schemas.customer_advances import CustomerAdvanceCreate
     from app.api.v1.accounting import create_ledger_account, create_manual_journal
     from app.schemas.accounting import LedgerAccountCreate, JournalEntryCreate, JournalLineCreate
@@ -264,9 +268,9 @@ def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request],
              'Verified shared client required')
     marker = uuid4().hex[:8]
 
-    def call(fn, *args, path: str):
+    def call(fn, *args, path: str, method: str = 'POST'):
         if not db.in_transaction(): db.begin()
-        return fn(*args, request('POST', path), db, tenant)
+        return fn(*args, request(method, path), db, tenant)
 
     destination = call(create_account, FinancialAccountCreate(name=f'Read-only transfer destination {marker}',
         account_type='bank', currency='USD', opening_balance=Decimal('0')), path='/finance/accounts')
@@ -291,18 +295,18 @@ def seed_remaining_financial(db, tenant, request: Callable[[str, str], Request],
     recurring = call(create_recurring_expense, RecurringExpenseCreate(name=f'Read-only recurring {marker}',
         description='Synthetic inactive automation; manual template only', category_id=shared_ids['expense_category_id'],
         account_id=account.id, expense_currency='USD', expense_amount=Decimal('1.01'), frequency='monthly',
-        next_due_date=fixture_date, auto_post=False, reference=f'RO-recurring-{marker}'), path='/finance-controls/recurring-expenses')
+        next_due_date=fixture_date, auto_post=False, reference=f'RO-recurring-{marker}'), path='/finance/recurring-expenses')
     # Completed past days, disjoint from each other and every fixture posting day.
     opened = call(create_accounting_period, AccountingPeriodCreate(name=f'Read-only open period {marker}',
-        start_date=fixture_date-timedelta(days=2), end_date=fixture_date-timedelta(days=2)), path='/finance-controls/accounting-periods')
+        start_date=fixture_date-timedelta(days=2), end_date=fixture_date-timedelta(days=2)), path='/finance/accounting-periods')
     closed = call(create_accounting_period, AccountingPeriodCreate(name=f'Read-only closed period {marker}',
-        start_date=fixture_date-timedelta(days=3), end_date=fixture_date-timedelta(days=3)), path='/finance-controls/accounting-periods')
+        start_date=fixture_date-timedelta(days=3), end_date=fixture_date-timedelta(days=3)), path='/finance/accounting-periods')
     closed = call(close_accounting_period, closed.id, AccountingPeriodClose(notes='Synthetic read-only closed-period fixture'),
-        path=f'/finance-controls/accounting-periods/{closed.id}/close')
+        path=f'/finance/accounting-periods/{closed.id}/close')
     invoice = call(create_invoice, InvoiceCreate(client_id=client.id, subject=f'Read-only invoice {marker}',
         issue_date=fixture_date, currency='USD', items=[InvoiceItemInput(item_name='Synthetic read-only service',
         description='Synthetic read-only service', quantity=Decimal('1'), unit_price=Decimal('10'))]), path='/finance/invoices')
-    call(change_invoice_status, invoice.id, InvoiceStatusAction(action='send'), path=f'/finance/invoices/{invoice.id}/status')
+    call(change_invoice_status, invoice.id, InvoiceStatusAction(action='send'), path=f'/finance/invoices/{invoice.id}/status', method='PATCH')
     payment = call(record_payment, PaymentCreate(invoice_id=invoice.id, account_id=account.id,
         payment_date=fixture_date, invoice_amount=Decimal('1'), method='bank_transfer', reference=f'RO-receipt-{marker}'), path='/finance/payments')
     advance = call(create_advance, CustomerAdvanceCreate(client_id=client.id, financial_account_id=account.id,
