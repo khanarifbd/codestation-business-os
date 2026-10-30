@@ -1,3 +1,4 @@
+import { verifyRecurringUnknownAction, verifyCreditUnknownAction } from "./support/credit-recurring-safe-actions.mjs";
 import { verifyAdvancedReviewRefresh, verifyManualBillUnknown } from "./support/accounting-family-boundaries.mjs";
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
@@ -160,4 +161,6 @@ test("FIN29 real owner historical trial, ledger search, source filters and rejec
   await testInfo.attach("fin29-fin22-real-owner-evidence", { body: JSON.stringify({ organizationId: workspace.organization.id, preservedSynthetic: true, trialTotals: { august: 0, september: 120, october: 162 }, journals: 7, manual: 3, reversal: 3, operational: 1, rejectedReference, rejectedStatus: 409, rejectedRowsAbsent: true, headlineTotalsUnchangedByFilters: true, bankId: bank.id, statement: { opening: 0, count: 5, credit: 200, debit: 55, closing: 145 } }), contentType: "application/json" });
   await verifyAdvancedReviewRefresh(page, testInfo, marker);
   await verifyManualBillUnknown(page, testInfo, marker);
+  await verifyRecurringUnknownAction(page, testInfo, api, bank, marker, today);
+  await verifyCreditUnknownAction(page, testInfo, api, bank, marker, today);
 });

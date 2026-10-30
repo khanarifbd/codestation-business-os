@@ -1,3 +1,4 @@
+import { verifyExistingEmployeeFinanceDenial } from "./support/credit-recurring-safe-actions.mjs";
 // Integrated UI suite: business outcomes use live local APIs/PostgreSQL.
 // The CI workflow seeds BROWSER_FIXTURE in its disposable PostgreSQL service.
 import {readFileSync} from 'node:fs';
@@ -40,6 +41,7 @@ test('MW02 MW03 NT03 MW04 MW05 real personal search board notification click com
  const workspace=await json(await page.request.get('/api/workspace/me'));expect(workspace.tasks.some(t=>t.id===f.task_id)).toBe(false);
  const notices=await json(await page.request.get('/api/workspace/notifications'));expect(notices.items.some(t=>t.href.includes(f.task_id))).toBe(false);
  await info.attach('personal-readback.json',{body:JSON.stringify({detail,workspace,notices}),contentType:'application/json'});
+ await verifyExistingEmployeeFinanceDenial(page,info);
 });
 
 // Each journey authenticates afresh against pre-seeded records. Only the billing/
