@@ -8,7 +8,7 @@
 .ws-brand .ws-brand-title { font-size:21px; letter-spacing:-.7px; font-weight:550; color:var(--workspace-neutral-ink, #f1f6ed); }
 .ws-brand .text-neutral-400 { color:var(--workspace-neutral-muted, #a8c0b7); font-size:8px; letter-spacing:1.5px; margin-top:3px; }
 .ws-switcher>div>button { border-color:var(--workspace-neutral-border, #43605b); background:var(--workspace-surface, #1c393c); color:var(--workspace-neutral-ink, #e2eee6); border-radius:9px; gap:9px; padding:11px 9px; }
-.ws-switcher>div>button>span:first-child { background:var(--workspace-surface-subtle, #35544a); border-radius:7px; width:30px; height:32px; }
+.ws-switcher>div>button>span:first-child { background:var(--workspace-neutral-action, #35544a); border-radius:7px; width:30px; height:32px; }
 .ws-switcher>div>button>span:nth-child(2)>span:first-child { font-size:12px; }
 .ws-switcher>div>button .text-neutral-400 { color:var(--workspace-neutral-muted, #afc3b6); font-size:10px; }
 .ws-switcher>div>button:hover { background:var(--workspace-surface-hover, #254541); }

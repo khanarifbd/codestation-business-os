@@ -5,7 +5,8 @@ async function isolatedWorkspace(page, context, info) {
   const baseURL = info.project.use.baseURL;
   expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(baseURL).hostname);
   const login = await page.request.post('/api/auth/login', { data: {
-    email: process.env.E2E_EMAIL ?? 'e2e-owner@example.com',
+    // Dedicated seeded account: these organizations must not affect other login tests.
+    email: 'neutral-theme@example.com',
     password: process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!',
   } });
   expect(login.status()).toBe(200);
@@ -55,6 +56,7 @@ test('neutral workspace: real desktop company and inventory surfaces remain whit
   await expect(active).toHaveCSS('background-color', 'rgb(235, 235, 235)');
   await readable(active);
   await readable(sidebar.locator('.ws-brand-title'));
+  await readable(sidebar.locator('.ws-switcher > div > button > span').first());
   const inactive = sidebar.locator('.ws-navigation-item:not([aria-current])').first();
   await inactive.hover();
   await expect(inactive).toHaveCSS('background-color', 'rgb(245, 245, 245)');
@@ -84,12 +86,13 @@ test('neutral workspace: mobile drawer stays white and closes repeatedly without
   await expect(page.locator('.inventory-attention')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await page.screenshot({ path: info.outputPath('neutral-theme-inventory-mobile.png'), fullPage: true });
   const before = page.url();
-  const opener = page.getByRole('button', { name: 'Open app drawer', exact: true });
+  const opener = page.locator('.ws-mobile-header').getByRole('button', { name: 'Open app drawer', exact: true });
   await opener.click();
   const drawer = page.getByRole('dialog', { name: 'App navigation', exact: true });
   await expect(drawer).toBeVisible();
   await expect(drawer).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   await readable(drawer.locator('.ws-navigation-item[aria-current="page"]'));
+  await readable(drawer.locator('.ws-switcher > div > button > span').first());
   await page.screenshot({ path: info.outputPath('neutral-theme-mobile-drawer.png'), fullPage: true });
   await drawer.getByRole('button', { name: 'Close app drawer', exact: true }).click();
   await expect(drawer).toHaveCount(0);
