@@ -1,3 +1,4 @@
+import { pendingAliasPatterns, resolveAliases } from '../e2e-admin-readonly/support/aliases.mjs';
 import { reconciledReadFailure } from '../e2e-admin-readonly/support/evidence.mjs';
 import { spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -14,7 +15,8 @@ export function summarize(manifest, events) {
   const rendered = new Map(events.filter(e => e.event === 'route_rendered').map(e => [e.route_id, e]));
   const blocked = new Map(events.filter(e => e.event === 'blocked_route').map(e => [e.route_id, e]));
   const routes = manifest.routes.map(route => ({ id: route.id, pattern: route.pattern, ...(rendered.get(route.id) || blocked.get(route.id) || { event: 'not_executed' }), visual_review: 'pending_actual_pixel_inspection' }));
-  return { unexpected_errors: events.filter(e => e.event === 'api_read_failure' && !reconciledReadFailure(e, events) || e.event === 'page_error' || e.event === 'console_error' || e.event === 'api_response' && e.status >= 400).length, route_count: routes.length, rendered: routes.filter(r => r.event === 'route_rendered').length, blocked: routes.filter(r => r.event === 'blocked_route').length, not_executed: routes.filter(r => r.event === 'not_executed').length, mutation_attempts: events.filter(e => e.event === 'blocked_mutation').length, rate_limit_responses: events.filter(e => e.event === 'api_response' && e.status === 429).length, routes };
+  const aliases = pendingAliasPatterns.map(pattern => events.find(e => e.event === 'alias_rendered' && e.pattern === pattern) || { pattern, event: 'not_executed' });
+  return { alias_count: aliases.length, aliases_rendered: aliases.filter(a => a.event === 'alias_rendered').length, aliases_not_executed: aliases.filter(a => a.event !== 'alias_rendered').length, aliases, unexpected_errors: events.filter(e => e.event === 'api_read_failure' && !reconciledReadFailure(e, events) || e.event === 'page_error' || e.event === 'console_error' || e.event === 'api_response' && e.status >= 400).length, route_count: routes.length, rendered: routes.filter(r => r.event === 'route_rendered').length, blocked: routes.filter(r => r.event === 'blocked_route').length, not_executed: routes.filter(r => r.event === 'not_executed').length, mutation_attempts: events.filter(e => e.event === 'blocked_mutation').length, rate_limit_responses: events.filter(e => e.event === 'api_response' && e.status === 429).length, routes };
 }
 async function executeBatch(batch, directory, env) {
   return new Promise((resolve, reject) => {
@@ -33,6 +35,7 @@ export async function runSweep(env = process.env) {
   if (readdirSync(directory).length) throw new Error('Fresh evidence directory required; do not silently retry prior run');
   const manifest = JSON.parse(readFileSync(new URL('../e2e-admin-readonly/routes.json', import.meta.url), 'utf8'));
   const registry = JSON.parse(readFileSync(env.ADMIN_SWEEP_FIXTURE, 'utf8'));
+  resolveAliases(registry);
   resolveRoutes(manifest, registry); // Validate every supplied ID before browser activity.
   let batchFailure = null;
   const privateAuth = mkdtempSync(path.join(tmpdir(), 'admin-sweep-auth-'));
@@ -61,7 +64,7 @@ export async function runSweep(env = process.env) {
   } finally { rmSync(privateAuth, { recursive: true, force: true }); }
   const summary = { ...summarize(manifest, readEvents(directory)), batch_failure: batchFailure, head: env.GITHUB_SHA || null, runtime: 'development', production_runtime_equivalence: false, no_live_verification: true };
   writeFileSync(path.join(directory, 'route-evidence.json'), JSON.stringify(summary, null, 2));
-  if (batchFailure || summary.blocked || summary.not_executed || summary.mutation_attempts || summary.rate_limit_responses || summary.unexpected_errors) throw new Error('Read-only sweep incomplete; consult exact route-evidence.json, no automatic retry');
+  if (batchFailure || summary.blocked || summary.not_executed || summary.aliases_not_executed || summary.mutation_attempts || summary.rate_limit_responses || summary.unexpected_errors) throw new Error('Read-only sweep incomplete; consult exact route-evidence.json, no automatic retry');
   return summary;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) runSweep().then(summary => console.log(`Rendered ${summary.rendered} readonly route patterns; actual pixel review still required`)).catch(error => { console.error(error.message); process.exitCode = 1; });

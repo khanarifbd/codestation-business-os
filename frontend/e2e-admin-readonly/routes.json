@@ -1803,7 +1803,7 @@
       "route": "/dashboard/finance/invoices/[invoiceId]",
       "source": "frontend/src/app/dashboard/finance/invoices/[invoiceId]/page.tsx",
       "redirect_expression": [
-        "`/print/invoices/${encodeURIComponent(invoiceId)}`"
+        "`/dashboard/accounting/invoices/${encodeURIComponent(invoiceId)}`"
       ]
     }
   ]

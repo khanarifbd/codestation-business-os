@@ -1,3 +1,4 @@
+import { aliasGroups } from './support/aliases.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
 import path from 'node:path';
@@ -11,7 +12,7 @@ const registry = JSON.parse(readFileSync(fixturePath, 'utf8'));
 const manifest = JSON.parse(readFileSync(new URL('./routes.json', import.meta.url), 'utf8'));
 const baseURL = localBaseURL(process.env.E2E_BASE_URL || 'http://localhost:3000');
 const batch = Number(process.env.ADMIN_SWEEP_BATCH);
-const groups = groupedRoutes(resolveRoutes(manifest, registry), batch);
+const groups = [...groupedRoutes(resolveRoutes(manifest, registry), batch), ...aliasGroups(manifest, registry, batch)];
 const evidenceDir = process.env.ADMIN_SWEEP_EVIDENCE;
 if (!evidenceDir) throw new Error('ADMIN_SWEEP_EVIDENCE directory is required');
 mkdirSync(evidenceDir, { recursive: true });
@@ -111,7 +112,7 @@ test.afterAll(async () => {
 
 for (const [index, group] of groups.entries()) test(`readonly batch${batch} group${index}: ${group.map(r => r.id).join(',')}`, async ({}, info) => {
   for (const route of group) {
-    const contract = registry.route_contracts?.[route.pattern];
+    const contract = route.contract || registry.route_contracts?.[route.pattern];
     if (route.status !== 'ready' || !contract?.heading || !['ready', 'empty', 'ineligible', 'restricted'].includes(contract.expected_mode)) {
       emit({ event: 'blocked_route', route_id: route.id, pattern: route.pattern, reason: route.status !== 'ready' ? route.status : 'missing_reviewed_readiness_contract' });
       continue;
@@ -121,6 +122,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       const response = await page.goto(route.url, { timeout: 30_000 });
       expect(response?.status(), route.pattern).toBeLessThan(400);
       await expect(page).not.toHaveURL(/\/login(?:[/?]|$)/);
+      if (route.kind === 'alias') await expect(page).toHaveURL(new URL(route.expected_url, baseURL).href);
       await expect(page.locator('body')).not.toContainText(/Application error: a client-side exception|This page could not be found/);
       for (const requiredPath of contract.expected_get_paths || []) await expect.poll(() => successfulRouteRead(responses, route.id, requiredPath)).toBe(true);
       const heading = page.getByRole('heading', { name: contract.heading, exact: true, ...(contract.heading_level ? { level: contract.heading_level } : {}) });
@@ -129,11 +131,11 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       if (contract.ready_button) await expect(page.getByRole('button', { name: contract.ready_button, exact: true })).toBeEnabled();
       await verifyReadyFields(page, expect, contract.ready_fields);
       const captures = [];
-      for (const [size, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
+      for (const [size, width, height] of (route.desktop_only ? [['desktop', 1440, 1000]] : [['desktop', 1440, 1000], ['mobile', 390, 844]])) {
         await page.setViewportSize({ width, height });
         await page.evaluate(() => window.scrollTo(0, 0));
         await expect(heading).toBeVisible();
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${route.id} ${size} width`).toBe(true);
+        if (!route.desktop_only) expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${route.id} ${size} width`).toBe(true);
         const filename = `admin-readonly-${route.id}-${size}.png`;
         await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(filename);
         if (size === 'mobile' && await page.evaluate(() => document.documentElement.scrollHeight > innerHeight + 1)) {
@@ -147,7 +149,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       expect(errors.filter(entry => entry.route_id === route.id), route.pattern).toEqual([]);
       expect(writes).toEqual([]);
       renderedRouteIds.push(route.id);
-      emit({ event: 'route_rendered', route_id: route.id, pattern: route.pattern, actual_url: new URL(page.url()).pathname + new URL(page.url()).search, expected_state: contract.expected_mode, heading: contract.heading, captures, visual_review: 'pending_actual_pixel_inspection', source: contract.source });
+      emit({ event: route.kind === 'alias' ? 'alias_rendered' : 'route_rendered', route_id: route.id, pattern: route.pattern, actual_url: new URL(page.url()).pathname + new URL(page.url()).search, expected_state: contract.expected_mode, heading: contract.heading, captures, visual_review: 'pending_actual_pixel_inspection', source: contract.source });
     });
   }
 });
