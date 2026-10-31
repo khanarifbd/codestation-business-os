@@ -351,9 +351,9 @@ export default function DashboardPage() {
     }
   }
 
-  async function changePreset(next: Exclude<Preset, "custom">) {
+  async function changePreset(next: Exclude<Preset, "custom">, selectedRange?: DashboardDateRange) {
     if (!tenant) return;
-    await changeDateRange(presetRange(next, tenant.organization.timezone), next);
+    await changeDateRange(selectedRange ?? presetRange(next, tenant.organization.timezone), next);
   }
 
   const company = tenant?.organization;
@@ -445,16 +445,10 @@ export default function DashboardPage() {
         {reportLoading ? <div role="status" aria-label="Updating dashboard reports" className="h-0.5 overflow-hidden rounded-full bg-neutral-200"><div className="h-full w-1/3 animate-pulse bg-neutral-800" /></div> : null}
         {error ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
-        <section aria-label="Key business metrics" className="dashboard-operations-rail">
-          <MetricCard label="Active clients" value={data.operations.active_clients} note="Current client base" href="/dashboard/clients" icon={Users} />
-          <MetricCard label="Open orders" value={data.operations.open_orders} note="Delivery not closed" href="/dashboard/orders" icon={ReceiptText} />
-          <MetricCard label="Active projects" value={data.operations.active_projects} note="Planned, active or on hold" href="/dashboard/projects" icon={FolderKanban} />
-          <MetricCard label="Open invoices" value={data.operations.open_invoices} note="Not paid or cancelled" href="/dashboard/accounting/invoices" icon={FileText} />
-        </section>
 
         <div className="dashboard-decision-grid">
           <Surface className="dashboard-trend-focus">
-            <DashboardTrendExplorer organizationId={activeOrganizationId ?? ""} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? "UTC"} reportingCurrency={company.currency} enabled={!reportLoading} filters={<DashboardDateFilter key={`${activeOrganizationId}:${data.date_from}:${data.date_to}`} from={data.date_from} to={data.date_to} timezone={company.timezone ?? "UTC"} preset={preset} busy={reportLoading} onRange={(range) => void changeDateRange(range)} onPreset={(next) => void changePreset(next)} />} />
+            <DashboardTrendExplorer organizationId={activeOrganizationId ?? ""} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? "UTC"} reportingCurrency={company.currency} enabled={!reportLoading} filters={<DashboardDateFilter key={activeOrganizationId} from={data.date_from} to={data.date_to} timezone={company.timezone ?? "UTC"} preset={preset} busy={reportLoading} onRange={(range) => void changeDateRange(range)} onPreset={(next, range) => void changePreset(next, range)} />} />
           </Surface>
           <aside className="dashboard-attention-column" aria-label="Priority work and quick entry">
             <Surface className="dashboard-priority-work">
@@ -480,6 +474,13 @@ export default function DashboardPage() {
 
           </aside>
         </div>
+
+        <section aria-label="Key business metrics" className="dashboard-operations-rail">
+          <MetricCard label="Active clients" value={data.operations.active_clients} note="Current client base" href="/dashboard/clients" icon={Users} />
+          <MetricCard label="Open orders" value={data.operations.open_orders} note="Delivery not closed" href="/dashboard/orders" icon={ReceiptText} />
+          <MetricCard label="Active projects" value={data.operations.active_projects} note="Planned, active or on hold" href="/dashboard/projects" icon={FolderKanban} />
+          <MetricCard label="Open invoices" value={data.operations.open_invoices} note="Not paid or cancelled" href="/dashboard/accounting/invoices" icon={FileText} />
+        </section>
 
         <Surface className="dashboard-financials p-5 sm:p-6">
           <SectionHeader

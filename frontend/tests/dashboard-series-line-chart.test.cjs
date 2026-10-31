@@ -61,7 +61,7 @@ test('pointer clamps to real periods; invalid geometry rejected',()=>{
 
 test('single-day dropdown removed; chart describes keyboard and shared date filters',()=>{
  const html=render({});assert.ok(!html.includes('<select'));assert.ok(!html.includes('Explore period'));
- for(const token of ['use Left/Right','Home/End','From/To filters above','aria-describedby','dashboard-series-current-period'])assert.ok(html.includes(token),token);
+ for(const token of ['use Left/Right','Home/End','date-range popup below','aria-describedby','dashboard-series-current-period'])assert.ok(html.includes(token),token);
 });
 test('palette stays attached to metric identity, with contrast and non-color redundancy',()=>{
  const keys=['income','expenses','projects','orders','clients'];

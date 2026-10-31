@@ -1,4 +1,5 @@
-import { verifyDashboardSeries } from './support/dashboard-series.mjs';
+import { requestDrain, finishReadOnlyBatch } from './support/drain.mjs';
+import { verifyDashboardSeries, captureDashboardPopupEvidence } from './support/dashboard-series.mjs';
 import { aliasGroups } from './support/aliases.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
@@ -25,6 +26,7 @@ const renderedRouteIds = [];
 const responses = [], errors = [], writes = [];
 const ownership = requestOwnership();
 const pendingResponses = new Set();
+const inFlight = requestDrain();
 const transportFailures = [];
 function reconcileTransportFailures() {
   for (const failure of transportFailures) {
@@ -47,7 +49,8 @@ test.beforeAll(async ({ browser }) => {
   const reuseAuth = existsSync(authPath);
   context = await browser.newContext({ ...(reuseAuth ? { storageState: authPath } : {}), baseURL, extraHTTPHeaders: { Origin: baseURL, Connection: 'close' }, viewport: { width: 1440, height: 1000 } });
   page = await context.newPage();
-  page.on('request', request => ownership.started(request, routeId));
+  page.on('request', request => { ownership.started(request, routeId); inFlight.started(request); });
+  page.on('requestfinished', request => inFlight.settled(request));
   if (!reuseAuth) {
     const login = await page.request.post('/api/auth/login', { data: { email: registry.owner_email, password } });
     const result = authResult(login.status(), await login.json().catch(() => null));
@@ -71,6 +74,7 @@ test.beforeAll(async ({ browser }) => {
     return route.abort('blockedbyclient');
   });
   page.on('requestfailed', request => {
+    inFlight.settled(request);
     const pathname = new URL(request.url()).pathname;
     if (!pathname.startsWith('/api/')) return;
     ownership.failed(request);
@@ -110,14 +114,16 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.afterAll(async () => {
-  await Promise.all(pendingResponses);
-  reconcileTransportFailures();
-  emit({ event: 'batch_terminal', blocked_mutations: writes.length, errors: errors.length });
-  if (context) {
-    try {
-      await persistSuccessfulBatch(context, authPath, { expected: groups.flat().map(route => route.id), rendered: renderedRouteIds, errors: errors.length, writes: writes.length });
-    } finally { await context.close(); }
-  }
+  await finishReadOnlyBatch({
+    drain: inFlight, pendingResponses,
+    persist: async () => { if (context) await persistSuccessfulBatch(context, authPath, { expected: groups.flat().map(route => route.id), rendered: renderedRouteIds, errors: errors.length, writes: writes.length }); },
+    close: async () => { if (context) await context.close(); },
+    reconcile: reconcileTransportFailures,
+    recordFailure: classification => { const failure = { event: 'api_read_failure', route_id: routeId, classification }; errors.push(failure); emit(failure); },
+    terminal: () => emit({ event: 'batch_terminal', blocked_mutations: writes.length, errors: errors.length }),
+  });
+  expect(errors, 'All API responses must complete before read-only teardown').toEqual([]);
+  expect(writes).toEqual([]);
 });
 
 for (const [index, group] of groups.entries()) test(`readonly batch${batch} group${index}: ${group.map(r => r.id).join(',')}`, async ({}, info) => {
@@ -150,6 +156,11 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
         const series = await seriesResponse;
         expect(await series.finished()).toBeNull();
         const explorer = await verifyDashboardSeries(page, expect, await series.json(), registry.organization_id);
+        await captureDashboardPopupEvidence(page, expect, async part => {
+          const filename = `admin-readonly-${route.id}-${part}.png`;
+          await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' });
+          captures.push(filename);
+        });
         for (const [size, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
           await page.setViewportSize({ width, height });
           const targets = [['top', explorer, 'Business trends'], ['counts', explorer.getByRole('region', { name: 'Records created over time', exact: true }), 'Records created over time']];
@@ -178,6 +189,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
           await page.screenshot({ path: info.outputPath(bottom), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(bottom);
         }
       }
+      await inFlight.wait(pendingResponses);
       await Promise.all(pendingResponses);
       reconcileTransportFailures();
       expect(errors.filter(entry => entry.route_id === route.id), route.pattern).toEqual([]);

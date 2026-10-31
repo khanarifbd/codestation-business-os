@@ -186,14 +186,14 @@ withDashboard('Lower detail empty states retain all existing operational destina
   for(const title of ['No financial accounts','No project economics yet','No client economics yet']) assert.ok(h.all(tree,'EmptyState').some(n=>n.props.title===title));
   assert.deepEqual(h.all(tree,'SectionHeading').map(n=>n.props.href),['/dashboard/accounting/accounts','/dashboard/reports','/dashboard/clients']);
 });
-withDashboard('Recomposed hierarchy puts compact operations before a shared trend/attention region, then ledgers and detail', h => {
+withDashboard('Chart-first hierarchy puts trends before unchanged operations, ledgers and detail', h => {
   const tree=ready(h,{...overview,trend:[{...financial('USD'),period:'2026-10'}]});
   const children=tree.props.children.props.children.filter(Boolean);
   const railIndex=children.findIndex(node=>h.all(node,'MetricCard').length===4);
   const decisionIndex=children.findIndex(node=>h.all(node,'DashboardTrendExplorer').length===1&&h.all(node,'aside').some(n=>n.props['aria-label']==='Priority work and quick entry'));
   const ledgerIndex=children.findIndex(node=>h.all(node,'FinancialPerformanceCard').length>0);
   const detailsIndex=children.findIndex(node=>h.all(node,'SectionHeading').length>0);
-  assert.ok(railIndex>=0&&decisionIndex>railIndex&&ledgerIndex>decisionIndex&&detailsIndex>ledgerIndex);
+  assert.ok(decisionIndex>=0&&railIndex>decisionIndex&&ledgerIndex>railIndex&&detailsIndex>ledgerIndex);
   const decision=children[decisionIndex], aside=h.all(decision,'aside')[0];
   assert.equal(h.all(decision,'MetricCard').length,0);
   assert.equal(h.all(aside,'AlertRow').length,2);

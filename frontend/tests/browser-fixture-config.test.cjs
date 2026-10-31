@@ -87,7 +87,8 @@ test('session contract runs once before shared-IP bulk traffic without changing 
   }
   const session = fs.readFileSync(path.join(root, 'e2e/session-idle.spec.mjs'), 'utf8');
   assert.match(session, /expect\(heartbeat.status\(\)\).toBe\(200\)/);
-  assert.doesNotMatch(session, /test\.(skip|fixme|fail)|route\(|fulfill\(|waitForTimeout/);
+  assert.doesNotMatch(session, /test\.(skip|fixme|fail)|fulfill\(|waitForTimeout/);
+  assertSessionScriptGate(session);
   const auth = fs.readFileSync(path.join(root, '../backend/app/api/v1/auth.py'), 'utf8');
   assert.ok(auth.includes('enforce_auth_rate_limit(request, action="session_activity", limit=120, window_seconds=600)'));
 });
@@ -158,4 +159,28 @@ test('only the evidenced cold billing-decision journey receives a 90s total budg
     source.replace('test.setTimeout(90_000);', 'test.setTimeout(90_000); page.setDefaultTimeout(90_000);'),
   ]) assert.throws(() => assertDecisionBudget(altered));
   for (const ci of [false, true]) assertSessionOrdering(readConfig(ci), ci); // global test45s / expect10s / no retry unchanged
+});
+
+function assertSessionScriptGate(source) {
+ const gate = "  const scriptGate = async route => {\n    if (route.request().resourceType() === \"script\") await released;\n    await route.continue();\n  };";
+ assert.equal(source.split(gate).length - 1, 1, 'only exact script-resource hydration gate');
+ assert.equal(source.split('await page.route("**/*", scriptGate);').length-1,1);
+ assert.equal(source.split('await page.unroute("**/*", scriptGate);').length-1,1);
+ const withoutGate=source.replace(gate,'').replace('await page.route("**/*", scriptGate);','').replace('await page.unroute("**/*", scriptGate);','');
+ assert.doesNotMatch(withoutGate,/\.route\(|\.unroute\(|\.fulfill\(|\.abort\(/);
+ assert.ok(source.includes('finally {\n    releaseScripts();\n  }'));
+ assert.ok(source.includes('expect(loginRequests).toBe(1)'));
+ assert.ok(source.includes('expect(nativeLoginQueries).toBe(0)'));
+ assert.ok(source.includes('javaScriptEnabled: false'));
+ assert.ok(source.includes('if (!password) throw'));
+}
+test('session hydration gate delays scripts only and retains exact authentication proof',()=>{
+ const source=fs.readFileSync(path.join(root,'e2e/session-idle.spec.mjs'),'utf8');
+ assertSessionScriptGate(source);
+ for(const changed of [
+  source.replace('resourceType() === "script"','resourceType() !== "script"'),
+  source.replace('await route.continue()','await route.abort()'),
+  source.replace('expect(loginRequests).toBe(1)','expect(loginRequests).toBe(0)'),
+  source+'\npage.route("**/api/**", route => route.abort());',
+ ])assert.throws(()=>assertSessionScriptGate(changed));
 });

@@ -92,7 +92,7 @@ test('Four rail metrics retain baseline values/routes and two operational alerts
 });
 test('One shared date filter replaces the header preset without changing source report scope', () => {
  const code=read(root,dashboard);assert.equal((code.match(/<DashboardDateFilter /g)||[]).length,1);
- for(const fragment of ['from={data.date_from}','to={data.date_to}','busy={reportLoading}','onRange={(range) => void changeDateRange(range)}','onPreset={(next) => void changePreset(next)}'])assert.ok(code.includes(fragment),fragment);
+ for(const fragment of ['from={data.date_from}','to={data.date_to}','busy={reportLoading}','onRange={(range) => void changeDateRange(range)}','onPreset={(next, range) => void changePreset(next, range)}'])assert.ok(code.includes(fragment),fragment);
  assert.ok(!code.includes('aria-label="Reporting period"'));
 });
 test('Currency values remain grouped, sorted and passed to existing financial components', () => {
