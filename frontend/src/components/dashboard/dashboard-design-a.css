@@ -51,6 +51,7 @@
 .dashboard-design-a .dashboard-context-actions { padding:17px 20px; }
 .dashboard-design-a .dashboard-action-list { margin-top:12px; gap:8px; }
 .dashboard-design-a .dashboard-action-list>a { font-size:11px; min-height:36px; }
+.dashboard-design-a .collections-trend:only-child { grid-column:1 / -1; }
 .dashboard-design-a .collections-plot { height:150px; }
 .dashboard-design-a .collections-bar,
 .dashboard-design-a .collections-column:nth-child(even) .collections-bar { background:#333; }

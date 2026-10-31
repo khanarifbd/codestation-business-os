@@ -142,3 +142,9 @@ test('reviewed inverse cannot hide collateral access, navigation, logout or mobi
     assert.notEqual(digest(beforeDashboardDesignA(shellFile, shell.replace(before, after))), pins[shellFile], before);
   }
 });
+
+test('one currency fills its panel without changing multi-currency sizing or amounts', () => {
+  assert.equal(declaration('.dashboard-design-a .collections-trend:only-child', 'grid-column'), '1 / -1');
+  assert.equal(rules(css).filter(rule => rule.body.includes('grid-column:')).length, 1);
+  assert.doesNotMatch(css, /collections-(?:column|bar)[^{]*\{[^}]*height:/);
+});

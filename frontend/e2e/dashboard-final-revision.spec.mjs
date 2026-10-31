@@ -90,6 +90,26 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect(page.locator('.workspace-shell')).toHaveClass(/dashboard-design-a/);
   await expect(page.locator('.ws-sidebar')).toHaveCSS('width', '224px');
   await expect(page.locator('.dashboard-operation-link')).toHaveCount(4);
+  // CSS-only probe: real chart classes, no API/data mutation or screenshot fixture.
+  // A single currency spans the panel; adding another restores separate equal cells.
+  const chartLayout = await page.locator('.dashboard-design-a').evaluate(root => {
+    const grid = document.createElement('div');
+    grid.className = 'dashboard-trend-multiples';
+    grid.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px';
+    const first = document.createElement('article'); first.className = 'collections-trend';
+    grid.append(first); root.append(grid);
+    try {
+      const single = getComputedStyle(first).gridColumn;
+      const second = document.createElement('article'); second.className = 'collections-trend'; grid.append(second);
+      return { single, multiple: [getComputedStyle(first).gridColumn, getComputedStyle(second).gridColumn], widths: [first.getBoundingClientRect().width, second.getBoundingClientRect().width] };
+    } finally { grid.remove(); }
+  });
+  expect(chartLayout.single).toBe('1 / -1');
+  expect(chartLayout.multiple).toEqual(['auto', 'auto']);
+  expect(Math.abs(chartLayout.widths[0] - chartLayout.widths[1])).toBeLessThan(1);
+  expect(chartLayout.widths[0]).toBeGreaterThan(0);
+  expect(chartLayout.widths[0]).toBeLessThan(300);
+
   for (const card of await page.locator('.dashboard-operation-link').all()) {
     await expect(card).toHaveCSS('border-top-width', '1px');
     await expect(card).toHaveCSS('border-radius', '7px');
