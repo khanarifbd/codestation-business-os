@@ -90,9 +90,10 @@ test('Four rail metrics retain baseline values/routes and two operational alerts
   assert.equal(queue.find(item=>item.value==='{data.operations.overdue_tasks}').label,'"Overdue tasks"');
   assert.equal(queue.find(item=>item.value==='{data.operations.due_followups}').label,'"Due CRM follow-ups"');
 });
-test('Reporting select retains all four presets, disabled pending state and same handler', () => {
-  const code = read(root, dashboard);
-  for (const fragment of ['aria-label="Reporting period"', 'value={preset}', 'disabled={reportLoading}', 'changePreset(event.target.value as Preset)', 'value="month"', 'value="last_month"', 'value="quarter"', 'value="year"']) assert.ok(code.includes(fragment), fragment);
+test('One shared date filter replaces the header preset without changing source report scope', () => {
+ const code=read(root,dashboard);assert.equal((code.match(/<DashboardDateFilter /g)||[]).length,1);
+ for(const fragment of ['from={data.date_from}','to={data.date_to}','busy={reportLoading}','onRange={(range) => void changeDateRange(range)}','onPreset={(next) => void changePreset(next)}'])assert.ok(code.includes(fragment),fragment);
+ assert.ok(!code.includes('aria-label="Reporting period"'));
 });
 test('Currency values remain grouped, sorted and passed to existing financial components', () => {
   const code = read(root, dashboard);
@@ -184,7 +185,7 @@ test('Dashboard revision compatibility rejects tampering and retains every unrel
     ['if (!currentRequest()) return;', 'if (false) return;'],
     ['setPreset("month");', 'setPreset("year");'],
     ['return formatDashboardMoney(value, currency);', 'return String(Number(value));'],
-    ['return reportingRange(preset, timezone);', 'return reportingRange(preset, "UTC");'],
+    ['return dashboardDateShortcut(preset, timezone);', 'return dashboardDateShortcut(preset, "UTC");'],
     ['if (!data && error)', 'if (!data)'],
   ]) assert.throws(()=>restoreDashboardRevision(actual.replace(from,to)),from);
   // A mutation outside a reviewed hunk is never normalized away.

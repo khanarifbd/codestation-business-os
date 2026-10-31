@@ -5,23 +5,18 @@
 .dashboard-series-unit { border:1px solid #e5e5e5; border-radius:4px; padding:3px 6px; font-size:11px; white-space:nowrap; }
 .dashboard-series-legend { display:flex; flex-wrap:wrap; gap:10px 20px; list-style:none; margin:17px 0 9px; padding:0; font-size:12px; }
 .dashboard-series-legend li { display:flex; align-items:center; gap:7px; color:#333; }
-.dashboard-series-legend .dashboard-series-legend-1,.dashboard-series-legend .dashboard-series-legend-3 { color:#737373; }
-.dashboard-series-legend .dashboard-series-legend-2,.dashboard-series-legend .dashboard-series-legend-4 { color:#444; }
 .dashboard-series-scale { margin:0 0 10px; color:#646464; font-size:11px; overflow-wrap:anywhere; }
 .dashboard-series-figure { margin:0; }
 .dashboard-series-svg { display:block; width:100%; height:auto; aspect-ratio:640 / 228; min-height:150px; overflow:visible; touch-action:pan-y; }
 .dashboard-series-svg text { fill:#646464; font-size:12px; font-family:inherit; }
 .dashboard-series-gridline { stroke:#e5e5e5; stroke-dasharray:3 4; }
 .dashboard-series-cursor { stroke:#a3a3a3; stroke-dasharray:2 4; }
-.dashboard-series-line { stroke:#171717; }
-.dashboard-series-line-1,.dashboard-series-line-3 { stroke:#737373; }
-.dashboard-series-line-2,.dashboard-series-line-4 { stroke:#444; }
-.dashboard-series-line circle { fill:#fff; }
+.dashboard-series-line { stroke:currentColor; }
+.dashboard-series-marker { fill:#fff; stroke:currentColor; stroke-width:1.5; }
+.dashboard-series-marker>* { vector-effect:non-scaling-stroke; }
+.dashboard-series-svg:focus-visible { outline:2px solid #737373; outline-offset:3px; border-radius:3px; }
 .dashboard-series-figure figcaption { color:#646464; font-size:11px; line-height:1.6; margin:6px 0 14px; }
 .dashboard-series-inspector { display:grid; grid-template-columns:auto minmax(120px,1fr); gap:8px 12px; padding-top:13px; border-top:1px solid #e5e5e5; align-items:center; }
-.dashboard-series-inspector>label { color:#646464; font-size:12px; }
-.dashboard-series-inspector>select { min-width:0; max-width:100%; border:1px solid #ddd; border-radius:5px; padding:8px; background:#fff; font:inherit; font-size:12px; color:#171717; }
-.dashboard-series-inspector>select:focus-visible { outline:none; box-shadow:none; border-color:#737373; }
 .dashboard-series-values { grid-column:1/-1; display:flex; flex-wrap:wrap; gap:10px 20px; margin:5px 0 0; font-size:12px; }
 .dashboard-series-values>div { min-width:0; }
 .dashboard-series-values dt { font-size:11px; color:#646464; }

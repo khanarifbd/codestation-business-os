@@ -58,14 +58,15 @@ test('newer scoped result survives late old JSON body and cannot redirect or rep
  oldJson.resolve(fixture());await old;await h.flush();assert.equal(h.vm().data.counts[0].projects,77);assert.equal(h.nav.length,0);
 }finally{h.cleanup();}});
 test('future range cannot invent currency series without periods',()=>{assert.throws(()=>decode(fixture({effective_date_to:null,counts:[],money:[{currency:'USD',points:[]}]}),scope));});
-test('browser date boundaries assert native option value attributes, never input-only value matchers',()=>{
+test('browser date and point inspection use native-compatible matchers after range-control replacement',()=>{
  const fs=require('node:fs'),path=require('node:path');
  const source=fs.readFileSync(path.join(__dirname,'../e2e/dashboard-final-revision.spec.mjs'),'utf8');
  const verify=code=>{
-  for(const [edge,value] of [['first','rangeFrom'],['last','rangeTo']])assert.ok(code.includes(`expect(historyPeriod.locator('option').${edge}()).toHaveAttribute('value', ${value})`),`exact ${edge} date attribute`);
-  assert.doesNotMatch(code,/expect\([^;\n]*locator\(['"]option['"]\)[^;\n]*\)\.toHaveValue\(/,'Playwright toHaveValue is for input/select/textarea, not option');
+  for(const token of ["expect(fromInput).toHaveValue(range.from)","expect(toInput).toHaveValue(range.to)","expect(inspectedDate).toHaveText(rangeFrom)","expect(inspectedDate).toHaveText(rangeTo)"])assert.ok(code.includes(token),token);
+  assert.doesNotMatch(code,/expect\([^;\n]*locator\(['"]option['"]\)[^;\n]*\)\.toHaveValue\(/);
+  assert.doesNotMatch(code,/expect\(inspectedDate\)\.toHaveValue\(/);
  };
  verify(source);
- for(const value of ['rangeFrom','rangeTo'])assert.throws(()=>verify(source.replace(`toHaveAttribute('value', ${value})`,`toHaveValue(${value})`)));
- assert.throws(()=>verify(source+"\nawait expect(historyPeriod.locator('option').first()).toHaveValue('2026-01-01');\n"));
+ assert.throws(()=>verify(source.replace('expect(inspectedDate).toHaveText(rangeFrom)','expect(inspectedDate).toHaveValue(rangeFrom)')));
+ assert.throws(()=>verify(source+"\nawait expect(select.locator('option').first()).toHaveValue('2026-01-01');\n"));
 });

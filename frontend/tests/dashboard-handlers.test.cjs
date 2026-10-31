@@ -31,7 +31,7 @@ function strings(node) {
 function reportingModule(file = 'dashboard-reporting.ts') {
   const filename=path.join(root,'src/lib',file), mod=new Module(filename,module);
   mod.filename=filename; mod.paths=module.paths;
-  mod.require=id=>id==='./sales-money-preview'?reportingModule('sales-money-preview.ts'):require(id);
+  mod.require=id=>id.startsWith('./')?reportingModule(id.slice(2)+'.ts'):require(id);
   mod._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,filename);
   return mod.exports;
 }
@@ -54,6 +54,8 @@ function harness(file = 'src/app/dashboard/page.tsx', exported = 'default', priv
     if (id === '@/components/dashboard-session-context') return { useDashboardSession: () => ({ tenant, profile: { full_name: 'Synthetic Preview', email: 'preview@example.invalid', has_avatar: false }, workspaces: workspaces ?? [tenant], setTenant: next => { tenant = next; } }) };
     if (id === '@/lib/workspace-navigation') return { requestWorkspaceExit: () => { workspaceExitChecks += 1; return workspaceExitAllowed; } };
     if (id === '@/lib/dashboard-reporting') return reportingModule();
+    if (id === '@/lib/dashboard-date-range') return reportingModule('dashboard-date-range.ts');
+    if (id === '@/hooks/use-administration-read-owner') return {useAdministrationReadOwner:()=>{const key=JSON.stringify(tenant);return {current:()=>Boolean(tenant)&&JSON.stringify(tenant)===key};}};
     if (id === '@/lib/cn') return { cn: (...values) => values.filter(Boolean).join(' ') };
     if (id.endsWith('.css')) return {};
     if (id.startsWith('@/components/')) return new Proxy({}, { get: (_target, name) => String(name) });
@@ -69,7 +71,9 @@ function harness(file = 'src/app/dashboard/page.tsx', exported = 'default', priv
 }
 function withDashboard(name, check) { test(name, async () => { const h = harness(); try { await check(h); } finally { h.cleanup(); } }); }
 function ready(h, data = overview) { h.render(); h.setState('reportResult', { organizationId: 'synthetic-a', value: structuredClone(data) }); h.setState('loading', false); return h.render(); }
-const periodSelect = (h, tree) => h.all(tree, 'select').find(n => n.props['aria-label'] === 'Reporting period');
+const dateFilter = (h, tree) => h.all(tree, 'DashboardDateFilter')[0];
+// Invoke the actual shared filter callback; the retired header dropdown is not rendered.
+const periodSelect = (h, tree) => { const filter = dateFilter(h,tree); return { props: { value:filter.props.preset, disabled:filter.props.busy, onChange:event=>filter.props.onPreset(event.target.value) } }; };
 
 withDashboard('Initial report request preserves month range, no-store and tenant-keyed result', async h => {
   h.setResponse(() => success(overview)); h.render(); h.effects[0](); await settle();
@@ -99,7 +103,9 @@ withDashboard('Historical explorer receives exact current tenant/date scope inde
   const tree = ready(h);
   const charts = h.all(tree, 'DashboardTrendExplorer');
   assert.equal(charts.length, 1);
-  assert.deepEqual(charts[0].props, { organizationId:'synthetic-a', dateFrom:overview.date_from, dateTo:overview.date_to, timezone:'UTC', reportingCurrency:'BDT', enabled:true });
+  const { filters, ...scope } = charts[0].props;
+  assert.equal(filters.type, 'DashboardDateFilter');
+  assert.deepEqual(scope, { organizationId:'synthetic-a', dateFrom:overview.date_from, dateTo:overview.date_to, timezone:'UTC', reportingCurrency:'BDT', enabled:true });
   h.setState('reportLoading', true);
   assert.equal(h.all(h.render(), 'DashboardTrendExplorer')[0].props.enabled, false);
 });
@@ -112,7 +118,7 @@ withDashboard('Four operation cards and two attention rows preserve all six orig
 for (const [preset, from, to] of [['last_month','2026-09-01','2026-09-30'],['quarter','2026-10-01','2026-10-24'],['year','2026-01-01','2026-10-24']]) {
   withDashboard(`${preset} requests the existing date range and updates preset only on success`, async h => {
     const tree = ready(h); h.setResponse(() => success({ ...overview, date_from: from, date_to: to })); periodSelect(h, tree).props.onChange({ target: { value: preset } }); await settle();
-    assert.equal(h.requests[0].url, `/api/reports/dashboard?date_from=${from}&date_to=${to}`); assert.equal(h.state('preset'), preset); assert.equal(h.state('reportLoading'), false);
+    if(from===overview.date_from&&to===overview.date_to)assert.equal(h.requests.length,0);else assert.equal(h.requests[0].url, `/api/reports/dashboard?date_from=${from}&date_to=${to}`); assert.equal(h.state('preset'), preset); assert.equal(h.state('reportLoading'), false);
   });
 }
 withDashboard('Unchanged period makes no request; failed period preserves previous report and enables control', async h => {
@@ -442,11 +448,14 @@ withDashboard('Unmount invalidates pending preset success and stale unauthentica
     assert.equal(h.state('preset'),'month'); assert.deepEqual(h.navigation,[]);
   }
 });
-withDashboard('Overlapping preset responses keep only newest report and pending ownership', async h => {
+withDashboard('Shared range admission blocks duplicate pending requests and permits a new range after completion', async h => {
   const finish=[]; const tree=ready(h); h.setResponse(()=>new Promise(resolve=>finish.push(resolve)));
   periodSelect(h,tree).props.onChange({target:{value:'year'}});
   periodSelect(h,tree).props.onChange({target:{value:'last_month'}});
-  finish[0](failure(500)); await settle(); assert.equal(h.state('reportLoading'),true); assert.equal(h.state('error'),null);
+  assert.equal(h.requests.length,1); assert.equal(finish.length,1);
+  finish[0](failure(500)); await settle(); assert.equal(h.state('reportLoading'),false);
+  periodSelect(h,h.render()).props.onChange({target:{value:'last_month'}});
+  assert.equal(h.requests.length,2);
   finish[1](success({...overview,date_from:'2026-09-01',date_to:'2026-09-30'})); await settle();
   assert.equal(h.state('preset'),'last_month'); assert.equal(h.state('reportResult').value.date_from,'2026-09-01');
   assert.equal(h.state('reportLoading'),false);
@@ -486,4 +495,39 @@ withDashboard('Aborted old details 403 cannot clear a different active tenant re
   assert.equal(h.state('reportResult').organizationId,'synthetic-b');
   assert.equal(h.state('reportResult').value.operations.active_clients,99);
   assert.equal(h.all(h.render(),'MetricCard').length,4);
+});
+
+withDashboard('Custom inclusive dates drive report, details and chart from one committed range', async h => {
+  const tree=ready(h);h.setResponse(()=>success({...overview,date_from:'2026-09-28',date_to:'2026-10-04'}));
+  dateFilter(h,tree).props.onRange({from:'2026-09-28',to:'2026-10-04'});await settle();
+  assert.equal(h.requests[0].url,'/api/reports/dashboard?date_from=2026-09-28&date_to=2026-10-04');
+  assert.equal(h.state('preset'),'custom');const next=h.render();const chart=h.all(next,'DashboardTrendExplorer')[0];
+  assert.equal(chart.props.dateFrom,'2026-09-28');assert.equal(chart.props.dateTo,'2026-10-04');
+  assert.equal(dateFilter(h,next).props.from,chart.props.dateFrom);assert.equal(dateFilter(h,next).props.to,chart.props.dateTo);
+  h.setResponse(()=>success({accounts:[],projects:[],clients:[]}));h.effects[2]();await settle();
+  assert.equal(h.requests.at(-1).url,'/api/reports/dashboard-details?date_from=2026-09-28&date_to=2026-10-04');
+  assert.equal(h.all(next,'select').some(n=>n.props['aria-label']==='Reporting period'),false);
+});
+for(const range of [{from:'',to:'2026-10-24'},{from:'2026-02-30',to:'2026-10-24'},{from:'2026-10-25',to:'2026-10-24'},{from:'2026-10-01',to:'2026-10-25'},{from:'2025-01-01',to:'2026-10-24'}])withDashboard(`Invalid custom range never reaches network ${JSON.stringify(range)}`,async h=>{
+  dateFilter(h,ready(h)).props.onRange(range);await settle();assert.equal(h.requests.length,0);assert.ok(h.state('error'));assert.equal(h.state('reportResult').value.date_from,overview.date_from);
+});
+withDashboard('Wrong returned date identity cannot relabel or replace a report',async h=>{
+  const tree=ready(h);h.setResponse(()=>success(overview));dateFilter(h,tree).props.onRange({from:'2026-10-23',to:'2026-10-24'});await settle();
+  assert.equal(h.state('preset'),'month');assert.equal(h.state('reportResult').value.date_from,overview.date_from);assert.match(h.state('error'),/did not match/);assert.equal(h.state('reportLoading'),false);
+});
+for(const [preset,from,to]of[['today','2026-10-24','2026-10-24'],['week','2026-10-19','2026-10-24']])withDashboard(`${preset} shortcut applies org-local inclusive dates`,async h=>{
+  const tree=ready(h);h.setResponse(()=>success({...overview,date_from:from,date_to:to}));dateFilter(h,tree).props.onPreset(preset);await settle();assert.equal(h.requests[0].url,`/api/reports/dashboard?date_from=${from}&date_to=${to}`);assert.equal(h.state('preset'),preset);
+});
+
+withDashboard('Selecting the already applied range clears an abandoned failed-range error without refetch',async h=>{
+ ready(h);h.setState('error','Unable to load dashboard metrics');const tree=h.render();dateFilter(h,tree).props.onPreset('month');await settle();assert.equal(h.requests.length,0);assert.equal(h.state('error'),null);assert.equal(h.state('preset'),'month');
+});
+
+withDashboard('Initial default month response must match requested inclusive dates',async h=>{
+ h.setResponse(()=>success({...overview,date_from:'2026-01-01'}));h.render();h.effects[0]();await settle();assert.equal(h.state('reportResult'),null);assert.match(h.state('error'),/did not match/);
+});
+for(const stage of ['initial','range','details'])for(const outcome of [401,403,500])withDashboard(`${stage} old-owner ${outcome} before passive cleanup cannot redirect or alter current state`,async h=>{
+ let finish;const tree=ready(h);h.setResponse(()=>new Promise(resolve=>{finish=resolve;}));
+ if(stage==='initial')h.effects[0]();else if(stage==='range')dateFilter(h,tree).props.onPreset('year');else h.effects[2]();
+ h.setTenant({...owner,permissions:['dashboard.view']});h.render();const priorError=h.state('error'),priorReport=h.state('reportResult');finish(failure(outcome));await settle();assert.deepEqual(h.navigation,[]);assert.equal(h.state('error'),priorError);assert.equal(h.state('reportResult'),priorReport);
 });
