@@ -113,3 +113,22 @@ test('teardown failures remain unexpected errors in authoritative summary',async
   assert.equal(summary.unexpected_errors,1);
  }
 });
+
+test('real per-route boundary holds navigation for pre-header heartbeat and body completion', async () => {
+ const source=fs.readFileSync(path.join(__dirname,'../e2e-admin-readonly/route-sweep.spec.mjs'),'utf8');
+ const boundary=source.match(/await inFlight\.wait\(pendingResponses\);\s+await Promise\.all\(pendingResponses\);\s+reconcileTransportFailures\(\);/g);
+ assert.equal(boundary?.length,1,'one bounded request-start drain before per-route reconciliation');
+ const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+ const advance=new AsyncFunction('inFlight','pendingResponses','reconcileTransportFailures','navigate',boundary[0]+' navigate();');
+ const drain=await create(),pending=new Set(),req=request(),events=[];
+ drain.started(req);
+ const waiting=advance(drain,pending,()=>events.push('reconcile'),()=>events.push('next-navigation'));
+ await new Promise(resolve=>setTimeout(resolve,20));assert.deepEqual(events,[]);
+ let complete;const body=new Promise(resolve=>{complete=resolve;});pending.add(body);drain.settled(req);
+ await new Promise(resolve=>setTimeout(resolve,20));assert.deepEqual(events,[]);
+ pending.delete(body);complete();await waiting;
+ assert.deepEqual(events,['reconcile','next-navigation']);
+ const blocked=await create();blocked.started(request());const failures=[];
+ await assert.rejects(advance({wait:p=>blocked.wait(p,{timeoutMs:20,pollMs:2})},new Set(),()=>failures.push('reconcile'),()=>failures.push('next-navigation')),/drain timed out/);
+ assert.deepEqual(failures,[]);
+});

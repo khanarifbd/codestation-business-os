@@ -28,8 +28,8 @@ export function DashboardTrendExplorer(props: DashboardTrendExplorerProps) {
    {selected.length===0?<p className="dashboard-series-explorer-status">Select at least one series to view its history.</p>:null}
    {data.effective_date_to&&data.effective_date_to<data.date_to?<p className="dashboard-series-range-note">Actual history through {data.effective_date_to}. Future periods are not projected.</p>:null}
    {data.effective_date_to===null?<p className="dashboard-series-explorer-status">No elapsed periods are available in this date range. Future activity is not projected or represented as zero.</p>:null}
-   {moneySelected&&data.effective_date_to!==null&&sortedMoney.length===0?<p className="dashboard-series-explorer-status">No recorded monetary activity is available for this date range. No income or expense trend is inferred.</p>:null}
    <div className="dashboard-series-charts">{charts}</div>
+   {moneySelected&&data.effective_date_to!==null&&sortedMoney.length===0?<p className="dashboard-series-explorer-status">No recorded monetary activity is available for this date range. No income or expense trend is inferred.</p>:null}
   </>:null}
   <div className="dashboard-series-controls">
   <fieldset className="dashboard-series-options"><legend>Choose trend series</legend>{choices.map(choice=><label key={choice} data-series={choice.toLowerCase()} style={{color:dashboardSeriesStyle(choice.toLowerCase()).color, borderColor:selected.includes(choice)?dashboardSeriesStyle(choice.toLowerCase()).color:undefined}}><input type="checkbox" checked={selected.includes(choice)} onChange={()=>setSelected(previous=>previous.includes(choice)?previous.filter(key=>key!==choice):choices.filter(key=>key===choice||previous.includes(key)))} /><span>{choice}</span></label>)}</fieldset>

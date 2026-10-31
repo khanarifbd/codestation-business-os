@@ -113,7 +113,7 @@ test('all manually created contexts inherit fixture headers without altering cro
   const e2e = path.join(root, 'e2e');
   const files = fs.readdirSync(e2e, { recursive: true }).filter(file => file.endsWith('.mjs'));
   const contexts = files.flatMap(file => verify(fs.readFileSync(path.join(e2e, file), 'utf8')));
-  assert.equal(contexts.length, 2);
+  assert.equal(contexts.length, 3);
   const inventory = fs.readFileSync(path.join(e2e, 'qc-owner-inventory.spec.mjs'), 'utf8');
   assert.throws(() => verify(inventory.replace('extraHTTPHeaders: testInfo.project.use.extraHTTPHeaders,', '')), /must inherit/);
   assert.throws(() => verify(inventory.replace('extraHTTPHeaders: testInfo.project.use.extraHTTPHeaders,', 'extraHTTPHeaders: {},')), /match/);
@@ -122,6 +122,19 @@ test('all manually created contexts inherit fixture headers without altering cro
   const options = vm.runInNewContext(`(${contexts.find(row => row.name === 'playwrightRequest').options})`, {
     appUrl: 'http://localhost:3000', state, originalOrganizationId: 'other-authorized-company', testInfo: { project: { use: { extraHTTPHeaders: headers } } },
   });
+  const anonymous = contexts.filter(row => row.options.includes('javaScriptEnabled: false'));
+  assert.equal(anonymous.length, 1);
+  const anonymousOptions = vm.runInNewContext(`(${anonymous[0].options})`, { baseURL: 'http://localhost:3000', info: { project: { use: { extraHTTPHeaders: headers } } } });
+  function verifyAnonymous(value) {
+    assert.equal(value.javaScriptEnabled, false);
+    assert.equal(value.baseURL, 'http://localhost:3000');
+    assert.equal(value.extraHTTPHeaders, headers);
+    assert.equal(Object.hasOwn(value, 'storageState'), false);
+    assert.deepEqual(Object.keys(value).sort(), ['baseURL','extraHTTPHeaders','javaScriptEnabled']);
+  }
+  verifyAnonymous(anonymousOptions);
+  assert.throws(() => verifyAnonymous({ ...anonymousOptions, storageState: {} }));
+  assert.throws(() => verifyAnonymous({ ...anonymousOptions, javaScriptEnabled: true }));
   assert.equal(options.extraHTTPHeaders, headers);
   assert.equal(options.baseURL, 'http://localhost:3000');
   assert.equal(options.storageState.cookies[0].value, 'other-authorized-company');

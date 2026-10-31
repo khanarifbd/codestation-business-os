@@ -189,6 +189,7 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
           await page.screenshot({ path: info.outputPath(bottom), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' }); captures.push(bottom);
         }
       }
+      await inFlight.wait(pendingResponses);
       await Promise.all(pendingResponses);
       reconcileTransportFailures();
       expect(errors.filter(entry => entry.route_id === route.id), route.pattern).toEqual([]);

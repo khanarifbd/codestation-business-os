@@ -4,10 +4,9 @@ const email = process.env.E2E_EMAIL ?? "e2e-owner@example.com";
 const password = process.env.E2E_PASSWORD;
 if (!password) throw new Error("Explicit disposable E2E_PASSWORD fixture configuration is required");
 
-test("foreground activity keeps a browser-session login without persistent auth cookies", async ({ page, context, browser, baseURL }) => {
+test("foreground activity keeps a browser-session login without persistent auth cookies", async ({ page, context, browser, baseURL }, info) => {
   if (!baseURL) throw new Error("Explicit fixture baseURL is required");
-  const origin = new URL(baseURL).origin;
-  const anonymous = await browser.newContext({ javaScriptEnabled: false, baseURL, extraHTTPHeaders: { Origin: origin, Connection: "close" } });
+  const anonymous = await browser.newContext({ javaScriptEnabled: false, baseURL, extraHTTPHeaders: info.project.use.extraHTTPHeaders });
   try {
     const ssr = await anonymous.newPage();
     let anonymousAuthRequests = 0;

@@ -22,3 +22,16 @@ test('none selected retains lower controls; loading/error never expose prior cha
   assert.equal(nodes.filter(n=>n.props.className==='dashboard-series-filter-slot').length,1);
  }
 });
+
+test('empty monetary history notice follows available count plots without hiding its meaning',()=>{
+ const emptyMoney={date_from:'2024-01-01',date_to:'2024-01-01',effective_date_to:'2024-01-01',bucket:'day',counts:[{period_start:'2024-01-01',period_end:'2024-01-01',projects:1,orders:0,clients:0}],money:[]};
+ const nodes=render(['Income','Expenses','Projects'],{data:emptyMoney});
+ const plots=nodes.filter(n=>typeof n.type==='function'&&n.type.name==='DashboardSeriesLineChart');
+ assert.deepEqual(plots.map(n=>n.props.title),['Records created over time']);
+ const notice=nodes.find(n=>n.type==='p'&&n.props.children==='No recorded monetary activity is available for this date range. No income or expense trend is inferred.');
+ assert.ok(notice);assert.ok(nodes.indexOf(notice)>nodes.indexOf(plots[0]));
+ assert.ok(nodes.indexOf(notice)<nodes.findIndex(n=>n.props.className==='dashboard-series-controls'));
+ const moneyOnly=render(['Income','Expenses'],{data:emptyMoney});
+ assert.equal(moneyOnly.filter(n=>typeof n.type==='function'&&n.type.name==='DashboardSeriesLineChart').length,0);
+ assert.equal(moneyOnly.filter(n=>n.type==='p'&&n.props.children===notice.props.children).length,1);
+});
