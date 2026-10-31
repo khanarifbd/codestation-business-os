@@ -78,8 +78,8 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect(historyPeriod).toBeVisible();
   const rangeText = await displayedRange.textContent();
   const [, rangeFrom, rangeTo] = rangeText.match(/(\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})$/);
-  await expect(historyPeriod.locator('option').first()).toHaveValue(rangeFrom);
-  await expect(historyPeriod.locator('option').last()).toHaveValue(rangeTo);
+  await expect(historyPeriod.locator('option').first()).toHaveAttribute('value', rangeFrom);
+  await expect(historyPeriod.locator('option').last()).toHaveAttribute('value', rangeTo);
 
 
   // Delay one actual old-tenant response; never fabricate business metrics.
