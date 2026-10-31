@@ -22,6 +22,7 @@ export default function LoginPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingGoogleCredential, setPendingGoogleCredential] = useState<string | null>(null);
   const conditionalPasskeyAbortRef = useRef<AbortController | null>(null);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -73,6 +74,8 @@ export default function LoginPage() {
       if (conditionalPasskeyAbortRef.current === controller) conditionalPasskeyAbortRef.current = null;
     };
   }, [router]);
+
+  useEffect(() => { setHydrated(true); }, []);
 
   async function finishAuthentication(user: AuthUser) {
     if (user.system_role === "super_admin") {
@@ -127,6 +130,7 @@ export default function LoginPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!hydrated) return;
     conditionalPasskeyAbortRef.current?.abort();
     conditionalPasskeyAbortRef.current = null;
     setLoading(true);
@@ -179,7 +183,8 @@ export default function LoginPage() {
     <AuthFrame variant="login" eyebrow="WELCOME BACK" title="Sign in to your workspace."
       description="Your clients, projects and finances. Right where you left them."
       asideTitle="One workspace. Every moving part." asideDescription="From the first client conversation to the final payment.">
-      <form className="login-form" onSubmit={handleSubmit}>
+      <form className="login-form" method="post" onSubmit={handleSubmit}>
+        <fieldset disabled={!hydrated} style={{ display: "contents" }} aria-label="Sign-in credentials">
         <label className="login-field"><span>Email or username</span>
           <input name="identifier" type="text" autoComplete="username webauthn" required autoFocus className="login-identifier" placeholder="you@company.com or username" />
         </label>
@@ -191,11 +196,12 @@ export default function LoginPage() {
           {pendingGoogleCredential ? <button type="button" onClick={() => { setPendingGoogleCredential(null); setNotice(null); }} className="login-cancel-google">Cancel Google connection</button> : null}
         </div> : null}
         {error ? <div className="login-message login-message-error" role="alert">{error}</div> : null}
-        <button type="submit" disabled={loading} className="login-submit">
+        <button type="submit" disabled={!hydrated || loading} className="login-submit">
           {loading ? <Loader2 className="size-4 animate-spin" /> : null}
           {loading ? (pendingGoogleCredential ? "Connecting Google…" : "Signing in…") : (pendingGoogleCredential ? "Confirm password & connect Google" : "Sign in securely")}
           {!loading ? <ArrowRight size={17} /> : null}
         </button>
+        </fieldset>
       </form>
       <div className="login-divider" aria-hidden="true"><span />or use another sign-in method<span /></div>
       <div className="login-alternative-methods">

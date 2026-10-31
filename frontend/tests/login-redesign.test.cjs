@@ -1,3 +1,4 @@
+const { restoreLoginReadiness } = require('./helpers/reviewed-login-readiness.cjs');
 const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -8,7 +9,7 @@ const baseline = process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
   : path.join(__dirname, '../../test-fixtures/frontend-original');
 const candidate = path.resolve(__dirname, '..');
-const read = (root, file) => fs.readFileSync(path.join(root, file), 'utf8');
+const read = (root, file) => { const source=fs.readFileSync(path.join(root,file),'utf8'); return root===candidate&&file==='src/app/login/page.tsx'?restoreLoginReadiness(source):source; };
 const login = 'src/app/login/page.tsx';
 // The release security change adds only these exact boundary guards. Comparing
 // against a transformed baseline preserves every original import, handler,
@@ -82,7 +83,7 @@ test('Origin boundary does not change any internal authentication refresh implem
 });
 test('Login form preserves identifier/password names, autocomplete, native validation and auth actions',()=>{
  const s=read(candidate,login);
- for(const token of ['name="identifier"','autoComplete="username webauthn"','required autoFocus','name="password"','autoComplete="current-password"','onSubmit={handleSubmit}','handlePasskeySignIn()','disabled={passkeyLoading || loading}','disabled={loading}','role="alert"','role="status"','href="/forgot-password"','href="/signup"','href="/verify-email"','onAuthenticated={finishAuthentication}','onLinkRequired={prepareGoogleLink}']) assert.ok(s.includes(token),token);
+ for(const token of ['name="identifier"','autoComplete="username webauthn"','required autoFocus','name="password"','autoComplete="current-password"','onSubmit={handleSubmit}','handlePasskeySignIn()','disabled={passkeyLoading || loading}','disabled={!hydrated || loading}','role="alert"','role="status"','href="/forgot-password"','href="/signup"','href="/verify-email"','onAuthenticated={finishAuthentication}','onLinkRequired={prepareGoogleLink}']) assert.ok(s.includes(token),token);
 });
 test('Shared auth frame retains original presentation except reviewed outer canvas',()=>{
  const source=read(candidate,'src/components/auth/auth-frame.tsx');assert.ok(source.includes('variant = "default"'));assert.ok(source.includes('if (variant !== "default")'));
@@ -98,4 +99,15 @@ test('Informative workflow is illustrative and adds no fake account metrics',()=
  assert.ok(s.includes('Not live account data.'));assert.ok(s.includes('Product overview'));
  for(const label of ['Client','Quotation','Order','Project','Invoice','Payment']) assert.ok(s.includes(`<strong>${label}</strong>`));
  assert.ok(!s.includes('trusted by')); assert.ok(!s.includes('99.9'));
+});
+
+test('Login readiness keeps POST fallback and credential controls disabled until mounted',()=>{
+ const s=fs.readFileSync(path.join(candidate,login),'utf8');
+ for(const token of ['method="post"','<fieldset disabled={!hydrated}','aria-label="Sign-in credentials"','disabled={!hydrated || loading}'])assert.ok(s.includes(token),token);
+ for(const {after} of require('./fixtures/login-readiness-reviewed-hunks.json')){
+  assert.throws(()=>restoreLoginReadiness(s.replace(after,after+after)));
+  assert.throws(()=>restoreLoginReadiness(s.replace(after,after.slice(0,-1)+'X')));
+ }
+ const changed=restoreLoginReadiness(s.replace('password: form.get("password")','password: null'));
+ assert.notEqual(changed,restoreLoginReadiness(s));
 });

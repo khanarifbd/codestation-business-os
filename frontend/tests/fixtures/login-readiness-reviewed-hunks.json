@@ -1,0 +1,14 @@
+[
+  {
+    "before": "  const conditionalPasskeyAbortRef = useRef<AbortController | null>(null);",
+    "after": "  const conditionalPasskeyAbortRef = useRef<AbortController | null>(null);\n  const [hydrated, setHydrated] = useState(false);"
+  },
+  {
+    "before": "  }, [router]);\n\n  async function finishAuthentication",
+    "after": "  }, [router]);\n\n  useEffect(() => { setHydrated(true); }, []);\n\n  async function finishAuthentication"
+  },
+  {
+    "before": "    event.preventDefault();\n    conditionalPasskeyAbortRef.current?.abort();",
+    "after": "    event.preventDefault();\n    if (!hydrated) return;\n    conditionalPasskeyAbortRef.current?.abort();"
+  }
+]
