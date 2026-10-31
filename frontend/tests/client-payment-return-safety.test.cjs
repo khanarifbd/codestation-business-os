@@ -1,3 +1,4 @@
+const { beforeDashboardDesignA } = require('./helpers/reviewed-dashboard-design-a.cjs');
 const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /* Actual return component under controlled React lifecycle/fetch scheduling.
  * No browser/provider/session/network/accounting integration is exercised. */
@@ -119,7 +120,7 @@ test('public route retains parsing, metadata and status props; only reviewed des
 });
 test('neutral destination delegates actual client/employee/staff routing to unchanged shell', () => {
   const file = path.join(root, 'src/components/dashboard-shell.tsx'), source = fs.readFileSync(file, 'utf8');
-  assert.equal(crypto.createHash('sha256').update(source).digest('hex'), JSON.parse(fs.readFileSync(path.join(evidence, 'dependency-pins.json'))).files['src/components/dashboard-shell.tsx']);
+  assert.equal(crypto.createHash('sha256').update(beforeDashboardDesignA('src/components/dashboard-shell.tsx', source)).digest('hex'), JSON.parse(fs.readFileSync(path.join(evidence, 'dependency-pins.json'))).files['src/components/dashboard-shell.tsx']);
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX); let effect;
   const visit = node => { if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect' && node.arguments[0]?.getText(ast).includes('router.replace(clientLanding)')) effect = node.arguments[0]; ts.forEachChild(node, visit); }; visit(ast); assert.ok(effect);
   const printed = ts.createPrinter().printNode(ts.EmitHint.Unspecified, effect, ast);
@@ -141,7 +142,7 @@ function normalizeNativeBootstrapEntry(source) {
   return source.replace(native, 'router.replace("/onboarding")');
 }
 function assertOriginalReturnDependency(file, source, pins) {
-  const normalized = file === 'src/components/dashboard-session-context.tsx' ? normalizeNativeBootstrapEntry(source) : source;
+  const normalized = file === 'src/components/dashboard-session-context.tsx' ? normalizeNativeBootstrapEntry(source) : beforeDashboardDesignA(file, source);
   assert.equal(crypto.createHash('sha256').update(normalized).digest('hex'), pins[file], file);
 }
 test('public status proxy and auth bootstrap retain original bytes except exact native onboarding entry; no provider or signed-pay GET is added', () => {

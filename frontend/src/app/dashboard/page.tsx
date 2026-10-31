@@ -25,6 +25,7 @@ import { formatDashboardMoney, reportingRange } from "@/lib/dashboard-reporting"
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { CurrencyTrendCard, FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
 import "@/components/dashboard/dashboard-composition.css";
+import "@/components/dashboard/dashboard-design-a.css";
 import { OperationalReportingNote } from "@/components/dashboard/operational-reporting-note";
 import { AppPage, PageHeader, SectionHeader, Surface } from "@/components/ui/app-page";
 

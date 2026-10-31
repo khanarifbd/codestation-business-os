@@ -6,7 +6,7 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   const baseURL = info.project.use.baseURL;
   expect(['localhost', '127.0.0.1', '[::1]']).toContain(new URL(baseURL).hostname);
   const login = await page.request.post('/api/auth/login', { data: {
-    email: 'neutral-theme@example.com', password: process.env.E2E_PASSWORD ?? 'E2E-Launch-Password-123!',
+    email: 'neutral-theme@example.com', password: (() => { if (!process.env.E2E_PASSWORD) throw new Error('E2E_PASSWORD is required'); return process.env.E2E_PASSWORD; })(),
   } });
   expect(login.status()).toBe(200);
   const stamp = Date.now();
@@ -86,6 +86,34 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect(displayedRange).toContainText('This month ·');
   await expect(displayedRange).not.toContainText('This year ·');
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
+  // Design A changes presentation only on this exact admin route.
+  await expect(page.locator('.workspace-shell')).toHaveClass(/dashboard-design-a/);
+  await expect(page.locator('.ws-sidebar')).toHaveCSS('width', '224px');
+  await expect(page.locator('.dashboard-operation-link')).toHaveCount(4);
+  // CSS-only probe: real chart classes, no API/data mutation or screenshot fixture.
+  // A single currency spans the panel; adding another restores separate equal cells.
+  const chartLayout = await page.locator('.dashboard-design-a').evaluate(root => {
+    const grid = document.createElement('div');
+    grid.className = 'dashboard-trend-multiples';
+    grid.style.cssText = 'position:fixed;left:-10000px;top:0;width:600px';
+    const first = document.createElement('article'); first.className = 'collections-trend';
+    grid.append(first); root.append(grid);
+    try {
+      const single = getComputedStyle(first).gridColumn;
+      const second = document.createElement('article'); second.className = 'collections-trend'; grid.append(second);
+      return { single, multiple: [getComputedStyle(first).gridColumn, getComputedStyle(second).gridColumn], widths: [first.getBoundingClientRect().width, second.getBoundingClientRect().width] };
+    } finally { grid.remove(); }
+  });
+  expect(chartLayout.single).toBe('1 / -1');
+  expect(chartLayout.multiple).toEqual(['auto', 'auto']);
+  expect(Math.abs(chartLayout.widths[0] - chartLayout.widths[1])).toBeLessThan(1);
+  expect(chartLayout.widths[0]).toBeGreaterThan(0);
+  expect(chartLayout.widths[0]).toBeLessThan(300);
+
+  for (const card of await page.locator('.dashboard-operation-link').all()) {
+    await expect(card).toHaveCSS('border-top-width', '1px');
+    await expect(card).toHaveCSS('border-radius', '7px');
+  }
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-final-desktop.png'), fullPage: false });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
@@ -94,4 +122,27 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await expect(period).toBeEnabled();
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-final-mobile.png'), fullPage: false });
+  const cards = page.locator('.dashboard-operation-link');
+  const first = await cards.nth(0).boundingBox(), second = await cards.nth(1).boundingBox(), third = await cards.nth(2).boundingBox();
+  expect(first).not.toBeNull(); expect(second).not.toBeNull(); expect(third).not.toBeNull();
+  expect(Math.abs(first.y - second.y)).toBeLessThan(1);
+  expect(third.y).toBeGreaterThan(first.y + first.height);
+  await page.locator('.ws-mobile-header').getByRole('button', { name: 'Open app drawer', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'App navigation', exact: true })).toBeVisible();
+  await page.screenshot({ path: info.outputPath('neutral-theme-design-a-dashboard-mobile-navigation.png'), fullPage: false });
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'App navigation', exact: true })).toHaveCount(0);
+  // Client-side navigation keeps CSS loaded: scope must still disappear on another page.
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator('.ws-sidebar a[href="/dashboard/company"]').click();
+  await expect(page).toHaveURL(/\/dashboard\/company$/);
+  await expect(page.getByRole('heading', { level: 1, name: organizations[1].name, exact: true })).toBeVisible();
+  await expect(page.locator('.workspace-shell')).not.toHaveClass(/dashboard-design-a/);
+  await expect(page.locator('.ws-sidebar')).toHaveCSS('width', '244px');
+  await page.screenshot({ path: info.outputPath('neutral-theme-design-a-company-scope-unchanged.png'), fullPage: false });
+  await page.locator('.ws-sidebar a[href="/dashboard"]').click();
+  await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toBeVisible();
+  await expect(page.locator('.workspace-shell')).toHaveClass(/dashboard-design-a/);
+  await expect(page.locator('.ws-sidebar')).toHaveCSS('width', '224px');
+
 });

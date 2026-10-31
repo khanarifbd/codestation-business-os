@@ -557,7 +557,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const navLabel = employeeSelfService ? "My workspace" : clientOnly ? "Client workspace" : "Workspace";
 
   return (
-    <div className="workspace-shell min-h-screen bg-[var(--app-canvas)] text-neutral-950 lg:flex">
+    <div className={cn("workspace-shell min-h-screen bg-[var(--app-canvas)] text-neutral-950 lg:flex", pathname === "/dashboard" && !clientOnly && !employeeSelfService && "dashboard-design-a")}>
       <aside className="ws-sidebar hidden h-screen w-[280px] shrink-0 border-r border-neutral-200/90 bg-white px-3 pb-3 pt-4 lg:sticky lg:top-0 lg:flex lg:flex-col">
         <div className="px-2">
           <div className="ws-brand flex items-center gap-3 px-1 py-2">
