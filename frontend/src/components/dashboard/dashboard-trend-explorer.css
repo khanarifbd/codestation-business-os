@@ -1,0 +1,19 @@
+.dashboard-series-explorer { min-width:0; }
+.dashboard-series-explorer-heading h2 { margin:0; font-size:16px; font-weight:600; color:#171717; }
+.dashboard-series-explorer-heading p { margin:5px 0 0; font-size:12px; color:#646464; }
+.dashboard-series-options { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 10px; padding:0; border:0; }
+.dashboard-series-options legend { margin-bottom:9px; font-size:12px; color:#646464; }
+.dashboard-series-options label { display:flex; align-items:center; gap:7px; padding:8px 11px; border:1px solid #ddd; border-radius:5px; background:#fff; color:#171717; font-size:12px; cursor:pointer; }
+.dashboard-series-options input { accent-color:#171717; width:14px; height:14px; margin:0; }
+.dashboard-series-options label:has(input:checked) { border-color:#737373; background:#f5f5f5; }
+.dashboard-series-options label:focus-within { outline:2px solid #737373; outline-offset:2px; }
+.dashboard-series-basis,.dashboard-series-range-note { margin:8px 0 16px; color:#646464; font-size:12px; line-height:1.65; }
+.dashboard-series-charts { display:grid; gap:16px; min-width:0; }
+.dashboard-series-explorer-status { margin:12px 0; padding:16px; border:1px solid #e5e5e5; border-radius:7px; color:#444; font-size:13px; line-height:1.6; }
+.dashboard-series-explorer-status p { margin:0 0 12px; }
+.dashboard-series-explorer-status button { padding:8px 12px; background:#171717; color:#fff; border:1px solid #171717; border-radius:5px; font-size:12px; }
+@media(max-width:700px) { .dashboard-series-options { gap:7px; }.dashboard-series-options label { padding:8px 9px; } }
+
+.dashboard-series-definitions { color:#646464; font-size:12px; line-height:1.65; margin:8px 0 16px; }
+.dashboard-series-definitions summary { cursor:pointer; color:#444; }
+.dashboard-series-definitions ul { margin:8px 0; padding-left:19px; }

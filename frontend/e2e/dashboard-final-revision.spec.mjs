@@ -24,6 +24,8 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   // Recovery and all business payloads still use the real app/database.
   const reportOutage = route => route.abort('failed');
   const detailsOutage = route => route.abort('failed');
+  const seriesOutage = route => route.abort('failed');
+  await page.route('**/api/reports/dashboard-series?*', seriesOutage);
   await page.route('**/api/reports/dashboard?*', reportOutage);
   await page.route('**/api/reports/dashboard-details?*', detailsOutage);
   await page.goto('/dashboard');
@@ -39,6 +41,29 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await retryDetails.first().click();
   await expect(retryDetails).toHaveCount(0);
   await expect(page.getByText('No financial accounts', { exact: true })).toBeVisible();
+  const trends = page.getByRole('region', { name: 'Business trends', exact: true });
+  await expect(trends.getByRole('alert')).toBeVisible();
+  await expect(trends.getByText(/No recorded monetary activity/)).toHaveCount(0);
+  await page.unroute('**/api/reports/dashboard-series?*', seriesOutage);
+  await trends.getByRole('button', { name: 'Retry trends', exact: true }).click();
+  await expect(trends.getByText(/No recorded monetary activity/)).toBeVisible();
+  for (const label of ['Income', 'Expenses']) await expect(trends.getByRole('checkbox', { name: label, exact: true })).toBeChecked();
+  for (const label of ['Projects', 'Orders', 'Clients']) {
+    const option = trends.getByRole('checkbox', { name: label, exact: true });
+    await expect(option).not.toBeChecked();
+    await option.check();
+  }
+  const counts = trends.getByRole('region', { name: 'Records created over time', exact: true });
+  await expect(counts).toBeVisible();
+  await expect(counts.getByText('All selected values are zero.', { exact: false })).toBeVisible();
+  for (const label of ['Income', 'Expenses', 'Projects', 'Orders', 'Clients']) await trends.getByRole('checkbox', { name: label, exact: true }).uncheck();
+  await expect(trends.getByText('Select at least one series to view its history.', { exact: true })).toBeVisible();
+  await expect(trends.locator('.dashboard-series-chart')).toHaveCount(0);
+  await trends.getByRole('checkbox', { name: 'Projects', exact: true }).focus();
+  await page.keyboard.press('Space');
+  await expect(counts).toBeVisible();
+  await expect(counts.locator('.dashboard-series-legend li')).toHaveCount(1);
+
   const period = page.getByRole('combobox', { name: 'Reporting period', exact: true });
   // Assert the approved shared font resolves on both heading and native form control.
   await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toHaveCSS('font-family', /Inter/i);
@@ -49,6 +74,13 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   const displayedRange = page.locator('.dashboard-heading span').filter({ hasText: / · \d{4}-\d{2}-\d{2} — \d{4}-\d{2}-\d{2}$/ });
   await expect(displayedRange).toHaveCount(1);
   await expect(displayedRange).toContainText('Last month ·');
+  const historyPeriod = counts.getByRole('combobox', { name: 'Explore period for Records created over time', exact: true });
+  await expect(historyPeriod).toBeVisible();
+  const rangeText = await displayedRange.textContent();
+  const [, rangeFrom, rangeTo] = rangeText.match(/(\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})$/);
+  await expect(historyPeriod.locator('option').first()).toHaveAttribute('value', rangeFrom);
+  await expect(historyPeriod.locator('option').last()).toHaveAttribute('value', rangeTo);
+
 
   // Delay one actual old-tenant response; never fabricate business metrics.
   let releaseOld;

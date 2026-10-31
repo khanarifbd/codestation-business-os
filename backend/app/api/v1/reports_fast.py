@@ -36,6 +36,8 @@ from app.schemas.reports import (
     ReportsOverview,
     ReportTrendRow,
 )
+from app.schemas.dashboard_series import DashboardSeries
+from app.services.dashboard_series import dashboard_series, plan_series
 from app.tenancy.context import TenantContext
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
@@ -580,3 +582,15 @@ def reports_overview_fast(
         projects=_project_rows_fast(db, tenant.organization_id, start, end, code, client_id, project_id),
         clients=_client_rows_fast(db, tenant.organization_id, start, end, code, client_id),
     )
+
+
+@router.get('/dashboard-series', response_model=DashboardSeries)
+def reports_dashboard_series(
+    db: DbSession,
+    tenant: ReportsViewer,
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    """Elapsed creation counts and exact, currency-separated financial trends."""
+    plan = plan_series(date_from, date_to, tenant.organization.timezone)
+    return dashboard_series(db, tenant.organization_id, plan)

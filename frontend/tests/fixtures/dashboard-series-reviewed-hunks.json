@@ -1,0 +1,22 @@
+[
+  {
+    "before": "import { CurrencyTrendCard, FinancialPerformanceCard } from \"@/components/dashboard/financial-insights\";",
+    "after": "import { FinancialPerformanceCard } from \"@/components/dashboard/financial-insights\";\nimport { DashboardTrendExplorer } from \"@/components/dashboard/dashboard-trend-explorer\";"
+  },
+  {
+    "before": "function periodLabel(value: string) {\n  const [year, month] = value.split(\"-\").map(Number);\n  if (!year || !month) return value;\n  return new Intl.DateTimeFormat(undefined, { month: \"short\", year: \"numeric\" }).format(new Date(year, month - 1, 1));\n}\n\nexport default function DashboardPage",
+    "after": "export default function DashboardPage"
+  },
+  {
+    "before": "  const trendGroups = useMemo(() => {\n    if (!data || !company) return [] as Array<{ currency: string; rows: TrendRow[] }>;\n    const grouped = new Map<string, TrendRow[]>();\n    for (const row of data.trend) {\n      const rows = grouped.get(row.currency) ?? [];\n      rows.push(row);\n      grouped.set(row.currency, rows);\n    }\n    return [...grouped.entries()]\n      .map(([currency, rows]) => ({\n        currency,\n        rows: rows.sort((a, b) => a.period.localeCompare(b.period)).slice(-6),\n      }))\n      .sort((a, b) => {\n        if (a.currency === company.currency) return -1;\n        if (b.currency === company.currency) return 1;\n        return a.currency.localeCompare(b.currency);\n      });\n  }, [data, company]);\n\n  const weightedPipeline = useMemo",
+    "after": "  const weightedPipeline = useMemo"
+  },
+  {
+    "before": "          <Surface className=\"dashboard-trend-focus\">\n            <SectionHeader title=\"Collections over time\" description={`${rangeLabel} \u00b7 Up to six available periods, with a separate scale for each currency.`} action={<TrendingUp className=\"size-5 text-neutral-300\" />} />\n            {trendGroups.length ? (\n              <div className=\"dashboard-trend-multiples\">\n                {trendGroups.map((group) => (\n                  <CurrencyTrendCard key={group.currency} currency={group.currency} rows={group.rows} reportingCurrency={company.currency} formatMoney={money} formatPeriod={periodLabel} />\n                ))}\n              </div>\n            ) : <EmptyState title=\"No trend yet\" note=\"Trend data appears after invoices, payments or expenses are posted.\" />}\n          </Surface>\n",
+    "after": "          <Surface className=\"dashboard-trend-focus\">\n            <DashboardTrendExplorer organizationId={activeOrganizationId ?? \"\"} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? \"UTC\"} reportingCurrency={company.currency} enabled={!reportLoading} />\n          </Surface>\n"
+  },
+  {
+    "before": "  TrendingUp,\n  Users,",
+    "after": "  Users,"
+  }
+]

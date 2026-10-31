@@ -96,7 +96,7 @@ test('Reporting select retains all four presets, disabled pending state and same
 });
 test('Currency values remain grouped, sorted and passed to existing financial components', () => {
   const code = read(root, dashboard);
-  for (const fragment of ['row={row}', 'currency={group.currency}', 'rows={group.rows}', 'reportingCurrency={company.currency}', 'formatMoney={money}', 'formatPeriod={periodLabel}', 'currency: row.currency, amount: row.weighted_amount']) assert.ok(code.includes(fragment), fragment);
+  for (const fragment of ['row={row}', 'organizationId={activeOrganizationId ?? ""}', 'dateFrom={data.date_from}', 'dateTo={data.date_to}', 'enabled={!reportLoading}', 'reportingCurrency={company.currency}', 'formatMoney={money}', 'currency: row.currency, amount: row.weighted_amount']) assert.ok(code.includes(fragment), fragment);
   assert.equal(logic(root, dashboard, 'CurrencyChips'), logic(baseline, dashboard, 'CurrencyChips'));
 });
 function normalizeNativeBootstrapEntry(value) {

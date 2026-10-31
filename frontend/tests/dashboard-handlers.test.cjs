@@ -95,11 +95,13 @@ withDashboard('Financial rows sort reporting currency first without combining cu
   assert.deepEqual(rows.map(row => row.currency), ['BDT', 'EUR', 'USD']); assert.equal(rows.length, overview.financials.length);
   assert.equal(rows[0].invoiced_revenue, '100.00');
 });
-withDashboard('Trend grouping preserves currencies and only the last six sorted periods', h => {
-  const trend = ['USD','BDT'].flatMap(currency => Array.from({ length: 8 }, (_, i) => ({ ...financial(currency), period: `2026-${String(8 - i).padStart(2, '0')}` })));
-  const groups = h.all(ready(h, { ...overview, trend }), 'CurrencyTrendCard');
-  assert.deepEqual(groups.map(g => g.props.currency), ['BDT','USD']);
-  for (const g of groups) { assert.equal(g.props.rows.length, 6); assert.deepEqual(g.props.rows.map(r => r.period), ['2026-03','2026-04','2026-05','2026-06','2026-07','2026-08']); assert.ok(g.props.rows.every(r => r.currency === g.props.currency)); }
+withDashboard('Historical explorer receives exact current tenant/date scope independently of old monthly trend', h => {
+  const tree = ready(h);
+  const charts = h.all(tree, 'DashboardTrendExplorer');
+  assert.equal(charts.length, 1);
+  assert.deepEqual(charts[0].props, { organizationId:'synthetic-a', dateFrom:overview.date_from, dateTo:overview.date_to, timezone:'UTC', reportingCurrency:'BDT', enabled:true });
+  h.setState('reportLoading', true);
+  assert.equal(h.all(h.render(), 'DashboardTrendExplorer')[0].props.enabled, false);
 });
 withDashboard('Four operation cards and two attention rows preserve all six original values and destinations', h => {
   const tree=ready(h), cards=h.all(tree,'MetricCard'), alerts=h.all(tree,'AlertRow');
@@ -144,8 +146,8 @@ withDashboard('Supplementary pulse failure does not replace usable financial dat
 withDashboard('Empty reports keep financial/trend empty states and operational counts without fabricated values', h => {
   const tree = ready(h, {...overview, financials:[], trend:[]});
   assert.equal(h.all(tree,'FinancialPerformanceCard').length,0);
-  assert.equal(h.all(tree,'CurrencyTrendCard').length,0);
-  assert.deepEqual(h.all(tree,'EmptyState').map(node=>node.props.title).sort(),['No financial activity','No trend yet']);
+  assert.equal(h.all(tree,'DashboardTrendExplorer').length,1);
+  assert.deepEqual(h.all(tree,'EmptyState').map(node=>node.props.title).sort(),['No financial activity']);
   assert.equal(h.all(tree,'PulseCard').length,0);
 });
 withDashboard('Details failure leaves financial report usable and renders three unavailable sections', h => {
@@ -182,7 +184,7 @@ withDashboard('Recomposed hierarchy puts compact operations before a shared tren
   const tree=ready(h,{...overview,trend:[{...financial('USD'),period:'2026-10'}]});
   const children=tree.props.children.props.children.filter(Boolean);
   const railIndex=children.findIndex(node=>h.all(node,'MetricCard').length===4);
-  const decisionIndex=children.findIndex(node=>h.all(node,'CurrencyTrendCard').length>0&&h.all(node,'aside').some(n=>n.props['aria-label']==='Priority work and quick entry'));
+  const decisionIndex=children.findIndex(node=>h.all(node,'DashboardTrendExplorer').length===1&&h.all(node,'aside').some(n=>n.props['aria-label']==='Priority work and quick entry'));
   const ledgerIndex=children.findIndex(node=>h.all(node,'FinancialPerformanceCard').length>0);
   const detailsIndex=children.findIndex(node=>h.all(node,'SectionHeading').length>0);
   assert.ok(railIndex>=0&&decisionIndex>railIndex&&ledgerIndex>decisionIndex&&detailsIndex>ledgerIndex);

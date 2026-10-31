@@ -58,6 +58,7 @@ jobs:
             test_candidate_conversion_transaction_sqlite.py \
             test_hr_talent_read_contract_offline.py \
             test_team_patch_name_integrity_offline.py \
+            test_dashboard_series_unit.py \
             test_release_security_unit.py \
             test_client_invitations_unit.py \
             test_hr_document_upload_commit_safety_offline.py \
@@ -102,6 +103,10 @@ jobs:
       - run: uv run python scripts/verify_session_idle.py
       - run: uv run python scripts/verify_company_currency_settings.py
       - run: uv run python scripts/verify_reporting_currency.py
+      - name: Verify historical dashboard series on isolated PostgreSQL temporary tables
+        env:
+          ENVIRONMENT: test
+        run: uv run python scripts/verify_dashboard_series_postgres.py
       - run: uv run python scripts/verify_functional_currency_change.py
       - run: uv run python scripts/verify_currency_business_date.py
       - run: uv run python scripts/verify_v1_accounting_integrity.py

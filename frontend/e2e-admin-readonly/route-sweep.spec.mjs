@@ -1,3 +1,4 @@
+import { verifyDashboardSeries } from './support/dashboard-series.mjs';
 import { aliasGroups } from './support/aliases.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
@@ -128,6 +129,9 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
     }
     await test.step(route.pattern, async () => {
       routeId = route.id;
+      const seriesResponse = route.pattern === '/dashboard'
+        ? page.waitForResponse(response => new URL(response.url()).pathname === '/api/reports/dashboard-series' && response.status() === 200)
+        : null;
       const response = await page.goto(route.url, { timeout: 30_000 });
       expect(response?.status(), route.pattern).toBeLessThan(400);
       await expect(page).not.toHaveURL(/\/login(?:[/?]|$)/);
@@ -142,6 +146,23 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
       if (contract.ready_button) await expect(page.getByRole('button', { name: contract.ready_button, exact: true })).toBeEnabled();
       await verifyReadyFields(page, expect, contract.ready_fields);
       const captures = [];
+      if (seriesResponse) {
+        const series = await seriesResponse;
+        expect(await series.finished()).toBeNull();
+        const explorer = await verifyDashboardSeries(page, expect, await series.json(), registry.organization_id);
+        for (const [size, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
+          await page.setViewportSize({ width, height });
+          for (const [part, target] of [['top', explorer], ['counts', explorer.getByRole('region', { name: 'Records created over time', exact: true })]]) {
+            // Fixed top chrome is 72px; align the intended content below it, not the center of a tall panel.
+            await target.evaluate(element => window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - 90), behavior: 'instant' }));
+            await expect(target.getByRole('heading', { name: part === 'top' ? 'Business trends' : 'Records created over time', exact: true })).toBeInViewport({ ratio: 1 });
+            expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+            const filename = `admin-readonly-${route.id}-series-${part}-${size}.png`;
+            await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' });
+            captures.push(filename);
+          }
+        }
+      }
       for (const [size, width, height] of captureViewports(route)) {
         await page.setViewportSize({ width, height });
         await page.evaluate(() => window.scrollTo(0, 0));
