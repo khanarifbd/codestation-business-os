@@ -1,0 +1,60 @@
+"use client";
+
+import { useId, useState, type PointerEvent } from "react";
+import { formatMoneyExact } from "@/lib/sales-money-preview";
+import { dashboardSeriesGeometry, exactChartCount, nearestChartPeriod, type DashboardChartPeriod, type DashboardChartSeries, type DashboardChartUnit } from "@/lib/dashboard-series-geometry";
+import "./dashboard-series-line-chart.css";
+
+export type DashboardSeriesLineChartProps = {
+  title: string;
+  description?: string;
+  periods: DashboardChartPeriod[];
+  series: DashboardChartSeries[];
+  unit: DashboardChartUnit;
+};
+const patterns = ["", "7 4", "2 4", "10 3 2 3", "4 3"];
+
+/** A presentation-only chart: callers own validated history, units and selection. */
+export function DashboardSeriesLineChart({ title, description, periods, series, unit }: DashboardSeriesLineChartProps) {
+  const id = useId();
+  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
+  let geometry: ReturnType<typeof dashboardSeriesGeometry>;
+  try { geometry = dashboardSeriesGeometry(periods, series, unit); }
+  catch { return <section className="dashboard-series-chart" aria-label={title}><p role="alert">Chart data is unavailable. Refresh the dashboard to try again.</p></section>; }
+  if (!periods.length || !series.length) return <section className="dashboard-series-chart" aria-label={title}><h3>{title}</h3><p className="dashboard-series-note">{!series.length ? "Select a series to view its history." : "No periods are available for this date range."}</p></section>;
+  const selectedIndex = periods.findIndex(period => period.key === selectedPeriod);
+  const activeIndex = selectedIndex < 0 ? periods.length - 1 : selectedIndex;
+  const active = periods[activeIndex];
+  const formatValue = (value: string) => unit.kind === "count" ? exactChartCount(value) : formatMoneyExact(value, unit.currency);
+  const selectPointer = (event: PointerEvent<SVGSVGElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const index = nearestChartPeriod(event.clientX, bounds.left, bounds.width, periods.length);
+    if (index != null) setSelectedPeriod(periods[index].key);
+  };
+  const ticks = periods.map((_, index) => index).filter(index => index === 0 || index === periods.length - 1 || index % Math.ceil(periods.length / 2) === 0);
+  return <section className="dashboard-series-chart" aria-labelledby={`${id}-title`}>
+    <header className="dashboard-series-heading"><div><h3 id={`${id}-title`}>{title}</h3>{description ? <p>{description}</p> : null}</div><span className="dashboard-series-unit">{unit.kind === "count" ? "Records created" : unit.currency}</span></header>
+    <ul className="dashboard-series-legend" aria-label={`${title} series`}>
+      {series.map((row, index) => <li key={row.key} className={`dashboard-series-legend-${index}`}><svg width="29" height="12" aria-hidden="true"><line x1="0" x2="29" y1="6" y2="6" stroke="currentColor" strokeWidth="2" strokeDasharray={patterns[index]} /></svg><span>{row.label}</span></li>)}
+    </ul>
+    <p className="dashboard-series-scale">{unit.kind === "count" ? "Count scale" : `${unit.currency} scale`}: {formatValue(geometry.min)} — {formatValue(geometry.max)}</p>
+    <figure className="dashboard-series-figure">
+      <svg className="dashboard-series-svg" viewBox="0 0 640 228" role="img" aria-labelledby={`${id}-title ${id}-caption`} onPointerMove={selectPointer} onPointerDown={selectPointer}>
+        {[0, 1, 2, 3, 4].map(tick => <line key={tick} className="dashboard-series-gridline" x1={geometry.left} x2={geometry.right} y1={geometry.top + tick / 4 * (geometry.bottom - geometry.top)} y2={geometry.top + tick / 4 * (geometry.bottom - geometry.top)} />)}
+        <line className="dashboard-series-cursor" x1={geometry.points[0][activeIndex].x} x2={geometry.points[0][activeIndex].x} y1={geometry.top} y2={geometry.bottom} />
+        {series.map((row, index) => <g key={row.key} className={`dashboard-series-line dashboard-series-line-${index}`}>
+          {periods.length > 1 ? <polyline points={geometry.points[index].map(point => `${point.x},${point.y}`).join(" ")} fill="none" strokeWidth="2" strokeDasharray={patterns[index]} vectorEffect="non-scaling-stroke" /> : null}
+          {geometry.points[index].map((point, pointIndex) => <circle key={periods[pointIndex].key} cx={point.x} cy={point.y} r={pointIndex === activeIndex ? 4 : 2.3} strokeWidth="1.5" vectorEffect="non-scaling-stroke"><title>{`${periods[pointIndex].label} · ${row.label}: ${formatValue(row.values[pointIndex])}`}</title></circle>)}
+        </g>)}
+        {ticks.map(index => <text key={periods[index].key} x={geometry.points[0][index].x} y="216" textAnchor={index === 0 ? "start" : index === periods.length - 1 ? "end" : "middle"}>{periods[index].axisLabel ?? periods[index].label}</text>)}
+      </svg>
+      <figcaption id={`${id}-caption`}>{periods.length === 1 ? "One recorded period; a point is shown, not an inferred trend. " : "Straight lines connect actual period values. "}{geometry.allZero ? "All selected values are zero. " : ""}{unit.kind === "count" ? "Counts are not monetary values." : `Only ${unit.currency} amounts share this scale.`} Use the period selector or touch the chart for exact values.</figcaption>
+    </figure>
+    <div className="dashboard-series-inspector">
+      <label htmlFor={`${id}-period`}>Explore period</label>
+      <select id={`${id}-period`} aria-label={`Explore period for ${title}`} value={active.key} onChange={event => setSelectedPeriod(event.target.value)}>{periods.map(period => <option key={period.key} value={period.key}>{period.label}</option>)}</select>
+      <dl className="dashboard-series-values" aria-live="polite" aria-atomic="true"><div className="dashboard-series-current-period"><dt>Period</dt><dd>{active.label}</dd></div>{series.map(row => <div key={row.key}><dt>{row.label}</dt><dd>{formatValue(row.values[activeIndex])}</dd></div>)}</dl>
+    </div>
+    <details className="dashboard-series-exact"><summary>View exact period values</summary><div className="dashboard-series-table-scroll" tabIndex={0} role="region" aria-label={`${title} exact values; scroll horizontally`}><table><caption>{title} · {unit.kind === "count" ? "counts" : unit.currency}</caption><thead><tr><th scope="col">Period</th>{series.map(row => <th scope="col" key={row.key}>{row.label}</th>)}</tr></thead><tbody>{periods.map((period, index) => <tr key={period.key}><th scope="row">{period.label}</th>{series.map(row => <td key={row.key}>{formatValue(row.values[index])}</td>)}</tr>)}</tbody></table></div></details>
+  </section>;
+}

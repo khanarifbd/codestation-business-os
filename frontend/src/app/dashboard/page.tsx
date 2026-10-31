@@ -15,7 +15,6 @@ import {
   FolderKanban,
   Landmark,
   ReceiptText,
-  TrendingUp,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -23,7 +22,8 @@ import {
 import { formatDashboardMoney, reportingRange } from "@/lib/dashboard-reporting";
 
 import { useDashboardSession } from "@/components/dashboard-session-context";
-import { CurrencyTrendCard, FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
+import { FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
+import { DashboardTrendExplorer } from "@/components/dashboard/dashboard-trend-explorer";
 import "@/components/dashboard/dashboard-composition.css";
 import "@/components/dashboard/dashboard-design-a.css";
 import { OperationalReportingNote } from "@/components/dashboard/operational-reporting-note";
@@ -171,12 +171,6 @@ function money(value: string | number, currency: string) {
 function percent(value: string | null) {
   if (value == null) return "—";
   return `${Number(value).toFixed(1)}%`;
-}
-
-function periodLabel(value: string) {
-  const [year, month] = value.split("-").map(Number);
-  if (!year || !month) return value;
-  return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(new Date(year, month - 1, 1));
 }
 
 export default function DashboardPage() {
@@ -358,26 +352,6 @@ export default function DashboardPage() {
     });
   }, [data, company]);
 
-  const trendGroups = useMemo(() => {
-    if (!data || !company) return [] as Array<{ currency: string; rows: TrendRow[] }>;
-    const grouped = new Map<string, TrendRow[]>();
-    for (const row of data.trend) {
-      const rows = grouped.get(row.currency) ?? [];
-      rows.push(row);
-      grouped.set(row.currency, rows);
-    }
-    return [...grouped.entries()]
-      .map(([currency, rows]) => ({
-        currency,
-        rows: rows.sort((a, b) => a.period.localeCompare(b.period)).slice(-6),
-      }))
-      .sort((a, b) => {
-        if (a.currency === company.currency) return -1;
-        if (b.currency === company.currency) return 1;
-        return a.currency.localeCompare(b.currency);
-      });
-  }, [data, company]);
-
   const weightedPipeline = useMemo<CurrencyValue[]>(() => (
     crmPulse?.values.map((row) => ({ currency: row.currency, amount: row.weighted_amount })) ?? []
   ), [crmPulse]);
@@ -476,14 +450,7 @@ export default function DashboardPage() {
 
         <div className="dashboard-decision-grid">
           <Surface className="dashboard-trend-focus">
-            <SectionHeader title="Collections over time" description={`${rangeLabel} · Up to six available periods, with a separate scale for each currency.`} action={<TrendingUp className="size-5 text-neutral-300" />} />
-            {trendGroups.length ? (
-              <div className="dashboard-trend-multiples">
-                {trendGroups.map((group) => (
-                  <CurrencyTrendCard key={group.currency} currency={group.currency} rows={group.rows} reportingCurrency={company.currency} formatMoney={money} formatPeriod={periodLabel} />
-                ))}
-              </div>
-            ) : <EmptyState title="No trend yet" note="Trend data appears after invoices, payments or expenses are posted." />}
+            <DashboardTrendExplorer organizationId={activeOrganizationId ?? ""} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? "UTC"} reportingCurrency={company.currency} enabled={!reportLoading} />
           </Surface>
           <aside className="dashboard-attention-column" aria-label="Priority work and quick entry">
             <Surface className="dashboard-priority-work">

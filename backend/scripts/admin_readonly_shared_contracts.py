@@ -8,7 +8,7 @@ def shared_route_contracts(organization_name: str, owner_name: str):
         if button: item['ready_button'] = button
         contracts[route] = item
     add('/dashboard', 'Business overview', 'app/dashboard/page.tsx',
-        ('/api/reports/dashboard',), ('Collections over time', 'Quick entry'))
+        ('/api/reports/dashboard', '/api/reports/dashboard-series'), ('Business trends', 'Quick entry'))
     add('/dashboard/company', organization_name, 'app/dashboard/company/page.tsx',
         ('/api/company-settings',), ('Company identity, localization, currencies, finance, system defaults and documents in one workspace.',))
     add('/dashboard/company/defaults', 'System Defaults', 'app/dashboard/company/defaults/page.tsx',
