@@ -19,3 +19,11 @@
 .dashboard-series-definitions ul { margin:8px 0; padding-left:19px; }
 
 .dashboard-series-filter-slot { margin-top:16px; min-width:0; }
+
+.dashboard-series-explorer-heading { margin-bottom:12px; }
+.dashboard-series-controls { display:flex; flex-wrap:wrap; align-items:flex-end; gap:10px 16px; margin:14px 0; padding-top:12px; border-top:1px solid #ededed; }
+.dashboard-series-controls .dashboard-series-options { margin:0; flex:1 1 300px; }
+.dashboard-series-controls .dashboard-series-options legend { margin-bottom:6px; }
+.dashboard-series-controls .dashboard-series-filter-slot { margin:0; flex:0 1 auto; }
+.dashboard-series-additional { margin-top:16px; }
+@media(max-width:700px) { .dashboard-series-controls .dashboard-series-filter-slot { flex:1 1 100%; } }

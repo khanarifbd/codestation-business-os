@@ -1,16 +1,26 @@
-.dashboard-date-filter { margin:16px 0; padding:14px; border:1px solid #e5e5e5; border-radius:7px; background:#fafafa; color:#171717; }
+.dashboard-date-control { min-width:0; }
+.dashboard-date-trigger { display:inline-flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:8px; max-width:100%; padding:8px 12px; border:1px solid #d5d5d5; border-radius:6px; background:#fff; color:#171717; font:inherit; font-size:12px; cursor:pointer; }
+.dashboard-date-trigger>span:first-child { color:#555; font-variant-numeric:tabular-nums; }
+.dashboard-date-popup { width:min(600px,calc(100vw - 24px)); max-width:calc(100vw - 24px); max-height:calc(100dvh - 32px); margin:auto; padding:0; overflow:auto; border:1px solid #ddd; border-radius:10px; background:#fff; color:#171717; box-shadow:0 18px 60px #0002; }
+.dashboard-date-popup::backdrop { background:#0005; }
+.dashboard-date-filter { padding:24px; }
+.dashboard-date-filter header h3 { margin:0; font-size:18px; font-weight:600; }
+.dashboard-date-filter header p { margin:7px 0 20px; font-size:12px; color:#646464; line-height:1.6; }
 .dashboard-date-filter fieldset { margin:0; padding:0; border:0; min-width:0; }
 .dashboard-date-filter legend { font-size:12px; font-weight:600; margin-bottom:10px; }
-.dashboard-date-shortcuts { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
-.dashboard-date-shortcuts button { border:1px solid #ddd; border-radius:5px; background:#fff; padding:6px 9px; font:inherit; font-size:12px; color:#444; cursor:pointer; }
+.dashboard-date-shortcuts { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:18px; }
+.dashboard-date-shortcuts button { border:1px solid #ddd; border-radius:5px; background:#fff; padding:8px 10px; font:inherit; font-size:12px; color:#444; cursor:pointer; }
 .dashboard-date-shortcuts button[aria-pressed="true"] { border-color:#171717; background:#171717; color:#fff; }
-.dashboard-date-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; gap:10px; align-items:end; }
+.dashboard-date-fields { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; }
 .dashboard-date-fields label { display:grid; gap:5px; font-size:12px; min-width:0; }
-.dashboard-date-fields input { width:100%; min-width:0; border:1px solid #ddd; border-radius:5px; padding:8px; background:#fff; color:#171717; font:inherit; font-size:13px; }
+.dashboard-date-fields input { width:100%; min-width:0; border:1px solid #ddd; border-radius:5px; padding:10px 8px; background:#fff; color:#171717; font:inherit; font-size:14px; }
 .dashboard-date-fields input:focus-visible { border-color:#737373; outline:none; box-shadow:none; }
 .dashboard-date-fields input[aria-invalid="true"] { border-color:#b91c1c; }
-.dashboard-date-apply { border:1px solid #171717; border-radius:5px; padding:9px 12px; background:#171717; color:#fff; font:inherit; font-size:12px; cursor:pointer; }
-.dashboard-date-filter button:disabled,.dashboard-date-filter input:disabled { opacity:.6; cursor:wait; }
-.dashboard-date-filter>p { margin:9px 0 0; color:#646464; font-size:11px; line-height:1.6; }
+.dashboard-date-filter footer { display:flex; justify-content:flex-end; gap:9px; margin-top:20px; }
+.dashboard-date-apply,.dashboard-date-cancel { border:1px solid #171717; border-radius:5px; padding:10px 16px; background:#171717; color:#fff; font:inherit; font-size:12px; cursor:pointer; }
+.dashboard-date-cancel { background:#fff; border-color:#ddd; color:#444; }
+.dashboard-date-control button:disabled,.dashboard-date-control button[aria-disabled="true"],.dashboard-date-filter button:disabled,.dashboard-date-filter input:disabled { opacity:.6; cursor:wait; }
+.dashboard-date-filter>p { margin:12px 0 0; color:#646464; font-size:11px; line-height:1.6; }
 .dashboard-date-filter>p[role="alert"] { color:#b91c1c; font-size:12px; }
-@media(max-width:700px) { .dashboard-date-filter { padding:12px; }.dashboard-date-fields { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }.dashboard-date-apply { grid-column:1/-1; }.dashboard-date-shortcuts button { flex:1 0 auto; } }
+@media(max-width:700px) { .dashboard-date-filter { padding:18px; }.dashboard-date-trigger { width:100%; }.dashboard-date-shortcuts button { flex:1 0 auto; } }
+@media(max-width:360px) { .dashboard-date-fields { grid-template-columns:minmax(0,1fr); } }

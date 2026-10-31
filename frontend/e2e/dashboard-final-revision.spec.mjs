@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { verifyDashboardChartPriority } from '../e2e-admin-readonly/support/dashboard-series.mjs';
 
 test('dashboard final revision: real recovery, period and tenant isolation remain usable on mobile', async ({ page, context }, info) => {
   // One cold route plus real setup/recovery/tenant transition, not a global timeout increase.
@@ -64,7 +65,12 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect(counts).toBeVisible();
   await expect(counts.locator('.dashboard-series-legend li')).toHaveCount(1);
 
+  const dateTrigger = page.getByRole('button', { name: 'Choose dashboard date range', exact: true });
+  const dateDialog = page.getByRole('dialog', { name: 'Dashboard date range', exact: true });
   const dateFilter = page.getByRole('form', { name: 'Dashboard date range', exact: true });
+  await expect(dateDialog).not.toBeVisible();
+  await dateTrigger.click();
+  await expect(dateDialog).toBeVisible();
   const fromInput = dateFilter.getByLabel('From', { exact: true }), toInput = dateFilter.getByLabel('To', { exact: true });
   const applyRange = dateFilter.getByRole('button', { name: 'Apply range', exact: true });
   await expect(page.getByRole('combobox', { name: 'Reporting period', exact: true })).toHaveCount(0);
@@ -90,16 +96,44 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
         const body = await response.json(); expect(body.date_from).toBe(range.from); expect(body.date_to).toBe(range.to);
       }
     }
+    await expect(dateDialog).not.toBeVisible();
+    await expect(dateTrigger).toBeFocused();
+    await expect(dateTrigger).toContainText(`${range.from} – ${range.to}`);
+    await dateTrigger.click();
     await expect(fromInput).toHaveValue(range.from); await expect(toInput).toHaveValue(range.to);
-    await expect(applyRange).toBeEnabled(); applied = range;
+    await expect(applyRange).toBeEnabled();
+    await dateFilter.getByRole('button', { name: 'Cancel', exact: true }).click();
+    applied = range;
   }
-  await applyAndVerify({ from: today, to: today }, () => dateFilter.getByRole('button', { name: 'Today', exact: true }).click());
+  // Preset selection is draft-only; Cancel/Escape/backdrop never dispatch report reads.
+  for (const dismissal of ['Cancel', 'Escape', 'backdrop']) {
+    if (!await dateDialog.isVisible()) await dateTrigger.click();
+    await expect(fromInput).toBeFocused();
+    const before = dateReads.length;
+    await dateFilter.getByRole('button', { name: 'Last month', exact: true }).click();
+    await expect(fromInput).not.toHaveValue(monthStart);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(dateReads.length).toBe(before);
+    if (dismissal === 'Cancel') await dateFilter.getByRole('button', { name: 'Cancel', exact: true }).click();
+    else if (dismissal === 'Escape') await page.keyboard.press('Escape');
+    else await page.mouse.click(1, 1);
+    await expect(dateDialog).not.toBeVisible();
+    await expect(dateTrigger).toBeFocused();
+    expect(dateReads.length).toBe(before);
+    await dateTrigger.click();
+    await expect(fromInput).toHaveValue(monthStart); await expect(toInput).toHaveValue(today);
+    await dateFilter.getByRole('button', { name: 'Cancel', exact: true }).click();
+  }
+  await dateTrigger.click();
+  await applyAndVerify({ from: today, to: today }, async () => { await dateFilter.getByRole('button', { name: 'Today', exact: true }).click(); await applyRange.click(); });
   await expect(counts.locator('polyline')).toHaveCount(0);
   await expect(counts).toContainText('One recorded period');
   const monday = new Date(`${today}T00:00:00Z`); monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
-  await applyAndVerify({ from: monday.toISOString().slice(0, 10), to: today }, () => dateFilter.getByRole('button', { name: 'This week (Mon–today)', exact: true }).click());
+  await dateTrigger.click();
+  await applyAndVerify({ from: monday.toISOString().slice(0, 10), to: today }, async () => { await dateFilter.getByRole('button', { name: 'This week (Mon–today)', exact: true }).click(); await applyRange.click(); });
   const previousEnd = new Date(`${monthStart}T00:00:00Z`); previousEnd.setUTCDate(0);
   const rangeTo = previousEnd.toISOString().slice(0, 10), rangeFrom = `${rangeTo.slice(0, 7)}-01`;
+  await dateTrigger.click();
   await fromInput.fill(rangeFrom); await toInput.fill(rangeTo);
   await applyAndVerify({ from: rangeFrom, to: rangeTo }, () => applyRange.click());
   const displayedRange = page.locator('.dashboard-heading span').filter({ hasText: / · \d{4}-\d{2}-\d{2} — \d{4}-\d{2}-\d{2}$/ });
@@ -107,6 +141,7 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   const historyPlot = counts.locator('.dashboard-series-svg'), inspectedDate = counts.locator('.dashboard-series-current-period dd');
   await historyPlot.focus(); await historyPlot.press('Home'); await expect(inspectedDate).toHaveText(rangeFrom);
   await historyPlot.press('End'); await expect(inspectedDate).toHaveText(rangeTo);
+  await dateTrigger.click();
   const readsBeforeInvalid = dateReads.length;
   await fromInput.fill(today); await toInput.fill(rangeFrom); await applyRange.click();
   await expect(dateFilter.getByRole('alert')).toHaveText('From must be on or before To.');
@@ -130,14 +165,18 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
     oldRouteCompleted();
   }, { times: 1 });
   await dateFilter.getByRole('button', { name: 'This year', exact: true }).click();
+  await applyRange.click();
   await ready;
-  await expect(fromInput).toBeDisabled();
+  await expect(dateDialog).not.toBeVisible();
+  await expect(dateTrigger).toBeDisabled();
   const switcher = page.locator('.ws-sidebar .ws-switcher');
   await switcher.locator('button[aria-expanded]').click();
   await switcher.getByRole('button', { name: new RegExp(organizations[1].name) }).click();
   await expect(page.locator('.dashboard-heading')).toContainText(organizations[1].name);
+  await dateTrigger.click();
   await expect(dateFilter.getByRole('button', { name: 'This month', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(fromInput).toBeEnabled();
+  await dateFilter.getByRole('button', { name: 'Cancel', exact: true }).click();
   const oldBrowserResponse = page.waitForResponse(response => response.request() === delayedRequest);
   releaseOld();
   await completed;
@@ -145,9 +184,12 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   // Give the delivered fetch continuation and React paint a turn before checking stale-state rejection.
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(page.locator('.dashboard-heading')).toContainText('Reporting currency · GBP');
+  await dateTrigger.click();
   await expect(dateFilter.getByRole('button', { name: 'This month', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(displayedRange).toContainText('This month ·');
   await expect(displayedRange).not.toContainText('This year ·');
+  await dateFilter.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await trends.getByRole('checkbox', { name: 'Projects', exact: true }).check();
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   // Design A changes presentation only on this exact admin route.
   await expect(page.locator('.workspace-shell')).toHaveClass(/dashboard-design-a/);
@@ -177,14 +219,35 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
     await expect(card).toHaveCSS('border-top-width', '1px');
     await expect(card).toHaveCSS('border-radius', '7px');
   }
+  await verifyDashboardChartPriority(page, expect);
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-final-desktop.png'), fullPage: false });
+  await dateTrigger.click();
+  await expect(fromInput).toBeFocused();
+  await expect(dateDialog).toBeInViewport({ ratio: 1 });
+  for (const key of ['Shift+Tab', 'Tab', 'Tab']) {
+    await page.keyboard.press(key);
+    expect(await dateDialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  }
+  await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-date-popup-desktop.png'), fullPage: false });
+  await page.keyboard.press('Escape');
+  await expect(dateTrigger).toBeFocused();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await expect(fromInput).toBeEnabled();
+  await expect(dateDialog).not.toBeVisible();
+  await expect(dateTrigger).toBeEnabled();
+  await verifyDashboardChartPriority(page, expect);
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-final-mobile.png'), fullPage: false });
+  await dateTrigger.click();
+  await expect(dateDialog).toBeInViewport({ ratio: 1 });
+  await expect(fromInput).toBeFocused();
+  await expect(applyRange).toBeInViewport({ ratio: 1 });
+  expect(await dateDialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-date-popup-mobile.png'), fullPage: false });
+  await dateFilter.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(dateTrigger).toBeFocused();
   const cards = page.locator('.dashboard-operation-link');
   const first = await cards.nth(0).boundingBox(), second = await cards.nth(1).boundingBox(), third = await cards.nth(2).boundingBox();
   expect(first).not.toBeNull(); expect(second).not.toBeNull(); expect(third).not.toBeNull();

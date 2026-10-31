@@ -1,5 +1,5 @@
 import { requestDrain, finishReadOnlyBatch } from './support/drain.mjs';
-import { verifyDashboardSeries } from './support/dashboard-series.mjs';
+import { verifyDashboardSeries, captureDashboardPopupEvidence } from './support/dashboard-series.mjs';
 import { aliasGroups } from './support/aliases.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync, appendFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
@@ -156,6 +156,11 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
         const series = await seriesResponse;
         expect(await series.finished()).toBeNull();
         const explorer = await verifyDashboardSeries(page, expect, await series.json(), registry.organization_id);
+        await captureDashboardPopupEvidence(page, expect, async part => {
+          const filename = `admin-readonly-${route.id}-${part}.png`;
+          await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' });
+          captures.push(filename);
+        });
         for (const [size, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
           await page.setViewportSize({ width, height });
           const targets = [['top', explorer, 'Business trends'], ['counts', explorer.getByRole('region', { name: 'Records created over time', exact: true }), 'Records created over time']];
