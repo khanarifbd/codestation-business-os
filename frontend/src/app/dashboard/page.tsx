@@ -19,9 +19,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import { formatDashboardMoney, reportingRange } from "@/lib/dashboard-reporting";
+import { formatDashboardMoney } from "@/lib/dashboard-reporting";
+import { dashboardDateShortcut, validateDashboardDateRange, type DashboardDatePreset, type DashboardDateRange } from "@/lib/dashboard-date-range";
+import { DashboardDateFilter } from "@/components/dashboard/dashboard-date-filter";
 
 import { useDashboardSession } from "@/components/dashboard-session-context";
+import { useAdministrationReadOwner } from "@/hooks/use-administration-read-owner";
 import { FinancialPerformanceCard } from "@/components/dashboard/financial-insights";
 import { DashboardTrendExplorer } from "@/components/dashboard/dashboard-trend-explorer";
 import "@/components/dashboard/dashboard-composition.css";
@@ -158,10 +161,10 @@ type DashboardPulseOverview = {
   people: PeoplePulse | null;
 };
 
-type Preset = "month" | "last_month" | "quarter" | "year";
+type Preset = DashboardDatePreset;
 
-function presetRange(preset: Preset, timezone?: string) {
-  return reportingRange(preset, timezone);
+function presetRange(preset: Exclude<Preset, "custom">, timezone?: string) {
+  return dashboardDateShortcut(preset, timezone);
 }
 
 function money(value: string | number, currency: string) {
@@ -176,6 +179,7 @@ function percent(value: string | null) {
 export default function DashboardPage() {
   const router = useRouter();
   const { tenant } = useDashboardSession();
+  const owns = useAdministrationReadOwner().current;
   const activeOrganizationId = tenant?.organization.id;
   const [reportResult, setReportResult] = useState<{ organizationId: string; value: Overview } | null>(null);
   const data = reportResult && reportResult.organizationId === activeOrganizationId ? reportResult.value : null;
@@ -203,11 +207,13 @@ export default function DashboardPage() {
   const [reportRetry, setReportRetry] = useState(0);
   const [detailsRetry, setDetailsRetry] = useState(0);
   const reportEpoch = useRef(0);
+  const rangeRequest = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!tenant) return;
+    if (!tenant || !owns()) return;
     let active = true;
     reportEpoch.current += 1;
+    rangeRequest.current = null;
     void (async () => {
       const range = presetRange("month", tenant.organization.timezone);
       setLoading(true);
@@ -215,14 +221,15 @@ export default function DashboardPage() {
       try {
         const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
         const response = await fetch(`/api/reports/dashboard?${params}`, { cache: "no-store" });
-        if (!active) return;
+        if (!active || !owns()) return;
         if (response.status === 401) {
           router.replace("/login");
           return;
         }
         if (response.ok) {
           const payload = (await response.json()) as Overview;
-          if (active) {
+          if (active && owns()) {
+            if (payload.date_from !== range.from || payload.date_to !== range.to) throw new Error("Dashboard response did not match the requested dates. Please retry.");
             setReportResult({ organizationId: tenant.organization.id, value: payload });
             setPreset("month");
           }
@@ -231,26 +238,26 @@ export default function DashboardPage() {
           setPreset("month");
         } else throw new Error("Unable to load dashboard metrics");
       } catch (reason) {
-        if (active) {
+        if (active && owns()) {
           setReportResult(null);
           setError(reason instanceof Error ? reason.message : "Unable to load dashboard");
         }
       } finally {
-        if (active) { setLoading(false); setReportLoading(false); }
+        if (active && owns()) { setLoading(false); setReportLoading(false); }
       }
     })();
-    return () => { active = false; reportEpoch.current += 1; };
-  }, [router, tenant, reportRetry]);
+    return () => { active = false; reportEpoch.current += 1; rangeRequest.current = null; };
+  }, [router, tenant, reportRetry, owns]);
 
   useEffect(() => {
-    if (!tenant) return;
+    if (!tenant || !owns()) return;
     let active = true;
     void (async () => {
       try {
         const response = await fetch("/api/dashboard-pulse/overview", { cache: "no-store" });
-        if (!active || !response.ok) return;
+        if (!active || !owns() || !response.ok) return;
         const pulse = (await response.json()) as DashboardPulseOverview;
-        if (!active) return;
+        if (!active || !owns()) return;
         setOrderPulse(pulse.orders);
         setProjectPulse(pulse.projects);
         setCrmPulse(pulse.crm);
@@ -262,13 +269,13 @@ export default function DashboardPage() {
       }
     })();
     return () => { active = false; };
-  }, [tenant]);
+  }, [tenant, owns]);
 
   const periodStart = data?.date_from;
   const periodEnd = data?.date_to;
 
   useEffect(() => {
-    if (!activeOrganizationId || !periodStart || !periodEnd) return;
+    if (!activeOrganizationId || !periodStart || !periodEnd || !owns()) return;
     const controller = new AbortController();
     setDetails(null);
     setDetailsLoading(true);
@@ -281,11 +288,11 @@ export default function DashboardPage() {
           signal: controller.signal,
         });
         if (response.status === 401) {
-          if (!controller.signal.aborted) router.replace("/login");
+          if (!controller.signal.aborted && owns()) router.replace("/login");
           return;
         }
         if (response.status === 403) {
-          if (!controller.signal.aborted) {
+          if (!controller.signal.aborted && owns()) {
             reportEpoch.current += 1;
             setReportResult(null);
             setError(null);
@@ -295,24 +302,27 @@ export default function DashboardPage() {
         }
         if (!response.ok) throw new Error("Dashboard details unavailable");
         const payload = (await response.json()) as DashboardDetails;
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && owns()) {
           setDetails({ organizationId: activeOrganizationId, from: periodStart, to: periodEnd, value: payload });
         }
       } catch {
-        if (!controller.signal.aborted) setDetailsError(true);
+        if (!controller.signal.aborted && owns()) setDetailsError(true);
       } finally {
-        if (!controller.signal.aborted) setDetailsLoading(false);
+        if (!controller.signal.aborted && owns()) setDetailsLoading(false);
       }
     })();
     return () => controller.abort();
-  }, [activeOrganizationId, periodStart, periodEnd, router, detailsRetry]);
+  }, [activeOrganizationId, periodStart, periodEnd, router, detailsRetry, owns]);
 
-  async function changePreset(next: Preset) {
-    if (!tenant || next === preset) return;
+  async function changeDateRange(range: DashboardDateRange, next: Preset = "custom") {
+    if (!tenant || !owns() || rangeRequest.current !== null) return;
+    const issue = validateDashboardDateRange(range, tenant.organization.timezone);
+    if (issue) { setError(issue); return; }
+    if (data?.date_from === range.from && data.date_to === range.to) { setPreset(next); setError(null); return; }
     const organizationId = tenant.organization.id;
     const requestEpoch = ++reportEpoch.current;
-    const currentRequest = () => reportEpoch.current === requestEpoch;
-    const range = presetRange(next, tenant.organization.timezone);
+    rangeRequest.current = requestEpoch;
+    const currentRequest = () => owns() && reportEpoch.current === requestEpoch;
     setReportLoading(true);
     setError(null);
     const params = new URLSearchParams({ date_from: range.from, date_to: range.to });
@@ -331,17 +341,23 @@ export default function DashboardPage() {
       if (!response.ok) throw new Error("Unable to load dashboard metrics");
       const payload = (await response.json()) as Overview;
       if (!currentRequest()) return;
+      if (payload.date_from !== range.from || payload.date_to !== range.to) throw new Error("Dashboard response did not match the requested dates. Please retry.");
       setReportResult({ organizationId, value: payload });
       setPreset(next);
     } catch (reason) {
       if (currentRequest()) setError(reason instanceof Error ? reason.message : "Unable to load dashboard metrics");
     } finally {
-      if (currentRequest()) setReportLoading(false);
+      if (currentRequest()) { rangeRequest.current = null; setReportLoading(false); }
     }
   }
 
+  async function changePreset(next: Exclude<Preset, "custom">) {
+    if (!tenant) return;
+    await changeDateRange(presetRange(next, tenant.organization.timezone), next);
+  }
+
   const company = tenant?.organization;
-  const rangeLabel = presetRange(preset, company?.timezone).label;
+  const rangeLabel = preset === "custom" ? "Custom range" : presetRange(preset, company?.timezone).label;
 
   const financialRows = useMemo(() => {
     if (!data || !company) return [];
@@ -419,18 +435,6 @@ export default function DashboardPage() {
           }
           actions={
             <>
-              <select
-                value={preset}
-                aria-label="Reporting period"
-                disabled={reportLoading}
-                onChange={(event) => void changePreset(event.target.value as Preset)}
-                className="h-10 min-w-36 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-700 shadow-sm outline-none transition hover:border-neutral-300 focus-visible:border-neutral-500 focus-visible:ring-2 focus-visible:ring-neutral-200 disabled:opacity-60"
-              >
-                <option value="month">This month</option>
-                <option value="last_month">Last month</option>
-                <option value="quarter">This quarter</option>
-                <option value="year">This year</option>
-              </select>
               <Link prefetch={false} href="/dashboard/reports" className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-neutral-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-neutral-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-500 focus-visible:ring-offset-2">
                 <BarChart3 className="size-4" /> Open reports
               </Link>
@@ -450,7 +454,7 @@ export default function DashboardPage() {
 
         <div className="dashboard-decision-grid">
           <Surface className="dashboard-trend-focus">
-            <DashboardTrendExplorer organizationId={activeOrganizationId ?? ""} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? "UTC"} reportingCurrency={company.currency} enabled={!reportLoading} />
+            <DashboardTrendExplorer organizationId={activeOrganizationId ?? ""} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? "UTC"} reportingCurrency={company.currency} enabled={!reportLoading} filters={<DashboardDateFilter key={`${activeOrganizationId}:${data.date_from}:${data.date_to}`} from={data.date_from} to={data.date_to} timezone={company.timezone ?? "UTC"} preset={preset} busy={reportLoading} onRange={(range) => void changeDateRange(range)} onPreset={(next) => void changePreset(next)} />} />
           </Surface>
           <aside className="dashboard-attention-column" aria-label="Priority work and quick entry">
             <Surface className="dashboard-priority-work">

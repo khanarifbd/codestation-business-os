@@ -110,7 +110,7 @@ test('A is an additional page-only style import; actual Dashboard data and actio
   assert.equal(page.split(addition).length - 1, 1);
   assert.ok(page.indexOf('import "@/components/dashboard/dashboard-composition.css";') < page.indexOf(addition));
   assert.ok(!shell.includes('import "@/components/dashboard/dashboard-design-a.css"'));
-  for (const fragment of ['data.operations.active_clients', 'data.operations.open_orders', 'data.operations.active_projects', 'data.operations.open_invoices', 'formatMoney={money}', 'dateFrom={data.date_from}', 'dateTo={data.date_to}', 'reportingCurrency={company.currency}', 'Company timezone ·', 'aria-label="Reporting period"', '<DashboardTrendExplorer organizationId={activeOrganizationId ?? ""}', 'title="Recent project economics"', '<OperationalReportingNote />', 'href="/dashboard/reports"']) assert.ok(page.includes(fragment), fragment);
+  for (const fragment of ['data.operations.active_clients', 'data.operations.open_orders', 'data.operations.active_projects', 'data.operations.open_invoices', 'formatMoney={money}', 'dateFrom={data.date_from}', 'dateTo={data.date_to}', 'reportingCurrency={company.currency}', 'Company timezone ·', '<DashboardDateFilter key=', '<DashboardTrendExplorer organizationId={activeOrganizationId ?? ""}', 'title="Recent project economics"', '<OperationalReportingNote />', 'href="/dashboard/reports"']) assert.ok(page.includes(fragment), fragment);
   assert.doesNotMatch(css, /\.dashboard-(?:financials|secondary-pulse|economics-grid|client-economics)[^{]*\{[^}]*display:\s*none/);
 });
 

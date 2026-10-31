@@ -152,10 +152,12 @@ for (const [index, group] of groups.entries()) test(`readonly batch${batch} grou
         const explorer = await verifyDashboardSeries(page, expect, await series.json(), registry.organization_id);
         for (const [size, width, height] of [['desktop', 1440, 1000], ['mobile', 390, 844]]) {
           await page.setViewportSize({ width, height });
-          for (const [part, target] of [['top', explorer], ['counts', explorer.getByRole('region', { name: 'Records created over time', exact: true })]]) {
+          const targets = [['top', explorer, 'Business trends'], ['counts', explorer.getByRole('region', { name: 'Records created over time', exact: true }), 'Records created over time']];
+          if (size === 'mobile') targets.push(['money', explorer.getByRole('region', { name: 'Income and expenses · USD', exact: true }), 'Income and expenses · USD']);
+          for (const [part, target, title] of targets) {
             // Fixed top chrome is 72px; align the intended content below it, not the center of a tall panel.
             await target.evaluate(element => window.scrollTo({ top: Math.max(0, window.scrollY + element.getBoundingClientRect().top - 90), behavior: 'instant' }));
-            await expect(target.getByRole('heading', { name: part === 'top' ? 'Business trends' : 'Records created over time', exact: true })).toBeInViewport({ ratio: 1 });
+            await expect(target.getByRole('heading', { name: title, exact: true })).toBeInViewport({ ratio: 1 });
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
             const filename = `admin-readonly-${route.id}-series-${part}-${size}.png`;
             await page.screenshot({ path: info.outputPath(filename), mask: [page.locator(sensitiveFields)], maskColor: '#d4d4d4' });

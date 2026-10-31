@@ -63,3 +63,13 @@ export function exactChartCount(value: string) {
   if (!COUNT.test(value)) throw new Error("Invalid chart count.");
   return new Intl.NumberFormat().format(BigInt(value));
 }
+
+/** Point inspection only: this never changes the reporting date range. */
+export function keyboardChartPeriod(key: string, current: number, count: number) {
+  if (!Number.isInteger(count) || count < 1 || !Number.isInteger(current) || current < 0 || current >= count) return null;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "ArrowLeft") return Math.max(0, current - 1);
+  if (key === "ArrowRight") return Math.min(count - 1, current + 1);
+  return null;
+}

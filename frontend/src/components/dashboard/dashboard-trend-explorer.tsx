@@ -1,11 +1,12 @@
 "use client";
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { useDashboardSeries, type DashboardSeriesReadProps } from "@/hooks/use-dashboard-series";
 import { DashboardSeriesLineChart } from "./dashboard-series-line-chart";
+import { dashboardSeriesStyle } from "@/lib/dashboard-series-palette";
 import "./dashboard-trend-explorer.css";
 const choices = ["Income","Expenses","Projects","Orders","Clients"] as const;
 type Choice = typeof choices[number];
-export type DashboardTrendExplorerProps = DashboardSeriesReadProps & { reportingCurrency: string };
+export type DashboardTrendExplorerProps = DashboardSeriesReadProps & { reportingCurrency: string; filters?: ReactNode };
 export function DashboardTrendExplorer(props: DashboardTrendExplorerProps) {
  const id=useId(), read=useDashboardSeries(props);
  const [selected,setSelected]=useState<Choice[]>(["Income","Expenses"]);
@@ -16,7 +17,8 @@ export function DashboardTrendExplorer(props: DashboardTrendExplorerProps) {
  const sortedMoney=data?[...data.money].sort((a,b)=>a.currency===props.reportingCurrency?-1:b.currency===props.reportingCurrency?1:a.currency.localeCompare(b.currency)):[];
  return <section className="dashboard-series-explorer" aria-labelledby={`${id}-heading`}>
   <header className="dashboard-series-explorer-heading"><div><h2 id={`${id}-heading`}>Business trends</h2><p>Explore actual activity over time · {props.timezone}</p></div></header>
-  <fieldset className="dashboard-series-options"><legend>Choose trend series</legend>{choices.map(choice=><label key={choice}><input type="checkbox" checked={selected.includes(choice)} onChange={()=>setSelected(previous=>previous.includes(choice)?previous.filter(key=>key!==choice):choices.filter(key=>key===choice||previous.includes(key)))} /><span>{choice}</span></label>)}</fieldset>
+  {props.filters ? <div className="dashboard-series-filter-slot">{props.filters}</div> : null}
+  <fieldset className="dashboard-series-options"><legend>Choose trend series</legend>{choices.map(choice=><label key={choice} data-series={choice.toLowerCase()} style={{color:dashboardSeriesStyle(choice.toLowerCase()).color, borderColor:selected.includes(choice)?dashboardSeriesStyle(choice.toLowerCase()).color:undefined}}><input type="checkbox" checked={selected.includes(choice)} onChange={()=>setSelected(previous=>previous.includes(choice)?previous.filter(key=>key!==choice):choices.filter(key=>key===choice||previous.includes(key)))} /><span>{choice}</span></label>)}</fieldset>
   <p className="dashboard-series-basis">Income received and expenses recorded use their original currency. Recorded expenses include approved payroll, which may not yet be paid. This is not a cash-profit comparison. Projects, orders and clients count records created in the company timezone.</p>
   <details className="dashboard-series-definitions"><summary>How these trends are calculated</summary><ul><li>Income: confirmed invoice collections and non-reversed direct income.</li><li>Expenses: posted expenses, non-reversed direct expenses and approved or paid gross payroll, dated by payroll period end.</li><li>Transfers are excluded. Different currencies are never combined, and recorded expenses are not a measure of cash paid.</li><li>Record counts include surviving projects, orders and clients by creation date. Deleted-record history is not reconstructed.</li></ul></details>
   {!props.enabled||read.loading?<p role="status" className="dashboard-series-explorer-status">Loading trend history…</p>:read.error?<div className="dashboard-series-explorer-status"><p role="alert">{read.error}</p>{!read.restricted?<button type="button" onClick={()=>void read.retry()}>Retry trends</button>:null}</div>:data?<>

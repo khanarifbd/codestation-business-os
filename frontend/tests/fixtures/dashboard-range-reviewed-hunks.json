@@ -1,0 +1,38 @@
+[
+  {
+    "before": "import { formatDashboardMoney, reportingRange } from \"@/lib/dashboard-reporting\";",
+    "after": "import { formatDashboardMoney } from \"@/lib/dashboard-reporting\";\nimport { dashboardDateShortcut, validateDashboardDateRange, type DashboardDatePreset, type DashboardDateRange } from \"@/lib/dashboard-date-range\";\nimport { DashboardDateFilter } from \"@/components/dashboard/dashboard-date-filter\";"
+  },
+  {
+    "before": "type Preset = \"month\" | \"last_month\" | \"quarter\" | \"year\";\n\nfunction presetRange(preset: Preset, timezone?: string) {\n  return reportingRange(preset, timezone);\n}",
+    "after": "type Preset = DashboardDatePreset;\n\nfunction presetRange(preset: Exclude<Preset, \"custom\">, timezone?: string) {\n  return dashboardDateShortcut(preset, timezone);\n}"
+  },
+  {
+    "before": "  const reportEpoch = useRef(0);",
+    "after": "  const reportEpoch = useRef(0);\n  const rangeRequest = useRef<number | null>(null);"
+  },
+  {
+    "before": "    reportEpoch.current += 1;\n    void (async () => {",
+    "after": "    reportEpoch.current += 1;\n    rangeRequest.current = null;\n    void (async () => {"
+  },
+  {
+    "before": "    return () => { active = false; reportEpoch.current += 1; };",
+    "after": "    return () => { active = false; reportEpoch.current += 1; rangeRequest.current = null; };"
+  },
+  {
+    "before": "  async function changePreset(next: Preset) {\n    if (!tenant || next === preset) return;\n    const organizationId = tenant.organization.id;\n    const requestEpoch = ++reportEpoch.current;\n    const currentRequest = () => reportEpoch.current === requestEpoch;\n    const range = presetRange(next, tenant.organization.timezone);\n    setReportLoading(true);\n    setError(null);\n    const params = new URLSearchParams({ date_from: range.from, date_to: range.to });\n    try {\n      const response = await fetch(`/api/reports/dashboard?${params}`, { cache: \"no-store\" });\n      if (!currentRequest()) return;\n      if (response.status === 401) {\n        router.replace(\"/login\");\n        return;\n      }\n      if (response.status === 403) {\n        setReportResult(null);\n        setError(null);\n        return;\n      }\n      if (!response.ok) throw new Error(\"Unable to load dashboard metrics\");\n      const payload = (await response.json()) as Overview;\n      if (!currentRequest()) return;\n      setReportResult({ organizationId, value: payload });\n      setPreset(next);\n    } catch (reason) {\n      if (currentRequest()) setError(reason instanceof Error ? reason.message : \"Unable to load dashboard metrics\");\n    } finally {\n      if (currentRequest()) setReportLoading(false);\n    }\n  }\n\n",
+    "after": "  async function changeDateRange(range: DashboardDateRange, next: Preset = \"custom\") {\n    if (!tenant || rangeRequest.current !== null) return;\n    const issue = validateDashboardDateRange(range, tenant.organization.timezone);\n    if (issue) { setError(issue); return; }\n    if (data?.date_from === range.from && data.date_to === range.to) { setPreset(next); setError(null); return; }\n    const organizationId = tenant.organization.id;\n    const requestEpoch = ++reportEpoch.current;\n    rangeRequest.current = requestEpoch;\n    const currentRequest = () => reportEpoch.current === requestEpoch;\n    setReportLoading(true);\n    setError(null);\n    const params = new URLSearchParams({ date_from: range.from, date_to: range.to });\n    try {\n      const response = await fetch(`/api/reports/dashboard?${params}`, { cache: \"no-store\" });\n      if (!currentRequest()) return;\n      if (response.status === 401) {\n        router.replace(\"/login\");\n        return;\n      }\n      if (response.status === 403) {\n        setReportResult(null);\n        setError(null);\n        return;\n      }\n      if (!response.ok) throw new Error(\"Unable to load dashboard metrics\");\n      const payload = (await response.json()) as Overview;\n      if (!currentRequest()) return;\n      if (payload.date_from !== range.from || payload.date_to !== range.to) throw new Error(\"Dashboard response did not match the requested dates. Please retry.\");\n      setReportResult({ organizationId, value: payload });\n      setPreset(next);\n    } catch (reason) {\n      if (currentRequest()) setError(reason instanceof Error ? reason.message : \"Unable to load dashboard metrics\");\n    } finally {\n      if (currentRequest()) { rangeRequest.current = null; setReportLoading(false); }\n    }\n  }\n\n  async function changePreset(next: Exclude<Preset, \"custom\">) {\n    if (!tenant) return;\n    await changeDateRange(presetRange(next, tenant.organization.timezone), next);\n  }\n\n"
+  },
+  {
+    "before": "  const rangeLabel = presetRange(preset, company?.timezone).label;",
+    "after": "  const rangeLabel = preset === \"custom\" ? \"Custom range\" : presetRange(preset, company?.timezone).label;"
+  },
+  {
+    "before": "              <select\n                value={preset}\n                aria-label=\"Reporting period\"\n                disabled={reportLoading}\n                onChange={(event) => void changePreset(event.target.value as Preset)}\n                className=\"h-10 min-w-36 rounded-lg border border-neutral-200 bg-white px-3 text-sm font-medium text-neutral-700 shadow-sm outline-none transition hover:border-neutral-300 focus-visible:border-neutral-500 focus-visible:ring-2 focus-visible:ring-neutral-200 disabled:opacity-60\"\n              >\n                <option value=\"month\">This month</option>\n                <option value=\"last_month\">Last month</option>\n                <option value=\"quarter\">This quarter</option>\n                <option value=\"year\">This year</option>\n              </select>\n              <Link prefetch={false} href=\"/dashboard/reports\"",
+    "after": "              <Link prefetch={false} href=\"/dashboard/reports\""
+  },
+  {
+    "before": "            <DashboardTrendExplorer organizationId={activeOrganizationId ?? \"\"} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? \"UTC\"} reportingCurrency={company.currency} enabled={!reportLoading} />",
+    "after": "            <DashboardTrendExplorer organizationId={activeOrganizationId ?? \"\"} dateFrom={data.date_from} dateTo={data.date_to} timezone={company.timezone ?? \"UTC\"} reportingCurrency={company.currency} enabled={!reportLoading} filters={<DashboardDateFilter key={`${activeOrganizationId}:${data.date_from}:${data.date_to}`} from={data.date_from} to={data.date_to} timezone={company.timezone ?? \"UTC\"} preset={preset} busy={reportLoading} onRange={(range) => void changeDateRange(range)} onPreset={(next) => void changePreset(next)} />} />"
+  }
+]

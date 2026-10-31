@@ -64,23 +64,54 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect(counts).toBeVisible();
   await expect(counts.locator('.dashboard-series-legend li')).toHaveCount(1);
 
-  const period = page.getByRole('combobox', { name: 'Reporting period', exact: true });
-  // Assert the approved shared font resolves on both heading and native form control.
+  const dateFilter = page.getByRole('form', { name: 'Dashboard date range', exact: true });
+  const fromInput = dateFilter.getByLabel('From', { exact: true }), toInput = dateFilter.getByLabel('To', { exact: true });
+  const applyRange = dateFilter.getByRole('button', { name: 'Apply range', exact: true });
+  await expect(page.getByRole('combobox', { name: 'Reporting period', exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toHaveCSS('font-family', /Inter/i);
-  await expect(period).toHaveCSS('font-family', /Inter/i);
-  await period.selectOption('last_month');
-  await expect(period).toHaveValue('last_month');
-  await expect(period).toBeEnabled();
+  await expect(fromInput).toHaveCSS('font-family', /Inter/i);
+  const today = await toInput.inputValue(), monthStart = `${today.slice(0, 7)}-01`;
+  await expect(fromInput).toHaveValue(monthStart);
+  await expect(dateFilter.getByRole('button', { name: 'This month', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const expectedReads = ['/api/reports/dashboard', '/api/reports/dashboard-details', '/api/reports/dashboard-series'];
+  const dateReads = [];
+  page.on('request', request => { const url = new URL(request.url()); if (expectedReads.includes(url.pathname)) dateReads.push(url); });
+  let applied = { from: monthStart, to: today };
+  async function applyAndVerify(range, action) {
+    const changed = range.from !== applied.from || range.to !== applied.to;
+    const waits = changed ? expectedReads.map(path => page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === path && url.searchParams.get('date_from') === range.from && url.searchParams.get('date_to') === range.to && response.status() === 200;
+    })) : [];
+    await action();
+    for (const pending of waits) {
+      const response = await pending; expect(await response.finished()).toBeNull();
+      if (new URL(response.url()).pathname !== '/api/reports/dashboard-details') {
+        const body = await response.json(); expect(body.date_from).toBe(range.from); expect(body.date_to).toBe(range.to);
+      }
+    }
+    await expect(fromInput).toHaveValue(range.from); await expect(toInput).toHaveValue(range.to);
+    await expect(applyRange).toBeEnabled(); applied = range;
+  }
+  await applyAndVerify({ from: today, to: today }, () => dateFilter.getByRole('button', { name: 'Today', exact: true }).click());
+  await expect(counts.locator('polyline')).toHaveCount(0);
+  await expect(counts).toContainText('One recorded period');
+  const monday = new Date(`${today}T00:00:00Z`); monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+  await applyAndVerify({ from: monday.toISOString().slice(0, 10), to: today }, () => dateFilter.getByRole('button', { name: 'This week (Mon–today)', exact: true }).click());
+  const previousEnd = new Date(`${monthStart}T00:00:00Z`); previousEnd.setUTCDate(0);
+  const rangeTo = previousEnd.toISOString().slice(0, 10), rangeFrom = `${rangeTo.slice(0, 7)}-01`;
+  await fromInput.fill(rangeFrom); await toInput.fill(rangeTo);
+  await applyAndVerify({ from: rangeFrom, to: rangeTo }, () => applyRange.click());
   const displayedRange = page.locator('.dashboard-heading span').filter({ hasText: / · \d{4}-\d{2}-\d{2} — \d{4}-\d{2}-\d{2}$/ });
-  await expect(displayedRange).toHaveCount(1);
-  await expect(displayedRange).toContainText('Last month ·');
-  const historyPeriod = counts.getByRole('combobox', { name: 'Explore period for Records created over time', exact: true });
-  await expect(historyPeriod).toBeVisible();
-  const rangeText = await displayedRange.textContent();
-  const [, rangeFrom, rangeTo] = rangeText.match(/(\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})$/);
-  await expect(historyPeriod.locator('option').first()).toHaveAttribute('value', rangeFrom);
-  await expect(historyPeriod.locator('option').last()).toHaveAttribute('value', rangeTo);
-
+  await expect(displayedRange).toHaveCount(1); await expect(displayedRange).toContainText(`${rangeFrom} — ${rangeTo}`);
+  const historyPlot = counts.locator('.dashboard-series-svg'), inspectedDate = counts.locator('.dashboard-series-current-period dd');
+  await historyPlot.focus(); await historyPlot.press('Home'); await expect(inspectedDate).toHaveText(rangeFrom);
+  await historyPlot.press('End'); await expect(inspectedDate).toHaveText(rangeTo);
+  const readsBeforeInvalid = dateReads.length;
+  await fromInput.fill(today); await toInput.fill(rangeFrom); await applyRange.click();
+  await expect(dateFilter.getByRole('alert')).toHaveText('From must be on or before To.');
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  expect(dateReads.length).toBe(readsBeforeInvalid);
 
   // Delay one actual old-tenant response; never fabricate business metrics.
   let releaseOld;
@@ -98,15 +129,15 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
     await route.fulfill({ response });
     oldRouteCompleted();
   }, { times: 1 });
-  await period.selectOption('year');
+  await dateFilter.getByRole('button', { name: 'This year', exact: true }).click();
   await ready;
-  await expect(period).toBeDisabled();
+  await expect(fromInput).toBeDisabled();
   const switcher = page.locator('.ws-sidebar .ws-switcher');
   await switcher.locator('button[aria-expanded]').click();
   await switcher.getByRole('button', { name: new RegExp(organizations[1].name) }).click();
   await expect(page.locator('.dashboard-heading')).toContainText(organizations[1].name);
-  await expect(period).toHaveValue('month');
-  await expect(period).toBeEnabled();
+  await expect(dateFilter.getByRole('button', { name: 'This month', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(fromInput).toBeEnabled();
   const oldBrowserResponse = page.waitForResponse(response => response.request() === delayedRequest);
   releaseOld();
   await completed;
@@ -114,7 +145,7 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   // Give the delivered fetch continuation and React paint a turn before checking stale-state rejection.
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await expect(page.locator('.dashboard-heading')).toContainText('Reporting currency · GBP');
-  await expect(period).toHaveValue('month');
+  await expect(dateFilter.getByRole('button', { name: 'This month', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(displayedRange).toContainText('This month ·');
   await expect(displayedRange).not.toContainText('This year ·');
   await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
@@ -152,7 +183,7 @@ test('dashboard final revision: real recovery, period and tenant isolation remai
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
   await expect(page.getByRole('heading', { name: 'Business overview', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await expect(period).toBeEnabled();
+  await expect(fromInput).toBeEnabled();
   await page.screenshot({ path: info.outputPath('neutral-theme-dashboard-final-mobile.png'), fullPage: false });
   const cards = page.locator('.dashboard-operation-link');
   const first = await cards.nth(0).boundingBox(), second = await cards.nth(1).boundingBox(), third = await cards.nth(2).boundingBox();
