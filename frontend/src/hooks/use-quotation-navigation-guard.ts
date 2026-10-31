@@ -18,7 +18,7 @@ export type QuotationNavigationGuardOptions = {
   discardMessage?: string;
   /** Disable listeners on a shared read-only/list controller. Defaults preserve existing editors. */
   enabled?: boolean;
-  documentLabel?: "quotation" | "order" | "inventory" | "project" | "work update" | "people" | "HR request" | "self review" | "financial account" | "transfer" | "payroll" | "money receipt" | "expense" | "credit application" | "payable" | "reconciliation" | "accounting entry" | "loan operation";
+  documentLabel?: "quotation" | "invoice" | "order" | "inventory" | "project" | "work update" | "people" | "HR request" | "self review" | "financial account" | "transfer" | "payroll" | "money receipt" | "expense" | "credit application" | "payable" | "reconciliation" | "accounting entry" | "loan operation";
 };
 
 type AnchorIntent = {

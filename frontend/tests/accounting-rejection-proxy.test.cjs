@@ -1,0 +1,8 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript'),Module=require('node:module');
+const {sourceLoader,root}=require('./reconciliation-harness.cjs');
+const {proxyUnreadable,validation}=require('./accounting-rejection-fixtures.cjs');
+const file=path.join(root,'src/lib/accounting-rejection.ts');
+const helper=sourceLoader().load(file).hasAccountingRejectionDetail;
+for(const family of ['accounting','finance'])for(const status of [400,409,422])test(`${family} actual proxy preserves unreadable status but its sentinel never establishes rejection ${status}`,async()=>{const response=await proxyUnreadable(status,family);assert.equal(response.status,status);const body=await response.json();assert.deepEqual(body,{detail:'Unexpected upstream response'});assert.equal(helper(body),false);});
+test('verified readable errors and Pydantic validation remain corrective body evidence',()=>{assert.equal(helper({detail:'Amount exceeds available balance'}),true);assert.equal(helper(validation),true);});
+test('inverse sentinel mutation demonstrably reintroduces unsafe classification',()=>{const source=fs.readFileSync(file,'utf8'),changed=source.replace(', "unexpected upstream response"','');assert.notEqual(changed,source);const mod=new Module(file);mod._compile(ts.transpileModule(changed,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,file);assert.equal(helper({detail:'Unexpected upstream response'}),false);assert.equal(mod.exports.hasAccountingRejectionDetail({detail:'Unexpected upstream response'}),true);});

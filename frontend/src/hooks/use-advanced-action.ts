@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { ConfirmationDetail } from "@/components/financial-confirmation-dialog";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 export type AdvancedConfirmation = { title: string; description: string; warning: string; details: ConfirmationDetail[]; confirmLabel: string };
 export type AdvancedCommand = { url: string; method?: "POST" | "PATCH"; body?: unknown; confirmation: AdvancedConfirmation; validate: (value: unknown) => boolean; resultHref?: (value: unknown) => string | null };
 type FrozenCommand = Omit<AdvancedCommand, "body"> & { bodyText: string | undefined };
@@ -34,7 +35,7 @@ export function useAdvancedAction(canManage: boolean, dirty: boolean, returnHref
       if (!alive.current) return;
       if (response.status === 401) router.replace("/login");
       if (!response.ok) {
-        if ([400,401,403,404,409,422].includes(response.status)) { phaseRef.current = "idle"; setPhase("idle"); command.current = null; setConfirmation(null); setError(getApiErrorMessage(payload, "The accounting operation was rejected. Your inputs are retained.")); }
+        if ([400,401,403,404,409,422].includes(response.status) && hasAccountingRejectionDetail(payload)) { phaseRef.current = "idle"; setPhase("idle"); command.current = null; setConfirmation(null); setError(getApiErrorMessage(payload, "The accounting operation was rejected. Your inputs are retained.")); }
         else { phaseRef.current = "unknown"; setPhase("unknown"); setConfirmation(null); setError("The response did not establish whether the operation posted. Do not post again; inspect saved records first."); }
         return;
       }

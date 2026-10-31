@@ -1,4 +1,5 @@
 "use client";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -26,6 +27,8 @@ type Operation = {
 };
 async function read(path: string): Promise<unknown> { const response = await fetch(path, { cache: "no-store" }), data: unknown = await response.json().catch(() => null); if (!response.ok)
     throw new Error(getApiErrorMessage(data, "Expense information could not be loaded.")); return data; }
+const knownMoneyRejection = (status: number, body: unknown) => [400, 401, 403, 404, 422].includes(status) && hasAccountingRejectionDetail(body);
+
 export function useMoneyOutWorkspace() {
     const { tenant } = useDashboardSession(), router = useRouter(), pathname = usePathname(), query = useSearchParams(), route = useParams<{
         expenseId?: string;
@@ -193,7 +196,7 @@ export function useMoneyOutWorkspace() {
             if (!mounted.current)
                 return;
             if (!response.ok) {
-                if (uncertain.current || response.status >= 500 || response.status === 409) {
+                if (uncertain.current || !knownMoneyRejection(response.status, data)) {
                     uncertain.current = true;
                     setPhase("uncertain");
                 }

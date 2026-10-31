@@ -1,3 +1,5 @@
+const {beforeReviewedInvoiceBoundaries}=require('./helpers/reviewed-invoice-boundaries.cjs');
+const {beforeReviewedInvoiceRegister}=require('./helpers/reviewed-invoice-register.cjs');
 const { withReviewedCanvas } = require('./helpers/reviewed-canvas.cjs');
 /** Presentation guardrails for the active invoice list/create/detail workflow. */
 const { test } = require('node:test');
@@ -10,7 +12,7 @@ const baseline = process.env.BASELINE_FRONTEND
   ? path.resolve(process.env.BASELINE_FRONTEND)
   : path.join(__dirname, '../../test-fixtures/frontend-original');
 const files = { list: 'src/components/invoices-workspace-v2.tsx', detail: 'src/components/invoice-detail-workspace.tsx', payment: 'src/components/invoice-payment-workspace.tsx', workspace: 'src/components/invoice-workspace.tsx' };
-const read = (dir, file) => fs.readFileSync(path.join(dir, file), 'utf8');
+const read = (dir, file) => {const source=fs.readFileSync(path.join(dir,file),'utf8');return dir===root?beforeReviewedInvoiceRegister(file,beforeReviewedInvoiceBoundaries(file,source)):source;};
 const parse = (dir, file) => ts.createSourceFile(file, read(dir, file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 function find(dir, file, name, predicate = ts.isFunctionDeclaration) { const ast = parse(dir, file); let node; const visit = n => { if (predicate(n) && n.name?.getText(ast) === name) node = n; ts.forEachChild(n, visit); }; visit(ast); assert.ok(node, `${name} still exists`); return { ast, node }; }
 function hasJsx(node) { let found = false; const visit = n => { if (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n)) found = true; ts.forEachChild(n, visit); }; visit(node); return found; }
@@ -120,3 +122,9 @@ test('Dedicated print links and client-preview anchor remain available',()=>{
   assert.ok(payment.includes('id="invoice-client-preview"'));
   assert.ok(payment.includes('onClick={printInvoice}'));
 });
+
+test('Reviewed register scope/create seams reject changed or duplicated admission',()=>{const f='src/components/invoices-workspace-v2.tsx';const raw=fs.readFileSync(path.join(root,f),'utf8');for(const [from,to] of [['if (!canChangeDraft()) return;','if (false) return;'],['writeUnknown.current = true','writeUnknown.current = false'],['if (response.ok && ownsScope()) writeAcknowledged.current = true;','if (false) writeAcknowledged.current = true;']])assert.throws(()=>beforeReviewedInvoiceRegister(f,raw.replace(from,to)));});
+
+test('Reviewed detail/payment boundary seams reject weakened write scope and uncertainty',()=>{for(const [f,from,to]of [['src/components/invoice-detail-workspace.tsx','!canReversePayment || !hasCurrentInvoice()','false'],['src/components/invoice-detail-workspace.tsx','outcome.current = "unknown"','outcome.current = null'],['src/components/invoice-payment-workspace.tsx','if (!canChange() || !invoice || !payment) return;','if (!invoice) return;']]){const raw=fs.readFileSync(path.join(root,f),'utf8');assert.ok(raw.includes(from));assert.throws(()=>beforeReviewedInvoiceBoundaries(f,raw.replace(from,to)));}});
+
+test('Reviewed current-session admission cannot be removed from drafts or financial confirmations',()=>{for(const [f,needle] of [['src/components/invoices-workspace-v2.tsx','generation === draftGeneration.current'],['src/components/invoice-detail-workspace.tsx','uiGeneration === sessions.current.ui'],['src/components/invoice-detail-workspace.tsx','sessions.current.reversalReviewed'],['src/components/invoice-payment-workspace.tsx','generation === editGeneration.current']]){const raw=fs.readFileSync(path.join(root,f),'utf8');assert.ok(raw.includes(needle));assert.throws(()=>(f.includes('invoices-workspace-v2')?beforeReviewedInvoiceRegister:beforeReviewedInvoiceBoundaries)(f,raw.replace(needle,'false')));}});

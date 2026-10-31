@@ -4,6 +4,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { accountCursorHistoryScope, readPreviousAccountCursor, rememberAccountCursorStep } from "@/lib/account-cursor-history";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { transferCents } from "@/components/accounting-transfers/transfer-model";
 import { billPayload, billValidation, centsText, effectiveTax, initialBillValues, initialPaymentValues, isAccounts, isBill, isCategories, isPayment, isPayablesPage, isTaxCodes, isVendors, payableBillPreview, paymentPayload, paymentValidation, record, type Bill, type BillValues, type Payment, type PaymentValues, type PayablesBrowse, type PayablesMeta, type PayablesOperation, type PayablesPage } from "@/components/accounting-payables/payables-model";
@@ -291,7 +292,7 @@ export function usePayablesWorkspace() {
                 }
             }
             else {
-                const body: unknown = await response.json().catch(() => null), definitive = [400, 401, 403, 404, 422].includes(response.status);
+                const body: unknown = await response.json().catch(() => null), definitive = [400, 401, 403, 404, 422].includes(response.status) && hasAccountingRejectionDetail(body);
                 if (!definitive || everUncertain.current) {
                     everUncertain.current = true;
                     setPhase("uncertain");

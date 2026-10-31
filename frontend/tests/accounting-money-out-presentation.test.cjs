@@ -61,3 +61,15 @@ check('existing expense management link requires manage capability',()=>{for(con
 check('missing joined project name never relabels a project expense as company',()=>{const tree=render(workspace,'MoneyOutDocument',{expense:{...expense,project_id:'p',project_name:null,project_number:'SYN-P1'}});assert.match(text(tree),/Project · SYN-P1/);});
 check('mobile create disclosure precedes register and uses the shared native purpose renderer',()=>{const tree=render(workspace,'MoneyOutRegister',{vm:vm()}),details=nodes(tree,'details');assert.equal(details[0].props.className,'mo-mobile-record');assert.match(text(details[0]),/Record a paid expense/);assert.equal(nodes(details[0],'a').filter(n=>n.props.href.includes('/new?')).length,3);const source=fs.readFileSync(path.join(root,workspace),'utf8'),css=fs.readFileSync(path.join(root,'src/components/accounting-money-out/money-out.css'),'utf8');assert.ok(source.indexOf('className="mo-mobile-record"')<source.indexOf('className="mo-browse-grid"'));assert.match(css,/@media\(max-width:850px\)\{\.mo-mobile-record\{display:block\}/);assert.match(css,/\.mo-sidebar-actions>\.mo-purpose-links,\.mo-sidebar-actions>h2\{display:none\}/);assert.match(css,/\.mo-mobile-record>summary[^}]*min-height:48px/);assert.match(css,/\.mo-mobile-record>summary:focus-visible/);});
 check('read-only role receives no mobile recording disclosure',()=>{const tree=render(workspace,'MoneyOutRegister',{vm:vm({canManage:false})});assert.equal(nodes(tree,'details').some(n=>n.props.className==='mo-mobile-record'),false);});
+
+check('desktop View action reserves its natural text and icon width without shrinking mobile touch target',()=>{
+ const css=fs.readFileSync(path.join(root,'src/components/accounting-money-out/money-out.css'),'utf8');
+ assert.match(css,/\.mo-columns,\.mo-row\{display:grid;grid-template-columns:minmax\(0,1.5fr\) minmax\(105px,1fr\) minmax\(105px,.8fr\) max-content;/);
+ assert.ok(css.includes('.mo-columns,.mo-row{gap:12px;grid-template-columns:minmax(0,1.1fr) minmax(95px,.85fr) minmax(95px,.8fr) max-content}'));
+ assert.match(css,/\.mo-row \.aa-row-link\{justify-self:end;white-space:nowrap\}/);
+ assert.match(css,/@media\(max-width:850px\)[\s\S]*\.mo-row\{grid-template-columns:1fr 1fr;/);
+ const shared=fs.readFileSync(path.join(root,'src/components/accounting-accounts/account-workspace.css'),'utf8');
+ assert.match(shared,/\.aa-primary,\.aa-secondary,\.aa-icon-button,\.aa-back,\.aa-row-link \{[^}]*min-height:44px/);
+ const tree=render(workspace,'MoneyOutRow',{expense:{id:'fixture',expense_number:'EXP-fixture',description:'Synthetic expense',expense_amount:'1.01',expense_currency:'USD',status:'posted'},href:'/dashboard/accounting/money-out/fixture'});
+ const action=nodes(tree,'NextLink').find(n=>n.props.className==='aa-row-link');assert.ok(action);assert.equal(action.props.href,'/dashboard/accounting/money-out/fixture');assert.equal(action.props['aria-label'],'View expense EXP-fixture');assert.equal(text(action),'View');
+});

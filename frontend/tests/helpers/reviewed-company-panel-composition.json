@@ -1,0 +1,14 @@
+[
+  {
+    "before": "  const readSequence=useRef(0),readPending=useRef(false),defaultsLeaveGuard=useRef<(()=>boolean)|null>(null);\n",
+    "after": "  const readSequence=useRef(0),readPending=useRef(false),defaultsLeaveGuard=useRef<(()=>boolean)|null>(null),currenciesLeaveGuard=useRef<(()=>boolean)|null>(null),gatewaysLeaveGuard=useRef<(()=>boolean)|null>(null);\n"
+  },
+  {
+    "before": "",
+    "after": "  const registerCurrenciesLeave=useCallback((guard:()=>boolean)=>{currenciesLeaveGuard.current=guard;return()=>{if(currenciesLeaveGuard.current===guard)currenciesLeaveGuard.current=null;};},[]);\n  const registerGatewaysLeave=useCallback((guard:()=>boolean)=>{gatewaysLeaveGuard.current=guard;return()=>{if(gatewaysLeaveGuard.current===guard)gatewaysLeaveGuard.current=null;};},[]);\n"
+  },
+  {
+    "before": "  function allowLeave(){if(!owns()||session!==sessionRef.current||inFlight.current)return false;if(tabRef.current===\"defaults\")return defaultsLeaveGuard.current?.()??false;if(writePhaseRef.current!==\"idle\")return window.confirm(\"Some company changes may already be saved. Leaving loses this document\u2019s retained outcome. Review current records before any replacement. Leave?\");return !dirtyRef.current||window.confirm(\"Discard the unsaved company settings entered in this section?\");}\n",
+    "after": "  function allowLeave(){if(!owns()||session!==sessionRef.current||inFlight.current)return false;if(tabRef.current===\"defaults\")return defaultsLeaveGuard.current?.()??false;if(tabRef.current===\"currencies\")return currenciesLeaveGuard.current?.()??false;if(tabRef.current===\"payments\")return gatewaysLeaveGuard.current?.()??false;if(writePhaseRef.current!==\"idle\")return window.confirm(\"Some company changes may already be saved. Leaving loses this document\u2019s retained outcome. Review current records before any replacement. Leave?\");return !dirtyRef.current||window.confirm(\"Discard the unsaved company settings entered in this section?\");}\n"
+  }
+]

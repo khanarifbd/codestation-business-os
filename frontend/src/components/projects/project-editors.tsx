@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 import type { ProjectWorkspaceState } from "@/hooks/use-project-workspace";
-import { allTabIds, defaultMemberTabs, formatBytes, isOverdueDate, pretty, tabs, type CredentialRow, type CredentialValues, type DocumentRow, type EmployeeOption, type MilestoneRow, type ProjectDetail, type ProjectMember, type Tab, type TaskEditValues, type TaskRow } from "./project-model";
+import { allTabIds, defaultMemberTabs, formatBytes, isOverdueDate, pretty, tabs, type CredentialRow, type CredentialValues, type DocumentRow, type EmployeeOption, type MilestoneRow, type ProjectDetail, type ProjectDetailsValues, type ProjectMember, type Tab, type TaskEditValues, type TaskRow } from "./project-model";
 import "./project-editors.css";
 
 type DirtyEditorProps = { onDirtyChange: (dirty: boolean) => void };
@@ -15,6 +15,7 @@ export function ProjectEditor({ vm }: { vm: ProjectWorkspaceState }) {
   const canManageExecution = Boolean(project.access.can_manage_project || project.access.is_project_manager);
   const canManageTeam = Boolean(project.access.can_manage_project && meta.can_manage_projects);
   switch (editorMode) {
+    case "project": return vm.canManageDetails ? <ProjectDetailsEditor {...common} project={project} onSave={vm.updateProjectDetails} /> : null;
     case "milestone": return canManageExecution ? <MilestoneEditor {...common} onSave={vm.createMilestone} /> : null;
     case "milestone_edit": return canManageExecution && selectedMilestone ? <EditMilestoneEditor {...common} milestone={selectedMilestone} tasks={workspace.tasks} projectDueDate={project.due_date} onSave={vm.updateMilestone} /> : null;
     case "task": return canManageExecution ? <TaskEditor {...common} milestones={workspace.milestones} members={project.members} onSave={vm.createTask} /> : null;
@@ -30,6 +31,32 @@ export function ProjectEditor({ vm }: { vm: ProjectWorkspaceState }) {
 }
 
 export const ProjectEditors = ProjectEditor;
+
+function ProjectDetailsEditor({ saving, project, onClose, onSave, onDirtyChange }: { saving: boolean; project: ProjectDetail; onClose: () => void; onSave: (values: ProjectDetailsValues) => Promise<void> } & DirtyEditorProps) {
+  const [name, setName] = useState(project.name);
+  const [priority, setPriority] = useState(project.priority);
+  const [start, setStart] = useState(project.planned_start_date || "");
+  const [due, setDue] = useState(project.due_date || "");
+  const [description, setDescription] = useState(project.description || "");
+  const [notes, setNotes] = useState(project.notes || "");
+  const invalidRange = Boolean(start && due && due < start);
+  useEditorDirty([name, priority, start, due, description, notes], onDirtyChange);
+  return <EditorFrame title="Edit project details" description="Update this project’s delivery plan. Commercial values and team access stay unchanged." saving={saving} disabled={!name.trim() || name.trim().length > 220 || invalidRange} onClose={onClose} onSave={() => void onSave({ name, priority, planned_start_date: start, due_date: due, description, notes })} summary={
+    <EditorContext eyebrow="Project context" title={project.project_number} note="The linked order remains the source of commercial information. Manage ownership and access in the Team section."><ContextRow label="Client" value={project.client_name} /><ContextRow label="Order" value={project.order_number} /><ContextRow label="Status" value={pretty(project.status)} /></EditorContext>
+  }>
+    <EditorSection number="01" title="Delivery plan" description="Use a clear name and date-only schedule for the team.">
+      <Field label="Project name"><input required maxLength={220} value={name} onChange={event => setName(event.target.value)} className="control" /></Field>
+      <Field label="Priority"><select value={priority} onChange={event => setPriority(event.target.value)} className="control">{["low", "normal", "high", "urgent"].map(value => <option key={value} value={value}>{pretty(value)}</option>)}</select></Field>
+      <Field label="Planned start"><input type="date" value={start} onChange={event => setStart(event.target.value)} className="control" /></Field>
+      <Field label="Due date"><input type="date" value={due} min={start || undefined} aria-invalid={invalidRange || undefined} onChange={event => setDue(event.target.value)} className="control" /></Field>
+      {invalidRange ? <p role="alert">Due date cannot be before planned start.</p> : null}
+    </EditorSection>
+    <EditorSection number="02" title="Project context" description="Keep the project description and internal notes with this delivery record.">
+      <Field label="Description"><textarea value={description} onChange={event => setDescription(event.target.value)} className="textarea" /></Field>
+      <Field label="Internal notes"><textarea value={notes} onChange={event => setNotes(event.target.value)} className="textarea" /></Field>
+    </EditorSection>
+  </EditorFrame>;
+}
 
 function MilestoneEditor({ saving, onClose, onSave, onDirtyChange }: { saving:boolean; onClose:()=>void; onSave:(v:{title:string;description:string;due_date:string})=>Promise<void> } & DirtyEditorProps) {
   const [title,setTitle]=useState("");
@@ -194,8 +221,8 @@ function CredentialEditor({ error, saving, credential, onClose, onSave, onDirtyC
   }>
     {error ? <div className="project-editor-notice project-editor-notice-error"><p className="font-semibold">Credential could not be saved</p><p className="mt-1 leading-5">{error}</p></div> : null}<EditorSection number="01" title="Identity & access" description="Choose the credential type, environment and who can access it.">
 <Field label="Name"><input value={name} onChange={(e)=>setName(e.target.value)} className="control" /></Field>
-<Field label="Type"><select value={type} onChange={(e)=>setType(e.target.value)} className="control"><option value="login">Login</option><option value="api_key">API Key</option><option value="database">Database</option><option value="ssh">SSH / Server</option><option value="hosting">Hosting</option><option value="domain">Domain</option><option value="other">Other</option></select></Field>
-<Field label="Environment"><select value={env} onChange={(e)=>setEnv(e.target.value)} className="control"><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="other">Other</option></select></Field>
+<Field label="Type"><select aria-label="Credential type" value={type} onChange={(e)=>setType(e.target.value)} className="control">{credential && !["login", "api_key", "database", "ssh", "hosting", "domain", "other"].includes(credential.credential_type) ? <option value={credential.credential_type}>{credential.credential_type} (saved)</option> : null}<option value="login">Login</option><option value="api_key">API Key</option><option value="database">Database</option><option value="ssh">SSH / Server</option><option value="hosting">Hosting</option><option value="domain">Domain</option><option value="other">Other</option></select></Field>
+<Field label="Environment"><select aria-label="Environment" value={env} onChange={(e)=>setEnv(e.target.value)} className="control">{credential && !["production", "staging", "development", "other"].includes(credential.environment) ? <option value={credential.environment}>{credential.environment} (saved)</option> : null}<option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option><option value="other">Other</option></select></Field>
 <Field label="Access"><select value={access} onChange={(e)=>setAccess(e.target.value)} className="control"><option value="manager_only">Project manager only</option><option value="team">Project team</option></select></Field>
 </EditorSection>
 <EditorSection number="02" title="Connection details" description="Enter the username and secret without exposing them in a document summary.">

@@ -130,7 +130,7 @@ export default function ClientWorkspacePage() {
       <div className="client-context-actions">
         {access.clients_manage ? <Link href={`/dashboard/clients?edit=${encodeURIComponent(client.id)}`} className="inline-flex h-11 w-full items-center justify-center rounded-xl border bg-white px-4 text-sm font-semibold sm:w-auto">Edit client</Link> : null}
         {access.quotations_manage && client.status === "active" ? <Link href={`/dashboard/quotations?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 text-sm font-semibold text-white sm:w-auto"><FileText className="size-4 shrink-0" />Create quotation</Link> : null}
-        {access.finance_manage && client.status === "active" ? <Link href={`/dashboard/finance?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold sm:w-auto"><ReceiptText className="size-4 shrink-0" />Create invoice</Link> : null}
+        {access.finance_manage && client.status === "active" ? <Link href={`/dashboard/accounting/invoices?client_id=${encodeURIComponent(client.id)}`} className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border bg-white px-4 text-sm font-semibold sm:w-auto"><ReceiptText className="size-4 shrink-0" />Create invoice</Link> : null}
       </div>
     </header>
 

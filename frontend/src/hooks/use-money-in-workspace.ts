@@ -1,4 +1,6 @@
 "use client";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
+import { FINANCE_PATH, financeBrowse, financeHref, financePaymentQuery } from "@/lib/finance-compatibility-navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -28,16 +30,20 @@ class ReadError extends Error {
 async function read(path: string): Promise<unknown> { const r = await fetch(path, { cache: "no-store" }), b: unknown = await r.json().catch(() => null); if (!r.ok)
     throw new ReadError(getApiErrorMessage(b, "Information could not be loaded."), r.status); return b; }
 const record = (x: unknown): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x));
+const knownMoneyRejection = (status: number, body: unknown) => [400, 401, 403, 404, 422].includes(status) && hasAccountingRejectionDetail(body);
+
 export function useMoneyInWorkspace() {
     const { tenant } = useDashboardSession(), router = useRouter(), pathname = usePathname(), query = useSearchParams(), route = useParams<{
         kind?: string;
         receiptId?: string;
     }>();
-    const mode = pathname.endsWith("/new") ? "create" : route.receiptId ? "receipt" : "register", purpose = moneyInPurpose(query.get("purpose")), legacyInvoice = mode === "register" ? query.get("invoice_id") : null;
+    const mode = pathname.endsWith("/new") ? "create" : route.receiptId ? "receipt" : "register", purpose = moneyInPurpose(query.get("purpose")), legacyInvoice = mode === "register" && pathname !== FINANCE_PATH ? query.get("invoice_id") : null;
     const canView = Boolean(tenant?.permissions.some(p => p === "*" || p === "finance.view")), canManage = Boolean(tenant?.permissions.some(p => p === "*" || p === "finance.manage"));
     const rawQuery = query.toString();
-    const browse = useMemo(() => moneyInBrowse(rawQuery), [rawQuery]);
-    const returnHref = safeMoneyInReturn(query.get("returnTo")), listHref = moneyInListHref(browse), pageUrl = moneyInReadApi({ ...browse }), browseKind = moneyInKind(query.get("kind")), prefillInvoiceId = query.get("invoice_id"), receiptId = route.receiptId || "", receiptKind = moneyInKind(route.kind || null);
+    const financeContext = pathname === FINANCE_PATH ? financeHref({ ...financeBrowse(rawQuery), tab: "payments" }) : null;
+    const browseQuery = `${pathname === FINANCE_PATH ? financePaymentQuery(rawQuery) : rawQuery}`;
+    const browse = useMemo(() => moneyInBrowse(browseQuery), [browseQuery]);
+    const returnHref = safeMoneyInReturn(query.get("returnTo")), listHref = moneyInListHref(browse, financeContext), pageUrl = moneyInReadApi({ ...browse }), browseKind = browse.kind, prefillInvoiceId = query.get("invoice_id"), receiptId = route.receiptId || "", receiptKind = moneyInKind(route.kind || null);
     const [meta, setMeta] = useState<Meta | null>(null), [metaLoading, setMetaLoading] = useState(true), [metaError, setMetaError] = useState<string | null>(null), [categories, setCategories] = useState<Category[]>([]);
     const [pageState, setPageState] = useState<{
         key: string;
@@ -236,12 +242,12 @@ export function useMoneyInWorkspace() {
     useEffect(() => { if (mode === "register" && browse.focus && pageState.key === pageUrl && pageState.rows)
         window.document.getElementById(`money-in-row-${browse.focus}`)?.focus(); }, [mode, browse.focus, pageState.key, pageState.rows, pageUrl]);
     const hasPrevious = browse.page > 1 && previous?.key === position && previous.cursor !== undefined;
-    function changeKind(kind: ReceiptKind) { ++navEpoch.current; navBusy.current = false; setPagingUrl(null); router.push(moneyInListHref({ kind })); }
+    function changeKind(kind: ReceiptKind) { ++navEpoch.current; navBusy.current = false; setPagingUrl(null); router.push(moneyInListHref({ kind }, financeContext)); }
     async function nextPage() { if (!nextCursor || pageLoading || navBusy.current)
         return; navBusy.current = true; setPagingUrl(pageUrl); const e = ++navEpoch.current; try {
         await rememberAccountCursorStep(scope, cursorBrowse, nextCursor);
         if (mounted.current && e === navEpoch.current)
-            router.push(moneyInListHref({ ...browse, cursor: nextCursor, page: browse.page + 1, focus: "" }));
+            router.push(moneyInListHref({ ...browse, cursor: nextCursor, page: browse.page + 1, focus: "" }, financeContext));
     }
     catch {
         if (mounted.current && e === navEpoch.current) {
@@ -253,7 +259,7 @@ export function useMoneyInWorkspace() {
     function previousPage() { if (hasPrevious && !pageLoading && !navBusy.current) {
         navBusy.current = true;
         setPagingUrl(pageUrl);
-        router.push(moneyInListHref({ ...browse, cursor: previous!.cursor!, page: browse.page - 1, focus: "" }));
+        router.push(moneyInListHref({ ...browse, cursor: previous!.cursor!, page: browse.page - 1, focus: "" }, financeContext));
     } }
     function change<K extends keyof MoneyInValues>(key: K, value: MoneyInValues[K]) { if (!canManage || mode !== "create" || inFlight.current || committed.current || ["create-uncertain", "create-confirmed", "issue-uncertain", "payment-uncertain"].includes(stageRef.current.status) || everUncertain.current)
         return; if (stageRef.current.status !== "idle" && ["source_id", "category_id", "relation_type", "relation_id"].includes(key))
@@ -321,7 +327,7 @@ export function useMoneyInWorkspace() {
                     if (!mounted.current)
                         return;
                     if (!r.ok) {
-                        if (r.status >= 500 || r.status === 409)
+                        if (!knownMoneyRejection(r.status, b))
                             setStage({ status: "create-uncertain", invoiceId: "", note: "Invoice creation may have completed. Read the source status; do not repeat creation." });
                         throw new Error(getApiErrorMessage(b, "Invoice creation was not confirmed."));
                     }
@@ -343,7 +349,7 @@ export function useMoneyInWorkspace() {
                     if (!mounted.current)
                         return;
                     if (!r.ok) {
-                        if (r.status >= 500 || r.status === 409)
+                        if (!knownMoneyRejection(r.status, b))
                             setStage({ status: "issue-uncertain", invoiceId: id, note: "Invoice issue may have completed. Verify status before continuing; do not issue again." });
                         throw new Error(getApiErrorMessage(b, "The invoice could not be issued. The saved draft is retained."));
                     }
@@ -372,7 +378,7 @@ export function useMoneyInWorkspace() {
             if (!mounted.current)
                 return;
             if (!r.ok) {
-                if (everUncertain.current || r.status >= 500 || r.status === 409) {
+                if (everUncertain.current || !knownMoneyRejection(r.status, b)) {
                     everUncertain.current = true;
                     setStage({ status: "payment-uncertain", invoiceId: stageRef.current.invoiceId, note: "The receipt may already be recorded. The original payload and retry key are retained; a later rejection does not prove the earlier request failed." });
                 }
@@ -461,6 +467,6 @@ export function useMoneyInWorkspace() {
             setInvoicePage(null);
             setInvoiceCursor(invoiceHistory.at(-1)!);
             setInvoiceHistory(h => h.slice(0, -1));
-        } }, hasPreviousInvoices: invoiceHistory.length > 0, formError, stage, saving, confirmOpen, review, cancelReview, postMoneyIn, recoverSource, receipt, writeError, dirty, unknown, canContinue, locked: unknown || saving || stage.status === "confirmed", sourceLocked: stage.status !== "idle", openReceipt, back: () => mode === "create" ? navigation.navigate(returnHref) : router.push(returnHref), createHref: (p: Purpose) => moneyInCreateHref(p, listHref), receiptHref: (r: Receipt) => moneyInReceiptHref(r.kind, r.record.id, moneyInListHref({ ...browse, focus: r.record.id })), verificationHref: stage.invoiceId ? `${MONEY_IN_PATH}?filter_invoice=${encodeURIComponent(stage.invoiceId)}` : MONEY_IN_PATH };
+        } }, hasPreviousInvoices: invoiceHistory.length > 0, formError, stage, saving, confirmOpen, review, cancelReview, postMoneyIn, recoverSource, receipt, writeError, dirty, unknown, canContinue, locked: unknown || saving || stage.status === "confirmed", sourceLocked: stage.status !== "idle", openReceipt, back: () => mode === "create" ? navigation.navigate(returnHref) : router.push(returnHref), createHref: (p: Purpose) => moneyInCreateHref(p, listHref), receiptHref: (r: Receipt) => moneyInReceiptHref(r.kind, r.record.id, moneyInListHref({ ...browse, focus: r.record.id }, financeContext)), verificationHref: stage.invoiceId ? `${MONEY_IN_PATH}?filter_invoice=${encodeURIComponent(stage.invoiceId)}` : MONEY_IN_PATH };
 }
 export type MoneyInState = ReturnType<typeof useMoneyInWorkspace>;

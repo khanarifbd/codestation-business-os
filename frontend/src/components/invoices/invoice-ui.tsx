@@ -1,10 +1,13 @@
-import type { ReactNode } from "react";
+import { invoiceDetailHref } from "@/lib/finance-compatibility-navigation";
+import { cloneElement, isValidElement, useId, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowUpRight, FileText, Trash2 } from "lucide-react";
 import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
 
 export function InvoiceField({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="invoice-field"><span>{label}</span>{children}</label>;
+  const labelId = useId();
+  // A populated textarea has text content; bind its name to the label text only.
+  return <label className="invoice-field"><span id={labelId}>{label}</span>{isValidElement<{ "aria-labelledby"?: string }>(children) ? cloneElement(children, { "aria-labelledby": children.props["aria-labelledby"] ?? labelId }) : children}</label>;
 }
 
 export function InvoiceStatus({ status }: { status: string }) {
@@ -12,19 +15,19 @@ export function InvoiceStatus({ status }: { status: string }) {
 }
 
 export function InvoiceCounts({ total, outstanding, overdue }: { total: number; outstanding: number; overdue: number }) {
-  return <dl className="invoice-counts" aria-label="Invoice counts">
-    <div><dt>All invoices</dt><dd>{total}</dd><dd className="invoice-count-caption">Across the current register</dd></div>
-    <div><dt>Outstanding</dt><dd>{outstanding}</dd><dd className="invoice-count-caption">Active invoices with a balance</dd></div>
-    <div data-tone="attention"><dt>Overdue</dt><dd>{overdue}</dd><dd className="invoice-count-caption">Past due and still unpaid</dd></div>
+  return <dl className="invoice-counts" aria-label="Loaded invoice counts">
+    <div><dt>Loaded invoices</dt><dd>{total}</dd><dd className="invoice-count-caption">Loaded matching records only</dd></div>
+    <div><dt>Outstanding</dt><dd>{outstanding}</dd><dd className="invoice-count-caption">Within the loaded records</dd></div>
+    <div data-tone="attention"><dt>Overdue</dt><dd>{overdue}</dd><dd className="invoice-count-caption">Within the loaded records</dd></div>
   </dl>;
 }
 
 type RegisterItem = { id: string; invoice_number: string; client_name: string; display_status: string; subject: string | null; issue_date: string; due_date: string | null; currency: string; total: string | number; amount_paid: string | number; balance_due: string | number };
-export function InvoiceRegister({ invoices, loading, currentDate, formatMoney }: { invoices: RegisterItem[]; loading: boolean; currentDate: string; formatMoney: (value: string | number, currency: string) => string }) {
+export function InvoiceRegister({ invoices, loading, currentDate, formatMoney, moreAvailable = false, returnHref }: { returnHref?: string | null; moreAvailable?: boolean; invoices: RegisterItem[]; loading: boolean; currentDate: string; formatMoney: (value: string | number, currency: string) => string }) {
   return <div className="invoice-register" aria-busy={loading}>
     <table><caption className="sr-only">Invoices with client, status, dates, total, paid and balance due</caption><thead><tr>{["Invoice", "Client", "Status", "Issue / Due", "Total", "Paid", "Due"].map((label) => <th scope="col" key={label}>{label}</th>)}</tr></thead>
       <tbody>{invoices.map((invoice) => <tr key={invoice.id}>
-        <td data-label="Invoice" className="invoice-register-number"><Link href={`/dashboard/accounting/invoices/${invoice.id}`}>{invoice.invoice_number}<ArrowUpRight aria-hidden="true" /></Link><p>{invoice.subject || "No subject"}</p></td>
+        <td data-label="Invoice" className="invoice-register-number"><Link href={invoiceDetailHref(invoice.id, returnHref)}>{invoice.invoice_number}<ArrowUpRight aria-hidden="true" /></Link><p>{invoice.subject || "No subject"}</p></td>
         <td data-label="Client" className="invoice-register-client">{invoice.client_name}</td>
         <td data-label="Status"><InvoiceStatus status={invoice.display_status} /></td>
         <td data-label="Issue / Due"><span>{invoice.issue_date}</span><p className={invoice.due_date && invoice.due_date < currentDate && Number(invoice.balance_due) > 0 ? "invoice-date-overdue" : "invoice-date-muted"}>Due {invoice.due_date || "—"}</p></td>
@@ -33,7 +36,7 @@ export function InvoiceRegister({ invoices, loading, currentDate, formatMoney }:
         <td data-label="Due" className="invoice-register-balance">{formatMoney(invoice.balance_due, invoice.currency)}</td>
       </tr>)}</tbody>
     </table>
-    {!loading && !invoices.length ? <div className="invoice-empty"><FileText aria-hidden="true" /><h3>No matching invoices</h3><p>Try clearing or changing the current filters.</p></div> : null}
+    {!loading && !invoices.length ? <div className="invoice-empty"><FileText aria-hidden="true" /><h3>{moreAvailable ? "No matching invoices in loaded records" : "No matching invoices"}</h3><p>{moreAvailable ? "Load more matching history below; older records may match the combined filters." : "Try clearing or changing the current filters."}</p></div> : null}
     {loading ? <p role="status" className="invoice-loading">Loading invoices…</p> : null}
   </div>;
 }

@@ -9,7 +9,7 @@ import {PayrollRegister,PayrollPolicyDocument} from "./payroll-register";
 import {PayrollRunDocument,PayrollEntryDocument,PayrollProfileDocument,PayrollPeriodDocument,PayrollWithholdingDocument} from "./payroll-documents";
 import {PayrollEditor,PayrollSetupIssues,PayrollPolicyRecovery} from "./payroll-editors";
 import "./payroll.css";
-export function PayrollWorkspace() {const {tenant,loading}=useDashboardSession(),pathname=usePathname();const key=`${tenant?.organization.id}:${tenant?.membership_id}:${tenant?.role_id}:${tenant?.permissions.join("|")}:${pathname}`;if(loading)return <RelationshipPage className="pr-workspace"><PayrollState loading title="Loading payroll workspace…"/></RelationshipPage>;return <PayrollContent key={key}/>;}
+export function PayrollWorkspace() {const {tenant,loading}=useDashboardSession(),pathname=usePathname();const key=`${tenant?.organization.id}:${tenant?.membership_id}:${tenant?.role_id}:${tenant?.permissions.join("|")}:${tenant?.status}:${pathname}`;if(loading)return <RelationshipPage className="pr-workspace"><PayrollState loading title="Loading payroll workspace…"/></RelationshipPage>;return <PayrollContent key={key}/>;}
 export function PayrollContent() {
     const vm=usePayrollWorkspace();
     const manualPeriod=vm.route.mode==="period_new"&&vm.canManage;

@@ -1,3 +1,6 @@
+import { inventoryToday } from "@/lib/inventory-localization";
+import { inventoryMoney } from "@/lib/inventory-decimal";
+
 export type Tab = "overview" | "items" | "service_sales" | "suppliers" | "warehouses" | "purchases" | "stock" | "movements" | "categories";
 export type Overview = {
   base_currency: string;
@@ -102,10 +105,11 @@ export type ItemForm = ReturnType<typeof emptyItem>;
 export type SupplierForm = ReturnType<typeof emptySupplier>;
 export type WarehouseForm = ReturnType<typeof emptyWarehouse>;
 
-export const today = () => new Date().toISOString().slice(0, 10);
-export const money = (value: string | number, currency = "") => `${currency ? `${currency} ` : ""}${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const today = inventoryToday;
+export const money = inventoryMoney;
+export const unitMoney = (value: string | number, currency = "") => inventoryMoney(value, currency, 4);
 export const emptyItem = (currency = "BDT") => ({ sku: "", barcode: "", name: "", description: "", item_type: "stock_item", category_id: "", unit: "unit", currency, selling_price: "0", standard_cost: "0", reorder_level: "0", tax_code_id: "", track_inventory: true, allow_negative_stock: false, is_active: true, service_duration_months: "" });
-export const emptySupplier = (currency = "BDT") => ({ name: "", contact_name: "", email: "", phone: "", website: "", tax_identifier: "", country_code: "BD", currency, notes: "", is_active: true });
+export const emptySupplier = (currency = "BDT", country = "") => ({ name: "", contact_name: "", email: "", phone: "", website: "", tax_identifier: "", country_code: country, currency, notes: "", is_active: true });
 export const emptyWarehouse = () => ({ code: "", name: "", address: "", is_default: false, is_active: true });
 
 export function labelType(value: string) { return value === "stock_item" ? "Stock product" : value === "service" ? "Service" : "Non-stock product"; }

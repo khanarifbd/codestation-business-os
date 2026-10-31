@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { formatFxDecimal, positiveFxInput } from "@/lib/company-fx-decimal";
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -15,6 +16,8 @@ import {
 } from "lucide-react";
 
 import { SearchableSelect, type SearchOption } from "@/components/searchable-select";
+import { useAdministrationReadOwner } from "@/hooks/use-administration-read-owner";
+import { CompanyPanelReadError, useCompanyPanelSafety, type CompanyPanelLeaveRegistration } from "@/hooks/use-company-panel-safety";
 import { CURRENCY_OPTIONS } from "@/lib/company-options";
 
 type FunctionalCurrencyPeriod = {
@@ -61,6 +64,29 @@ type Rate = {
 
 type RateBundle = { policy: RatePolicy; rates: Rate[] };
 
+const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const text = (value: unknown) => typeof value === "string";
+const nullableText = (value: unknown) => value === null || text(value);
+const currencyCode = (value: unknown) => typeof value === "string" && /^[A-Z]{3}$/.test(value);
+const decimalText = (value: unknown) => typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value);
+function isCurrencySettings(value: unknown): value is CurrencySettings {
+  return object(value) && currencyCode(value.accounting_currency) && currencyCode(value.reporting_currency)
+    && (value.default_client_currency === null || currencyCode(value.default_client_currency))
+    && typeof value.accounting_currency_locked === "boolean" && nullableText(value.accounting_currency_lock_reason)
+    && nullableText(value.accounting_currency_change_earliest_date) && text(value.organization_current_date) && text(value.organization_timezone)
+    && Array.isArray(value.functional_currency_periods) && value.functional_currency_periods.every(row => object(row) && text(row.id) && currencyCode(row.currency) && text(row.effective_from) && nullableText(row.effective_to) && nullableText(row.previous_currency) && nullableText(row.transition_rate) && nullableText(row.reason) && nullableText(row.transition_journal_entry_id));
+}
+function isRatePolicy(value: unknown): value is RatePolicy {
+  return object(value) && ["automatic", "manual", "automatic_adjusted"].includes(String(value.mode)) && text(value.provider)
+    && decimalText(value.adjustment_percent) && ["manual", "daily"].includes(String(value.sync_frequency)) && nullableText(value.last_synced_at);
+}
+function isRate(value: unknown): value is Rate {
+  return object(value) && text(value.id) && currencyCode(value.base_currency) && currencyCode(value.quote_currency)
+    && (value.reference_rate === null || decimalText(value.reference_rate)) && (value.manual_rate === null || decimalText(value.manual_rate))
+    && decimalText(value.effective_rate) && text(value.source) && nullableText(value.synced_at);
+}
+function isRateBundle(value: unknown): value is RateBundle { return object(value) && isRatePolicy(value.policy) && Array.isArray(value.rates) && value.rates.every(isRate); }
+
 const MODE_OPTIONS: SearchOption[] = [
   { value: "automatic", label: "Automatic — live reference rate" },
   { value: "manual", label: "Manual — admin controlled" },
@@ -68,8 +94,7 @@ const MODE_OPTIONS: SearchOption[] = [
 ];
 
 function rateNumber(value: string | null) {
-  if (value == null) return "—";
-  return Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  return formatFxDecimal(value);
 }
 
 function rateSentence(rate: Rate) {
@@ -84,14 +109,21 @@ function localDate(value: string) {
   });
 }
 
-export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | Promise<void> }) {
+type CurrencyPanelProps = { onChanged?: () => void | Promise<void>; registerLeaveGuard?: CompanyPanelLeaveRegistration };
+export function CurrencySettingsPanel(props: CurrencyPanelProps) {
+  const owner = useAdministrationReadOwner();
+  if (owner.loading || !owner.tenant) return <p role="status">Checking currency settings access…</p>;
+  if (owner.tenant.role !== "admin") return <p role="alert">Company admin access is required for currency settings.</p>;
+  return <CurrencySettingsContent key={`${owner.key}:${owner.tenant.role}`} {...props}/>;
+}
+function CurrencySettingsContent({ onChanged, registerLeaveGuard }: CurrencyPanelProps) {
+  const safety = useCompanyPanelSafety(true, true, registerLeaveGuard);
+  const loading = safety.reading, saving = safety.busy, syncing = safety.busy;
   const [settings, setSettings] = useState<CurrencySettings | null>(null);
   const [rates, setRates] = useState<RateBundle | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [localError, setError] = useState<string | null>(null);
+  const error = safety.error || localError;
   const [syncResult, setSyncResult] = useState<Rate[] | null>(null);
   const [base, setBase] = useState("USD");
   const [quote, setQuote] = useState("BDT");
@@ -108,7 +140,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
   const currencyOptions = useMemo(() => CURRENCY_OPTIONS, []);
   const today = settings?.organization_current_date ?? "";
 
-  function resetAccountingChange(next: CurrencySettings) {
+  const resetAccountingChange = useCallback((next: CurrencySettings) => {
     const alternate = currencyOptions.find((item) => item.value !== next.accounting_currency)?.value ?? "USD";
     setNextAccountingCurrency(alternate);
     setAccountingEffectiveDate(next.accounting_currency_change_earliest_date ?? next.organization_current_date);
@@ -116,71 +148,45 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
     setAccountingChangeReason("");
     setAccountingChangeConfirmed(false);
     setAccountingChangeError(null);
-  }
+  }, [currencyOptions]);
 
-  async function load() {
-    setLoading(true);
-    setError(null);
-    setAccountingChangeError(null);
-    try {
+  const readOwned = safety.read, isUnresolved = safety.isUnresolved;
+  const load = useCallback(async () => {
+    await readOwned(async () => {
       const [currencyResponse, rateResponse] = await Promise.all([
         fetch("/api/company-settings/currencies", { cache: "no-store" }),
         fetch("/api/settings/exchange-rates", { cache: "no-store" }),
       ]);
-      const currencyPayload = await currencyResponse.json().catch(() => null);
-      if (!currencyResponse.ok) throw new Error(currencyPayload?.detail ?? "Unable to load currency settings.");
-      const ratePayload = await rateResponse.json().catch(() => null);
-      if (!rateResponse.ok) throw new Error(ratePayload?.detail ?? "Unable to load exchange rates.");
-
-      const nextSettings = currencyPayload as CurrencySettings;
-      setSettings(nextSettings);
-      setRates(ratePayload as RateBundle);
-      resetAccountingChange(nextSettings);
-      const suggestedFrom = nextSettings.default_client_currency && nextSettings.default_client_currency !== nextSettings.accounting_currency
-        ? nextSettings.default_client_currency
-        : nextSettings.accounting_currency === "USD" ? "EUR" : "USD";
-      setBase(suggestedFrom);
-      setQuote(nextSettings.accounting_currency);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load currency settings.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { void load(); }, []);
+      const currencyPayload: unknown = await currencyResponse.json().catch(() => null);
+      const ratePayload: unknown = await rateResponse.json().catch(() => null);
+      if ([401,403].includes(currencyResponse.status) || [401,403].includes(rateResponse.status)) throw new CompanyPanelReadError("Current currency settings access could not be verified.", [401,403].includes(currencyResponse.status) ? currencyResponse.status : rateResponse.status);
+      if (!currencyResponse.ok || !rateResponse.ok || !isCurrencySettings(currencyPayload) || !isRateBundle(ratePayload)) throw Error("Currency settings could not be verified. Retry reading current settings.");
+      return { settings: currencyPayload, rates: ratePayload };
+    }, next => {
+      if (isUnresolved()) return;
+      setSettings(next.settings); setRates(next.rates); setError(null); resetAccountingChange(next.settings);
+      const suggestedFrom = next.settings.default_client_currency && next.settings.default_client_currency !== next.settings.accounting_currency
+        ? next.settings.default_client_currency : next.settings.accounting_currency === "USD" ? "EUR" : "USD";
+      setBase(suggestedFrom); setQuote(next.settings.accounting_currency);
+    });
+  }, [readOwned, isUnresolved, resetAccountingChange]);
+  useEffect(() => { void load(); }, [load]);
 
   async function saveCurrencies() {
-    if (!settings) return;
-    setSaving(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/company-settings/currencies", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          accounting_currency: settings.accounting_currency,
-          reporting_currency: settings.reporting_currency,
-          default_client_currency: settings.default_client_currency || null,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to save currency settings.");
-      const next = payload as CurrencySettings;
-      setSettings(next);
-      setQuote(next.accounting_currency);
-      setMessage("Currency roles saved. Reporting and client currencies remain independent from the accounting ledger.");
+    if (!settings || !safety.canEdit()) return;
+    setError(null); setMessage(null);
+    await safety.run(() => fetch("/api/company-settings/currencies", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ accounting_currency: settings.accounting_currency, reporting_currency: settings.reporting_currency, default_client_currency: settings.default_client_currency || null }),
+    }), isCurrencySettings, async next => {
+      setSettings(next); setQuote(next.accounting_currency);
       await onChanged?.();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save currency settings.");
-    } finally {
-      setSaving(false);
-    }
+      if (safety.current()) setMessage("Currency roles saved. Reporting and client currencies remain independent from the accounting ledger.");
+    });
   }
 
   async function changeAccountingCurrency() {
-    if (!settings) return;
+    if (!settings || !safety.canEdit()) return;
     if (nextAccountingCurrency === settings.accounting_currency) {
       setAccountingChangeError("Choose a different accounting / functional currency.");
       return;
@@ -204,119 +210,54 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
       return;
     }
 
-    setSaving(true);
-    setError(null);
-    setAccountingChangeError(null);
-    setMessage(null);
-    try {
-      const response = await fetch("/api/company-settings/currencies/change-accounting", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          new_currency: nextAccountingCurrency,
-          effective_date: accountingEffectiveDate,
-          transition_rate: accountingTransitionRate.trim() ? Number(accountingTransitionRate) : null,
-          reason: accountingChangeReason.trim(),
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to change accounting currency.");
-
-      const next = payload as CurrencySettings;
-      setSettings(next);
-      setQuote(next.accounting_currency);
-      resetAccountingChange(next);
-      setShowAccountingChange(false);
-      setMessage(
-        `Accounting currency changed to ${next.accounting_currency}. Historical journals remain in their original functional currency and a new effective-dated ledger period is active.`,
-      );
-      await onChanged?.();
-    } catch (reason) {
-      setAccountingChangeError(reason instanceof Error ? reason.message : "Unable to change accounting currency.");
-    } finally {
-      setSaving(false);
+    if (accountingTransitionRate.trim() && !positiveFxInput(accountingTransitionRate)) {
+      setAccountingChangeError("Enter a positive finite transition rate, or leave it blank when no rate is needed."); return;
     }
+    setError(null); setAccountingChangeError(null); setMessage(null);
+    await safety.run(() => fetch("/api/company-settings/currencies/change-accounting", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_currency: nextAccountingCurrency, effective_date: accountingEffectiveDate, transition_rate: accountingTransitionRate.trim() ? positiveFxInput(accountingTransitionRate) : null, reason: accountingChangeReason.trim() }),
+    }), isCurrencySettings, async next => {
+      setSettings(next); setQuote(next.accounting_currency); resetAccountingChange(next); setShowAccountingChange(false);
+      await onChanged?.();
+      if (safety.current()) setMessage(`Accounting currency changed to ${next.accounting_currency}. Historical journals remain in their original functional currency and a new effective-dated ledger period is active.`);
+    });
   }
 
   async function savePolicy() {
-    if (!rates) return;
-    setSaving(true);
-    setError(null);
-    setMessage(null);
-    setSyncResult(null);
-    try {
-      const response = await fetch("/api/settings/exchange-rates/policy", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rates.policy),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to save exchange-rate policy.");
-      setRates({ ...rates, policy: payload });
-      setMessage("Exchange-rate policy saved.");
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to save exchange-rate policy.");
-    } finally {
-      setSaving(false);
-    }
+    if (!rates || !safety.canEdit()) return;
+    setError(null); setMessage(null); setSyncResult(null);
+    await safety.run(() => fetch("/api/settings/exchange-rates/policy", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rates.policy) }), isRatePolicy, payload => {
+      setRates({ ...rates, policy: payload }); setMessage("Exchange-rate policy saved.");
+    });
   }
-
   async function addPair() {
-    if (!rates) return;
-    if (base === quote) {
-      setError("From and To currencies must be different.");
-      return;
-    }
-    setError(null);
-    setMessage(null);
-    setSyncResult(null);
-    try {
-      const response = await fetch("/api/settings/exchange-rates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          base_currency: base,
-          quote_currency: quote,
-          manual_rate: rates.policy.mode === "manual" ? Number(manualRate) : null,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to add currency pair.");
-      setRates({ ...rates, rates: [...rates.rates, payload] });
-      setManualRate("");
-      setSyncResult([payload]);
-      setMessage(`Currency pair added. ${rateSentence(payload)}.`);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to add currency pair.");
-    }
+    if (!rates || !safety.canEdit()) return;
+    if (base === quote) { setError("From and To currencies must be different."); return; }
+    if (rates.policy.mode === "manual" && !positiveFxInput(manualRate)) { setError("Enter a positive finite manual rate."); return; }
+    setError(null); setMessage(null); setSyncResult(null);
+    await safety.run(() => fetch("/api/settings/exchange-rates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base_currency: base, quote_currency: quote, manual_rate: rates.policy.mode === "manual" ? positiveFxInput(manualRate) : null }) }), isRate, payload => {
+      setRates({ ...rates, rates: [...rates.rates, payload] }); setManualRate(""); setSyncResult([payload]); setMessage(`Currency pair added. ${rateSentence(payload)}.`);
+    });
   }
-
   async function sync() {
-    setSyncing(true);
-    setError(null);
-    setMessage(null);
-    setSyncResult(null);
-    try {
-      const response = await fetch("/api/settings/exchange-rates/sync", { method: "POST" });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.detail ?? "Unable to sync rates.");
-      setRates(payload as RateBundle);
-      setSyncResult((payload as RateBundle).rates);
-      setMessage(`Synced ${(payload as RateBundle).rates.length} currency pair${(payload as RateBundle).rates.length === 1 ? "" : "s"}.`);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to sync rates.");
-    } finally {
-      setSyncing(false);
-    }
+    if (!safety.canEdit()) return;
+    setError(null); setMessage(null); setSyncResult(null);
+    await safety.run(() => fetch("/api/settings/exchange-rates/sync", { method: "POST" }), isRateBundle, payload => {
+      setRates(payload); setSyncResult(payload.rates); setMessage(`Synced ${payload.rates.length} currency pair${payload.rates.length === 1 ? "" : "s"}.`);
+    });
   }
 
   if (loading) return <div className="flex min-h-64 items-center justify-center"><Loader2 className="size-6 animate-spin text-neutral-400" /></div>;
-  if (!settings || !rates) return <div className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error ?? "Currency settings unavailable."}</div>;
+  if (!settings || !rates || safety.readDenied) return <div className="rounded-xl bg-red-50 p-4 text-sm text-red-700">{error ?? "Currency settings unavailable."}<button type="button" onClick={() => void load()}>Retry currency read</button></div>;
 
   const changeAvailableToday = !settings.accounting_currency_change_earliest_date
     || settings.accounting_currency_change_earliest_date <= today;
 
   return <div className="space-y-6">
+    {safety.unresolved ? <div role="status">{safety.phase === "unknown" ? "The currency operation outcome is unknown." : "The currency operation was acknowledged but could not be fully verified."} Do not repeat it. Reading current settings does not prove the earlier operation failed.</div> : null}
+    {(safety.error || safety.unresolved) ? <button type="button" disabled={safety.busy || safety.reading} onClick={() => void load()}>Read currency settings only</button> : null}
+    <fieldset className="m-0 min-w-0 border-0 p-0 space-y-6" disabled={safety.locked} onChangeCapture={safety.markDirty}>
     <section className="rounded-2xl border bg-neutral-50 p-5">
       <div>
         <h3 className="font-semibold">Currency roles</h3>
@@ -329,7 +270,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
             label="Reporting currency"
             name="reporting_currency"
             value={settings.reporting_currency}
-            onValueChange={(value) => setSettings({ ...settings, reporting_currency: value })}
+            onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setSettings({ ...settings, reporting_currency: value }); } }}
             options={currencyOptions}
             placeholder="Select reporting currency"
           />
@@ -342,7 +283,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
             label="Accounting / functional currency"
             name="accounting_currency"
             value={settings.accounting_currency}
-            onValueChange={(value) => setSettings({ ...settings, accounting_currency: value })}
+            onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setSettings({ ...settings, accounting_currency: value }); } }}
             options={currencyOptions}
             placeholder="Select accounting currency"
             disabled={settings.accounting_currency_locked}
@@ -356,7 +297,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
             label="Default client currency"
             name="default_client_currency"
             value={settings.default_client_currency}
-            onValueChange={(value) => setSettings({ ...settings, default_client_currency: value || null })}
+            onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setSettings({ ...settings, default_client_currency: value || null }); } }}
             options={currencyOptions}
             placeholder="No default"
           />
@@ -371,7 +312,7 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
         </div>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2">
-          <SearchableSelect label="New accounting / functional currency" name="new_accounting_currency" value={nextAccountingCurrency} onValueChange={(value) => { setNextAccountingCurrency(value); setAccountingChangeError(null); }} options={currencyOptions.filter((item) => item.value !== settings.accounting_currency)} placeholder="Select new accounting currency" />
+          <SearchableSelect label="New accounting / functional currency" name="new_accounting_currency" value={nextAccountingCurrency} onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setNextAccountingCurrency(value); setAccountingChangeError(null); } }} options={currencyOptions.filter((item) => item.value !== settings.accounting_currency)} placeholder="Select new accounting currency" />
           <label className="block"><span className="text-sm font-semibold">Effective date</span><input type="date" min={settings.accounting_currency_change_earliest_date ?? undefined} max={today} value={accountingEffectiveDate} onChange={(event) => { setAccountingEffectiveDate(event.target.value); setAccountingChangeError(null); }} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" /><span className="mt-1 block text-xs leading-5 text-neutral-400">Must be after the latest posted journal and cannot be after {localDate(today)} ({settings.organization_timezone}).</span></label>
           <label className="block"><span className="text-sm font-semibold">Transition rate <span className="font-normal text-neutral-400">(optional)</span></span><input type="number" min="0" step="0.00000001" value={accountingTransitionRate} onChange={(event) => { setAccountingTransitionRate(event.target.value); setAccountingChangeError(null); }} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" placeholder="Use configured FX pair when blank" /><span className="mt-1 block text-xs leading-5 text-neutral-400">Rate means 1 {settings.accounting_currency} = X {nextAccountingCurrency || "new currency"}. Leave blank to use the configured organization FX pair.</span></label>
           <label className="block"><span className="text-sm font-semibold">Reason</span><input value={accountingChangeReason} onChange={(event) => { setAccountingChangeReason(event.target.value); setAccountingChangeError(null); }} maxLength={500} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" placeholder="Example: Primary operations moved to Australia" /></label>
@@ -413,10 +354,10 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
       </div>
 
       <div className="mt-5 grid gap-5 md:grid-cols-2">
-        <SearchableSelect label="Rate mode" name="fx_mode" value={rates.policy.mode} onValueChange={(value) => setRates({ ...rates, policy: { ...rates.policy, mode: value as RatePolicy["mode"] } })} options={MODE_OPTIONS} placeholder="Select mode" />
-        <SearchableSelect label="Provider" name="provider" value={rates.policy.provider} onValueChange={(value) => setRates({ ...rates, policy: { ...rates.policy, provider: value } })} options={[{ value: "frankfurter", label: "Frankfurter — reference rates" }]} placeholder="Select provider" />
+        <SearchableSelect label="Rate mode" name="fx_mode" value={rates.policy.mode} onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setRates({ ...rates, policy: { ...rates.policy, mode: value as RatePolicy["mode"] } }); } }} options={MODE_OPTIONS} placeholder="Select mode" />
+        <SearchableSelect label="Provider" name="provider" value={rates.policy.provider} onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setRates({ ...rates, policy: { ...rates.policy, provider: value } }); } }} options={[{ value: "frankfurter", label: "Frankfurter — reference rates" }]} placeholder="Select provider" />
         {rates.policy.mode === "automatic_adjusted" ? <label className="block"><span className="text-sm font-semibold">Operational adjustment %</span><input type="number" step="0.01" min={-50} max={50} value={rates.policy.adjustment_percent} onChange={(event) => setRates({ ...rates, policy: { ...rates.policy, adjustment_percent: event.target.value } })} className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" /><span className="mt-1 block text-xs text-neutral-400">Example: -1.00% models a bank/provider rate below the reference rate.</span></label> : null}
-        <SearchableSelect label="Sync frequency" name="sync_frequency" value={rates.policy.sync_frequency} onValueChange={(value) => setRates({ ...rates, policy: { ...rates.policy, sync_frequency: value as RatePolicy["sync_frequency"] } })} options={[{ value: "daily", label: "Daily" }, { value: "manual", label: "Only when Sync now is pressed" }]} placeholder="Select frequency" />
+        <SearchableSelect label="Sync frequency" name="sync_frequency" value={rates.policy.sync_frequency} onValueChange={(value) => { if (safety.canEdit()) { safety.markDirty(); setRates({ ...rates, policy: { ...rates.policy, sync_frequency: value as RatePolicy["sync_frequency"] } }); } }} options={[{ value: "daily", label: "Daily" }, { value: "manual", label: "Only when Sync now is pressed" }]} placeholder="Select frequency" />
       </div>
       <div className="mt-5 flex justify-end"><button type="button" disabled={saving} onClick={() => void savePolicy()} className="rounded-xl bg-neutral-950 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">Save FX policy</button></div>
 
@@ -424,9 +365,9 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
         <h4 className="font-semibold">Currency pairs</h4>
         <p className="mt-1 text-sm text-neutral-500">Add conversion pairs used for transactions, reporting and functional-currency transitions. Accounting postings always preserve their historical rate.</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_1fr_1fr_auto]">
-          <SearchableSelect label="From" name="fx_base" value={base} onValueChange={setBase} options={currencyOptions} placeholder="From" />
+          <SearchableSelect label="From" name="fx_base" value={base} onValueChange={value => { if (safety.canEdit()) { safety.markDirty(); setBase(value); } }} options={currencyOptions} placeholder="From" />
           <div className="hidden pt-9 text-neutral-300 sm:block">→</div>
-          <SearchableSelect label="To" name="fx_quote" value={quote} onValueChange={setQuote} options={currencyOptions} placeholder="To" />
+          <SearchableSelect label="To" name="fx_quote" value={quote} onValueChange={value => { if (safety.canEdit()) { safety.markDirty(); setQuote(value); } }} options={currencyOptions} placeholder="To" />
           {rates.policy.mode === "manual" ? <label><span className="text-sm font-semibold">Manual rate</span><input value={manualRate} onChange={(event) => setManualRate(event.target.value)} type="number" step="0.000001" className="mt-2 h-11 w-full rounded-xl border px-3 text-sm" /></label> : <div />}
           <button type="button" onClick={() => void addPair()} className="mt-7 inline-flex h-11 items-center justify-center gap-2 rounded-xl border px-4 text-sm font-semibold"><Plus className="size-4" />Add</button>
         </div>
@@ -440,5 +381,6 @@ export function CurrencySettingsPanel({ onChanged }: { onChanged?: () => void | 
 
     {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
     {message ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div> : null}
+    </fieldset>
   </div>;
 }

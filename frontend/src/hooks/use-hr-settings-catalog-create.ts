@@ -1,9 +1,11 @@
 "use client";
 
+import { verifiedHRRejectionBody } from "@/lib/hr-rejection-body";
+
 import { useLayoutEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useHRSettingsIdentity } from "./use-hr-settings-identity";
-import { record, timeError } from "@/components/hr-time/hr-time-model";
+import { timeError } from "@/components/hr-time/hr-time-model";
 import { catalogIntent, catalogReceipt, catalogEndpoints, catalogViews, type CatalogKind, type CatalogIntent, type CatalogReceipt } from "@/components/hr-settings/catalog-create-model";
 import { useDocumentNavigationGuard } from "./use-document-navigation-guard";
 import { useHRTimeLifetime } from "./use-hr-time-resource";
@@ -12,7 +14,7 @@ import { HR_SETTINGS, safeSettingsReturn, settingsHref } from "@/lib/hr-settings
 type Phase = "idle" | "review" | "pending" | "rejected" | "acknowledged" | "confirmed" | "unknown";
 const UNKNOWN = "The save outcome is unknown. This setup item may already have been created. Do not submit it again.";
 const ACK = "The server acknowledged the save, but a matching setup receipt was not returned. Do not submit it again.";
-const knownRejection = (status: number, body: unknown) => [401, 403, 404, 422].includes(status) && record(body) && (typeof body.detail === "string" || status === 422 && Array.isArray(body.detail));
+const knownRejection = (status: number, body: unknown) => [401, 403, 404, 422].includes(status) && verifiedHRRejectionBody(body, status === 422);
 
 /** One reviewed intent per page. An uncertain result is never made retryable by a later read. */
 export function useHRSettingsCatalogCreate(kind: CatalogKind) {

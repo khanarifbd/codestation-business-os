@@ -1,6 +1,7 @@
 "use client";
+import { isDefiniteExpenseRejection } from "@/components/expenses/expense-write-outcome";
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { isAccounts } from "@/components/accounting-money-out/money-out-model";
@@ -27,12 +28,13 @@ export function useExpensePosting(returnHref: string) {
   const [candidateId, setCandidateId] = useState(""), [document, setDocument] = useState<ExpenseDetail | null>(null);
   const [recovering, setRecovering] = useState(false), [recoveryError, setRecoveryError] = useState<string | null>(null);
   const mounted = useRef(true), inFlight = useRef(false), uncertain = useRef(false), committed = useRef(false), operation = useRef<ExpenseOperation | null>(null);
+  const lifecycle = useRef(0);
   const sequence = useRef(0), confirmation = useRef(0), readEpoch = useRef(0), valuesRef = useRef(values), knownId = useRef(""), verifiedId = useRef("");
   const preview = expensePreview(values, metadata.value, accounts.value);
   const dirty = phase !== "confirmed" && (phase === "uncertain" || JSON.stringify(values) !== JSON.stringify(initial));
   const navigation = useDocumentNavigationGuard(dirty, { documentLabel: "expense", isBusy: saving, pendingRef: inFlight,
     discardMessage: phase === "uncertain" ? "This expense may already be posted. Leaving loses this tab’s original body and retry key. Verify the current company’s expense history before creating any replacement. Leave anyway?" : undefined });
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; readEpoch.current += 1; }; }, []);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; lifecycle.current += 1; readEpoch.current += 1; }; }, []);
 
   function change<K extends keyof ExpenseForm>(key: K, value: ExpenseForm[K]) {
     if (!mounted.current || !canManage || inFlight.current || uncertain.current || committed.current) return;
@@ -41,7 +43,7 @@ export function useExpensePosting(returnHref: string) {
     valuesRef.current = next; setValues(next);
   }
   async function refreshSetup() {
-    if (inFlight.current || uncertain.current || committed.current) return;
+    if (!mounted.current || inFlight.current || uncertain.current || committed.current) return;
     confirmation.current = 0; setConfirmOpen(false);
     await Promise.all([metadata.refresh(), accounts.refresh()]);
   }
@@ -49,7 +51,7 @@ export function useExpensePosting(returnHref: string) {
     if (!mounted.current || !canView || !canManage || inFlight.current || committed.current || !uncertain.current && (preview.error || !preview.amounts)) return;
     confirmation.current = ++sequence.current; setConfirmationVersion(confirmation.current); setConfirmOpen(true); setWriteError(null);
   }
-  function cancelReview() { if (!inFlight.current && confirmation.current === confirmationVersion) { confirmation.current = 0; setConfirmOpen(false); } }
+  function cancelReview() { if (mounted.current && !inFlight.current && confirmation.current === confirmationVersion) { confirmation.current = 0; setConfirmOpen(false); } }
   async function verifyCandidate(id = knownId.current) {
     if (!mounted.current || !committed.current || !operation.current || !id) return;
     const token = ++readEpoch.current; setRecovering(true); setRecoveryError(null);
@@ -68,18 +70,20 @@ export function useExpensePosting(returnHref: string) {
   async function postExpense() {
     if (!mounted.current || !canView || !canManage || !confirmOpen || confirmation.current !== confirmationVersion || !confirmationVersion || inFlight.current || committed.current || !uncertain.current && (preview.error || !preview.amounts)) return;
     inFlight.current = true; confirmation.current = 0; setSaving(true); setWriteError(null);
+    const owner = lifecycle.current;
     let attempted = false, classified = false;
     try {
       if (!operation.current) operation.current = prepareExpenseOperation(valuesRef.current, preview, window.crypto.randomUUID());
       const op = operation.current; setOperationState(op); attempted = true;
       const response = await fetch("/api/finance/expenses", { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": op.key }, body: op.body });
+      if (!mounted.current || owner !== lifecycle.current) return;
       if (response.ok) { committed.current = true; uncertain.current = false; }
       const body: unknown = await response.json().catch(() => null);
-      if (!mounted.current) return;
+      if (!mounted.current || owner !== lifecycle.current) return;
       if (response.status === 401) router.replace("/login");
       if (!response.ok) {
         classified = true;
-        if (uncertain.current || response.status >= 500 || response.status === 409) { uncertain.current = true; setPhase("uncertain"); }
+        if (uncertain.current || !isDefiniteExpenseRejection(response.status, body)) { uncertain.current = true; setPhase("uncertain"); }
         else { operation.current = null; setOperationState(null); setPhase("idle"); }
         throw new Error(getApiErrorMessage(body, "The expense could not be confirmed."));
       }
@@ -90,16 +94,16 @@ export function useExpensePosting(returnHref: string) {
       else if (candidate) { setRecoveryError("Posting was acknowledged. Verify the returned document before opening it."); await verifyCandidate(candidate); }
       else setRecoveryError("Posting was acknowledged, but no verifiable document ID was returned. Do not post again; inspect the current company’s expense register.");
     } catch (reason) {
-      if (!mounted.current) return;
+      if (!mounted.current || owner !== lifecycle.current) return;
       if (!committed.current && attempted && !classified) { uncertain.current = true; setPhase("uncertain"); }
       if (committed.current) { setPhase("confirmed"); navigation.markClean(); }
       setConfirmOpen(false); setWriteError(reason instanceof Error ? reason.message : "The expense outcome is uncertain.");
-    } finally { inFlight.current = false; if (mounted.current) setSaving(false); }
+    } finally { if (mounted.current && owner === lifecycle.current) { inFlight.current = false; setSaving(false); } }
   }
-  function openDocument() { if (committed.current && document && verifiedId.current === document.id) navigation.navigate(expenseDocumentHref(document.id, returnHref), { discard: true, replace: true }); }
+  function openDocument() { if (mounted.current && committed.current && document && verifiedId.current === document.id) navigation.navigate(expenseDocumentHref(document.id, returnHref), { discard: true, replace: true }); }
   return { canView, canManage, values, change, preview, metadata, accounts, refreshSetup, phase, saving, dirty, locked: saving || phase !== "idle", confirmOpen, review, cancelReview, postExpense,
     operation: operationState, writeError, document, candidateId, recovering, recoveryError, verifyCandidate, openDocument,
-    back: () => navigation.navigate(returnHref, { replace: phase === "confirmed" }),
+    back: () => mounted.current && navigation.navigate(returnHref, { replace: phase === "confirmed" }),
   };
 }
 export type ExpensePostingState = ReturnType<typeof useExpensePosting>;

@@ -1,76 +1,68 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useCompanyProviderChild, type ProviderChildLeaveRegistration } from "@/hooks/use-company-provider-child";
 import { ExternalLink, KeyRound } from "lucide-react";
 
 type Mode = "test" | "live";
 
 export function StripeManualConnectForm({
-  mode, connected, enabled, onConnected,
+  mode, connected, enabled, onConnected, registerLeaveGuard, registerOperationGuard, mayStart,
 }: {
   mode: Mode;
   connected: boolean;
   enabled: boolean;
   onConnected: () => Promise<void>;
+  registerLeaveGuard?: ProviderChildLeaveRegistration;
+  registerOperationGuard?: ProviderChildLeaveRegistration; mayStart?: () => boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [secretKey, setSecretKey] = useState("");
-  const [webhookSecret, setWebhookSecret] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [keyDraft, setKeyDraft] = useState<{ scope: object | null; value: string }>({ scope: null, value: "" });
+  const [webhookDraft, setWebhookDraft] = useState<{ scope: object | null; value: string }>({ scope: null, value: "" });
+  const guard = useCompanyProviderChild(`manual:${mode}`, enabled, registerLeaveGuard, registerOperationGuard, mayStart);
+  const saving = guard.busy, error = guard.error;
+  const secretKey = keyDraft.scope === guard.identity ? keyDraft.value : "", webhookSecret = webhookDraft.scope === guard.identity ? webhookDraft.value : "";
+  const setSecretKey = (value: string) => setKeyDraft({ scope: guard.identity, value });
+  const setWebhookSecret = (value: string) => setWebhookDraft({ scope: guard.identity, value });
 
   function close() {
+    if (!guard.discard()) return;
     setSecretKey("");
     setWebhookSecret("");
-    setError(null);
     setOpen(false);
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!secretKey.trim() || saving) return;
+    if (!secretKey.trim() || !guard.canEdit()) return;
     if (connected && !window.confirm("Replace the existing Stripe connection for this mode? Existing invoices and accounting data will not be changed.")) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const response = await fetch("/api/finance/payment-gateways/stripe/manual", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode,
-          secret_key: secretKey.trim(),
-          webhook_secret: webhookSecret.trim() || null,
-          replace_existing: connected,
-        }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(typeof body?.detail === "string" ? body.detail : "Could not verify Stripe credentials");
-      close();
+    await guard.run(() => fetch("/api/finance/payment-gateways/stripe/manual", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode, secret_key: secretKey.trim(), webhook_secret: webhookSecret.trim() || null, replace_existing: connected }),
+    }), value => Boolean(value && typeof value === "object" && "provider" in value && value.provider === "stripe" && "mode" in value && value.mode === mode && "connected" in value && value.connected === true && "stripe_account_id" in value && typeof value.stripe_account_id === "string" && value.stripe_account_id.startsWith("acct_")), async () => {
+      setSecretKey(""); setWebhookSecret(""); setOpen(false);
       await onConnected();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Stripe account connection failed");
-    } finally {
-      setSaving(false);
-    }
+    });
   }
 
   return <div className="mt-4">
-    <button type="button" disabled={!enabled || saving} onClick={() => { if (open) close(); else setOpen(true); }}
+    <button type="button" disabled={guard.locked} onClick={() => { if (!guard.canEdit()) return; if (open) close(); else setOpen(true); }}
       className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2.5 text-sm font-medium disabled:opacity-40">
       <KeyRound className="size-4" />{connected ? "Replace API credentials" : "Add Stripe API Key"}
     </button>
     {!enabled ? <p className="mt-2 text-xs text-amber-700">The SaaS administrator must configure server-side payment gateway encryption once before companies can securely save keys.</p> : null}
+    {error && !open ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
     {open && <form onSubmit={(event) => void submit(event)} className="mt-3 space-y-3 rounded-xl border bg-neutral-50 p-4">
       <h5 className="text-sm font-semibold">{mode === "test" ? "Test" : "Live"} Stripe credentials</h5>
       <label className="block text-sm">Stripe API Key (Secret or Restricted) <span className="text-red-600">*</span>
         <input type="password" autoComplete="off" spellCheck={false} value={secretKey}
-          onChange={(event) => setSecretKey(event.target.value)} required
+          disabled={guard.locked} onChange={(event) => { if (guard.changeDirty(Boolean(event.target.value || webhookSecret))) setSecretKey(event.target.value); }} required
           placeholder={mode === "test" ? "sk_test_... or rk_test_..." : "sk_live_... or rk_live_..."}
           className="mt-1 w-full rounded-lg border bg-white px-3 py-2.5 font-mono text-sm" />
       </label>
       <label className="block text-sm">Webhook Signing Secret (optional until checkout integration)
         <input type="password" autoComplete="off" spellCheck={false} value={webhookSecret}
-          onChange={(event) => setWebhookSecret(event.target.value)} placeholder="whsec_..."
+          disabled={guard.locked} onChange={(event) => { if (guard.changeDirty(Boolean(secretKey || event.target.value))) setWebhookSecret(event.target.value); }} placeholder="whsec_..."
           className="mt-1 w-full rounded-lg border bg-white px-3 py-2.5 font-mono text-sm" />
       </label>
       <p className="text-xs leading-5 text-neutral-500">Restricted keys (rk_) are supported. Grant the key read access to Account, Payment Intents, Charges, Balance Transactions, Payouts and Disputes, plus write access to Checkout Sessions. Key permissions are verified when relevant Stripe API calls are made. Keys are validated against the merchant account and stored encrypted, never displayed again. Never share an API key in chat. <a
@@ -79,8 +71,8 @@ export function StripeManualConnectForm({
         Stripe API Keys <ExternalLink className="size-3" /></a></p>
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       <div className="flex gap-2">
-        <button type="submit" disabled={saving || !secretKey.trim()} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{saving ? "Verifying…" : "Verify & Connect"}</button>
-        <button type="button" onClick={close} disabled={saving} className="rounded-lg border px-3 py-2 text-xs">Cancel</button>
+        <button type="submit" disabled={guard.locked || !secretKey.trim()} className="rounded-lg bg-neutral-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">{saving ? "Verifying…" : "Verify & Connect"}</button>
+        <button type="button" onClick={close} disabled={guard.locked} className="rounded-lg border px-3 py-2 text-xs">Cancel</button>
       </div>
     </form>}
   </div>;

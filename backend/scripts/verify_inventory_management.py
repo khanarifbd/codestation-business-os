@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
+import unittest
 from uuid import uuid4
 
 from sqlalchemy import select, text
@@ -36,6 +38,12 @@ def req(method: str, path: str) -> Request:
 
 
 def main() -> None:
+    # Keep schema boundary regressions in this existing inventory CI entrypoint.
+    suite = unittest.defaultTestLoader.discover(
+        str(Path(__file__).resolve().parents[1] / "tests"), pattern="test_inventory_schema_validation.py"
+    )
+    if not unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful():
+        raise SystemExit(1)
     with engine.begin() as conn:
         row = conn.execute(text("""SELECT o.id organization_id,o.created_by_user_id user_id,o.currency,m.id membership_id FROM organizations o JOIN memberships m ON m.organization_id=o.id AND m.user_id=o.created_by_user_id WHERE o.name='Existing Tenant Fixture' ORDER BY o.created_at DESC LIMIT 1""")).mappings().one()
     tenant = Tenant(str(row["organization_id"]), str(row["user_id"]), str(row["membership_id"]), Org(str(row["organization_id"]), str(row["currency"] or "BDT")))

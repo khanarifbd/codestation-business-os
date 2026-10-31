@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { useDocumentNavigationGuard } from "./use-document-navigation-guard";
 import { prepareRecurringPost, recurringPostBody, recurringPostId, recurringPostReceipt, type RecurringPostOperation, type RecurringPostPayload, type RecurringPostReceipt, type RecurringPostTarget } from "@/components/finance-controls/recurring-post-operation";
@@ -80,7 +81,8 @@ export function useRecurringExpensePost(scope: string, canPost: boolean) {
       if (response.status === 401) router.replace("/login");
       if (!response.ok) {
         classified = true;
-        if (uncertain.current || response.status >= 500 || [408,409,429].includes(response.status)) { uncertain.current = true; setPhase("uncertain"); }
+        const definitive = [400,401,403,404,422].includes(response.status) && hasAccountingRejectionDetail(body);
+        if (uncertain.current || !definitive) { uncertain.current = true; setPhase("uncertain"); }
         // Keep an unchanged rejected request's operation/body/key. An edited authoritative rejection is a new intent, not a retry.
         throw new Error(getApiErrorMessage(body, "Recurring expense posting was not confirmed."));
       }

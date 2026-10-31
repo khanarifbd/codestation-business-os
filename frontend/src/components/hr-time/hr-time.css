@@ -697,6 +697,10 @@
   .ht-section-heading h2 {
     font-size:1rem
   }
+  .ht-setup > .ht-section-heading {
+    flex-direction:column;
+    align-items:flex-start
+  }
   .ht-attention-row {
     padding:13px 16px;
     min-height:65px

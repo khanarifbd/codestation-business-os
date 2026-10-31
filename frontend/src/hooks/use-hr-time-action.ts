@@ -58,10 +58,8 @@ export function useHRTimeAction(owner: object, current: () => boolean, dirty: bo
         return false;
       if (response.ok)
         outcome("acknowledged", "The server acknowledged this request. Result details are not verified yet; do not repeat it.");
-      else if (!knownTimeRejection(response.status))
+      else
         outcome("unknown", "The outcome is unknown. The record or decision may already exist. Review current records before any separate new intent; this document will not resend it.");
-      if (response.status === 409)
-        intent.onConflict?.();
       if (response.status === 401)
         router.replace("/login");
       const body: unknown = await response.json().catch(() => null);
@@ -75,8 +73,10 @@ export function useHRTimeAction(owner: object, current: () => boolean, dirty: bo
         }
         return true;
       }
-      if (knownTimeRejection(response.status))
+      if (knownTimeRejection(response.status, body)) {
+        if (response.status === 409) intent.onConflict?.();
         outcome("rejected", timeError(body, "The request was rejected. Review the input or reload current details before trying deliberately."));
+      }
       return false;
     }
     catch {

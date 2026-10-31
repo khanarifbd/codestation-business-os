@@ -1,0 +1,10 @@
+{
+  "qc-owner-ledger-statements.spec.mjs": {
+    "count": 47,
+    "hash": "a2b6427d30ba3d3c05face69a985de2a059dee462be087ee723bc831678c4479"
+  },
+  "qc-personal-client-portals.spec.mjs": {
+    "count": 59,
+    "hash": "71ed0ff1c6a5e7c607bb7854cb06c0547c4bb0b364d1af087b429051f64e97ff"
+  }
+}

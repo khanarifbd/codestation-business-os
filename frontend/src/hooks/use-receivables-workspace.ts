@@ -4,6 +4,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from "next/navigat
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { accountCursorHistoryScope, readPreviousAccountCursor, rememberAccountCursorStep } from "@/lib/account-cursor-history";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { creditAmount, creditMaximum, creditPayload, creditToday, creditValidation, isCurrentAdvance, isReceivableAdvance, isReceivableInvoice, isReceivablePage, type CreditOperation, type CreditPhase, type CreditValues, type CurrentAdvance, type ReceivableAdvance, type ReceivableBrowse, type ReceivableInvoice, type ReceivablePage, type ReceivableRow } from "@/components/accounting-receivables/receivables-model";
 import { creditApplyHref, receivableCollectHref, receivableInvoiceHref, receivablesBrowse, receivablesListHref, receivablesReadApi, safeReceivablesReturn } from "@/lib/receivables-navigation";
@@ -175,7 +176,7 @@ export function useReceivablesWorkspace() {
             }
             else {
                 const body: unknown = await response.json().catch(() => null);
-                const definitive = [400, 401, 403, 404, 422].includes(response.status);
+                const definitive = [400, 401, 403, 404, 422].includes(response.status) && hasAccountingRejectionDetail(body);
                 if (!definitive || everUncertain.current) {
                     everUncertain.current = true;
                     setPhase("uncertain");

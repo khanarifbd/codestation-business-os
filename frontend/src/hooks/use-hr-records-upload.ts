@@ -1,5 +1,7 @@
 "use client";
 
+import { verifiedHRRejectionBody } from "@/lib/hr-rejection-body";
+
 import { useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
@@ -15,7 +17,7 @@ type Receipt = { id: string; file_url: string };
 const UNKNOWN = "The upload outcome is unknown. The document may already exist. Do not upload it again; neither a matching nor a missing later record proves this request's result.";
 const ACK = "The server acknowledged the upload, but its document receipt is not verified. Do not upload it again.";
 const UNKNOWN_LEAVE = "This upload may already have completed. Closing this dialog keeps its lock on this page, but reloading or leaving can lose this memory-only result. Do not repeat the upload without reviewing its outcome. Close this dialog?";
-const knownRejection = (status: number, body: unknown) => [400, 401, 403, 404, 413, 422].includes(status) && record(body) && (typeof body.detail === "string" || status === 422 && Array.isArray(body.detail));
+const knownRejection = (status: number, body: unknown) => [400, 401, 403, 404, 413, 422].includes(status) && verifiedHRRejectionBody(body, status === 422);
 function isReceipt(body: unknown): body is Receipt {
   return record(body) && timeId(body.id) && encodeURIComponent(body.id) === body.id
     && body.file_url === `/api/hr-documents/${body.id}/file`;
@@ -86,6 +88,14 @@ export function useHRRecordsUpload() {
     if (typeof employee !== "string" || !meta.value?.employees.some(item => item.id === employee) || !(file instanceof File) || !file.name) {
       lock.current = "rejected";
       setState({ owner, phase: "rejected", message: "Choose a current company employee and a document file before uploading.", receipt: null });
+      return null;
+    }
+    const title = body.get("title"), reference = body.get("reference_number");
+    // Code points match backend model widths; do not count UTF-16 halves of valid Unicode.
+    if (typeof title !== "string" || Array.from(title.trim()).length > 180 ||
+        reference !== null && (typeof reference !== "string" || Array.from(reference.trim()).length > 120)) {
+      lock.current = "rejected";
+      setState({ owner, phase: "rejected", message: "Document title must be at most 180 characters and reference number at most 120 characters.", receipt: null });
       return null;
     }
     const token = { owner, dialog };

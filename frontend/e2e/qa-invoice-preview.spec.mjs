@@ -2,10 +2,13 @@ import { expect, test } from "@playwright/test";
 
 // Authentication is real against the isolated local fixture. Every invoice/payment
 // request below is mocked: these tests cannot send mail or move money.
+const password = process.env.E2E_PASSWORD;
+if (!password?.trim()) throw new Error("E2E_PASSWORD must be supplied by the isolated CI fixture.");
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel(/email or username/i).fill(process.env.E2E_EMAIL ?? "e2e-owner@example.com");
-  await page.getByLabel("Password", { exact: true }).fill(process.env.E2E_PASSWORD ?? "E2E-Launch-Password-123!");
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: /sign in securely/i }).click();
   await expect(page).toHaveURL(/\/dashboard(?:$|\/|\?)/, { timeout: 15_000 });
 });
@@ -19,7 +22,7 @@ async function mockInvoice(page, invoice, payments = []) {
     const url = new URL(route.request().url());
     if (url.pathname.includes("stripe-checkout")) return route.fulfill({ json: { gateway_connected: false, checkout_available: false, attempts: [], sessions: [] } });
     if (url.pathname.endsWith("/payment-destinations")) return route.fulfill({ json: [] });
-    if (url.pathname.endsWith("/payment-instructions")) return route.fulfill({ json: { invoice_id: invoice.id, locked: invoice.status !== "draft", payment_method: null, payment_account_id: null, payment_url: null } });
+    if (url.pathname.endsWith("/payment-instructions")) return route.fulfill({ json: { invoice_id: invoice.id, invoice_number: invoice.invoice_number, invoice_status: invoice.status, invoice_currency: invoice.currency, locked: invoice.status !== "draft", payment_method: null, payment_account_id: null, payment_account_name: null, payment_provider: null, payment_account_holder: null, payment_account_reference: null, payment_currency: null, payment_url: null, payment_instructions: null } });
     if (url.pathname.endsWith("/payments")) return route.fulfill({ json: payments });
     if (url.pathname.endsWith("/draft") && route.request().method() === "PATCH") {
       const body = route.request().postDataJSON();
@@ -78,17 +81,28 @@ test("QA-012 reversal updates paid and due in client preview immediately", async
   await preview.screenshot({ path: testInfo.outputPath("qa012-reversed-preview.png") });
 });
 
+// This isolated mock now follows the existing server balance-filter contract.
+// The real-stack financial journey independently exercises the backend query.
+function qaInvoicePage(items, requestUrl) {
+  const balance = new URL(requestUrl).searchParams.get("balance") || "all";
+  if (!["all", "outstanding", "paid"].includes(balance)) throw new Error("Unsupported synthetic invoice balance query");
+  const filtered = balance === "outstanding" ? items.filter(item => item.balance_due > 0 && !["draft", "cancelled", "paid"].includes(item.status))
+    : balance === "paid" ? items.filter(item => item.balance_due <= 0 && item.status === "paid") : items;
+  return { items: filtered, next_cursor: null };
+}
+
 test("QA-015 outstanding excludes cancelled and draft rows even with legacy residual balances", async ({ page }, testInfo) => {
   const items = ["cancelled", "draft", "sent", "paid"].map((status) => ({ ...invoiceFixture(status, 24.68), id: `qa-${status}`, invoice_number: `QA-${status.toUpperCase()}`, balance_due: status === "paid" ? 0 : 24.68 }));
   await page.route("**/api/finance/**", (route) => {
     const path = new URL(route.request().url()).pathname;
-    return route.fulfill({ json: path.endsWith("/invoice-page") ? { items, next_cursor: null } : path.endsWith("/meta") ? { clients: [], orders: [], projects: [] } : [] });
+    return route.fulfill({ json: path.endsWith("/invoice-page") ? qaInvoicePage(items, route.request().url()) : path.endsWith("/meta") ? { clients: [], orders: [], projects: [] } : [] });
   });
   await page.route("**/api/inventory/products", (route) => route.fulfill({ json: [] }));
   await page.route("**/api/accounting/tax/codes", (route) => route.fulfill({ json: [] }));
   await page.goto("/dashboard/accounting/invoices");
   await expect(page.getByRole("link", { name: "QA-CANCELLED", exact: true })).toBeVisible();
   await page.locator("select").filter({ has: page.locator('option[value="outstanding"]') }).selectOption("outstanding");
+  await page.getByRole("button", { name: "Apply filters", exact: true }).click();
   await expect(page.getByRole("link", { name: "QA-SENT", exact: true })).toBeVisible();
   for (const status of ["CANCELLED", "DRAFT", "PAID"]) await expect(page.getByRole("link", { name: `QA-${status}`, exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("qa015-outstanding-filter.png"), fullPage: true });

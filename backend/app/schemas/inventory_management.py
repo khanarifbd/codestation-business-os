@@ -1,19 +1,36 @@
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import Field, field_validator, model_validator
+
+from app.core.localization import normalize_country_code, normalize_currency_code
+from app.schemas.inventory import InventoryRequiredText
 
 
 ItemType = Literal["stock_item", "non_stock_item", "service"]
 
 
-class CategoryUpdate(BaseModel):
+class CategoryUpdate(InventoryRequiredText):
+    @field_validator("name", "is_active", mode="before")
+    @classmethod
+    def reject_required_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = None
     is_active: bool | None = None
 
 
-class WarehouseUpdate(BaseModel):
+class WarehouseUpdate(InventoryRequiredText):
+    @field_validator("code", "name", "is_default", "is_active", mode="before")
+    @classmethod
+    def reject_required_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
     code: str | None = Field(default=None, min_length=1, max_length=40)
     name: str | None = Field(default=None, min_length=1, max_length=180)
     address: str | None = None
@@ -21,7 +38,14 @@ class WarehouseUpdate(BaseModel):
     is_active: bool | None = None
 
 
-class ProductUpdate(BaseModel):
+class ProductUpdate(InventoryRequiredText):
+    @field_validator("sku", "name", "item_type", "unit", "currency", "selling_price", "standard_cost", "reorder_level", "track_inventory", "allow_negative_stock", "is_active", mode="before")
+    @classmethod
+    def reject_required_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
     sku: str | None = Field(default=None, min_length=1, max_length=80)
     barcode: str | None = Field(default=None, max_length=120)
     name: str | None = Field(default=None, min_length=1, max_length=220)
@@ -53,7 +77,19 @@ class ProductUpdate(BaseModel):
         return self
 
 
-class SupplierCreate(BaseModel):
+class SupplierLocalization(InventoryRequiredText):
+    @field_validator("country_code", mode="before", check_fields=False)
+    @classmethod
+    def normalize_country(cls, value):
+        return normalize_country_code(value) if isinstance(value, str) else value
+
+    @field_validator("currency", mode="before", check_fields=False)
+    @classmethod
+    def normalize_currency(cls, value):
+        return normalize_currency_code(value) if isinstance(value, str) else value
+
+
+class SupplierCreate(SupplierLocalization):
     name: str = Field(min_length=1, max_length=220)
     contact_name: str | None = Field(default=None, max_length=180)
     email: str | None = Field(default=None, max_length=320)
@@ -65,7 +101,14 @@ class SupplierCreate(BaseModel):
     notes: str | None = None
 
 
-class SupplierUpdate(BaseModel):
+class SupplierUpdate(SupplierLocalization):
+    @field_validator("name", "is_active", mode="before")
+    @classmethod
+    def reject_required_null(cls, value):
+        if value is None:
+            raise ValueError("This field cannot be null")
+        return value
+
     name: str | None = Field(default=None, min_length=1, max_length=220)
     contact_name: str | None = Field(default=None, max_length=180)
     email: str | None = Field(default=None, max_length=320)

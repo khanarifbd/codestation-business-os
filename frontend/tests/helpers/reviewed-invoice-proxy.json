@@ -1,0 +1,20 @@
+{
+  "src/components/invoices-workspace-v2.tsx": [
+    {
+      "before": "definiteRejection = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && getApiErrorMessage(payload, \"\").trim().length > 0;",
+      "after": "definiteRejection = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && getApiErrorMessage(payload, \"\").trim().length > 0 && getApiErrorMessage(payload, \"\").trim() !== \"Unexpected upstream response\";"
+    }
+  ],
+  "src/components/invoice-detail-workspace.tsx": [
+    {
+      "before": "classified = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && apiError(payload, \"\").trim().length > 0;",
+      "after": "classified = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && apiError(payload, \"\").trim().length > 0 && apiError(payload, \"\").trim() !== \"Unexpected upstream response\";"
+    }
+  ],
+  "src/components/invoice-payment-workspace.tsx": [
+    {
+      "before": "definiteRejection = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && getApiErrorMessage(payload, \"\").trim().length > 0;",
+      "after": "definiteRejection = response.status >= 400 && response.status < 500 && ![408, 409].includes(response.status) && getApiErrorMessage(payload, \"\").trim().length > 0 && getApiErrorMessage(payload, \"\").trim() !== \"Unexpected upstream response\";"
+    }
+  ]
+}

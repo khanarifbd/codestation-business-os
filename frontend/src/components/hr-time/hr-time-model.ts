@@ -107,7 +107,13 @@ export function attendanceError(v: AttendanceDraft, meta: HRTimeMeta | null) {
 }
 export function attendancePayload(v: AttendanceDraft) { const hours = Math.max(0, Number(v.hours || 0)), overtimeHours = Math.max(0, Number(v.overtime_hours || 0)); return { employee_id: v.employee_id, attendance_date: v.attendance_date, status: v.status || "present", work_minutes: Math.round(hours * 60), overtime_minutes: Math.round(overtimeHours * 60), notes: v.notes.trim() || null }; }
 export function timeError(body: unknown, fallback: string) { return record(body) && text(body.detail) ? body.detail : fallback; }
-export function knownTimeRejection(status: number) { return [400, 401, 403, 404, 409, 422].includes(status); }
+export function knownTimeRejection(status: number, body: unknown) {
+  if (![400, 401, 403, 404, 409, 422].includes(status) || !record(body)) return false;
+  if (typeof body.detail === "string") return body.detail.trim().length > 0;
+  return status === 422 && Array.isArray(body.detail) && body.detail.length > 0 && body.detail.every(issue =>
+    record(issue) && Array.isArray(issue.loc) && issue.loc.length > 0 && issue.loc.every(part => typeof part === "string" || typeof part === "number") &&
+    typeof issue.msg === "string" && issue.msg.trim().length > 0 && typeof issue.type === "string" && issue.type.trim().length > 0);
+}
 export function minuteLabel(value: number) { return `${Math.floor(value / 60)}h ${value % 60}m`; }
 export function timeLabel(value: string) { return value.replaceAll("_", " "); }
 export function timeInstant(value: string | null, timezone: string) {

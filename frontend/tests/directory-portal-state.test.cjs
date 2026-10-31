@@ -19,9 +19,10 @@ function peopleFixture(bundle, search = '') {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
   const ts = require('typescript'), React = require('react');
   const { renderToStaticMarkup } = require('react-dom/server');
-  const values = [bundle, false, null, null, {}, {}, false, false, null, null, null];
-  const refs = [], modules = new Map(); let cursor = 0, refCursor = 0;
-  const hooks = { ...React, useState(initial) { const i = cursor++; if (!(i in values)) values[i] = typeof initial === 'function' ? initial() : initial; return [values[i], value => { values[i] = typeof value === 'function' ? value(values[i]) : value; }]; }, useRef(initial) { return refs[refCursor++] ??= { current: initial }; }, useEffect() {}, useMemo: fn => fn(), useCallback: fn => fn };
+  const values = ['idle', bundle, false, null, null, {}, {}, false, false, null, null, null];
+  const refs = [], memos = [], layouts = [], modules = new Map(); let cursor = 0, refCursor = 0, memoCursor = 0, layoutCursor = 0, company = 'synthetic-company';
+  const same=(a,b)=>a&&b&&a.length===b.length&&a.every((v,i)=>Object.is(v,b[i]));
+  const hooks = { ...React, useState(initial) { const i = cursor++; if (!(i in values)) values[i] = typeof initial === 'function' ? initial() : initial; return [values[i], value => { values[i] = typeof value === 'function' ? value(values[i]) : value; }]; }, useRef(initial) { return refs[refCursor++] ??= { current: initial }; }, useEffect() {}, useLayoutEffect(fn,deps) {const i=layoutCursor++,old=layouts[i];layouts[i]={fn,deps,cleanup:old?.cleanup,changed:!old||!same(old.deps,deps)};}, useMemo(fn,deps) {const i=memoCursor++;if(!memos[i]||!same(memos[i].deps,deps))memos[i]={deps,value:fn()};return memos[i].value;}, useCallback(fn,deps) {return hooks.useMemo(()=>fn,deps);} };
   function load(filename) {
     if (modules.has(filename)) return modules.get(filename);
     const compiled = { exports: {} }; modules.set(filename, compiled.exports);
@@ -32,12 +33,12 @@ function peopleFixture(bundle, search = '') {
       fetch: () => { throw new Error('Unexpected HR06 fixture request'); },
       require(name) {
         if (name === 'react') return hooks;
-        if (name === 'next/navigation') return { useParams: () => ({}), usePathname: () => '/dashboard/hr/people', useSearchParams: () => new URLSearchParams({ search }), useRouter: () => ({}) };
+        if (name === 'next/navigation') return { useParams: () => ({}), usePathname: () => '/dashboard/hr/people', useSearchParams: () => new URLSearchParams({ search }), useRouter: () => ({push(){throw Error('Unexpected stale navigation');}}) };
         if (name.includes('document-navigation-guard')) return { useDocumentNavigationGuard: () => ({ confirmLeave: () => true, navigate: () => false, markClean() {} }) };
         if (name === 'lucide-react') return new Proxy({}, { get: () => () => null });
         if (name.endsWith('.css')) return {};
         if (name === '@/components/searchable-select') return { SearchableSelect: () => null };
-        if (name === '@/components/dashboard-session-context') return { useDashboardSession: () => ({ tenant: null, loading: false }) };
+        if (name === '@/components/dashboard-session-context') return { useDashboardSession: () => ({ tenant: {organization:{id:company},membership_id:'synthetic-member',role_id:'synthetic-role',status:'active',permissions:['*']}, loading: false }) };
         if (name === '@/components/relationships/relationship-ui') return { RelationshipPage: ({ children }) => React.createElement('main', null, children), RelationshipNotice: ({ children }) => React.createElement('aside', null, children) };
         if (name.startsWith('@/') || name.startsWith('.')) { const base = name.startsWith('@/') ? path.resolve(__dirname, '../src', name.slice(2)) : path.resolve(path.dirname(filename), name); const found = ['.tsx', '.ts'].map(ext => base + ext).find(fs.existsSync); if (found) return load(found); }
         return require(name);
@@ -46,13 +47,17 @@ function peopleFixture(bundle, search = '') {
     return compiled.exports;
   }
   const Component = load(path.resolve(__dirname, '../src', peoplePath)).TestPeopleContent;
-  return { states: values, render() { cursor = 0; refCursor = 0; return renderToStaticMarkup(Component()); } };
+  function begin(){cursor=0;refCursor=0;memoCursor=0;layoutCursor=0;}
+  function commit(){for(const slot of layouts)if(slot.changed){slot.changed=false;slot.cleanup?.();slot.cleanup=slot.fn();}}
+  return { setBundle(next){values[1]=next;}, controller(){begin();const result=load(path.resolve(__dirname,'../src/hooks/use-people-workspace.ts')).usePeopleWorkspace();commit();return result;}, company(value){company=value;}, unmount(){for(const slot of layouts)slot.cleanup?.();}, render() { begin();const tree=Component();commit();return renderToStaticMarkup(tree); } };
 }
 function metric(html, label, value) {
   const matches = [...html.matchAll(new RegExp(`<dt>${label}</dt><dd>([^<]*)</dd>`, 'g'))].map(match => match[1]);
   // Desktop and collapsed mobile disclosure must contain the same exact counts.
   assert.deepEqual(matches, [String(value), String(value)]);
 }
+
+test('HR06 faithful layout lifetime blocks retained controller after unmount and company replacement',async()=>{for(const boundary of ['unmount','company']){const fixture=peopleFixture(directoryBundle());const old=fixture.controller();if(boundary==='unmount')fixture.unmount();else{fixture.company('replacement');fixture.controller();}old.openPerson('employee');old.changeBrowse({search:'stale'});await old.load();assert.equal(old.values.full_name,undefined);fixture.unmount();}});
 
 test('HR06 directory renders all supplied people and active/pending counts before acceptance', () => {
   const fixture = peopleFixture(directoryBundle());
@@ -65,7 +70,7 @@ test('HR06 directory renders all supplied people and active/pending counts befor
 test('HR06 post-acceptance bundle renders the new employee and no pending invitation', () => {
   const fixture = peopleFixture(directoryBundle());
   fixture.render();
-  fixture.states[0] = directoryBundle({ people: [person('owner', { role_name: 'Owner' }), person('employee'), person('invited')], invitations: [] });
+  fixture.setBundle(directoryBundle({ people: [person('owner', { role_name: 'Owner' }), person('employee'), person('invited')], invitations: [] }));
   const html = fixture.render();
   metric(html, 'People', 3); metric(html, 'Active', 3); metric(html, 'Invites pending', 0);
   assert.match(html, /Synthetic person invited/); assert.match(html, /EMP-invited/);

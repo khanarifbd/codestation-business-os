@@ -21,7 +21,7 @@ export function AccountHeading({ eyebrow, title, description, actions }: {
 export function CurrencyValues({ values, empty = "No balances recorded" }: {
     values: [
         string,
-        number
+        string
     ][];
     empty?: string;
 }) {

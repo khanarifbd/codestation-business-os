@@ -22,13 +22,14 @@ export function payrollReadSpec(route:PayrollRoute,tab:PayrollTab,periodId:strin
     }
 }
 type ReadState={url:string;data:unknown;loading:boolean;error:string|null};
-export function usePayrollRead(spec:PayrollReadSpec,enabled:boolean,pendingRef:{readonly current:boolean}) {
+const standaloneReadOwner=()=>true;
+export function usePayrollRead(spec:PayrollReadSpec,enabled:boolean,pendingRef:{readonly current:boolean},ownsDocument:()=>boolean=standaloneReadOwner) {
     const router=useRouter(),mounted=useRef(true),epoch=useRef(0),key=JSON.stringify(spec);
     const [states,setStates]=useState<Partial<Record<PayrollResource,ReadState>>>({});
     const load=useCallback(async()=> {
-        if(!enabled||pendingRef.current)return null;
+        if(!ownsDocument()||!enabled||pendingRef.current)return null;
         const generation=++epoch.current,paths=JSON.parse(key) as PayrollReadSpec;
-        const active=()=>mounted.current&&epoch.current===generation;
+        const active=()=>ownsDocument()&&mounted.current&&epoch.current===generation;
         const loaded:Partial<PayrollResources>={};
         await Promise.all((Object.entries(paths) as [PayrollResource,string][]).map(async([resource,url])=>{
             if(!active())return;
@@ -37,7 +38,7 @@ export function usePayrollRead(spec:PayrollReadSpec,enabled:boolean,pendingRef:{
             catch(reason){if(!active())return;setStates(old=>({...old,[resource]:{url,data:null,loading:false,error:reason instanceof Error?reason.message:"Payroll information is unavailable."}}));if(reason instanceof PayrollRequestError&&reason.status===401)router.replace("/login");}
         }));
         return active()?loaded:null;
-    },[enabled,key,pendingRef,router]);
+    },[enabled,key,pendingRef,router,ownsDocument]);
     const invalidateReads=useCallback(()=>{epoch.current++;},[]);
     useEffect(()=>{mounted.current=true;let active=true;void Promise.resolve().then(()=>{if(active)void load();});return()=>{active=false;mounted.current=false;invalidateReads();};},[load,invalidateReads]);
     const data:Partial<PayrollResources>={},errors:Partial<Record<PayrollResource,string>>={},loading:Partial<Record<PayrollResource,boolean>>={};

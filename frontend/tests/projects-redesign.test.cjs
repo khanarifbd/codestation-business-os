@@ -11,13 +11,33 @@ const originalList=path.join(baseline,'src/app/dashboard/projects/page.tsx');
 const model=path.join(root,'src/components/projects/project-model.ts');
 const listModel=path.join(root,'src/components/projects/project-list-model.ts');
 const printer=ts.createPrinter({removeComments:true});
-const parse=file=>ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+const preservedCredentialOptions = [
+ '{credential && !["login", "api_key", "database", "ssh", "hosting", "domain", "other"].includes(credential.credential_type) ? <option value={credential.credential_type}>{credential.credential_type} (saved)</option> : null}',
+ '{credential && !["production", "staging", "development", "other"].includes(credential.environment) ? <option value={credential.environment}>{credential.environment} (saved)</option> : null}',
+];
+function restoreOriginalCredentialOptions(source) {
+ for (const addition of preservedCredentialOptions) { assert.equal(source.split(addition).length,2,'Only the exact reviewed saved-value option is accepted'); source=source.replace(addition,''); }
+ return source;
+}
+const parse=file=>ts.createSourceFile(file,file.endsWith('/components/projects/project-editors.tsx')?restoreOriginalCredentialOptions(fs.readFileSync(file,'utf8')):fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
 function declaration(file,name){const ast=parse(file);let node;const visit=n=>{if((ts.isVariableDeclaration(n)||ts.isFunctionDeclaration(n)||ts.isTypeAliasDeclaration(n))&&n.name?.getText(ast)===name)node=n;ts.forEachChild(n,visit);};visit(ast);assert.ok(node,`${name} in ${path.basename(file)}`);return{ast,node};}
 function printed(file,name,part){const{ast,node}=declaration(file,name);return printer.printNode(ts.EmitHint.Unspecified,part?node[part]:node,ast).replace(/^export /,'');}
 for(const name of ['Tab','ProjectMember','ProjectAccess','ProjectDetail','Summary','MilestoneRow','TaskRow','WorkLog','DocumentRow','CredentialRow','Workspace','EmployeeOption','Meta','CredentialValues','TaskEditValues'])test(`Projects model ${name}: original DTO contract is unchanged`,()=>assert.equal(printed(model,name),printed(original,name)));
-for(const name of ['tabs','allTabIds','defaultMemberTabs','previewTypes','money','pretty','formatBytes','localDateKey','isOverdueDate','vaultMessage'])test(`Projects ${name}: existing tabs, display math, preview types and safe error copy remain exact`,()=>assert.equal(printed(model,name),printed(original,name)));
+for(const name of ['tabs','allTabIds','defaultMemberTabs','previewTypes','pretty','formatBytes','localDateKey','isOverdueDate','vaultMessage'])test(`Projects ${name}: existing tabs, display math, preview types and safe error copy remain exact`,()=>assert.equal(printed(model,name),printed(original,name)));
 for(const[old,next]of [['EmployeeOption','ProjectEmployeeOption'],['Meta','ProjectListMeta'],['Summary','ProjectSummary'],['ProjectRow','ProjectListRow'],['OrderDetail','ProjectOrder'],['ProjectLink','ExistingProjectLink']])test(`Projects list ${old}: extraction preserves every original field`,()=>assert.equal(printed(listModel,next).replaceAll('ProjectEmployeeOption','EmployeeOption').replace(`type ${next}` ,`type ${old}`),printed(originalList,old)));
-test('Projects list money remains currency-labeled and not aggregated across currencies',()=>assert.equal(printed(listModel,'projectMoney').replace('projectMoney','money'),printed(originalList,'money')));
+function reviewedExactMoney(file,name,override) {
+ const source=override??fs.readFileSync(file,'utf8');
+ const ast=ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+ const fn=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text===name);
+ assert.ok(fn);
+ assert.equal(printer.printNode(ts.EmitHint.Unspecified,fn,ast).replace(/^export /,''),`function ${name}(value: string | number, currency: string) { return formatMoneyExact(value, currency); }`);
+ const imports=ast.statements.filter(ts.isImportDeclaration).map(n=>printer.printNode(ts.EmitHint.Unspecified,n,ast));
+ assert.ok(imports.includes('import { formatMoneyExact } from "@/lib/sales-money-preview";'));
+}
+for(const[file,name]of [[model,'money'],[listModel,'projectMoney']]) {
+ test(`Projects ${name}: exact shared two-decimal display is the only reviewed replacement`,()=>reviewedExactMoney(file,name));
+ for(const[from,to]of [['formatMoneyExact(value, currency)','formatMoneyExact(Number(value), currency)'],['formatMoneyExact(value, currency)','formatMoneyExact(value, "USD")'],['@/lib/sales-money-preview','@/lib/unreviewed-money']])test(`Projects ${name}: reject display tampering ${to}`,()=>assert.throws(()=>reviewedExactMoney(file,name,fs.readFileSync(file,'utf8').replace(from,to))));
+}
 for(const file of ['src/app/api/projects/[...segments]/route.ts'])test(`${file}: existing notes, feedback and authenticated proxy remain byte-identical`,()=>assert.equal(fs.readFileSync(path.join(root,file),'utf8'),fs.readFileSync(path.join(baseline,file),'utf8')));
 function stringifyBodies(file,fn){const{ast,node}=declaration(file,fn),out=[];const visit=n=>{if(ts.isCallExpression(n)&&['JSON.stringify','json'].includes(n.expression.getText(ast)))out.push(printer.printNode(ts.EmitHint.Unspecified,n.arguments[n.expression.getText(ast)==='json'?1:0],ast).replace(/\s+/g,' ').replace(/,\s*}/g,' }'));ts.forEachChild(n,visit);};visit(node);return out;}
 // Controller boundaries may intentionally change for routing, duplicate-write and stale-read safety.
@@ -189,3 +209,5 @@ for(const [name,from,to] of [
  ['changed captured transport body','body: op.body','body: JSON.stringify(op.payload)'],
 ]) test('Approved child adapter rejects '+name,()=>{const hook=fs.readFileSync(path.join(root,'src/hooks/use-project-income-operation.ts'),'utf8');assert.ok(hook.includes(from));assert.throws(()=>assertChildReviewPreserved(currentChildReview(),hook.replace(from,to)));});
 test('Approved child adapter rejects an unguarded Note input',()=>{const relative='src/components/project-notes-section.tsx',original=fs.readFileSync(path.join(root,relative),'utf8'),from='if (!pendingRef.current && !outcomeRef.current) setDraft';assert.ok(original.includes(from));assert.throws(()=>approvedChildContracts(relative,original.replace(from,'setDraft')));});
+
+test('saved custom-option adapter rejects condition, value, omission and arbitrary option drift',()=>{const source=fs.readFileSync(editors,'utf8');assert.ok(!restoreOriginalCredentialOptions(source).includes('(saved)</option>'));for(const changed of [source.replace('credential && !["production"','credential && ["production"'),source.replace('<option value={credential.environment}>','<option value="production">'),source.replace(preservedCredentialOptions[0],''),source.replace('(saved)</option>','(other)</option>')])assert.throws(()=>restoreOriginalCredentialOptions(changed),/exact reviewed/);const stripped=restoreOriginalCredentialOptions(source);for(const value of ['login','api_key','database','domain','other','production','staging','development'])assert.ok(stripped.includes('<option value="'+value+'">'));});

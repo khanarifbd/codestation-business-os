@@ -181,7 +181,7 @@ export default function InvoicePrintPage() {
 
     async function load() {
       setLoading(true);
-      setError(null);
+      setError(null); setInvoice(null); setPayment(null);
       try {
         const [invoiceResponse, paymentResponse] = await Promise.all([
           fetch(`/api/finance/invoices/${encodeURIComponent(params.invoiceId)}`, { cache: "no-store" }),
@@ -190,6 +190,7 @@ export default function InvoicePrintPage() {
           }),
         ]);
 
+        if (!active) return;
         if (invoiceResponse.status === 401 || paymentResponse.status === 401) {
           router.replace("/login");
           return;
@@ -200,11 +201,14 @@ export default function InvoicePrintPage() {
           paymentResponse.json().catch(() => null),
         ]);
 
+        if (!active) return;
         if (!invoiceResponse.ok) throw new Error(apiError(invoicePayload, "Unable to load invoice."));
         if (!paymentResponse.ok) {
           throw new Error(apiError(paymentPayload, "Unable to load invoice payment instructions."));
         }
 
+        if (!invoicePayload || invoicePayload.id !== params.invoiceId || typeof invoicePayload.invoice_number !== "string" || !Array.isArray(invoicePayload.items)) throw new Error("Invoice print identity could not be verified.");
+        if (!paymentPayload || paymentPayload.invoice_id !== params.invoiceId) throw new Error("Payment instruction identity could not be verified.");
         if (active) {
           setInvoice(invoicePayload as InvoiceDetail);
           setPayment(paymentPayload as PaymentInstructions);
@@ -239,7 +243,7 @@ export default function InvoicePrintPage() {
     [invoice],
   );
 
-  if (loading) {
+  if (loading || invoice && invoice.id !== params.invoiceId || payment && payment.invoice_id !== params.invoiceId) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[var(--app-canvas)]">
         <Loader2 className="size-7 animate-spin text-neutral-400" />

@@ -18,8 +18,8 @@
 .quotation-browse .quotation-register-filters form>svg { position:absolute; left:11px; color:var(--workspace-neutral-muted, #708263); }
 .quotation-browse .quotation-register-filters input { width:100%; padding:0 8px 0 34px; border:1px solid var(--workspace-neutral-border, #d2decb); border-right:0; border-radius:6px 0 0 6px; }
 .quotation-browse .quotation-register-filters form>button { align-self:stretch; min-width:52px; padding:0 9px; background:var(--workspace-surface, #edf3e7); border:1px solid var(--workspace-neutral-border, #d2decb); border-radius:0 6px 6px 0; color:var(--workspace-neutral-ink, #3e5b38); font-size:11px; }
-.quotation-browse .quotation-status-filter button { min-height:44px; padding:0 10px; border:1px solid #d2decb; font-size:11px; }
-.quotation-browse .quotation-status-filter select { padding:0 9px; border:1px solid #d2decb; min-height:44px; }
+.quotation-browse .quotation-status-filter button { min-height:44px; padding:0 10px; border:1px solid var(--workspace-neutral-border, #d2decb); font-size:11px; }
+.quotation-browse .quotation-status-filter select { padding:0 9px; border:1px solid var(--workspace-neutral-border, #d2decb); min-height:44px; }
 .quotation-browse-open { display:flex; align-items:center; gap:3px; color:var(--workspace-neutral-muted, #476d37); font-size:11px; font-weight:600; }
 .quotation-browse-status { display:inline-block; border-radius:4px; padding:4px 8px; background:#f1f3e9; color:#62683d; font-size:10px; text-transform:capitalize; line-height:1.5; }
 .quotation-browse-status[data-status=sent] { background:#edf2f8; color:#43657e; }.quotation-browse-status[data-status=accepted] { background:#eaf3e5; color:#3f6e35; }.quotation-browse-status[data-status=rejected] { background:#fbede7; color:#8d5140; }.quotation-browse-status[data-status=cancelled] { background:#eff0ed; color:#697064; }

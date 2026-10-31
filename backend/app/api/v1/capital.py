@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import case, func, select
 
+from app.schemas.capital_response import CapitalExactResponse
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.db.session import defer_commits
 from app.api.v1.accounting_loans import (
@@ -436,14 +437,14 @@ def project_investor_json(x: ProjectInvestor, project_name: str | None = None):
     return {"id": x.id, "project_id": x.project_id, "project_name": project_name, "investor_name": x.investor_name, "investor_email": x.investor_email, "currency": x.currency, "committed_amount": x.committed_amount, "funded_amount": x.funded_amount, "invested_amount": x.invested_amount, "outstanding_commitment": money(x.committed_amount - x.funded_amount), "investment_date": x.investment_date, "share_type": x.share_type, "share_value": x.share_value, "status": x.status, "agreement_reference": x.agreement_reference, "notes": x.notes}
 
 
-@router.get("/meta")
+@router.get("/meta", response_model=CapitalExactResponse)
 def meta(db: DbSession, tenant: CapitalViewer):
     accounts = db.scalars(select(FinancialAccount).where(FinancialAccount.organization_id == tenant.organization_id, FinancialAccount.is_active.is_(True)).order_by(FinancialAccount.currency, FinancialAccount.name)).all()
     projects = db.scalars(select(Project).where(Project.organization_id == tenant.organization_id, Project.status != "cancelled").order_by(Project.created_at.desc()).limit(200)).all()
     return {"accounts": [{"id": x.id, "name": x.name, "currency": x.currency, "account_type": x.account_type, "balance": balance(db, x, tenant.organization_id)} for x in accounts], "projects": [{"id": x.id, "project_number": x.project_number, "name": x.name, "currency": x.currency, "contract_value": x.contract_value, "status": x.status} for x in projects]}
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", response_model=CapitalExactResponse)
 def dashboard(db: DbSession, tenant: CapitalViewer):
     org = tenant.organization_id
     investments = db.scalars(select(CompanyInvestment).where(CompanyInvestment.organization_id == org)).all()
@@ -471,12 +472,12 @@ def dashboard(db: DbSession, tenant: CapitalViewer):
 # Legacy loan routes remain as compatibility wrappers only. All new debt movements
 # must pass through the canonical Accounting loan workflow so the operational
 # financial account, loan subledger, Journal/Ledger and reports stay in sync.
-@router.get("/loans")
+@router.get("/loans", response_model=CapitalExactResponse)
 def loans(db: DbSession, tenant: CapitalViewer):
     return [loan_json(x) for x in db.scalars(select(CompanyLoan).where(CompanyLoan.organization_id == tenant.organization_id).order_by(CompanyLoan.loan_date.desc(), CompanyLoan.created_at.desc())).all()]
 
 
-@router.post("/loans", status_code=201)
+@router.post("/loans", status_code=201, response_model=CapitalExactResponse)
 def create_loan(payload: LoanCreate, request: Request, db: DbSession, tenant: LoanAccountingManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     with defer_commits(db):
@@ -533,7 +534,7 @@ def create_loan(payload: LoanCreate, request: Request, db: DbSession, tenant: Lo
     return result
 
 
-@router.post("/loans/{loan_id}/repay", status_code=201)
+@router.post("/loans/{loan_id}/repay", status_code=201, response_model=CapitalExactResponse)
 def repay(loan_id: str, payload: RepaymentCreate, request: Request, db: DbSession, tenant: LoanAccountingManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(
@@ -589,7 +590,7 @@ def repay(loan_id: str, payload: RepaymentCreate, request: Request, db: DbSessio
 
 
 
-@router.get("/owner-equity")
+@router.get("/owner-equity", response_model=CapitalExactResponse)
 def owner_equity_transactions(db: DbSession, tenant: CapitalViewer):
     rows = db.execute(
         select(OwnerEquityTransaction, FinancialAccount.name)
@@ -619,7 +620,7 @@ def owner_equity_transactions(db: DbSession, tenant: CapitalViewer):
     ]
 
 
-@router.post("/owner-equity", status_code=201)
+@router.post("/owner-equity", status_code=201, response_model=CapitalExactResponse)
 def create_owner_equity_transaction(payload: OwnerEquityCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     financial = db.scalar(
@@ -718,12 +719,12 @@ def create_owner_equity_transaction(payload: OwnerEquityCreate, request: Request
     }
 
 
-@router.get("/company-investors")
+@router.get("/company-investors", response_model=CapitalExactResponse)
 def company_investors(db: DbSession, tenant: CapitalViewer):
     return [company_investor_json(x) for x in db.scalars(select(CompanyInvestor).where(CompanyInvestor.organization_id == tenant.organization_id).order_by(CompanyInvestor.created_at.desc())).all()]
 
 
-@router.post("/company-investors", status_code=201)
+@router.post("/company-investors", status_code=201, response_model=CapitalExactResponse)
 def create_company_investor(payload: CompanyInvestorCreate, request: Request, db: DbSession, tenant: CapitalManager):
     currency = payload.currency.upper()
     agreement_functional_currency = functional_currency_for_date(db, tenant.organization_id, payload.agreement_date)
@@ -735,7 +736,7 @@ def create_company_investor(payload: CompanyInvestorCreate, request: Request, db
     db.commit(); return company_investor_json(row)
 
 
-@router.post("/company-investors/{investor_id}/fundings", status_code=201)
+@router.post("/company-investors/{investor_id}/fundings", status_code=201, response_model=CapitalExactResponse)
 def fund_company_investor(investor_id: str, payload: FundingCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestor).where(CompanyInvestor.id == investor_id, CompanyInvestor.organization_id == tenant.organization_id))
@@ -753,7 +754,7 @@ def fund_company_investor(investor_id: str, payload: FundingCreate, request: Req
     db.commit(); return {"id": funding.id, **company_investor_json(row)}
 
 
-@router.post("/company-investors/{investor_id}/payouts", status_code=201)
+@router.post("/company-investors/{investor_id}/payouts", status_code=201, response_model=CapitalExactResponse)
 def company_investor_payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestor).where(CompanyInvestor.id == investor_id, CompanyInvestor.organization_id == tenant.organization_id))
@@ -775,7 +776,7 @@ def company_investor_payout(investor_id: str, payload: PayoutCreate, request: Re
     db.commit(); return {"id": payout.id, "status": row.status}
 
 
-@router.get("/company-investors/{investor_id}/statement")
+@router.get("/company-investors/{investor_id}/statement", response_model=CapitalExactResponse)
 def company_investor_statement(investor_id: str, db: DbSession, tenant: CapitalViewer):
     row = db.scalar(select(CompanyInvestor).where(CompanyInvestor.id == investor_id, CompanyInvestor.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Company investor not found")
@@ -785,12 +786,12 @@ def company_investor_statement(investor_id: str, db: DbSession, tenant: CapitalV
     return {"investor": company_investor_json(row), "fundings": [{"id": x.id, "date": x.funding_date, "amount": x.amount, "account_id": x.account_id, "reference": x.reference} for x in fundings], "payouts": [{"id": x.id, "date": x.payout_date, "principal_return_amount": x.principal_return_amount, "profit_share_amount": x.profit_share_amount, "account_id": x.account_id, "reference": x.reference} for x in payouts], "principal_returned": principal_returned, "profit_paid": profit_paid, "outstanding_capital": money(row.funded_amount - principal_returned)}
 
 
-@router.get("/investments")
+@router.get("/investments", response_model=CapitalExactResponse)
 def investments(db: DbSession, tenant: CapitalViewer):
     return [inv_json(x) for x in db.scalars(select(CompanyInvestment).where(CompanyInvestment.organization_id == tenant.organization_id).order_by(CompanyInvestment.investment_date.desc())).all()]
 
 
-@router.post("/investments", status_code=201)
+@router.post("/investments", status_code=201, response_model=CapitalExactResponse)
 def create_investment(payload: InvestmentCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     currency = payload.currency.upper(); amount = money(payload.invested_amount); acc = account(db, tenant.organization_id, payload.account_id, currency)
@@ -806,7 +807,7 @@ def create_investment(payload: InvestmentCreate, request: Request, db: DbSession
     db.commit(); return inv_json(row)
 
 
-@router.post("/investments/{investment_id}/fundings", status_code=201)
+@router.post("/investments/{investment_id}/fundings", status_code=201, response_model=CapitalExactResponse)
 def add_investment_funding(investment_id: str, payload: FundingCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestment).where(CompanyInvestment.id == investment_id, CompanyInvestment.organization_id == tenant.organization_id))
@@ -822,7 +823,7 @@ def add_investment_funding(investment_id: str, payload: FundingCreate, request: 
     db.commit(); return {"id": funding.id, **inv_json(row)}
 
 
-@router.post("/investments/{investment_id}/returns", status_code=201)
+@router.post("/investments/{investment_id}/returns", status_code=201, response_model=CapitalExactResponse)
 def add_return(investment_id: str, payload: ReturnCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(CompanyInvestment).where(CompanyInvestment.id == investment_id, CompanyInvestment.organization_id == tenant.organization_id))
@@ -838,7 +839,7 @@ def add_return(investment_id: str, payload: ReturnCreate, request: Request, db: 
     db.commit(); return {"id": r.id, "cash_amount": r.cash_amount, "income_amount": r.income_amount, "carrying_value": row.carrying_value, "status": row.status}
 
 
-@router.get("/investments/{investment_id}/statement")
+@router.get("/investments/{investment_id}/statement", response_model=CapitalExactResponse)
 def investment_statement(investment_id: str, db: DbSession, tenant: CapitalViewer):
     row = db.scalar(select(CompanyInvestment).where(CompanyInvestment.id == investment_id, CompanyInvestment.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Investment not found")
@@ -847,13 +848,13 @@ def investment_statement(investment_id: str, db: DbSession, tenant: CapitalViewe
     return {"investment": inv_json(row), "fundings": [{"id": x.id, "date": x.funding_date, "amount": x.amount, "reference": x.reference} for x in fundings], "returns": [{"id": x.id, "date": x.return_date, "type": x.return_type, "cash_amount": x.cash_amount, "principal_return_amount": x.principal_return_amount, "income_amount": x.income_amount, "reference": x.reference} for x in returns]}
 
 
-@router.get("/project-investors")
+@router.get("/project-investors", response_model=CapitalExactResponse)
 def project_investors(db: DbSession, tenant: CapitalViewer):
     rows = db.execute(select(ProjectInvestor, Project.name).join(Project, Project.id == ProjectInvestor.project_id).where(ProjectInvestor.organization_id == tenant.organization_id).order_by(ProjectInvestor.investment_date.desc())).all()
     return [project_investor_json(x, n) for x, n in rows]
 
 
-@router.post("/project-investors", status_code=201)
+@router.post("/project-investors", status_code=201, response_model=CapitalExactResponse)
 def create_project_investor(payload: ProjectInvestorCreate, request: Request, db: DbSession, tenant: CapitalManager):
     project = db.scalar(select(Project).where(Project.id == payload.project_id, Project.organization_id == tenant.organization_id))
     if project is None: raise HTTPException(404, "Project not found")
@@ -865,7 +866,7 @@ def create_project_investor(payload: ProjectInvestorCreate, request: Request, db
     db.commit(); return project_investor_json(row, project.name)
 
 
-@router.post("/project-investors/{investor_id}/fundings", status_code=201)
+@router.post("/project-investors/{investor_id}/fundings", status_code=201, response_model=CapitalExactResponse)
 def fund_project_investor(investor_id: str, payload: FundingCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(ProjectInvestor).where(ProjectInvestor.id == investor_id, ProjectInvestor.organization_id == tenant.organization_id))
@@ -882,7 +883,7 @@ def fund_project_investor(investor_id: str, payload: FundingCreate, request: Req
     record_activity(db, action="capital.project_investor.fund", scope="tenant", actor_user_id=tenant.user_id, organization_id=tenant.organization_id, entity_type="project_investor_funding", entity_id=funding.id, after={"investor_id": row.id, "amount": amount, "funded_amount": row.funded_amount}, request=request)
     db.commit(); return {"id": funding.id, **project_investor_json(row, project.name if project else None)}
 
-@router.post("/project-investors/{investor_id}/payouts", status_code=201)
+@router.post("/project-investors/{investor_id}/payouts", status_code=201, response_model=CapitalExactResponse)
 def payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSession, tenant: CapitalManager):
     acquire_accounting_period_gate(db, tenant.organization_id)
     row = db.scalar(select(ProjectInvestor).where(ProjectInvestor.id == investor_id, ProjectInvestor.organization_id == tenant.organization_id))
@@ -901,7 +902,7 @@ def payout(investor_id: str, payload: PayoutCreate, request: Request, db: DbSess
     db.commit(); return {"id": p.id, "investor_id": row.id, "principal_return_amount": principal, "profit_share_amount": profit, "status": row.status}
 
 
-@router.get("/project-investors/{investor_id}/statement")
+@router.get("/project-investors/{investor_id}/statement", response_model=CapitalExactResponse)
 def project_investor_statement(investor_id: str, db: DbSession, tenant: CapitalViewer):
     row = db.scalar(select(ProjectInvestor).where(ProjectInvestor.id == investor_id, ProjectInvestor.organization_id == tenant.organization_id))
     if row is None: raise HTTPException(404, "Project investor not found")

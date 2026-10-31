@@ -4,6 +4,8 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
+import { InventoryRequestError, isStockPosting, isUncertainInventoryWrite } from "@/lib/inventory-write-outcome";
+import { inventoryCompare, inventoryDecimalWire, inventoryPurchasePreview } from "@/lib/inventory-decimal";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { inventoryBrowseHref, inventoryBrowseState, inventoryDocumentHref, inventoryReturnHref, parseInventoryRoute, type InventoryBrowse, type InventorySection } from "@/lib/inventory-navigation";
 import { type Tab, type Overview, type Product, type Warehouse, type Category, type Supplier, type TaxCode, type Stock, type Purchase, type Movement, type PurchaseLine, type ItemForm, type SupplierForm, type WarehouseForm, today, emptyItem, emptySupplier, emptyWarehouse } from "@/components/inventory/inventory-model";
@@ -40,7 +42,7 @@ export function useInventoryWorkspace() {
   const [coreReady, setCoreReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [baseCurrency, setBaseCurrency] = useState("BDT");
-  const [createdDate] = useState(today);
+  const [createdDate] = useState(() => today(tenant?.organization.timezone));
   const [loadedTabs, setLoadedTabs] = useState<Set<Tab>>(() => new Set(["overview", "suppliers", "warehouses", "categories", "service_sales"]));
   const loadedTabsRef = useRef(loadedTabs);
   const serviceTermsRef = useRef<Map<string, number | null> | null>(null);
@@ -53,6 +55,8 @@ export function useInventoryWorkspace() {
   const saveInFlightRef = useRef(false);
   const committedDocumentRef = useRef(false);
   const [documentCommitted, setDocumentCommitted] = useState(false);
+  const uncertainStockWriteRef = useRef(false);
+  const [uncertainStockWrite, setUncertainStockWrite] = useState(false);
   const [persistedProductId, setPersistedProductId] = useState<string | null>(null);
   const persistedProductRef = useRef<string | null>(null);
   const [itemDraft, setItemForm] = useState<ItemForm | null>(null);
@@ -67,10 +71,12 @@ export function useInventoryWorkspace() {
   const request = useCallback(async (url: string, init?: RequestInit) => {
     const response = await fetch(url, { cache: "no-store", ...init });
     const text = await response.text();
-    let payload: any = {};
-    try { payload = text ? JSON.parse(text) : {}; } catch { payload = { detail: "Unexpected server response" }; }
-    if (!response.ok) throw new Error(getApiErrorMessage(payload, "Inventory request failed"));
-    return payload;
+    let payload: any;
+    try { payload = text ? JSON.parse(text) : null; } catch { throw new InventoryRequestError("Unexpected server response", response.status, false); }
+    const structured = payload !== null && typeof payload === "object" && !Array.isArray(payload);
+    if (!response.ok) throw new InventoryRequestError(getApiErrorMessage(payload, "Inventory request failed"), response.status, structured && (typeof payload.detail === "string" || Array.isArray(payload.detail)));
+    if (init?.method === "POST" && isStockPosting(url, init.method) && (!structured || typeof payload.id !== "string" || !payload.id.trim())) throw new InventoryRequestError("The posting response could not be verified", response.status, false);
+    return payload ?? {};
   }, []);
 
   const loadCore = useCallback(async (showLoader = true) => {
@@ -165,7 +171,7 @@ export function useInventoryWorkspace() {
   const filteredPurchases = useMemo(() => purchases.filter((purchase) => !search || `${purchase.receipt_number} ${purchase.supplier_name} ${purchase.warehouse_name} ${purchase.reference ?? ""}`.toLowerCase().includes(search.toLowerCase())), [purchases, search]);
   const filteredStock = useMemo(() => stock.filter((row) => {
     const matchesSearch = !search || `${row.sku} ${row.product_name} ${row.warehouse_name}`.toLowerCase().includes(search.toLowerCase());
-    const matchesLow = !lowStockOnly || Number(row.on_hand) <= Number(row.reorder_level);
+    const matchesLow = !lowStockOnly || (inventoryCompare(row.on_hand, row.reorder_level) ?? 1) <= 0;
     return matchesSearch && matchesLow;
   }), [stock, search, lowStockOnly]);
   const filteredMovements = useMemo(() => movements.filter((movement) => !search || `${movement.sku} ${movement.product_name} ${movement.warehouse_name} ${movement.movement_type} ${movement.reason ?? ""} ${movement.reference ?? ""}`.toLowerCase().includes(search.toLowerCase())), [movements, search]);
@@ -179,7 +185,7 @@ export function useInventoryWorkspace() {
   const requestedItemType = searchParams.get("itemType") || "stock_item";
   const newItemType = ["stock_item", "non_stock_item", "service"].includes(requestedItemType) ? requestedItemType : "stock_item";
   const initialItemForm: ItemForm = selectedItem ? { sku: selectedItem.sku, barcode: selectedItem.barcode ?? "", name: selectedItem.name, description: selectedItem.description ?? "", item_type: selectedItem.item_type, category_id: selectedItem.category_id ?? "", unit: selectedItem.unit, currency: selectedItem.currency, selling_price: String(selectedItem.selling_price), standard_cost: String(selectedItem.standard_cost), reorder_level: String(selectedItem.reorder_level), tax_code_id: selectedItem.tax_code_id ?? "", track_inventory: selectedItem.track_inventory, allow_negative_stock: selectedItem.allow_negative_stock, is_active: selectedItem.is_active, service_duration_months: selectedItem.service_duration_months == null ? "" : String(selectedItem.service_duration_months) } : { ...emptyItem(baseCurrency), item_type: newItemType, track_inventory: newItemType === "stock_item" };
-  const initialSupplierForm: SupplierForm = selectedSupplier ? { name: selectedSupplier.name, contact_name: selectedSupplier.contact_name ?? "", email: selectedSupplier.email ?? "", phone: selectedSupplier.phone ?? "", website: selectedSupplier.website ?? "", tax_identifier: selectedSupplier.tax_identifier ?? "", country_code: selectedSupplier.country_code ?? "", currency: selectedSupplier.currency ?? baseCurrency, notes: selectedSupplier.notes ?? "", is_active: selectedSupplier.is_active } : emptySupplier(baseCurrency);
+  const initialSupplierForm: SupplierForm = selectedSupplier ? { name: selectedSupplier.name, contact_name: selectedSupplier.contact_name ?? "", email: selectedSupplier.email ?? "", phone: selectedSupplier.phone ?? "", website: selectedSupplier.website ?? "", tax_identifier: selectedSupplier.tax_identifier ?? "", country_code: selectedSupplier.country_code ?? "", currency: selectedSupplier.currency ?? "", notes: selectedSupplier.notes ?? "", is_active: selectedSupplier.is_active } : emptySupplier(baseCurrency, tenant?.organization.country_code || "");
   const initialWarehouseForm: WarehouseForm = selectedWarehouse ? { code: selectedWarehouse.code, name: selectedWarehouse.name, address: selectedWarehouse.address ?? "", is_default: selectedWarehouse.is_default, is_active: selectedWarehouse.is_active } : { ...emptyWarehouse(), is_default: warehouses.length === 0 };
   const initialCategoryDraft = selectedCategory ? { id: selectedCategory.id, name: selectedCategory.name, description: selectedCategory.description || "" } : { id: "", name: "", description: "" };
   const defaultWarehouseId = activeWarehouses.find(warehouse => warehouse.is_default)?.id ?? activeWarehouses[0]?.id ?? "";
@@ -187,7 +193,7 @@ export function useInventoryWorkspace() {
   const initialPurchaseForm = { supplier_id: firstSupplier?.id ?? "", warehouse_id: defaultWarehouseId, receipt_date: createdDate, currency: firstSupplier?.currency || baseCurrency, reference: "", notes: "" };
   const initialPurchaseLines: PurchaseLine[] = [{ product_id: "", quantity: "1", unit_cost: "0", tax_code_id: "" }];
   const initialAdjustForm = { product_id: activeStockProducts[0]?.id || "", warehouse_id: defaultWarehouseId, adjustment_date: createdDate, quantity_delta: "", unit_cost: "", reason: "", reference: "" };
-  const sourceRow = stock.find(row => Number(row.on_hand) > 0 && activeStockProducts.some(item => item.id === row.product_id) && activeWarehouses.some(warehouse => warehouse.id === row.warehouse_id));
+  const sourceRow = stock.find(row => (inventoryCompare(row.on_hand, "0") ?? 0) > 0 && activeStockProducts.some(item => item.id === row.product_id) && activeWarehouses.some(warehouse => warehouse.id === row.warehouse_id));
   const initialTransferForm = { product_id: sourceRow?.product_id || "", from_warehouse_id: sourceRow?.warehouse_id || "", to_warehouse_id: activeWarehouses.find(warehouse => warehouse.id !== sourceRow?.warehouse_id)?.id || "", transfer_date: createdDate, quantity: "", reason: "Stock transfer", reference: "" };
   const itemForm = itemDraft ?? initialItemForm;
   const supplierForm = supplierDraft ?? initialSupplierForm;
@@ -199,21 +205,11 @@ export function useInventoryWorkspace() {
   const transferForm = transferDraft ?? initialTransferForm;
   const purchaseProducts = useMemo(() => activeStockProducts.filter((product) => product.currency === purchaseForm.currency), [activeStockProducts, purchaseForm.currency]);
   const transferProducts = useMemo(() => {
-    const ids = new Set(stock.filter((row) => row.warehouse_id === transferForm.from_warehouse_id && Number(row.on_hand) > 0).map((row) => row.product_id));
+    const ids = new Set(stock.filter((row) => row.warehouse_id === transferForm.from_warehouse_id && (inventoryCompare(row.on_hand, "0") ?? 0) > 0).map((row) => row.product_id));
     return activeStockProducts.filter((product) => ids.has(product.id));
   }, [stock, transferForm.from_warehouse_id, activeStockProducts]);
   const transferAvailable = useMemo(() => stock.find((row) => row.warehouse_id === transferForm.from_warehouse_id && row.product_id === transferForm.product_id), [stock, transferForm.from_warehouse_id, transferForm.product_id]);
-  const purchaseTotals = useMemo(() => {
-    let subtotal = 0;
-    let tax = 0;
-    for (const line of purchaseLines) {
-      const base = Number(line.quantity || 0) * Number(line.unit_cost || 0);
-      subtotal += base;
-      const taxCode = purchaseTaxes.find((item) => item.id === line.tax_code_id);
-      if (taxCode) tax += base * Number(taxCode.rate || 0) / 100;
-    }
-    return { subtotal, tax, total: subtotal + tax };
-  }, [purchaseLines, purchaseTaxes]);
+  const purchaseTotals = useMemo(() => inventoryPurchasePreview(purchaseLines, purchaseTaxes), [purchaseLines, purchaseTaxes]);
 
   const missingPurchaseSetup = useMemo(() => {
     const missing: string[] = [];
@@ -310,7 +306,9 @@ export function useInventoryWorkspace() {
   function backToRegister() { router.push(returnHref); }
 
   async function refresh() {
-    if (saving || !navigation.confirmLeave()) return;
+    if (saving) return;
+    if (uncertainStockWriteRef.current) { if (await loadCore()) await loadTab(activeTabRef.current, true); return; }
+    if (!navigation.confirmLeave()) return;
     if (isEditor) { navigation.navigate(window.location.href, { discard: true, replace: true }); return; }
     if (await loadCore()) await loadTab(activeTabRef.current, true);
   }
@@ -320,6 +318,7 @@ export function useInventoryWorkspace() {
 
   async function save(url: string, method: "POST" | "PATCH", body: unknown, success: string) {
     if (isEditor && committedDocumentRef.current) return true;
+    if (isStockPosting(url, method) && uncertainStockWriteRef.current) return false;
     if (saveInFlightRef.current || !canManage || isEditor && !documentReady) return false;
     saveInFlightRef.current = true; setSaving(true); setError(null); setMessage(null);
     let committed = false;
@@ -332,6 +331,11 @@ export function useInventoryWorkspace() {
       else { if (await loadCore(false)) await loadTab(activeTabRef.current, true); }
       return true;
     } catch (reason) {
+      if (!committed && isStockPosting(url, method) && isUncertainInventoryWrite(reason)) {
+        uncertainStockWriteRef.current = true;
+        if (mountedRef.current) { setUncertainStockWrite(true); setError("The stock posting outcome is unknown. It may have completed. Do not submit it again; review receipts, movements and stock with your finance administrator. Reloading or an absent row does not prove it failed."); }
+        return false;
+      }
       if (mountedRef.current) setError(committed ? "The change was saved, but the view could not refresh. Reload before taking another action." : reason instanceof Error ? reason.message : "Could not save record");
       return committed;
     } finally { saveInFlightRef.current = false; if (mountedRef.current) setSaving(false); }
@@ -343,7 +347,7 @@ export function useInventoryWorkspace() {
     const duration = itemForm.item_type === "service" && itemForm.service_duration_months !== "" ? Number(itemForm.service_duration_months) : null;
     if (duration !== null && (!Number.isInteger(duration) || duration < 1 || duration > 120)) { setError("Service duration must be a whole number between 1 and 120 months."); return; }
     const { service_duration_months: _duration, ...baseForm } = itemForm;
-    const body = { ...baseForm, barcode: baseForm.barcode || null, description: baseForm.description || null, category_id: baseForm.category_id || null, tax_code_id: baseForm.tax_code_id || null, selling_price: Number(baseForm.selling_price), standard_cost: Number(baseForm.standard_cost), reorder_level: Number(baseForm.reorder_level), track_inventory: baseForm.item_type === "stock_item" ? baseForm.track_inventory : false };
+    const body = { ...baseForm, barcode: baseForm.barcode || null, description: baseForm.description || null, category_id: baseForm.category_id || null, tax_code_id: baseForm.tax_code_id || null, selling_price: inventoryDecimalWire(baseForm.selling_price), standard_cost: inventoryDecimalWire(baseForm.standard_cost), reorder_level: inventoryDecimalWire(baseForm.reorder_level), track_inventory: baseForm.item_type === "stock_item" ? baseForm.track_inventory : false };
     saveInFlightRef.current = true; setSaving(true); setError(null); setMessage(null);
     try {
       const coreId = editingId ?? persistedProductRef.current;
@@ -397,28 +401,28 @@ export function useInventoryWorkspace() {
 
   async function submitAdjustment(event: FormEvent) {
     event.preventDefault();
-    await save("/api/inventory/adjustments", "POST", { ...adjustForm, quantity_delta: Number(adjustForm.quantity_delta), unit_cost: adjustForm.unit_cost ? Number(adjustForm.unit_cost) : null, reference: adjustForm.reference || null }, "Stock adjustment posted.");
+    await save("/api/inventory/adjustments", "POST", { ...adjustForm, quantity_delta: inventoryDecimalWire(adjustForm.quantity_delta), unit_cost: adjustForm.unit_cost ? inventoryDecimalWire(adjustForm.unit_cost) : null, reference: adjustForm.reference || null }, "Stock adjustment posted.");
   }
 
   async function submitPurchase(event: FormEvent) {
     event.preventDefault();
     const supplier = suppliers.find((item) => item.id === purchaseForm.supplier_id);
     if (!supplier) { setError("Choose a supplier first."); return; }
-    const lines = purchaseLines.filter((line) => line.product_id).map((line) => ({ product_id: line.product_id, quantity: Number(line.quantity), unit_cost: Number(line.unit_cost), tax_code_id: line.tax_code_id || null }));
+    const lines = purchaseLines.filter((line) => line.product_id).map((line) => ({ product_id: line.product_id, quantity: inventoryDecimalWire(line.quantity), unit_cost: inventoryDecimalWire(line.unit_cost), tax_code_id: line.tax_code_id || null }));
     if (!lines.length) { setError("Add at least one product line."); return; }
     await save("/api/inventory/purchases", "POST", { supplier_name: supplier.name, vendor_id: supplier.id, warehouse_id: purchaseForm.warehouse_id, receipt_date: purchaseForm.receipt_date, currency: purchaseForm.currency, reference: purchaseForm.reference || null, notes: purchaseForm.notes || null, items: lines }, "Purchase received and stock updated.");
   }
 
   async function submitTransfer(event: FormEvent) {
     event.preventDefault();
-    await save("/api/inventory/transfers", "POST", { ...transferForm, quantity: Number(transferForm.quantity), reference: transferForm.reference || null }, "Stock transferred between warehouses.");
+    await save("/api/inventory/transfers", "POST", { ...transferForm, quantity: inventoryDecimalWire(transferForm.quantity), reference: transferForm.reference || null }, "Stock transferred between warehouses.");
   }
 
 
   // Expose the presentation contract only; request identities and write latches stay private.
   return {
     activeCategoryOptions, activeStockProducts, activeSuppliers, activeWarehouses, adjustForm, backToRegister, baseCurrency,
-    browse, canManage, categories, categoryDraft, closeDocument, coreReady, documentCommitted,
+    browse, canManage, categories, categoryDraft, closeDocument, coreReady, documentCommitted, uncertainStockWrite,
     documentReady, editingId, error, filteredItems, filteredMovements, filteredPurchases, filteredStock,
     filteredSuppliers, isEditor, itemFilter, itemForm, loading, lowStockOnly, message,
     missingPurchaseSetup, modal, movements, openAdjustment, openCategories, openEditCategory, openEditItem,

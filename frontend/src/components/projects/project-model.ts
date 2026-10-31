@@ -1,3 +1,5 @@
+import { formatMoneyExact } from "@/lib/sales-money-preview";
+
 export type Tab = "overview" | "milestones" | "tasks" | "work" | "documents" | "notes" | "credentials" | "team" | "review_tips";
 export type ProjectMember = { id: string; employee_id: string; employee_code: string; full_name: string; role_label: string | null; tab_permissions: Tab[] };
 export type ProjectAccess = { allowed_tabs: Tab[]; can_manage_project: boolean; is_project_manager: boolean; current_employee_id: string | null };
@@ -23,7 +25,7 @@ export const allTabIds = tabs.map((item) => item.id);
 export const defaultMemberTabs: Tab[] = ["overview", "milestones", "tasks", "work", "documents", "notes", "team"];
 export const previewTypes = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "text/plain"]);
 
-export function money(value: string | number, currency: string) { return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+export function money(value: string | number, currency: string) { return formatMoneyExact(value, currency); }
 export function pretty(value: string) { return value.replaceAll("_", " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 export function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`; return `${(value / (1024 * 1024)).toFixed(1)} MB`; }
 export function localDateKey() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
@@ -35,7 +37,8 @@ export function vaultMessage(reason: unknown) {
 }
 
 
-export type ProjectEditorMode = "milestone" | "milestone_edit" | "task" | "task_edit" | "progress" | "document" | "document_edit" | "credential" | "credential_edit" | "team";
+export type ProjectDetailsValues = { name: string; priority: string; planned_start_date: string; due_date: string; description: string; notes: string };
+export type ProjectEditorMode = "project" | "milestone" | "milestone_edit" | "task" | "task_edit" | "progress" | "document" | "document_edit" | "credential" | "credential_edit" | "team";
 export type ProjectWorkspaceRoute = { kind: "register" | "record" | "editor" | "invalid"; section?: Tab; id?: string; editorMode?: ProjectEditorMode };
 export function parseProjectWorkspaceRoute(pathname: string, projectId: string): ProjectWorkspaceRoute {
   const base = `/dashboard/projects/${encodeURIComponent(projectId)}`;
@@ -44,6 +47,7 @@ export function parseProjectWorkspaceRoute(pathname: string, projectId: string):
   let parts: string[];
   try { parts = pathname.slice(base.length + 1).split("/").map(decodeURIComponent); } catch { return { kind: "invalid" }; }
   const [section, id, action] = parts;
+  if (section === "edit" && parts.length === 1) return { kind: "editor", section: "overview", editorMode: "project" };
   if (section === "team" && id === "edit" && parts.length === 2) return { kind: "editor", section: "team", editorMode: "team" };
   const modes = { milestones: "milestone", tasks: "task", documents: "document", credentials: "credential" } as const;
   if (!(section in modes)) return { kind: "invalid" };

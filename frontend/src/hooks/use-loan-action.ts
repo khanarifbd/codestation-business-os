@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { ConfirmationDetail } from "@/components/financial-confirmation-dialog";
 import { useDocumentNavigationGuard } from "@/hooks/use-document-navigation-guard";
 import { getApiErrorMessage } from "@/lib/api-error";
+import { hasAccountingRejectionDetail } from "@/lib/accounting-rejection";
 export type LoanConfirmation = { title: string; description: string; warning: string; details: ConfirmationDetail[]; confirmLabel: string };
 export type LoanCommand = { url: string; body?: unknown; keyed?: boolean; confirmation: LoanConfirmation; validate: (value: unknown) => boolean; resultHref?: (value: unknown) => string | null };
 type Frozen = Omit<LoanCommand,"body"> & { bodyText?: string; key: string | null };
@@ -46,7 +47,7 @@ export function useLoanAction(canManage: boolean, dirty: boolean, returnHref: st
         const pendingOutcome=response.status===409&&/matching financial request|original .*no longer available|original accounting journal/i.test(message);
         if(identityConflict||pendingOutcome){uncertain(`${message} The submitted operation remains locked; do not create a fresh request.`,Boolean(selected.key)&&!identityConflict);return;}
         if(retry){uncertain(`${message} This retry did not establish the earlier attempt’s outcome; retain the original request and do not create a new posting.`,Boolean(selected.key));return;}
-        if([400,401,403,404,409,422].includes(response.status)){phaseRef.current="idle";setPhase("idle");command.current=null;setConfirmation(null);setOperation(null);setError(message);return;}
+        if([400,401,403,404,409,422].includes(response.status)&&hasAccountingRejectionDetail(payload)){phaseRef.current="idle";setPhase("idle");command.current=null;setConfirmation(null);setOperation(null);setError(message);return;}
         uncertain("The response did not establish the outcome. Inspect saved loan history. Only an offered same-request retry retains the original key and exact submitted body.",Boolean(selected.key));return;
       }
       if(!selected.validate(payload)){setError("The operation was acknowledged but the returned posting identity could not be verified. Do not submit again; inspect saved history.");return;}

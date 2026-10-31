@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { isDefiniteExpenseRejection } from "@/components/expenses/expense-write-outcome";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDashboardSession } from "@/components/dashboard-session-context";
 import { isExpenseDetail } from "@/components/expenses/expense-read-model";
@@ -23,8 +24,9 @@ export function useExpenseDocumentActions(document: ExpenseDetail | null, canMan
   const [confirmationVersion, setConfirmationVersion] = useState(0);
   const sequence = useRef(0), confirmation = useRef(0);
   const mounted = useRef(true), inFlight = useRef(false), locked = useRef(false), armed = useRef(false), current = useRef(document), operation = useRef<DocumentAction | null>(null), readEpoch = useRef(0);
-  useEffect(() => { current.current = document; }, [document]);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; readEpoch.current += 1; }; }, []);
+  const lifecycle = useRef(0);
+  useLayoutEffect(() => { current.current = document; }, [document]);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; lifecycle.current += 1; readEpoch.current += 1; }; }, []);
   const navigation = useDocumentNavigationGuard(phase === "uncertain", { enabled: saving || phase === "uncertain", documentLabel: "expense", isBusy: saving, pendingRef: inFlight,
     discardMessage: "This expense action has an uncertain result. Verify current status or document metadata before repeating it. Leave anyway?" });
   function review(kind: "void" | "delete", documentId?: string) {
@@ -35,7 +37,7 @@ export function useExpenseDocumentActions(document: ExpenseDetail | null, canMan
     const op = { kind, expenseId: d.id, documentId, title: receipt?.title || d.description, number: d.expense_number, amount: d.account_amount, currency: d.account_currency };
     operation.current = op; armed.current = true; confirmation.current = ++sequence.current; setConfirmationVersion(confirmation.current); setAction(op); setOpen(true); setError(null); setMessage(null);
   }
-  function cancel() { if (!inFlight.current && confirmation.current === confirmationVersion) { armed.current = false; confirmation.current = 0; setOpen(false); } }
+  function cancel() { if (mounted.current && !inFlight.current && confirmation.current === confirmationVersion) { armed.current = false; confirmation.current = 0; setOpen(false); } }
   async function recheck() {
     const op = operation.current; if (!op || !mounted.current) return;
     const epoch = ++readEpoch.current, fresh = await refresh();
@@ -50,26 +52,30 @@ export function useExpenseDocumentActions(document: ExpenseDetail | null, canMan
   async function confirm() {
     const op = operation.current;
     if (!mounted.current || !canManage || !op || !armed.current || !confirmationVersion || confirmation.current !== confirmationVersion || inFlight.current || locked.current) return;
+    const currentDocument = current.current;
+    if (!currentDocument || currentDocument.id !== op.expenseId || op.kind === "void" && currentDocument.status !== "posted" || op.kind === "delete" && !currentDocument.documents.some(row => row.id === op.documentId)) return;
     armed.current = false; confirmation.current = 0; inFlight.current = true; setSaving(true); setError(null);
+    const owner = lifecycle.current;
     let acknowledged = false, classified = false;
     try {
       const response = await fetch(op.kind === "void" ? `/api/finance/expenses/${encodeURIComponent(op.expenseId)}/void` : `/api/expense-documents/${encodeURIComponent(op.expenseId)}/${encodeURIComponent(op.documentId!)}`, { method: op.kind === "void" ? "POST" : "DELETE" });
+      if (!mounted.current || owner !== lifecycle.current) return;
       if (response.ok) { acknowledged = true; locked.current = true; }
       const body: unknown = response.status === 204 ? null : await response.json().catch(() => null);
-      if (!mounted.current) return;
+      if (!mounted.current || owner !== lifecycle.current) return;
       if (response.status === 401) router.replace("/login");
-      if (!response.ok) { classified = response.status < 500; throw new Error(getApiErrorMessage(body, "The expense action could not be confirmed.")); }
+      if (!response.ok) { classified = isDefiniteExpenseRejection(response.status, body); throw new Error(getApiErrorMessage(body, "The expense action could not be confirmed.")); }
       setPhase("confirmed"); setOpen(false); setMessage("Action acknowledged. Reading current expense state; a read failure must not cause another write."); await recheck();
     } catch (reason) {
-      if (!mounted.current) return;
+      if (!mounted.current || owner !== lifecycle.current) return;
       if (acknowledged) { locked.current = true; setPhase("confirmed"); }
       else if (!classified) { locked.current = true; setPhase("uncertain"); }
       setError(reason instanceof Error ? reason.message : "The action outcome is uncertain."); setOpen(false);
       // Document deletion can commit its metadata before storage cleanup fails.
       if (!classified && !acknowledged) await recheck();
-    } finally { inFlight.current = false; if (mounted.current) setSaving(false); }
+    } finally { if (mounted.current && owner === lifecycle.current) { inFlight.current = false; setSaving(false); } }
   }
   return { action, open, saving, phase, message, error, review, cancel, confirm, recheck, locked: saving || phase !== "idle",
-    back: (href: string) => locked.current || inFlight.current ? navigation.navigate(href) : router.push(href),
+    back: (href: string) => !mounted.current ? false : locked.current || inFlight.current ? navigation.navigate(href) : router.push(href),
   };
 }

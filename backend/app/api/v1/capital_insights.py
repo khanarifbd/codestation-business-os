@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 
+from app.schemas.capital_response import CapitalExactResponse
 from app.api.dependencies import DbSession, require_tenant_permission
 from app.api.v1.reports import _invoice_project_id
 from app.models.capital import (
@@ -43,7 +44,7 @@ def entitlement(project_profit: Decimal, project_revenue: Decimal, investor: Pro
     return Decimal("0.00")
 
 
-@router.get("/insights")
+@router.get("/insights", response_model=CapitalExactResponse)
 def insights(
     db: DbSession,
     tenant: CapitalViewer,
